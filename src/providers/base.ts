@@ -1,5 +1,6 @@
 import type { Coin, VirtualCoin } from "../types/wallet";
 import type { UTXO, VTXO } from "../types/internal";
+import type { ArkEvent } from "./ark";
 
 export interface OnchainProvider {
     getCoins(address: string): Promise<Coin[]>;
@@ -10,6 +11,7 @@ export interface OnchainProvider {
 export interface ArkProvider {
     getVirtualCoins(address: string): Promise<VirtualCoin[]>;
     submitVirtualTx(psbtBase64: string): Promise<string>;
+    subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
 }
 
 export abstract class BaseOnchainProvider implements OnchainProvider {
@@ -38,7 +40,7 @@ export abstract class BaseArkProvider implements ArkProvider {
     abstract getVirtualCoins(address: string): Promise<VirtualCoin[]>;
     abstract submitVirtualTx(psbtBase64: string): Promise<string>;
     abstract subscribeToEvents(
-        callback: (event: any) => void
+        callback: (event: ArkEvent) => void
     ): Promise<() => void>;
 
     protected convertVTXOsToVirtualCoin(vtxos: VTXO[]): VirtualCoin[] {

@@ -350,14 +350,13 @@ export class Wallet implements IWallet {
         return hex.encode(signature);
     }
 
+    /* eslint-disable @typescript-eslint/no-unused-vars */
     async verifyMessage(
         _message: string,
         _signature: string,
         _address: string
     ): Promise<boolean> {
-        // TODO: Implement message verification
-        // Need to verify schnorr signature against P2TR address
-        return true;
+        throw new Error("Method not implemented.");
     }
 
     async subscribeToEvents(
@@ -365,13 +364,9 @@ export class Wallet implements IWallet {
         _signature: string,
         _address: string
     ): Promise<void> {
-        if (!this.arkProvider) {
-            throw new Error("Ark provider not configured");
-        }
-
-        // TODO: Implement event subscription
-        throw new Error("Not implemented");
+        throw new Error("Method not implemented.");
     }
+    /* eslint-enable @typescript-eslint/no-unused-vars */
 
     dispose() {
         if (this.unsubscribeEvents) {

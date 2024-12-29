@@ -3,6 +3,12 @@ import { Identity } from "../types/wallet";
 import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
 
+// Interface for external signers
+export interface ExternalSignerInterface {
+    sign(message: Uint8Array): Promise<Uint8Array>;
+    getPublicKey(): Uint8Array;
+}
+
 export class InMemoryKey implements Identity {
     private key: Uint8Array;
 
@@ -32,22 +38,22 @@ export class InMemoryKey implements Identity {
 }
 
 export class ExternalSigner implements Identity {
-    private signer: any; // Replace with proper type based on external signer interface
+    private signer: ExternalSignerInterface;
 
-    private constructor(signer: any) {
+    private constructor(signer: ExternalSignerInterface) {
         this.signer = signer;
     }
 
-    static fromSigner(signer: any): ExternalSigner {
+    static fromSigner(signer: ExternalSignerInterface): ExternalSigner {
         return new ExternalSigner(signer);
     }
 
-    async sign(_message: Uint8Array): Promise<Uint8Array> {
-        throw new Error("Not implemented");
+    async sign(message: Uint8Array): Promise<Uint8Array> {
+        return this.signer.sign(message);
     }
 
     xOnlyPublicKey(): Uint8Array {
-        throw new Error("Not implemented");
+        return this.signer.getPublicKey();
     }
 
     privateKey(): Uint8Array {

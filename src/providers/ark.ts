@@ -1,6 +1,18 @@
 import { BaseArkProvider } from "./base";
 import type { VirtualCoin } from "../types/wallet";
 
+// Define event types
+export interface ArkEvent {
+    type: "vtxo_created" | "vtxo_spent" | "vtxo_swept" | "vtxo_expired";
+    data: {
+        txid?: string;
+        address?: string;
+        amount?: number;
+        roundTxid?: string;
+        expireAt?: number;
+    };
+}
+
 export class ArkProvider extends BaseArkProvider {
     async getInfo() {
         const url = `${this.serverUrl}/v1/info`;
@@ -67,7 +79,8 @@ export class ArkProvider extends BaseArkProvider {
                 throw new Error(
                     `Failed to submit virtual transaction: ${grpcError.message || grpcError.error || errorText}`
                 );
-            } catch (_e) {
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            } catch (_) {
                 // If JSON parse fails, use the raw error text
                 throw new Error(
                     `Failed to submit virtual transaction: ${errorText}`
@@ -80,13 +93,13 @@ export class ArkProvider extends BaseArkProvider {
     }
 
     async subscribeToEvents(
-        callback: (event: any) => void
+        callback: (event: ArkEvent) => void
     ): Promise<() => void> {
         const url = `${this.serverUrl}/v1/events`;
         const eventSource = new EventSource(url);
 
         eventSource.onmessage = (event) => {
-            const data = JSON.parse(event.data);
+            const data = JSON.parse(event.data) as ArkEvent;
             callback(data);
         };
 

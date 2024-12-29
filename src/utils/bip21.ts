@@ -5,7 +5,7 @@ export interface BIP21Params {
     message?: string;
     ark?: string; // ARK address
     sp?: string; // Silent Payment address
-    [key: string]: any;
+    [key: string]: string | number | undefined;
 }
 
 export interface BIP21ParseResult {
@@ -23,7 +23,7 @@ export class BIP21 {
         const { address, ...options } = params;
 
         // Build query string
-        const queryParams: Record<string, any> = {};
+        const queryParams: Record<string, string | number> = {};
         for (const [key, value] of Object.entries(options)) {
             if (value === undefined) continue;
 
@@ -53,7 +53,7 @@ export class BIP21 {
                 } else {
                     console.warn("Invalid Silent Payment address format");
                 }
-            } else {
+            } else if (typeof value === "string" || typeof value === "number") {
                 queryParams[key] = value;
             }
         }
@@ -62,7 +62,12 @@ export class BIP21 {
             Object.keys(queryParams).length > 0
                 ? "?" +
                   new URLSearchParams(
-                      queryParams as Record<string, string>
+                      Object.fromEntries(
+                          Object.entries(queryParams).map(([k, v]) => [
+                              k,
+                              String(v),
+                          ])
+                      )
                   ).toString()
                 : "";
 
