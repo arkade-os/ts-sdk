@@ -28,7 +28,7 @@
         "format:check": "prettier --check src",
         "audit": "pnpm audit",
         "preinstall": "npx only-allow pnpm",
-        "prepare": "husky",
+        "prepare": "husky init",
         "prepublishOnly": "pnpm run build",
         "release": "bash scripts/release.sh",
         "release:dry-run": "bash scripts/release.sh --dry-run",
