@@ -56,7 +56,7 @@ jobs:
         use_ln: false
 
     - name: Run setup script
-      run: node test/setup.js
+      run: pnpm test:setup
 
     - name: Run integration tests
       run: pnpm test:integration

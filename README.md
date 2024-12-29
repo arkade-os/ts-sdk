@@ -2,11 +2,6 @@
 
 The Ark Wallet SDK is a TypeScript library for building Bitcoin wallets with support for both on-chain and off-chain transactions via Ark protocol.
 
-## Requirements
-
-- [pnpm](https://pnpm.io/) - Package manager
-- [nigiri](https://github.com/vulpemventures/nigiri) - For running integration tests with a local Bitcoin regtest network
-
 ## Installation
 
 ```bash
@@ -27,10 +22,11 @@ const identity = InMemoryKey.fromHex('your_private_key_hex')
 const wallet = new Wallet({
   network: 'testnet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
   identity: identity,
+  // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mempool.space/testnet/api', // Optional Esplora URL
-  // Optional Ark configuration
-  arkServerUrl: 'https://master.signet.arklabs.to',
-  arkServerPublicKey: 'your_ark_server_public_key'
+  // OPTIONAL Ark Server connection information
+  arkServerUrl: 'https://server.com',
+  arkServerPublicKey: '3'
 })
 
 // Get wallet addresses
@@ -134,6 +130,7 @@ interface WalletConfig {
 The SDK provides two implementations of the `Identity` interface:
 
 1. `InMemoryKey`: For managing private keys in memory
+
 ```typescript
 class InMemoryKey {
   static fromPrivateKey(privateKey: Uint8Array): InMemoryKey;
@@ -141,7 +138,8 @@ class InMemoryKey {
 }
 ```
 
-2. `ExternalSigner`: For integrating with external signing devices (hardware wallets, etc.)
+2.`ExternalSigner`: For integrating with external signing devices (hardware wallets, etc.)
+
 ```typescript
 class ExternalSigner {
   static fromSigner(signer: any): ExternalSigner;
@@ -150,16 +148,23 @@ class ExternalSigner {
 
 ## Development
 
+### Requirements
+
+- [pnpm](https://pnpm.io/) - Package manager
+- [nigiri](https://github.com/vulpemventures/nigiri) - For running integration tests with a local Bitcoin regtest network
+
 ### Setup
 
 1. Install dependencies:
+
 ```bash
 pnpm install
 pnpm format
 pnpm lint
 ```
 
-2. Install nigiri for integration tests:
+2.Install nigiri for integration tests:
+
 ```bash
 curl https://getnigiri.vulpem.com | bash
 ```
@@ -167,10 +172,36 @@ curl https://getnigiri.vulpem.com | bash
 ### Running Tests
 
 ```bash
+# Run all tests
+pnpm test
+
+# Run unit tests only
+pnpm test:unit
+
 # Run integration tests (requires nigiri)
 nigiri start --ark
-pnpm test
+pnpm test:setup      # Run setup script for integration tests
+pnpm test:integration
 nigiri stop --delete
+
+# Watch mode for development
+pnpm test:watch
+
+# Run tests with coverage
+pnpm test:coverage
+```
+
+### Releasing
+
+```bash
+# Release new version (will prompt for version patch, minor, major)
+pnpm release
+
+# You can test release process without making changes
+pnpm release:dry-run
+
+# Cleanup: checkout version commit and remove release branch
+pnpm release:cleanup
 ```
 
 ## License

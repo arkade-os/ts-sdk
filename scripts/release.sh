@@ -58,9 +58,6 @@ else
     # Get the new version number
     NEW_VERSION=$(node -p "require('./package.json').version")
 
-    # Create git tag
-    git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
-
     # Push the tag to trigger GitHub release
     git push origin "v$NEW_VERSION"
 
