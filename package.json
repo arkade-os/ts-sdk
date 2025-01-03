@@ -36,6 +36,9 @@
     "precommit": "lint-staged"
   },
   "dependencies": {
+    "@cmdcode/buff": "2.2.5",
+    "@cmdcode/crypto-tools": "2.8.0",
+    "@cmdcode/musig2": "2.4.3",
     "@noble/curves": "1.7.0",
     "@noble/hashes": "1.6.1",
     "@scure/base": "1.2.1",
