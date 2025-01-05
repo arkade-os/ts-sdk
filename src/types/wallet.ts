@@ -61,9 +61,12 @@ export interface VirtualStatus {
     batchExpiry?: number;
 }
 
-export interface Coin {
+export interface Outpoint {
     txid: string;
     vout: number;
+}
+
+export interface Coin extends Outpoint {
     value: number;
     status: Status;
 }
