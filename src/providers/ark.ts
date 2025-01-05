@@ -20,32 +20,35 @@ export interface ArkEvent {
     };
 }
 
-interface Node {
-    txid: string;
-    tx: string;
-    parent_txid: string;
-}
+// ProtoTypes namespace defines unexported types representing the raw data received from the server
+namespace ProtoTypes {
+    interface Node {
+        txid: string;
+        tx: string;
+        parent_txid: string;
+    }
+    interface TreeLevel {
+        nodes: Node[];
+    }
+    export interface Tree {
+        levels: TreeLevel[];
+    }
 
-interface TreeLevel {
-    nodes: Node[];
-}
-
-interface Tree {
-    levels: TreeLevel[];
-}
-
-interface EventData {
-    id: string;
-    round_tx?: string;
-    vtxo_tree?: Tree;
-    connectors?: string[];
-    min_relay_fee_rate?: string;
-    round_txid?: string;
-    reason?: string;
-    cosigners_pubkeys?: string[];
-    unsigned_vtxo_tree?: Tree;
-    unsigned_round_tx?: string;
-    tree_nonces?: string;
+    // this interface is used to parse the event data received from the server
+    // it is not exported because it has to be parsed to the associated SettlementEvent
+    export interface EventData {
+        id: string;
+        round_tx?: string;
+        vtxo_tree?: Tree;
+        connectors?: string[];
+        min_relay_fee_rate?: string;
+        round_txid?: string;
+        reason?: string;
+        cosigners_pubkeys?: string[];
+        unsigned_vtxo_tree?: Tree;
+        unsigned_round_tx?: string;
+        tree_nonces?: string;
+    }
 }
 
 export class ArkProvider extends BaseArkProvider {
@@ -310,7 +313,7 @@ export class ArkProvider extends BaseArkProvider {
         }
     }
 
-    private toVtxoTree(t: Tree): VtxoTree {
+    private toVtxoTree(t: ProtoTypes.Tree): VtxoTree {
         // collect the parent txids to determine later if a node is a leaf
         const parentTxids = new Set<string>();
         t.levels.forEach((level) =>
@@ -333,7 +336,9 @@ export class ArkProvider extends BaseArkProvider {
         );
     }
 
-    private parseSettlementEvent(data: EventData): SettlementEvent | null {
+    private parseSettlementEvent(
+        data: ProtoTypes.EventData
+    ): SettlementEvent | null {
         if (!data || typeof data !== "object" || !data.id) {
             console.warn("Invalid event data:", data);
             return null;
