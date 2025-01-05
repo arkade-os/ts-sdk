@@ -1,5 +1,12 @@
-import { BaseArkProvider, Input, Output } from "./base";
+import {
+    BaseArkProvider,
+    EventType,
+    Input,
+    Output,
+    SettlementEvent,
+} from "./base";
 import type { VirtualCoin } from "../types/wallet";
+import { VtxoTree } from "../core/vtxoTree";
 
 // Define event types
 export interface ArkEvent {
@@ -11,6 +18,34 @@ export interface ArkEvent {
         roundTxid?: string;
         expireAt?: number;
     };
+}
+
+interface Node {
+    txid: string;
+    tx: string;
+    parent_txid: string;
+}
+
+interface TreeLevel {
+    nodes: Node[];
+}
+
+interface Tree {
+    levels: TreeLevel[];
+}
+
+interface EventData {
+    id: string;
+    round_tx?: string;
+    vtxo_tree?: Tree;
+    connectors?: string[];
+    min_relay_fee_rate?: string;
+    round_txid?: string;
+    reason?: string;
+    cosigners_pubkeys?: string[];
+    unsigned_vtxo_tree?: Tree;
+    unsigned_round_tx?: string;
+    tree_nonces?: string;
 }
 
 export class ArkProvider extends BaseArkProvider {
@@ -240,5 +275,130 @@ export class ArkProvider extends BaseArkProvider {
         if (!response.ok) {
             throw new Error(`Ping failed: ${response.statusText}`);
         }
+    }
+
+    async *getEventStream(): AsyncIterableIterator<SettlementEvent> {
+        const url = `${this.serverUrl}/v1/events`;
+        const eventSource = new EventSource(url);
+
+        try {
+            while (true) {
+                const event = await new Promise<SettlementEvent>(
+                    (resolve, reject) => {
+                        eventSource.onmessage = (e) => {
+                            try {
+                                const data = JSON.parse(e.data);
+                                const event = this.parseSettlementEvent(data);
+                                if (event) {
+                                    resolve(event);
+                                }
+                            } catch (err) {
+                                console.error("Failed to parse event:", err);
+                            }
+                        };
+
+                        eventSource.onerror = (err) => {
+                            reject(err);
+                        };
+                    }
+                );
+
+                yield event;
+            }
+        } finally {
+            eventSource.close();
+        }
+    }
+
+    private toVtxoTree(t: Tree): VtxoTree {
+        // collect the parent txids to determine later if a node is a leaf
+        const parentTxids = new Set<string>();
+        t.levels.forEach((level) =>
+            level.nodes.forEach((node) => {
+                if (node.parent_txid) {
+                    parentTxids.add(node.parent_txid);
+                }
+            })
+        );
+
+        return new VtxoTree(
+            t.levels.map((level) =>
+                level.nodes.map((node) => ({
+                    txid: node.txid,
+                    tx: node.tx,
+                    parentTxid: node.parent_txid,
+                    leaf: !parentTxids.has(node.txid),
+                }))
+            )
+        );
+    }
+
+    private parseSettlementEvent(data: EventData): SettlementEvent | null {
+        if (!data || typeof data !== "object" || !data.id) {
+            console.warn("Invalid event data:", data);
+            return null;
+        }
+
+        // Check for Finalization event
+        if (
+            data.round_tx &&
+            data.vtxo_tree &&
+            data.connectors &&
+            data.min_relay_fee_rate
+        ) {
+            return {
+                type: EventType.Finalization,
+                id: data.id,
+                roundTx: data.round_tx,
+                vtxoTree: this.toVtxoTree(data.vtxo_tree),
+                connectors: data.connectors,
+                minRelayFeeRate: BigInt(data.min_relay_fee_rate),
+            };
+        }
+
+        // Check for Finalized event
+        if (data.round_txid) {
+            return {
+                type: EventType.Finalized,
+                id: data.id,
+                roundTxid: data.round_txid,
+            };
+        }
+
+        // Check for Failed event
+        if (data.reason) {
+            return {
+                type: EventType.Failed,
+                id: data.id,
+                reason: data.reason,
+            };
+        }
+
+        // Check for Signing event
+        if (
+            data.cosigners_pubkeys &&
+            data.unsigned_vtxo_tree &&
+            data.unsigned_round_tx
+        ) {
+            return {
+                type: EventType.Signing,
+                id: data.id,
+                cosignersPublicKeys: data.cosigners_pubkeys,
+                unsignedVtxoTree: this.toVtxoTree(data.unsigned_vtxo_tree),
+                unsignedRoundTx: data.unsigned_round_tx,
+            };
+        }
+
+        // Check for SigningNoncesGenerated event
+        if (data.tree_nonces) {
+            return {
+                type: EventType.SigningNoncesGenerated,
+                id: data.id,
+                treeNonces: data.tree_nonces,
+            };
+        }
+
+        console.warn("Unknown event structure:", data);
+        return null;
     }
 }

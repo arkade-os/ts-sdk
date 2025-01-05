@@ -1,6 +1,7 @@
 import type { Coin, Outpoint, VirtualCoin } from "../types/wallet";
 import type { UTXO, VTXO } from "../types/internal";
 import type { ArkEvent } from "./ark";
+import { VtxoTree } from "../core/vtxoTree";
 
 export interface OnchainProvider {
     getCoins(address: string): Promise<Coin[]>;
@@ -21,6 +22,56 @@ export type Output = {
     address: string; // onchain or off-chain
     amount: bigint; // Amount to send in satoshis
 };
+
+export enum EventType {
+    Finalization = "finalization",
+    Finalized = "finalized",
+    Failed = "failed",
+    Signing = "signing",
+    SigningNoncesGenerated = "signing_nonces_generated",
+}
+
+export type FinalizationEvent = {
+    type: EventType.Finalization;
+    id: string;
+    roundTx: string;
+    vtxoTree: VtxoTree;
+    connectors: string[];
+    minRelayFeeRate: bigint; // Using bigint for int64
+};
+
+export type FinalizedEvent = {
+    type: EventType.Finalized;
+    id: string;
+    roundTxid: string;
+};
+
+export type FailedEvent = {
+    type: EventType.Failed;
+    id: string;
+    reason: string;
+};
+
+export type SigningEvent = {
+    type: EventType.Signing;
+    id: string;
+    cosignersPublicKeys: string[];
+    unsignedVtxoTree: VtxoTree;
+    unsignedRoundTx: string;
+};
+
+export type SigningNoncesGeneratedEvent = {
+    type: EventType.SigningNoncesGenerated;
+    id: string;
+    treeNonces: string;
+};
+
+export type SettlementEvent =
+    | FinalizationEvent
+    | FinalizedEvent
+    | FailedEvent
+    | SigningEvent
+    | SigningNoncesGeneratedEvent;
 
 export interface ArkProvider {
     getVirtualCoins(address: string): Promise<VirtualCoin[]>;
@@ -49,6 +100,7 @@ export interface ArkProvider {
         signedRoundTx?: string
     ): Promise<void>;
     ping(paymentID: string): Promise<void>;
+    getEventStream(): AsyncIterableIterator<SettlementEvent>;
 }
 
 export abstract class BaseOnchainProvider implements OnchainProvider {
@@ -108,6 +160,8 @@ export abstract class BaseArkProvider implements ArkProvider {
     ): Promise<void>;
 
     abstract ping(requestId: string): Promise<void>;
+
+    abstract getEventStream(): AsyncIterableIterator<SettlementEvent>;
 
     protected convertVTXOsToVirtualCoin(vtxos: VTXO[]): VirtualCoin[] {
         return vtxos.map((vtxo) => ({
