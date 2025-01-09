@@ -23,16 +23,16 @@ export type Output = {
     amount: bigint; // Amount to send in satoshis
 };
 
-export enum EventType {
+export enum SettlementEventType {
     Finalization = "finalization",
     Finalized = "finalized",
     Failed = "failed",
-    Signing = "signing",
+    SigningStart = "signing_start",
     SigningNoncesGenerated = "signing_nonces_generated",
 }
 
 export type FinalizationEvent = {
-    type: EventType.Finalization;
+    type: SettlementEventType.Finalization;
     id: string;
     roundTx: string;
     vtxoTree: VtxoTree;
@@ -41,27 +41,27 @@ export type FinalizationEvent = {
 };
 
 export type FinalizedEvent = {
-    type: EventType.Finalized;
+    type: SettlementEventType.Finalized;
     id: string;
     roundTxid: string;
 };
 
 export type FailedEvent = {
-    type: EventType.Failed;
+    type: SettlementEventType.Failed;
     id: string;
     reason: string;
 };
 
-export type SigningEvent = {
-    type: EventType.Signing;
+export type SigningStartEvent = {
+    type: SettlementEventType.SigningStart;
     id: string;
     cosignersPublicKeys: string[];
     unsignedVtxoTree: VtxoTree;
-    unsignedRoundTx: string;
+    unsignedSettlementTx: string;
 };
 
 export type SigningNoncesGeneratedEvent = {
-    type: EventType.SigningNoncesGenerated;
+    type: SettlementEventType.SigningNoncesGenerated;
     id: string;
     treeNonces: string;
 };
@@ -70,19 +70,36 @@ export type SettlementEvent =
     | FinalizationEvent
     | FinalizedEvent
     | FailedEvent
-    | SigningEvent
+    | SigningStartEvent
     | SigningNoncesGeneratedEvent;
 
+export interface ArkInfo {
+    pubkey: string;
+    roundLifetime: bigint;
+    unilateralExitDelay: bigint;
+    roundInterval: bigint;
+    network: string;
+    dust: bigint;
+    boardingDescriptorTemplate: string;
+    vtxoDescriptorTemplates: string[];
+    forfeitAddress: string;
+    marketHour?: {
+        start: number;
+        end: number;
+    };
+}
+
 export interface ArkProvider {
+    getInfo(): Promise<ArkInfo>;
     getVirtualCoins(address: string): Promise<VirtualCoin[]>;
     submitVirtualTx(psbtBase64: string): Promise<string>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
     registerInputsForNextRound(
         inputs: Input[],
         vtxoTreeSigningPublicKey: string
-    ): Promise<{ paymentID: string }>;
+    ): Promise<{ requestId: string }>;
     registerOutputsForNextRound(
-        paymentID: string,
+        requestId: string,
         outputs: Output[]
     ): Promise<void>;
     submitTreeNonces(
@@ -126,6 +143,8 @@ export abstract class BaseArkProvider implements ArkProvider {
         protected serverPublicKey: string
     ) {}
 
+    abstract getInfo(): Promise<ArkInfo>;
+
     abstract getVirtualCoins(address: string): Promise<VirtualCoin[]>;
     abstract submitVirtualTx(psbtBase64: string): Promise<string>;
     abstract subscribeToEvents(
@@ -135,10 +154,10 @@ export abstract class BaseArkProvider implements ArkProvider {
     abstract registerInputsForNextRound(
         inputs: Input[],
         vtxoTreeSigningPublicKey: string
-    ): Promise<{ paymentID: string }>;
+    ): Promise<{ requestId: string }>;
 
     abstract registerOutputsForNextRound(
-        paymentID: string,
+        requestId: string,
         outputs: Output[]
     ): Promise<void>;
 

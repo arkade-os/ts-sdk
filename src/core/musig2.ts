@@ -3,26 +3,7 @@ import { hash340 } from "@cmdcode/crypto-tools/hash";
 import { mod_bytes, mod_n, pt } from "@cmdcode/crypto-tools/math";
 import { convert_32b } from "@cmdcode/crypto-tools/keys";
 import { CONST, PointData } from "@cmdcode/crypto-tools";
-import { NonceContext, util } from "@cmdcode/musig2";
-
-export function combineNonces(pub_nonces: Uint8Array[]): Buff {
-    const rounds = 2;
-    const members = pub_nonces.map((e) => Buff.parse(e, 32, 64));
-    const points = [];
-    for (let j = 0; j < rounds; j++) {
-        let group_R = null;
-        for (const nonces of members) {
-            const nonce = nonces[j];
-            const n_pt = pt.lift_x(nonce);
-            group_R = pt.add(group_R, n_pt);
-        }
-        if (group_R === null) {
-            group_R = CONST._G;
-        }
-        points.push(group_R);
-    }
-    return util.parse_points(points);
-}
+import { NonceContext } from "@cmdcode/musig2";
 
 // override get_nonce_ctx to build a context from the combined nonce
 export function getNonceCtx(

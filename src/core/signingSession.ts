@@ -1,213 +1,31 @@
 import * as musig2 from "@cmdcode/musig2";
 import { VtxoTree } from "./vtxoTree.js";
 import { SigHash, Transaction } from "@scure/btc-signer";
-import { combineNonces, getNonceCtx } from "./musig2.js";
-import { Bytes } from "@cmdcode/buff";
+import { getNonceCtx } from "./musig2.js";
 import { base64, hex } from "@scure/base";
 import { p2tr } from "@scure/btc-signer";
-import { schnorr } from "@noble/curves/secp256k1";
+import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 
 // Error definitions
 export const ErrMissingVtxoTree = new Error("missing vtxo tree");
 export const ErrMissingAggregateKey = new Error("missing aggregate key");
 
-export interface Musig2Nonces {
+interface Musig2Nonces {
     pubNonce: Uint8Array;
     secNonce: Uint8Array;
 }
 
-// Type definitions for tree public nonces and partial signatures
 export type TreeNonces = Pick<Musig2Nonces, "pubNonce">[][];
-export type TreePartialSigs = Bytes[][];
+export type TreePartialSigs = Uint8Array[][];
 
-// Interface for signer session
+// Signer session defines the methods to participate in a cooperative signing process
+// with participants of a settlement. It holds the state of the musig2 nonces and allows to
+// create the partial signatures for each transaction in the vtxo tree
 export interface SignerSession {
     getNonces(): TreeNonces;
     setKeys(keys: Uint8Array[]): void;
     setAggregatedNonces(nonces: TreeNonces): void;
     sign(): TreePartialSigs;
-}
-
-// Interface for coordinator session
-export interface CoordinatorSession {
-    addNonce(pubkey: Uint8Array, nonces: TreeNonces): void;
-    aggregateNonces(): TreeNonces;
-    addSig(pubkey: Uint8Array, sigs: TreePartialSigs): void;
-    signTree(): VtxoTree;
-}
-
-export class TreeCoordinatorSession implements CoordinatorSession {
-    private nonces: Map<string, TreeNonces> = new Map();
-    private sigs: Map<string, TreePartialSigs> = new Map();
-    private aggregatedNonces: TreeNonces | null = null;
-
-    constructor(
-        private tree: VtxoTree,
-        private pubkeys: Uint8Array[],
-        private scriptRoot: Uint8Array
-    ) {}
-
-    addNonce(pubkey: Uint8Array, nonces: TreeNonces): void {
-        // Validate nonce structure matches tree
-        if (nonces.length !== this.tree.levels.length) {
-            throw new Error("nonce levels do not match tree levels");
-        }
-
-        for (let i = 0; i < nonces.length; i++) {
-            if (nonces[i].length !== this.tree.levels[i].length) {
-                throw new Error(`nonce count mismatch at level ${i}`);
-            }
-        }
-
-        const pubkeyHex = hex.encode(pubkey);
-        this.nonces.set(pubkeyHex, nonces);
-    }
-
-    aggregateNonces(): TreeNonces {
-        if (this.aggregatedNonces) return this.aggregatedNonces;
-
-        // Ensure we have nonces from all participants
-        for (const pubkey of this.pubkeys) {
-            const pubkeyHex = hex.encode(pubkey);
-            if (!this.nonces.has(pubkeyHex)) {
-                throw new Error(`missing nonces for pubkey ${pubkeyHex}`);
-            }
-        }
-
-        const aggregatedNonces: TreeNonces = [];
-
-        // For each level in the tree
-        for (
-            let levelIndex = 0;
-            levelIndex < this.tree.levels.length;
-            levelIndex++
-        ) {
-            const levelNonces: Pick<Musig2Nonces, "pubNonce">[] = [];
-
-            // For each node in the level
-            for (
-                let nodeIndex = 0;
-                nodeIndex < this.tree.levels[levelIndex].length;
-                nodeIndex++
-            ) {
-                // Collect nonces from all participants for this node
-                const nodeNonces: Uint8Array[] = [];
-                for (const pubkey of this.pubkeys) {
-                    const participantNonces = this.nonces.get(
-                        hex.encode(pubkey)
-                    )!;
-                    nodeNonces.push(
-                        participantNonces[levelIndex][nodeIndex].pubNonce
-                    );
-                }
-
-                // Aggregate nonces for this node
-                const aggregatedNodeNonce = combineNonces(nodeNonces);
-                levelNonces.push({ pubNonce: aggregatedNodeNonce });
-            }
-
-            aggregatedNonces.push(levelNonces);
-        }
-
-        this.aggregatedNonces = aggregatedNonces;
-        return aggregatedNonces;
-    }
-
-    addSig(pubkey: Uint8Array, sigs: TreePartialSigs): void {
-        // Validate signature structure matches tree
-        if (sigs.length !== this.tree.levels.length) {
-            throw new Error("signature levels do not match tree levels");
-        }
-
-        for (let i = 0; i < sigs.length; i++) {
-            if (sigs[i].length !== this.tree.levels[i].length) {
-                throw new Error(`signature count mismatch at level ${i}`);
-            }
-        }
-
-        const pubkeyHex = hex.encode(pubkey);
-        this.sigs.set(pubkeyHex, sigs);
-    }
-
-    signTree(): VtxoTree {
-        // Ensure we have signatures from all participants
-        for (const pubkey of this.pubkeys) {
-            const pubkeyHex = hex.encode(pubkey);
-            if (!this.sigs.has(pubkeyHex)) {
-                throw new Error(`missing signatures for pubkey ${pubkeyHex}`);
-            }
-        }
-
-        if (!this.aggregatedNonces) {
-            throw new Error("nonces not aggregated");
-        }
-
-        const keyCtx = musig2.get_key_ctx(this.pubkeys);
-        const tweakedKeyCtx = musig2.tweak_key_ctx(keyCtx, [this.scriptRoot]);
-
-        // For each level in the tree
-        for (
-            let levelIndex = 0;
-            levelIndex < this.tree.levels.length;
-            levelIndex++
-        ) {
-            // For each node in the level
-            for (
-                let nodeIndex = 0;
-                nodeIndex < this.tree.levels[levelIndex].length;
-                nodeIndex++
-            ) {
-                const node = this.tree.levels[levelIndex][nodeIndex];
-                const tx = Transaction.fromPSBT(base64.decode(node.tx));
-
-                // Collect partial signatures for this node
-                const partialSigs: Bytes[] = [];
-                for (const pubkey of this.pubkeys) {
-                    const participantSigs = this.sigs.get(hex.encode(pubkey))!;
-                    partialSigs.push(participantSigs[levelIndex][nodeIndex]);
-                }
-
-                // Get the message that was signed
-                const prevout = getPrevOutput(
-                    tweakedKeyCtx.group_pubkey,
-                    this.tree,
-                    0n, // Not needed for verification
-                    tx
-                );
-
-                const message = tx.preimageWitnessV1(
-                    0,
-                    [prevout.script],
-                    SigHash.DEFAULT,
-                    [prevout.amount]
-                );
-
-                // Create signing context
-                const ctx = musig2.create_ctx(
-                    tweakedKeyCtx,
-                    getNonceCtx(
-                        this.aggregatedNonces[levelIndex][nodeIndex].pubNonce,
-                        tweakedKeyCtx.group_pubkey,
-                        message
-                    ),
-                    { key_tweaks: [this.scriptRoot] }
-                );
-
-                // Aggregate partial signatures
-                const signature = musig2.combine_psigs(ctx, partialSigs);
-
-                // Add signature to transaction
-                tx.updateInput(0, { tapKeySig: signature });
-
-                // Update node with signed transaction
-                this.tree.levels[levelIndex][nodeIndex].tx = base64.encode(
-                    tx.toPSBT()
-                );
-            }
-        }
-
-        return this.tree;
-    }
 }
 
 export class TreeSignerSession implements SignerSession {
@@ -222,6 +40,10 @@ export class TreeSignerSession implements SignerSession {
         private scriptRoot: Uint8Array,
         private rootSharedOutputAmount: bigint
     ) {}
+
+    get publicKey(): Uint8Array {
+        return secp256k1.getPublicKey(this.secretKey);
+    }
 
     getNonces(): TreeNonces {
         if (!this.tree) throw ErrMissingVtxoTree;
@@ -245,6 +67,8 @@ export class TreeSignerSession implements SignerSession {
 
     setKeys(keys: Uint8Array[]) {
         if (this.keys) throw new Error("keys already set");
+        keys = sortKeys(keys);
+        keys = keys.map((k) => (k.length === 33 ? k.slice(1) : k));
 
         const keyCtx = musig2.get_key_ctx(keys);
         const tweakedCtx = musig2.tweak_key_ctx(keyCtx, [this.scriptRoot]);
@@ -260,6 +84,14 @@ export class TreeSignerSession implements SignerSession {
 
     setAggregatedNonces(nonces: TreeNonces) {
         if (this.aggregateNonces) throw new Error("nonces already set");
+
+        // remove 'x' coordinate if present
+        // this.aggregateNonces = nonces
+        //     .map(row => row
+        //         .map((n) => n.pubNonce.length === 64 ? n
+        //             : { pubNonce: Buffer.concat(Buff.parse(n.pubNonce, 33, 66).map(compressed => compressed.slice(1))) }
+        //         )
+        //     )
         this.aggregateNonces = nonces;
     }
 
@@ -277,7 +109,7 @@ export class TreeSignerSession implements SignerSession {
             levelIndex < this.tree.levels.length;
             levelIndex++
         ) {
-            const levelSigs: Bytes[] = [];
+            const levelSigs: Uint8Array[] = [];
             const level = this.tree.levels[levelIndex];
 
             for (let nodeIndex = 0; nodeIndex < level.length; nodeIndex++) {
@@ -314,7 +146,7 @@ export class TreeSignerSession implements SignerSession {
         tx: Transaction,
         levelIndex: number,
         nodeIndex: number
-    ): Bytes {
+    ): Uint8Array {
         if (!this.myNonces || !this.aggregateNonces || !this.keyCtx) {
             throw new Error("session not properly initialized");
         }
@@ -346,8 +178,7 @@ export class TreeSignerSession implements SignerSession {
 
         const ctx = musig2.create_ctx(
             this.keyCtx,
-            getNonceCtx(aggNonce.pubNonce, this.keyCtx.group_pubkey, message),
-            { key_tweaks: [this.scriptRoot] }
+            getNonceCtx(aggNonce.pubNonce, this.keyCtx.group_pubkey, message)
         );
         return musig2.musign(ctx, this.secretKey, myNonce.secNonce);
     }
@@ -401,16 +232,23 @@ export async function validateTreeSigs(
     }
 }
 
+function sortKeys(pubkeys: Uint8Array[]): Uint8Array[] {
+    return pubkeys.sort((a, b) => Buffer.compare(b, a));
+}
+
 // Helper function to aggregate public keys
 export function aggregateKeys(
     pubkeys: Uint8Array[],
     scriptRoot: Uint8Array
 ): { aggregateKey: Uint8Array; finalKey: Uint8Array } {
+    pubkeys = sortKeys(pubkeys);
+    pubkeys = pubkeys.map((k) => (k.length === 33 ? k.slice(1) : k));
     const keyCtx = musig2.get_key_ctx(pubkeys);
+    console.log(hex.encode(keyCtx.group_pubkey));
     const tweakKeyCtx = musig2.tweak_key_ctx(keyCtx, [scriptRoot]);
 
     return {
-        aggregateKey: tweakKeyCtx.int_pubkey!,
+        aggregateKey: keyCtx.group_pubkey,
         finalKey: tweakKeyCtx.group_pubkey,
     };
 }

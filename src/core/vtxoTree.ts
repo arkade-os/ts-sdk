@@ -122,13 +122,14 @@ export class VtxoTree {
         }
 
         const rootInput = rootTx.getInput(0);
-        if (!rootInput.txid || !rootInput.index) throw ErrWrongSettlementTxid;
+        if (!rootInput.txid || rootInput.index === undefined)
+            throw ErrWrongSettlementTxid;
 
         const settlementTxid = hex.encode(
             sha256x2(settlementTransaction.toBytes(true)).reverse()
         );
         if (
-            hex.encode(rootInput.txid) !== settlementTxid ||
+            hex.encode(Buffer.from(rootInput.txid)) !== settlementTxid ||
             rootInput.index !== VtxoTree.SHARED_OUTPUT_INDEX
         ) {
             throw ErrWrongSettlementTxid;
@@ -185,13 +186,30 @@ export class VtxoTree {
             throw ErrNumberOfTapscripts;
         }
 
+        // Get cosigner keys from input
+        const cosignerKeys = getCosignerKeys(tx);
+
+        const { finalKey, aggregateKey } = aggregateKeys(
+            cosignerKeys,
+            tapTreeRoot
+        );
+
+        console.log(
+            "hex.encode(input.tapInternalKey)",
+            hex.encode(input.tapInternalKey)
+        );
+        console.log("hex.encode(finalKey)", hex.encode(finalKey));
+        console.log("hex.encode(aggregateKey)", hex.encode(aggregateKey));
+        if (hex.encode(input.tapInternalKey) !== hex.encode(finalKey)) {
+            throw ErrInternalKey;
+        }
+
         if (!input.txid) throw ErrParentTxidInput;
         if (hex.encode(input.txid) !== node.parentTxid) {
             throw ErrParentTxidInput;
         }
 
         const children = this.children(node.txid);
-
         if (node.leaf && children.length >= 1) {
             throw ErrLeafChildren;
         }
@@ -210,17 +228,12 @@ export class VtxoTree {
             }
 
             // Get cosigner keys from input
-            const cosignerKeys = input.tapInternalKey
-                ? [input.tapInternalKey]
-                : [];
+            const cosignerKeys = getCosignerKeys(childTx);
 
             // Aggregate keys
             const { finalKey } = aggregateKeys(cosignerKeys, tapTreeRoot);
 
-            if (
-                !input.tapInternalKey ||
-                !Buffer.compare(input.tapInternalKey, finalKey)
-            ) {
+            if (hex.encode(input.tapInternalKey) !== hex.encode(finalKey)) {
                 throw ErrInternalKey;
             }
 
@@ -316,4 +329,41 @@ export class VtxoTree {
         }
         throw ErrParentNotFound;
     }
+}
+
+// Prefix for cosigner keys in PSBT unknowns
+const COSIGNER_KEY_PREFIX = new Uint8Array(
+    "cosigner".split("").map((c) => c.charCodeAt(0))
+);
+
+function parsePrefixedCosignerKey(key: Uint8Array): number {
+    // Check if key starts with the cosigner prefix
+    if (key.length < COSIGNER_KEY_PREFIX.length + 1) return -1;
+
+    for (let i = 0; i < COSIGNER_KEY_PREFIX.length; i++) {
+        if (key[i] !== COSIGNER_KEY_PREFIX[i]) return -1;
+    }
+
+    // The index is stored after the prefix
+    return key[COSIGNER_KEY_PREFIX.length];
+}
+
+function getCosignerKeys(tx: Transaction): Uint8Array[] {
+    const keys: Uint8Array[] = [];
+
+    const input = tx.getInput(0);
+
+    if (!input.unknown) return keys;
+
+    for (const unknown of input.unknown) {
+        const cosignerIndex = parsePrefixedCosignerKey(
+            Buffer.concat([new Uint8Array([unknown[0].type]), unknown[0].key])
+        );
+        if (cosignerIndex === -1) throw new Error("Invalid cosigner key");
+
+        // Assuming the value is already a valid public key in compressed format
+        keys.push(unknown[1]);
+    }
+
+    return keys;
 }

@@ -1,12 +1,14 @@
 import {
     BaseArkProvider,
-    EventType,
+    SettlementEventType,
     Input,
     Output,
     SettlementEvent,
+    ArkInfo,
 } from "./base";
 import type { VirtualCoin } from "../types/wallet";
 import { VtxoTree } from "../core/vtxoTree";
+import { EventSource } from "eventsource";
 
 // Define event types
 export interface ArkEvent {
@@ -25,7 +27,7 @@ namespace ProtoTypes {
     interface Node {
         txid: string;
         tx: string;
-        parent_txid: string;
+        parentTxid: string;
     }
     interface TreeLevel {
         nodes: Node[];
@@ -34,25 +36,63 @@ namespace ProtoTypes {
         levels: TreeLevel[];
     }
 
-    // this interface is used to parse the event data received from the server
-    // it is not exported because it has to be parsed to the associated SettlementEvent
-    export interface EventData {
+    interface RoundFailed {
         id: string;
-        round_tx?: string;
-        vtxo_tree?: Tree;
-        connectors?: string[];
-        min_relay_fee_rate?: string;
-        round_txid?: string;
-        reason?: string;
-        cosigners_pubkeys?: string[];
-        unsigned_vtxo_tree?: Tree;
-        unsigned_round_tx?: string;
-        tree_nonces?: string;
+        reason: string;
+    }
+
+    interface RoundFinalizationEvent {
+        id: string;
+        roundTx: string;
+        vtxoTree: Tree;
+        connectors: string[];
+        minRelayFeeRate: string;
+    }
+
+    interface RoundFinalizedEvent {
+        id: string;
+        roundTxid: string;
+    }
+
+    interface RoundSigningEvent {
+        id: string;
+        cosignersPubkeys: string[];
+        unsignedVtxoTree: Tree;
+        unsignedRoundTx: string;
+    }
+
+    interface RoundSigningNoncesGeneratedEvent {
+        id: string;
+        treeNonces: string;
+    }
+
+    // Update the EventData interface to match the Golang structure
+    export interface EventData {
+        roundFailed?: RoundFailed;
+        roundFinalization?: RoundFinalizationEvent;
+        roundFinalized?: RoundFinalizedEvent;
+        roundSigning?: RoundSigningEvent;
+        roundSigningNoncesGenerated?: RoundSigningNoncesGeneratedEvent;
+    }
+
+    export interface Input {
+        outpoint: {
+            txid: string;
+            vout: number;
+        };
+        tapscripts: {
+            scripts: string[];
+        };
+    }
+
+    export interface Output {
+        address: string;
+        amount: string;
     }
 }
 
 export class ArkProvider extends BaseArkProvider {
-    async getInfo() {
+    async getInfo(): Promise<ArkInfo> {
         const url = `${this.serverUrl}/v1/info`;
         const response = await fetch(url);
         if (!response.ok) {
@@ -134,15 +174,25 @@ export class ArkProvider extends BaseArkProvider {
         callback: (event: ArkEvent) => void
     ): Promise<() => void> {
         const url = `${this.serverUrl}/v1/events`;
-        const eventSource = new EventSource(url);
+        const eventSource = new EventSource(url, {
+            fetch: (input, init) =>
+                fetch(input, {
+                    ...init,
+                    headers: {
+                        ...init?.headers,
+                        Accept: "text/event-stream",
+                    },
+                }),
+        });
 
         eventSource.onmessage = (event) => {
             const data = JSON.parse(event.data) as ArkEvent;
             callback(data);
         };
 
-        eventSource.onerror = () => {
-            // Error handling is done by the callback
+        eventSource.onerror = (err) => {
+            console.error("EventSource error:", err);
+            // You might want to implement reconnection logic here
         };
 
         // Return unsubscribe function
@@ -152,31 +202,50 @@ export class ArkProvider extends BaseArkProvider {
     async registerInputsForNextRound(
         inputs: Input[],
         vtxoTreeSigningPublicKey: string
-    ): Promise<{ paymentID: string }> {
+    ): Promise<{ requestId: string }> {
         const url = `${this.serverUrl}/v1/round/registerInputs`;
+        const vtxoInputs: ProtoTypes.Input[] = [];
+        const noteInputs: string[] = [];
+
+        for (const input of inputs) {
+            if (typeof input === "string") {
+                noteInputs.push(input);
+            } else {
+                vtxoInputs.push({
+                    outpoint: {
+                        txid: input.outpoint.txid,
+                        vout: input.outpoint.vout,
+                    },
+                    tapscripts: {
+                        scripts: input.tapscripts,
+                    },
+                });
+            }
+        }
+
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                inputs,
-                ephemeral_pubkey: vtxoTreeSigningPublicKey,
+                inputs: vtxoInputs,
+                notes: noteInputs,
+                ephemeralPubkey: vtxoTreeSigningPublicKey,
             }),
         });
 
         if (!response.ok) {
-            throw new Error(
-                `Failed to register inputs: ${response.statusText}`
-            );
+            const errorText = await response.text();
+            throw new Error(`Failed to register inputs: ${errorText}`);
         }
 
         const data = await response.json();
-        return { paymentID: data.request_id };
+        return { requestId: data.requestId };
     }
 
     async registerOutputsForNextRound(
-        paymentID: string,
+        requestId: string,
         outputs: Output[]
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/round/registerOutputs`;
@@ -186,15 +255,19 @@ export class ArkProvider extends BaseArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                request_id: paymentID,
-                outputs,
+                requestId,
+                outputs: outputs.map(
+                    (output): ProtoTypes.Output => ({
+                        address: output.address,
+                        amount: output.amount.toString(10),
+                    })
+                ),
             }),
         });
 
         if (!response.ok) {
-            throw new Error(
-                `Failed to register outputs: ${response.statusText}`
-            );
+            const errorText = await response.text();
+            throw new Error(`Failed to register outputs: ${errorText}`);
         }
     }
 
@@ -210,16 +283,15 @@ export class ArkProvider extends BaseArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                round_id: settlementID,
+                roundId: settlementID,
                 pubkey,
-                tree_nonces: nonces,
+                treeNonces: nonces,
             }),
         });
 
         if (!response.ok) {
-            throw new Error(
-                `Failed to submit tree nonces: ${response.statusText}`
-            );
+            const errorText = await response.text();
+            throw new Error(`Failed to submit tree nonces: ${errorText}`);
         }
     }
 
@@ -235,16 +307,15 @@ export class ArkProvider extends BaseArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                round_id: settlementID,
+                roundId: settlementID,
                 pubkey,
-                tree_signatures: signatures,
+                treeSignatures: signatures,
             }),
         });
 
         if (!response.ok) {
-            throw new Error(
-                `Failed to submit tree signatures: ${response.statusText}`
-            );
+            const errorText = await response.text();
+            throw new Error(`Failed to submit tree signatures: ${errorText}`);
         }
     }
 
@@ -259,8 +330,8 @@ export class ArkProvider extends BaseArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                signed_forfeit_txs: signedForfeitTxs,
-                signed_round_tx: signedRoundTx,
+                signedForfeitTxs: signedForfeitTxs,
+                signedRoundTx: signedRoundTx,
             }),
         });
 
@@ -271,8 +342,8 @@ export class ArkProvider extends BaseArkProvider {
         }
     }
 
-    async ping(paymentID: string): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/ping/${paymentID}`;
+    async ping(requestId: string): Promise<void> {
+        const url = `${this.serverUrl}/v1/round/ping/${requestId}`;
         const response = await fetch(url);
 
         if (!response.ok) {
@@ -282,34 +353,67 @@ export class ArkProvider extends BaseArkProvider {
 
     async *getEventStream(): AsyncIterableIterator<SettlementEvent> {
         const url = `${this.serverUrl}/v1/events`;
-        const eventSource = new EventSource(url);
+        console.log("Initializing event stream:", url);
 
-        try {
-            while (true) {
-                const event = await new Promise<SettlementEvent>(
-                    (resolve, reject) => {
-                        eventSource.onmessage = (e) => {
-                            try {
-                                const data = JSON.parse(e.data);
-                                const event = this.parseSettlementEvent(data);
-                                if (event) {
-                                    resolve(event);
-                                }
-                            } catch (err) {
-                                console.error("Failed to parse event:", err);
-                            }
-                        };
+        while (true) {
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                    },
+                });
 
-                        eventSource.onerror = (err) => {
-                            reject(err);
-                        };
+                if (!response.ok) {
+                    throw new Error(
+                        `Unexpected status ${response.status} when fetching event stream`
+                    );
+                }
+
+                if (!response.body) {
+                    throw new Error("Response body is null");
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        console.log("Stream ended");
+                        break;
                     }
-                );
 
-                yield event;
+                    // Append new data to buffer and split by newlines
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n");
+
+                    // Process all complete lines
+                    for (let i = 0; i < lines.length - 1; i++) {
+                        const line = lines[i].trim();
+                        if (!line) continue;
+
+                        try {
+                            const data = JSON.parse(line);
+                            const event = this.parseSettlementEvent(
+                                data.result
+                            );
+                            if (event) {
+                                yield event;
+                            }
+                        } catch (err) {
+                            console.error("Failed to parse event:", err);
+                            throw err;
+                        }
+                    }
+
+                    // Keep the last partial line in the buffer
+                    buffer = lines[lines.length - 1];
+                }
+            } catch (error) {
+                console.error("Event stream error:", error);
+                throw error;
             }
-        } finally {
-            eventSource.close();
         }
     }
 
@@ -318,8 +422,8 @@ export class ArkProvider extends BaseArkProvider {
         const parentTxids = new Set<string>();
         t.levels.forEach((level) =>
             level.nodes.forEach((node) => {
-                if (node.parent_txid) {
-                    parentTxids.add(node.parent_txid);
+                if (node.parentTxid) {
+                    parentTxids.add(node.parentTxid);
                 }
             })
         );
@@ -329,7 +433,7 @@ export class ArkProvider extends BaseArkProvider {
                 level.nodes.map((node) => ({
                     txid: node.txid,
                     tx: node.tx,
-                    parentTxid: node.parent_txid,
+                    parentTxid: node.parentTxid,
                     leaf: !parentTxids.has(node.txid),
                 }))
             )
@@ -339,67 +443,55 @@ export class ArkProvider extends BaseArkProvider {
     private parseSettlementEvent(
         data: ProtoTypes.EventData
     ): SettlementEvent | null {
-        if (!data || typeof data !== "object" || !data.id) {
-            console.warn("Invalid event data:", data);
-            return null;
-        }
-
         // Check for Finalization event
-        if (
-            data.round_tx &&
-            data.vtxo_tree &&
-            data.connectors &&
-            data.min_relay_fee_rate
-        ) {
+        if (data.roundFinalization) {
             return {
-                type: EventType.Finalization,
-                id: data.id,
-                roundTx: data.round_tx,
-                vtxoTree: this.toVtxoTree(data.vtxo_tree),
-                connectors: data.connectors,
-                minRelayFeeRate: BigInt(data.min_relay_fee_rate),
+                type: SettlementEventType.Finalization,
+                id: data.roundFinalization.id,
+                roundTx: data.roundFinalization.roundTx,
+                vtxoTree: this.toVtxoTree(data.roundFinalization.vtxoTree),
+                connectors: data.roundFinalization.connectors,
+                minRelayFeeRate: BigInt(data.roundFinalization.minRelayFeeRate),
             };
         }
 
         // Check for Finalized event
-        if (data.round_txid) {
+        if (data.roundFinalized) {
             return {
-                type: EventType.Finalized,
-                id: data.id,
-                roundTxid: data.round_txid,
+                type: SettlementEventType.Finalized,
+                id: data.roundFinalized.id,
+                roundTxid: data.roundFinalized.roundTxid,
             };
         }
 
         // Check for Failed event
-        if (data.reason) {
+        if (data.roundFailed) {
             return {
-                type: EventType.Failed,
-                id: data.id,
-                reason: data.reason,
+                type: SettlementEventType.Failed,
+                id: data.roundFailed.id,
+                reason: data.roundFailed.reason,
             };
         }
 
         // Check for Signing event
-        if (
-            data.cosigners_pubkeys &&
-            data.unsigned_vtxo_tree &&
-            data.unsigned_round_tx
-        ) {
+        if (data.roundSigning) {
             return {
-                type: EventType.Signing,
-                id: data.id,
-                cosignersPublicKeys: data.cosigners_pubkeys,
-                unsignedVtxoTree: this.toVtxoTree(data.unsigned_vtxo_tree),
-                unsignedRoundTx: data.unsigned_round_tx,
+                type: SettlementEventType.SigningStart,
+                id: data.roundSigning.id,
+                cosignersPublicKeys: data.roundSigning.cosignersPubkeys,
+                unsignedVtxoTree: this.toVtxoTree(
+                    data.roundSigning.unsignedVtxoTree
+                ),
+                unsignedSettlementTx: data.roundSigning.unsignedRoundTx,
             };
         }
 
         // Check for SigningNoncesGenerated event
-        if (data.tree_nonces) {
+        if (data.roundSigningNoncesGenerated) {
             return {
-                type: EventType.SigningNoncesGenerated,
-                id: data.id,
-                treeNonces: data.tree_nonces,
+                type: SettlementEventType.SigningNoncesGenerated,
+                id: data.roundSigningNoncesGenerated.id,
+                treeNonces: data.roundSigningNoncesGenerated.treeNonces,
             };
         }
 
