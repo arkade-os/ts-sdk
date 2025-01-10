@@ -4,8 +4,24 @@
       "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
       "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     ],
-    "tweak": "02a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
+    "tweak": "a9acc1e48c25eeeb9289b5031cc57da9fe72f3fe2861d264bdc074209b107ba2",
     "expectedAggregatedKey": "3b46d262d2f610e9038b44beabdfe97ab5a0feb89870acc2264edfb7f63ec2ec",
     "expectedFinalKey": "2a1cf6fb50d72dd88a07c9bdfebee1af15020a12e56b183e6e27f36344e052ff"
+  },
+  "signing": {
+    "inputs": {
+      "secNonce": "d48329a8d2e803194e2c4b6b7144853c38b1e8f2856b533d6ddb307123692cd65f17f50c18671fa0aa0b0b825c6e3529fe1d91b2807f1d08a9632966d580971b03a0eca0028d6efc941b299db22d09c30cf868947cfb728711eed9acae58c60a0b",
+      "secretKey": "91f1165167e44bdba4061aeb3f7dad34f7a9bc47fc47b881c7c2f5e21585cec3",
+      "pubNonce": "02475b0c830216ebe335b52c396d53daf6dfc0d84811ae79e036417d39b6f5035803fae33747b0e074c828b1923a10e54959d02db733385141350e6e194fc5d3df75",
+      "publicKeys": [
+        "03726760a0da59e51febe4d524614f21c8d19c63df3bd5ea55ca2951e084a615d4",
+        "03a0eca0028d6efc941b299db22d09c30cf868947cfb728711eed9acae58c60a0b"
+      ],
+      "message": "8aa6e879d4989b03a0a3fdb869bf8b42e82f6cd4958b82860b87cbb99eca954e",
+      "options": {
+        "taprootTweak": "7d08f95a060a350c8dec789bdc032cded2a40c1a19e4ff3d814d592bd002b5f5"
+      }
+    },
+    "result": "c2df0e2ff8caf7c85deac5ef5a017656adbbb15b8611090c6e28fcff1cd7010a"
   }
 }

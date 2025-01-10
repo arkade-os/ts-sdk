@@ -1,7 +1,6 @@
-import * as musig2 from "@cmdcode/musig2";
+import * as musig2 from "../core/musig2";
 import { VtxoTree } from "./vtxoTree.js";
 import { SigHash, Transaction } from "@scure/btc-signer";
-import { getNonceCtx } from "./musig2.js";
 import { base64, hex } from "@scure/base";
 import { p2tr } from "@scure/btc-signer";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
@@ -10,13 +9,8 @@ import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 export const ErrMissingVtxoTree = new Error("missing vtxo tree");
 export const ErrMissingAggregateKey = new Error("missing aggregate key");
 
-interface Musig2Nonces {
-    pubNonce: Uint8Array;
-    secNonce: Uint8Array;
-}
-
-export type TreeNonces = Pick<Musig2Nonces, "pubNonce">[][];
-export type TreePartialSigs = Uint8Array[][];
+export type TreeNonces = Pick<musig2.Nonces, "pubNonce">[][];
+export type TreePartialSigs = musig2.PartialSig[][];
 
 // Signer session defines the methods to participate in a cooperative signing process
 // with participants of a settlement. It holds the state of the musig2 nonces and allows to
@@ -29,10 +23,9 @@ export interface SignerSession {
 }
 
 export class TreeSignerSession implements SignerSession {
-    private myNonces: Musig2Nonces[][] | null = null;
+    private myNonces: musig2.Nonces[][] | null = null;
     private keys: Uint8Array[] | null = null;
     private aggregateNonces: TreeNonces | null = null;
-    private keyCtx: musig2.KeyContext | null = null;
 
     constructor(
         private secretKey: Uint8Array,
@@ -55,7 +48,7 @@ export class TreeSignerSession implements SignerSession {
         const nonces: TreeNonces = [];
 
         for (const levelNonces of this.myNonces) {
-            const levelPubNonces: Pick<Musig2Nonces, "pubNonce">[] = [];
+            const levelPubNonces: Pick<musig2.Nonces, "pubNonce">[] = [];
             for (const nonce of levelNonces) {
                 levelPubNonces.push({ pubNonce: nonce.pubNonce });
             }
@@ -67,31 +60,11 @@ export class TreeSignerSession implements SignerSession {
 
     setKeys(keys: Uint8Array[]) {
         if (this.keys) throw new Error("keys already set");
-        keys = sortKeys(keys);
-        keys = keys.map((k) => (k.length === 33 ? k.slice(1) : k));
-
-        const keyCtx = musig2.get_key_ctx(keys);
-        const tweakedCtx = musig2.tweak_key_ctx(keyCtx, [this.scriptRoot]);
-        this.keyCtx = tweakedCtx;
         this.keys = keys;
-
-        // Verify our secret key is part of the key set
-        const pubkey = musig2.keys.get_pubkey(this.secretKey);
-        if (!keys.some((k) => Buffer.compare(k, pubkey) === 0)) {
-            throw new Error("secret key not in key set");
-        }
     }
 
     setAggregatedNonces(nonces: TreeNonces) {
         if (this.aggregateNonces) throw new Error("nonces already set");
-
-        // remove 'x' coordinate if present
-        // this.aggregateNonces = nonces
-        //     .map(row => row
-        //         .map((n) => n.pubNonce.length === 64 ? n
-        //             : { pubNonce: Buffer.concat(Buff.parse(n.pubNonce, 33, 66).map(compressed => compressed.slice(1))) }
-        //         )
-        //     )
         this.aggregateNonces = nonces;
     }
 
@@ -100,7 +73,6 @@ export class TreeSignerSession implements SignerSession {
         if (!this.keys) throw ErrMissingAggregateKey;
         if (!this.aggregateNonces) throw new Error("nonces not set");
         if (!this.myNonces) throw new Error("nonces not generated");
-        if (!this.keyCtx) throw new Error("key context not set");
 
         const sigs: TreePartialSigs = [];
 
@@ -109,7 +81,7 @@ export class TreeSignerSession implements SignerSession {
             levelIndex < this.tree.levels.length;
             levelIndex++
         ) {
-            const levelSigs: Uint8Array[] = [];
+            const levelSigs: musig2.PartialSig[] = [];
             const level = this.tree.levels[levelIndex];
 
             for (let nodeIndex = 0; nodeIndex < level.length; nodeIndex++) {
@@ -125,16 +97,18 @@ export class TreeSignerSession implements SignerSession {
         return sigs;
     }
 
-    private generateNonces(): Musig2Nonces[][] {
+    private generateNonces(): musig2.Nonces[][] {
         if (!this.tree) throw ErrMissingVtxoTree;
 
-        const myNonces: Musig2Nonces[][] = [];
+        const myNonces: musig2.Nonces[][] = [];
+
+        const publicKey = secp256k1.getPublicKey(this.secretKey);
 
         for (const level of this.tree.levels) {
-            const levelNonces: Musig2Nonces[] = [];
+            const levelNonces: musig2.Nonces[] = [];
             for (let i = 0; i < level.length; i++) {
-                const nonces = musig2.keys.gen_nonce_pair();
-                levelNonces.push({ pubNonce: nonces[1], secNonce: nonces[0] });
+                const nonces = musig2.generateNonces(publicKey);
+                levelNonces.push(nonces);
             }
             myNonces.push(levelNonces);
         }
@@ -146,8 +120,8 @@ export class TreeSignerSession implements SignerSession {
         tx: Transaction,
         levelIndex: number,
         nodeIndex: number
-    ): Uint8Array {
-        if (!this.myNonces || !this.aggregateNonces || !this.keyCtx) {
+    ): musig2.PartialSig {
+        if (!this.myNonces || !this.aggregateNonces || !this.keys) {
             throw new Error("session not properly initialized");
         }
 
@@ -157,9 +131,13 @@ export class TreeSignerSession implements SignerSession {
         const prevoutAmounts: bigint[] = [];
         const prevoutScripts: Uint8Array[] = [];
 
+        const { finalKey } = musig2.aggregateKeys(this.keys, true, {
+            taprootTweak: this.scriptRoot,
+        });
+
         for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
             const prevout = getPrevOutput(
-                this.keyCtx.group_pubkey,
+                finalKey.slice(1),
                 this.tree,
                 this.rootSharedOutputAmount,
                 tx
@@ -176,11 +154,36 @@ export class TreeSignerSession implements SignerSession {
             prevoutAmounts
         );
 
-        const ctx = musig2.create_ctx(
-            this.keyCtx,
-            getNonceCtx(aggNonce.pubNonce, this.keyCtx.group_pubkey, message)
+        // Create fixture data
+        const fixtureData = {
+            inputs: {
+                secNonce: hex.encode(myNonce.secNonce),
+                secretKey: hex.encode(this.secretKey),
+                pubNonce: hex.encode(aggNonce.pubNonce),
+                publicKeys: this.keys.map((key) => hex.encode(key)),
+                message: hex.encode(message),
+                options: {
+                    sortKeys: true,
+                    taprootTweak: hex.encode(this.scriptRoot),
+                },
+            },
+            result: "",
+        };
+
+        const partialSig = musig2.sign(
+            myNonce.secNonce,
+            this.secretKey,
+            aggNonce.pubNonce,
+            this.keys,
+            message,
+            { sortKeys: true, taprootTweak: this.scriptRoot }
         );
-        return musig2.musign(ctx, this.secretKey, myNonce.secNonce);
+
+        // Add the result to the fixture data
+        fixtureData.result = hex.encode(partialSig.encode());
+        console.log("Complete Fixture:", JSON.stringify(fixtureData, null, 2));
+
+        return partialSig;
     }
 }
 
@@ -230,27 +233,6 @@ export async function validateTreeSigs(
             }
         }
     }
-}
-
-function sortKeys(pubkeys: Uint8Array[]): Uint8Array[] {
-    return pubkeys.sort((a, b) => Buffer.compare(b, a));
-}
-
-// Helper function to aggregate public keys
-export function aggregateKeys(
-    pubkeys: Uint8Array[],
-    scriptRoot: Uint8Array
-): { aggregateKey: Uint8Array; finalKey: Uint8Array } {
-    pubkeys = sortKeys(pubkeys);
-    pubkeys = pubkeys.map((k) => (k.length === 33 ? k.slice(1) : k));
-    const keyCtx = musig2.get_key_ctx(pubkeys);
-    console.log(hex.encode(keyCtx.group_pubkey));
-    const tweakKeyCtx = musig2.tweak_key_ctx(keyCtx, [scriptRoot]);
-
-    return {
-        aggregateKey: keyCtx.group_pubkey,
-        finalKey: tweakKeyCtx.group_pubkey,
-    };
 }
 
 interface PrevOutput {

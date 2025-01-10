@@ -36,7 +36,6 @@ import { TreeSignerSession } from "./signingSession";
 import { decodeNoncesMatrix, encodeMatrix } from "./encoding";
 import { buildForfeitTxs } from "./forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
-import { Buff } from "@cmdcode/buff";
 
 export class Wallet implements IWallet {
     private identity: Identity;
@@ -556,17 +555,7 @@ export class Wallet implements IWallet {
         const nonces = signingSession.getNonces();
         const serializedNonces = hex.encode(
             encodeMatrix(
-                nonces.map((row) =>
-                    row.map(
-                        (nonce) =>
-                            Buffer.concat(
-                                Buff.parse(nonce.pubNonce, 32, 64).map(
-                                    (x_only) =>
-                                        new Uint8Array([0x02, ...x_only])
-                                )
-                            ) // add 'x', server expects nonces in compressed format
-                    )
-                )
+                nonces.map((row) => row.map((nonce) => nonce.pubNonce))
             )
         );
 
@@ -587,7 +576,6 @@ export class Wallet implements IWallet {
             throw new Error("Ark provider not configured");
         }
 
-        console.log(event.treeNonces);
         const combinedNonces = decodeNoncesMatrix(hex.decode(event.treeNonces));
         for (const levelNonces of combinedNonces) {
             for (const nonce of levelNonces) {
@@ -600,7 +588,11 @@ export class Wallet implements IWallet {
         await this.arkProvider.submitTreeSignatures(
             event.id,
             hex.encode(signingSession.publicKey),
-            hex.encode(encodeMatrix(signatures))
+            hex.encode(
+                encodeMatrix(
+                    signatures.map((row) => row.map((s) => s.encode()))
+                )
+            )
         );
     }
 

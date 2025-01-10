@@ -1,7 +1,7 @@
 import { Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
-import { aggregateKeys } from "./signingSession.js";
 import { sha256x2 } from "@scure/btc-signer/utils";
+import { aggregateKeys } from "./musig2";
 
 // Node represents a transaction and its parent txid in a vtxo tree
 export interface TreeNode {
@@ -189,18 +189,14 @@ export class VtxoTree {
         // Get cosigner keys from input
         const cosignerKeys = getCosignerKeys(tx);
 
-        const { finalKey, aggregateKey } = aggregateKeys(
-            cosignerKeys,
-            tapTreeRoot
-        );
+        const { preTweakedKey } = aggregateKeys(cosignerKeys, true, {
+            taprootTweak: tapTreeRoot,
+        });
 
-        console.log(
-            "hex.encode(input.tapInternalKey)",
-            hex.encode(input.tapInternalKey)
-        );
-        console.log("hex.encode(finalKey)", hex.encode(finalKey));
-        console.log("hex.encode(aggregateKey)", hex.encode(aggregateKey));
-        if (hex.encode(input.tapInternalKey) !== hex.encode(finalKey)) {
+        if (
+            hex.encode(input.tapInternalKey) !==
+            hex.encode(preTweakedKey.slice(1))
+        ) {
             throw ErrInternalKey;
         }
 
@@ -231,9 +227,14 @@ export class VtxoTree {
             const cosignerKeys = getCosignerKeys(childTx);
 
             // Aggregate keys
-            const { finalKey } = aggregateKeys(cosignerKeys, tapTreeRoot);
+            const { preTweakedKey } = aggregateKeys(cosignerKeys, true, {
+                taprootTweak: tapTreeRoot,
+            });
 
-            if (hex.encode(input.tapInternalKey) !== hex.encode(finalKey)) {
+            if (
+                hex.encode(input.tapInternalKey) !==
+                hex.encode(preTweakedKey.slice(1))
+            ) {
                 throw ErrInternalKey;
             }
 
