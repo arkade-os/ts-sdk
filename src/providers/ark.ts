@@ -89,7 +89,8 @@ export class ArkProvider extends BaseArkProvider {
         }
 
         const data = await response.json();
-        return data.txid;
+        // Handle both current and future response formats
+        return data.txid || data.signedRedeemTx;
     }
 
     async subscribeToEvents(
