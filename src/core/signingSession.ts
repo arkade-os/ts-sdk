@@ -1,11 +1,9 @@
 import * as musig2 from "../core/musig2";
 import { VtxoTree } from "./vtxoTree.js";
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
-import { p2tr } from "@scure/btc-signer";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 
-// Error definitions
 export const ErrMissingVtxoTree = new Error("missing vtxo tree");
 export const ErrMissingAggregateKey = new Error("missing aggregate key");
 
@@ -146,7 +144,6 @@ export class TreeSignerSession implements SignerSession {
             prevoutScripts.push(prevout.script);
         }
 
-        // Get the message to sign (sighash)
         const message = tx.preimageWitnessV1(
             0, // always first input
             prevoutScripts,
@@ -154,24 +151,7 @@ export class TreeSignerSession implements SignerSession {
             prevoutAmounts
         );
 
-        // Create fixture data
-        const fixtureData = {
-            inputs: {
-                secNonce: hex.encode(myNonce.secNonce),
-                pubNonce: hex.encode(myNonce.pubNonce),
-                secretKey: hex.encode(this.secretKey),
-                aggNonce: hex.encode(aggNonce.pubNonce),
-                publicKeys: this.keys.map((key) => hex.encode(key)),
-                message: hex.encode(message),
-                options: {
-                    sortKeys: true,
-                    taprootTweak: hex.encode(this.scriptRoot),
-                },
-            },
-            result: "",
-        };
-
-        const partialSig = musig2.sign(
+        return musig2.sign(
             myNonce.secNonce,
             myNonce.pubNonce,
             this.secretKey,
@@ -183,11 +163,6 @@ export class TreeSignerSession implements SignerSession {
                 sortKeys: true,
             }
         );
-
-        fixtureData.result = hex.encode(partialSig.encode());
-        console.log("Complete Fixture:", JSON.stringify(fixtureData, null, 2));
-
-        return partialSig;
     }
 }
 
@@ -251,8 +226,7 @@ function getPrevOutput(
     partial: Transaction
 ): PrevOutput {
     // Generate P2TR script
-    const pkScript = p2tr(finalAggregatedKey).script;
-
+    const pkScript = Script.encode(["OP_1", finalAggregatedKey]);
     // Get root node
     const rootNode = vtxoTree.levels[0][0];
     if (!rootNode) throw new Error("empty vtxo tree");

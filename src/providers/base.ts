@@ -75,6 +75,8 @@ export type SettlementEvent =
 
 export interface ArkInfo {
     pubkey: string;
+    vtxoTreeExpiry: bigint;
+    // roundLifetime is the same as vtxoTreeExpiry, only kept for backwards compatibility
     roundLifetime: bigint;
     unilateralExitDelay: bigint;
     roundInterval: bigint;

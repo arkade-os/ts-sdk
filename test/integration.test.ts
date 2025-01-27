@@ -3,7 +3,6 @@ import { expect, describe, it, beforeAll } from 'vitest'
 import { utils } from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import { execSync } from 'child_process'
-import { skip } from 'node:test'
 
 describe('Wallet SDK Integration Tests', () => {
   // Generate random keys for all participants
@@ -81,6 +80,31 @@ describe('Wallet SDK Integration Tests', () => {
     })
   })
 
+  it('should settle a VTXO', { timeout: 60000}, async () => {
+    const frankOffchainAddress = frankWallet.getAddress().offchain?.address
+    const fundAmount = 1000 
+    execSync(`nigiri ark send --to ${frankOffchainAddress} --amount ${fundAmount} --password secret`)
+
+    await new Promise(resolve => setTimeout(resolve, 1000))
+
+    const virtualCoins = await frankWallet.getForfeitVtxoInputs()
+    expect(virtualCoins).toHaveLength(1)
+    const vtxo = virtualCoins[0]
+    expect(vtxo.outpoint.txid).toBeDefined()
+
+    const settleTxid = await frankWallet.settle({
+      inputs: [vtxo],
+      outputs: [{
+        address: frankOffchainAddress!,
+        amount: BigInt(fundAmount)
+      }]
+    })
+
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    
+    expect(settleTxid).toBeDefined()
+  })
+
   it('should perform a complete onchain roundtrip payment', { timeout: 30000 }, async () => {
     // Get addresses
     const aliceAddress = aliceWallet.getAddress().onchain
@@ -142,8 +166,7 @@ describe('Wallet SDK Integration Tests', () => {
 
     // Use a smaller amount for testing
     const fundAmount = 10000 
-    // Fund Carol's offchain address using nigiri ark send
-    const sendOutput = execSync(`nigiri ark send --to ${carolOffchainAddress} --amount ${fundAmount} --password secret`).toString()
+    execSync(`nigiri ark send --to ${carolOffchainAddress} --amount ${fundAmount} --password secret`)
 
     await new Promise(resolve => setTimeout(resolve, 1000))
 
@@ -180,30 +203,5 @@ describe('Wallet SDK Integration Tests', () => {
     expect(carolFinalBalance.offchain.total).toBe(fundAmount - sendAmount - fee)
   })
 
-  it.only('should settle a VTXO', { timeout: 60000}, async () => {
-    const frankOffchainAddress = frankWallet.getAddress().offchain?.address
-    const fundAmount = 1000 
-    execSync(`nigiri ark send --to ${frankOffchainAddress} --amount ${fundAmount} --password secret`)
 
-    await new Promise(resolve => setTimeout(resolve, 1000))
-
-    const virtualCoins = await frankWallet.getForfeitVtxoInputs()
-    expect(virtualCoins).toHaveLength(1)
-    const vtxo = virtualCoins[0]
-    expect(vtxo.outpoint.txid).toBeDefined()
-
-    const settleTxid = await frankWallet.settle({
-      inputs: [vtxo],
-      outputs: [{
-        address: frankOffchainAddress!,
-        amount: BigInt(fundAmount)
-      }]
-    })
-
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    expect(settleTxid).toBeDefined()
-
-
-  })
 })

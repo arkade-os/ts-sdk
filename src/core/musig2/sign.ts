@@ -5,7 +5,6 @@ import { bytesToNumberBE } from "@noble/curves/abstract/utils";
 import { CURVE } from "@noble/secp256k1";
 import { aggregateKeys, sortKeys } from "./keys";
 import { schnorr } from "@noble/curves/secp256k1";
-import { hex } from "@scure/base";
 
 export class SignError extends Error {
     constructor(message: string) {
@@ -96,6 +95,9 @@ export function sign(
         throw new SignError("Taproot tweak is required");
     }
 
+    if (preTweakedKey.length !== 33) {
+        throw new SignError("Pre-tweaked key is not 33 bytes");
+    }
     const tweakBytes = schnorr.utils.taggedHash(
         "TapTweak",
         preTweakedKey.subarray(1),
@@ -115,13 +117,6 @@ export function sign(
         secretKey: privateKey,
         verify: true,
     });
-
-    // Verify partial signature
-    const pSig = PartialSig.decode(partialSig);
-    console.log(hex.encode(pSig.encode()));
-    if (hex.encode(pSig.encode()) !== hex.encode(partialSig)) {
-        throw new SignError("Partial signature does not match expected");
-    }
 
     return PartialSig.decode(partialSig);
 }

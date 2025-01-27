@@ -353,7 +353,6 @@ export class ArkProvider extends BaseArkProvider {
 
     async *getEventStream(): AsyncIterableIterator<SettlementEvent> {
         const url = `${this.serverUrl}/v1/events`;
-        console.log("Initializing event stream:", url);
 
         while (true) {
             try {
@@ -380,7 +379,6 @@ export class ArkProvider extends BaseArkProvider {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) {
-                        console.log("Stream ended");
                         break;
                     }
 
@@ -451,7 +449,10 @@ export class ArkProvider extends BaseArkProvider {
                 roundTx: data.roundFinalization.roundTx,
                 vtxoTree: this.toVtxoTree(data.roundFinalization.vtxoTree),
                 connectors: data.roundFinalization.connectors,
-                minRelayFeeRate: BigInt(data.roundFinalization.minRelayFeeRate),
+                // divide by 1000 to convert to sat/vbyte
+                minRelayFeeRate:
+                    BigInt(data.roundFinalization.minRelayFeeRate) /
+                    BigInt(1000),
             };
         }
 

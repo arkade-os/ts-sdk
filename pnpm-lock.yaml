@@ -8,21 +8,9 @@ importers:
 
   .:
     dependencies:
-      '@bitcoinerlab/secp256k1':
-        specifier: 1.2.0
-        version: 1.2.0
       '@brandonblack/musig':
         specifier: github:reardencode/musig-js
         version: https://codeload.github.com/reardencode/musig-js/tar.gz/488ad09fccdee5cd4b91d1a17baeb96b2af69135
-      '@cmdcode/buff':
-        specifier: 2.2.5
-        version: 2.2.5
-      '@cmdcode/crypto-tools':
-        specifier: 2.8.0
-        version: 2.8.0
-      '@cmdcode/musig2':
-        specifier: 2.4.3
-        version: 2.4.3
       '@noble/curves':
         specifier: 1.7.0
         version: 1.7.0
@@ -44,9 +32,6 @@ importers:
       eventsource:
         specifier: 3.0.2
         version: 3.0.2
-      tiny-secp256k1:
-        specifier: 2.2.3
-        version: 2.2.3
     devDependencies:
       '@eslint/js':
         specifier: ^9.17.0
@@ -111,21 +96,9 @@ packages:
   '@bcoe/v8-coverage@0.2.3':
     resolution: {integrity: sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==}
 
-  '@bitcoinerlab/secp256k1@1.2.0':
-    resolution: {integrity: sha512-jeujZSzb3JOZfmJYI0ph1PVpCRV5oaexCgy+RvCXV8XlY+XFB/2n3WOcvBsKLsOw78KYgnQrQWb2HrKE4be88Q==}
-
   '@brandonblack/musig@https://codeload.github.com/reardencode/musig-js/tar.gz/488ad09fccdee5cd4b91d1a17baeb96b2af69135':
     resolution: {tarball: https://codeload.github.com/reardencode/musig-js/tar.gz/488ad09fccdee5cd4b91d1a17baeb96b2af69135}
     version: 0.0.1-alpha.1
-
-  '@cmdcode/buff@2.2.5':
-    resolution: {integrity: sha512-+nc3QDoJ+MU/fp+YkX6WuEjJrXLF6ME+eVX1sj5a+MfBKO9LWb4R9Y2zH6APBrySd7nFr48ozscAui7SKvLmXg==}
-
-  '@cmdcode/crypto-tools@2.8.0':
-    resolution: {integrity: sha512-p98mSC59DqY6gOaaq72xscbSexeNpJNlYGoB3tcgBM1jEQld3k9cgN+9rzLfPXWDwkIjcZjhiUw4ecj5SoWWFw==}
-
-  '@cmdcode/musig2@2.4.3':
-    resolution: {integrity: sha512-XOMARob3RiNCTMRdkNihNYYBkx3TuwthuSsJLy2D+MseRXJCFsAxq5oFz/3xG05YEcDYXzKPR+B4wMdiRe3I/w==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -344,9 +317,6 @@ packages:
 
   '@jridgewell/trace-mapping@0.3.25':
     resolution: {integrity: sha512-vNk6aEwybGtawWmy/PzwnGDOjCkLWSD2wqvjGGAgOAwCGWySYXfYoxt00IJkTF+8Lb57DwOb3Aa0o9CApepiYQ==}
-
-  '@noble/ciphers@0.4.1':
-    resolution: {integrity: sha512-QCOA9cgf3Rc33owG0AYBB9wszz+Ul2kramWN8tXG44Gyciud/tbkEqvxRF/IpqQaBpRBNi9f4jdNxqB2CQCIXg==}
 
   '@noble/curves@1.7.0':
     resolution: {integrity: sha512-UTMhXK9SeDhFJVrHeUJ5uZlI6ajXg10O6Ddocf9S6GjbSBVZsJo88HzKwXznNfGpMTRDyJkqMjNDPYgf0qFWnw==}
@@ -1235,10 +1205,6 @@ packages:
     resolution: {integrity: sha512-pFYqmTw68LXVjeWJMST4+borgQP2AyMNbg1BpZh9LbyhUeNkeaPF9gzfPGUAnSMV3qPYdWUwDIjjCLiSDOl7vg==}
     engines: {node: '>=18'}
 
-  tiny-secp256k1@2.2.3:
-    resolution: {integrity: sha512-SGcL07SxcPN2nGKHTCvRMkQLYPSoeFcvArUSCYtjVARiFAWU44cCIqYS0mYAU6nY7XfvwURuTIGo2Omt3ZQr0Q==}
-    engines: {node: '>=14.0.0'}
-
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
 
@@ -1275,10 +1241,6 @@ packages:
     resolution: {integrity: sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg==}
     engines: {node: '>=14.17'}
     hasBin: true
-
-  uint8array-tools@0.0.7:
-    resolution: {integrity: sha512-vrrNZJiusLWoFWBqz5Y5KMCgP9W9hnjZHzZiZRT8oNAkq3d5Z5Oe76jAvVVSRh4U8GGR90N2X1dWtrhvx6L8UQ==}
-    engines: {node: '>=14.0.0'}
 
   undici-types@6.20.0:
     resolution: {integrity: sha512-Ny6QZ2Nju20vw1SRHe3d9jVu6gJ+4e3+MMpqu7pqE5HT6WsTSlce++GQmK5UXS8mzV8DSYHrQH+Xrf2jVcuKNg==}
@@ -1404,28 +1366,7 @@ snapshots:
 
   '@bcoe/v8-coverage@0.2.3': {}
 
-  '@bitcoinerlab/secp256k1@1.2.0':
-    dependencies:
-      '@noble/curves': 1.7.0
-
   '@brandonblack/musig@https://codeload.github.com/reardencode/musig-js/tar.gz/488ad09fccdee5cd4b91d1a17baeb96b2af69135': {}
-
-  '@cmdcode/buff@2.2.5':
-    dependencies:
-      '@noble/hashes': 1.6.1
-      '@scure/base': 1.2.1
-
-  '@cmdcode/crypto-tools@2.8.0':
-    dependencies:
-      '@cmdcode/buff': 2.2.5
-      '@noble/ciphers': 0.4.1
-      '@noble/curves': 1.7.0
-      '@noble/hashes': 1.6.1
-
-  '@cmdcode/musig2@2.4.3':
-    dependencies:
-      '@cmdcode/buff': 2.2.5
-      '@cmdcode/crypto-tools': 2.8.0
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
@@ -1577,8 +1518,6 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.0
-
-  '@noble/ciphers@0.4.1': {}
 
   '@noble/curves@1.7.0':
     dependencies:
@@ -2477,10 +2416,6 @@ snapshots:
       glob: 10.4.5
       minimatch: 9.0.5
 
-  tiny-secp256k1@2.2.3:
-    dependencies:
-      uint8array-tools: 0.0.7
-
   tinybench@2.9.0: {}
 
   tinyexec@0.3.1: {}
@@ -2504,8 +2439,6 @@ snapshots:
       prelude-ls: 1.2.1
 
   typescript@5.7.2: {}
-
-  uint8array-tools@0.0.7: {}
 
   undici-types@6.20.0: {}
 

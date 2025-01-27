@@ -112,6 +112,6 @@ export class ArkAddress {
     }
 
     get script(): Bytes {
-        return Script.encode([0x51, 0x20, ...this.tweakedPubKey]);
+        return Script.encode(["OP_1", this.tweakedPubKey]);
     }
 }

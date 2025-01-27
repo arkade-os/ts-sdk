@@ -1,7 +1,8 @@
+import { hex } from "@scure/base";
 import { SigHash, Transaction } from "@scure/btc-signer";
-import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
+import { sha256x2 } from "@scure/btc-signer/utils";
+import { Outpoint } from "../types/wallet";
 
-type Outpoint = Pick<TransactionInputUpdate, "txid" | "index">;
 type WitnessUtxo = {
     script: Uint8Array;
     amount: bigint;
@@ -46,14 +47,16 @@ export function buildForfeitTxs({
 
         // Add connector input
         tx.addInput({
-            ...connectorInput,
+            txid: connectorInput.txid,
+            index: connectorInput.vout,
             witnessUtxo: connectorPrevout,
             sequence: 0xffffffff, // MAX_SEQUENCE
         });
 
         // Add VTXO input
         tx.addInput({
-            ...vtxoInput,
+            txid: vtxoInput.txid,
+            index: vtxoInput.vout,
             witnessUtxo: {
                 script: vtxoScript,
                 amount: vtxoAmount,
@@ -62,10 +65,13 @@ export function buildForfeitTxs({
             sighashType: SigHash.DEFAULT,
         });
 
+        const amount =
+            BigInt(vtxoAmount) + BigInt(connectorAmount) - BigInt(feeAmount);
+
         // Add main output to server
         tx.addOutput({
             script: serverScript,
-            amount: vtxoAmount + connectorAmount - feeAmount,
+            amount,
         });
 
         forfeitTxs.push(tx);
@@ -81,14 +87,17 @@ function getConnectorInputs(
 ): [Outpoint[], WitnessUtxo[]] {
     const outpoints: Outpoint[] = [];
     const witnessUtxos: WitnessUtxo[] = [];
-    const txid = tx.id;
+    const txid = hex.encode(sha256x2(tx.toBytes(true)).reverse());
 
-    for (let index = 0; index < tx.outputsLength; index++) {
-        const output = tx.getOutput(index);
-        if (output.amount === connectorAmount) {
+    for (let vout = 0; vout < tx.outputsLength; vout++) {
+        const output = tx.getOutput(vout);
+        if (!output.amount) {
+            continue;
+        }
+        if (BigInt(output.amount) === BigInt(connectorAmount)) {
             outpoints.push({
                 txid,
-                index,
+                vout,
             });
 
             if (!output.script) {

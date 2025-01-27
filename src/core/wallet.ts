@@ -45,10 +45,11 @@ export class Wallet implements IWallet {
     private unsubscribeEvents?: () => void;
     private onchainAddress: string;
     private offchainAddress?: OffchainInfo;
-    private boardingAddress?: string;
     private onchainP2TR: ReturnType<typeof btc.p2tr>;
     private offchainTapscript?: VtxoTapscript;
-    private boardingTapscript?: VtxoTapscript;
+
+    public boardingAddress?: string;
+    public boardingTapscript?: VtxoTapscript;
 
     static DUST_AMOUNT = BigInt(546); // Bitcoin dust limit in satoshis = 546
     static FEE_RATE = 1; // sats/vbyte
@@ -403,20 +404,21 @@ export class Wallet implements IWallet {
         const vtxoTreePublicKey = secp256k1.getPublicKey(vtxoTreeSigningKey);
 
         // register inputs
-        const { requestId } = await this.arkProvider.registerInputsForNextRound(
-            params.inputs,
-            hex.encode(vtxoTreePublicKey)
-        );
+        const { requestId } =
+            await this.arkProvider!.registerInputsForNextRound(
+                params.inputs,
+                hex.encode(vtxoTreePublicKey)
+            );
 
         // register outputs
-        await this.arkProvider.registerOutputsForNextRound(
+        await this.arkProvider!.registerOutputsForNextRound(
             requestId,
             params.outputs
         );
 
         // start pinging every seconds
         const interval = setInterval(() => {
-            this.arkProvider?.ping(requestId).catch(console.error);
+            this.arkProvider?.ping(requestId).catch(stopPing);
         }, 1000);
         let pingRunning = true;
         const stopPing = () => {
@@ -437,33 +439,22 @@ export class Wallet implements IWallet {
         const info = await this.arkProvider.getInfo();
 
         const sweepTapscript = checkSequenceVerifyScript(
-            { value: info.roundLifetime, type: "seconds" },
+            {
+                value: info.vtxoTreeExpiry || info.roundLifetime,
+                type: "seconds",
+            }, // TODO: remove roundLifetime
             hex.decode(info.pubkey).slice(1)
         );
 
-        console.log("hex.encode(sweepTapscript)", hex.encode(sweepTapscript));
-        const tapTree = btc.taprootListToTree([{ script: sweepTapscript }]);
-        const p2tr = btc.p2tr(
-            btc.TAPROOT_UNSPENDABLE_KEY,
-            tapTree,
-            this.network,
-            true
-        );
-        console.log(
-            "hex.encode(p2tr.tapMerkleRoot)",
-            hex.encode(p2tr.tapMerkleRoot!)
-        );
-
         const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
-        console.log(
-            "hex.encode(sweepTapTreeRoot)",
-            hex.encode(sweepTapTreeRoot)
-        );
 
         for await (const event of settlementStream) {
             switch (event.type) {
                 // the settlement failed
                 case SettlementEventType.Failed:
+                    if (step === undefined) {
+                        continue;
+                    }
                     stopPing();
                     throw new Error(event.reason);
                 // the server has started the signing process of the vtxo tree transactions
@@ -577,11 +568,6 @@ export class Wallet implements IWallet {
         }
 
         const combinedNonces = decodeNoncesMatrix(hex.decode(event.treeNonces));
-        for (const levelNonces of combinedNonces) {
-            for (const nonce of levelNonces) {
-                console.log(hex.encode(nonce.pubNonce));
-            }
-        }
         signingSession.setAggregatedNonces(combinedNonces);
         const signatures = signingSession.sign();
 
@@ -632,7 +618,8 @@ export class Wallet implements IWallet {
             }
 
             const forfeitLeafHash = tapLeafHash(
-                hex.decode(input.forfeitScript)
+                hex.decode(input.forfeitScript),
+                TAP_LEAF_VERSION
             );
             const taprootTree = btc.taprootListToTree(
                 input.tapscripts.map((script) => ({
@@ -650,7 +637,7 @@ export class Wallet implements IWallet {
                 throw new Error("invalid vtxo tapscripts");
 
             const tapLeafScriptIndex = p2tr.leaves?.findIndex(
-                (leaf) => leaf.hash === forfeitLeafHash
+                (leaf) => hex.encode(leaf.hash) === hex.encode(forfeitLeafHash)
             );
             if (tapLeafScriptIndex === -1 || tapLeafScriptIndex === undefined) {
                 throw new Error(
@@ -695,15 +682,12 @@ export class Wallet implements IWallet {
                         tapLeafScript: [forfeitTapLeafScript],
                     });
 
-                    if (
-                        forfeitTx.sign(
-                            this.identity.privateKey(),
-                            undefined,
-                            new Uint8Array(32)
-                        ) === 0
-                    ) {
-                        throw new Error("failed to sign forfeit transaction");
-                    }
+                    forfeitTx.signIdx(
+                        this.identity.privateKey(),
+                        1,
+                        undefined,
+                        Buffer.alloc(32)
+                    );
 
                     signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
                 }

@@ -36,19 +36,14 @@
     "precommit": "lint-staged"
   },
   "dependencies": {
-    "@bitcoinerlab/secp256k1": "1.2.0",
     "@brandonblack/musig": "github:reardencode/musig-js",
-    "@cmdcode/buff": "2.2.5",
-    "@cmdcode/crypto-tools": "2.8.0",
-    "@cmdcode/musig2": "2.4.3",
     "@noble/curves": "1.7.0",
     "@noble/hashes": "1.6.1",
     "@noble/secp256k1": "2.2.3",
     "@scure/base": "1.2.1",
     "@scure/btc-signer": "1.5.0",
     "bip68": "1.0.4",
-    "eventsource": "3.0.2",
-    "tiny-secp256k1": "2.2.3"
+    "eventsource": "3.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
