@@ -190,23 +190,29 @@ export function aggregateKeys(
     options: Partial<KeyAggOptions> = {}
 ): AggregateKey {
     if (sort) {
-        publicKeys = sortKeys(publicKeys)
+        publicKeys = sortKeys(publicKeys);
     }
 
-    const musig2 = MuSigFactory(nobleCrypto)
-    const preTweakedKeyCtx = musig2.keyAgg(publicKeys)
-    const preTweakedKey = preTweakedKeyCtx.aggPublicKey
-    const preTweakedKeyCompressed = nobleCrypto.pointCompress(preTweakedKey, true)
+    const musig2 = MuSigFactory(nobleCrypto);
+    const preTweakedKeyCtx = musig2.keyAgg(publicKeys);
+    const preTweakedKey = preTweakedKeyCtx.aggPublicKey;
+    const preTweakedKeyCompressed = nobleCrypto.pointCompress(
+        preTweakedKey,
+        true
+    );
     const tweakBytes = schnorr.utils.taggedHash(
         "TapTweak",
         preTweakedKeyCompressed.subarray(1),
         options.taprootTweak ?? new Uint8Array(0)
-    )
-    const finalKeyCtx = musig2.addTweaks(preTweakedKeyCtx, {tweak: tweakBytes, xOnly: true})
-    const finalKey = finalKeyCtx.aggPublicKey
+    );
+    const finalKeyCtx = musig2.addTweaks(preTweakedKeyCtx, {
+        tweak: tweakBytes,
+        xOnly: true,
+    });
+    const finalKey = finalKeyCtx.aggPublicKey;
 
     // convert to compressed format
-    const finalKeyCompressed = nobleCrypto.pointCompress(finalKey, true)
+    const finalKeyCompressed = nobleCrypto.pointCompress(finalKey, true);
 
     return {
         preTweakedKey: preTweakedKeyCompressed,

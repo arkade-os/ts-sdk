@@ -184,7 +184,6 @@ export class TreeSignerSession implements SignerSession {
             }
         );
 
-
         fixtureData.result = hex.encode(partialSig.encode());
         console.log("Complete Fixture:", JSON.stringify(fixtureData, null, 2));
 

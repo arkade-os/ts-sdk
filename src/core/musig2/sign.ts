@@ -1,11 +1,11 @@
-import { nobleCrypto } from './crypto';
-import * as musig from '@brandonblack/musig'
+import { nobleCrypto } from "./crypto";
+import * as musig from "@brandonblack/musig";
 
 import { bytesToNumberBE } from "@noble/curves/abstract/utils";
-import { CURVE } from '@noble/secp256k1';
-import { aggregateKeys, sortKeys } from './keys';
-import { schnorr } from '@noble/curves/secp256k1';
-import { hex } from '@scure/base';
+import { CURVE } from "@noble/secp256k1";
+import { aggregateKeys, sortKeys } from "./keys";
+import { schnorr } from "@noble/curves/secp256k1";
+import { hex } from "@scure/base";
 
 export class SignError extends Error {
     constructor(message: string) {
@@ -84,41 +84,44 @@ export function sign(
     message: Uint8Array,
     options?: SignOptions
 ): PartialSig {
-    const musig2 = musig.MuSigFactory(nobleCrypto)
-    musig2.addExternalNonce(pubNonce, secNonce)
+    const musig2 = musig.MuSigFactory(nobleCrypto);
+    musig2.addExternalNonce(pubNonce, secNonce);
 
-    const { preTweakedKey } = aggregateKeys(options?.sortKeys ? sortKeys(publicKeys) : publicKeys, true)
+    const { preTweakedKey } = aggregateKeys(
+        options?.sortKeys ? sortKeys(publicKeys) : publicKeys,
+        true
+    );
 
     if (!options?.taprootTweak) {
-        throw new SignError("Taproot tweak is required")
+        throw new SignError("Taproot tweak is required");
     }
 
     const tweakBytes = schnorr.utils.taggedHash(
         "TapTweak",
         preTweakedKey.subarray(1),
         options.taprootTweak
-    )
+    );
 
     const sessionKey = musig2.startSigningSession(
         combinedNonce,
         message,
         options?.sortKeys ? sortKeys(publicKeys) : publicKeys,
-        { tweak: tweakBytes, xOnly: true},
-    )
+        { tweak: tweakBytes, xOnly: true }
+    );
 
     const partialSig = musig2.partialSign({
         sessionKey,
         publicNonce: pubNonce,
         secretKey: privateKey,
         verify: true,
-    })
+    });
 
     // Verify partial signature
-    const pSig = PartialSig.decode(partialSig)
-    console.log(hex.encode(pSig.encode()))
+    const pSig = PartialSig.decode(partialSig);
+    console.log(hex.encode(pSig.encode()));
     if (hex.encode(pSig.encode()) !== hex.encode(partialSig)) {
-        throw new SignError("Partial signature does not match expected")
+        throw new SignError("Partial signature does not match expected");
     }
 
-    return PartialSig.decode(partialSig)
+    return PartialSig.decode(partialSig);
 }
