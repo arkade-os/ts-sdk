@@ -15,7 +15,7 @@ describe('musig2', () => {
     })
   })
 
-  describe.skip('sign', () => {
+  describe('sign', () => {
     it('should correctly generate signature', () => {
       const { inputs, result } = testData.signing
       const {
@@ -24,13 +24,15 @@ describe('musig2', () => {
         pubNonce,
         publicKeys,
         message,
-        options
+        options,
+        aggNonce
       } = inputs
 
       const signature = sign(
         hex.decode(secNonce),
-        hex.decode(secretKey),
         hex.decode(pubNonce),
+        hex.decode(secretKey),
+        hex.decode(aggNonce),
         publicKeys.map(key => hex.decode(key)),
         hex.decode(message),
         {

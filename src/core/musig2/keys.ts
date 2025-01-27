@@ -1,8 +1,10 @@
 import { ProjectivePoint, CURVE } from "@noble/secp256k1";
 import { bytesToNumberBE } from "@noble/curves/abstract/utils";
 import { mod } from "@noble/curves/abstract/modular";
-import { schnorr } from "@noble/curves/secp256k1";
+import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 import { concatBytes } from "@noble/hashes/utils";
+import { nobleCrypto } from "./crypto";
+import { MuSigFactory } from "@brandonblack/musig";
 
 const KEY_AGG_LIST_TAG = "KeyAgg list";
 const KEY_AGG_COEFF_TAG = "KeyAgg coefficient";
@@ -21,7 +23,6 @@ interface KeyAggOptions {
 export interface AggregateKey {
     preTweakedKey: Uint8Array; // 33-byte compressed point
     finalKey: Uint8Array; // 33-byte compressed point
-    parityAcc: bigint;
 }
 
 /**
@@ -112,7 +113,7 @@ function isSorted(keys: Uint8Array[]): boolean {
  * Sorts public keys in lexicographical order based on their serialized bytes.
  * Returns a new array with sorted keys.
  */
-function sortKeys(keys: Uint8Array[]): Uint8Array[] {
+export function sortKeys(keys: Uint8Array[]): Uint8Array[] {
     // Check if already sorted
     if (isSorted(keys)) {
         return keys;
@@ -188,49 +189,27 @@ export function aggregateKeys(
     sort: boolean,
     options: Partial<KeyAggOptions> = {}
 ): AggregateKey {
-    // Sort keys if requested
-    const keys = sort ? sortKeys(publicKeys) : publicKeys;
-
-    const keyHash = keyHashFingerprint(keys, sort);
-    const uniqueKeyIndex = secondUniqueKeyIndex(keys, sort);
-
-    // Aggregate all keys: P = sum(a_i * P_i)
-    let finalKey = ProjectivePoint.ZERO;
-    for (const key of keys) {
-        // Convert key bytes to point
-        const keyPoint = ProjectivePoint.fromHex(key);
-
-        // Get aggregation coefficient
-        const a = aggregationCoefficient(keys, key, keyHash, uniqueKeyIndex);
-
-        // Add a_i * P_i to sum
-        finalKey = finalKey.add(keyPoint.multiply(a));
+    if (sort) {
+        publicKeys = sortKeys(publicKeys)
     }
 
-    // Save pre-tweaked key
-    const preTweakedKey = finalKey.toRawBytes(true);
+    const musig2 = MuSigFactory(nobleCrypto)
+    const preTweakedKeyCtx = musig2.keyAgg(publicKeys)
+    const preTweakedKey = preTweakedKeyCtx.aggPublicKey
+    const preTweakedKeyCompressed = nobleCrypto.pointCompress(preTweakedKey, true)
+    const tweakBytes = schnorr.utils.taggedHash(
+        "TapTweak",
+        preTweakedKeyCompressed.subarray(1),
+        options.taprootTweak ?? new Uint8Array(0)
+    )
+    const finalKeyCtx = musig2.addTweaks(preTweakedKeyCtx, {tweak: tweakBytes, xOnly: true})
+    const finalKey = finalKeyCtx.aggPublicKey
 
-    // Initialize accumulators
-    let parityAcc = 1n;
-    let tweakAcc = 0n;
-
-    // Handle taproot tweaks
-    if (options.taprootTweak) {
-        const tapTweak = schnorr.utils.taggedHash(
-            "TapTweak",
-            concatBytes(preTweakedKey.slice(1), options.taprootTweak)
-        );
-
-        const result = tweakKey(finalKey, parityAcc, tapTweak, tweakAcc, false);
-
-        finalKey = result.tweakedKey;
-        parityAcc = result.newParityAcc;
-        tweakAcc = result.newTweakAcc;
-    }
+    // convert to compressed format
+    const finalKeyCompressed = nobleCrypto.pointCompress(finalKey, true)
 
     return {
-        preTweakedKey,
-        finalKey: finalKey.toRawBytes(true),
-        parityAcc,
+        preTweakedKey: preTweakedKeyCompressed,
+        finalKey: finalKeyCompressed,
     };
 }

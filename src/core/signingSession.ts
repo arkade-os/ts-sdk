@@ -158,8 +158,9 @@ export class TreeSignerSession implements SignerSession {
         const fixtureData = {
             inputs: {
                 secNonce: hex.encode(myNonce.secNonce),
+                pubNonce: hex.encode(myNonce.pubNonce),
                 secretKey: hex.encode(this.secretKey),
-                pubNonce: hex.encode(aggNonce.pubNonce),
+                aggNonce: hex.encode(aggNonce.pubNonce),
                 publicKeys: this.keys.map((key) => hex.encode(key)),
                 message: hex.encode(message),
                 options: {
@@ -172,14 +173,18 @@ export class TreeSignerSession implements SignerSession {
 
         const partialSig = musig2.sign(
             myNonce.secNonce,
+            myNonce.pubNonce,
             this.secretKey,
             aggNonce.pubNonce,
             this.keys,
             message,
-            { sortKeys: true, taprootTweak: this.scriptRoot }
+            {
+                taprootTweak: this.scriptRoot,
+                sortKeys: true,
+            }
         );
 
-        // Add the result to the fixture data
+
         fixtureData.result = hex.encode(partialSig.encode());
         console.log("Complete Fixture:", JSON.stringify(fixtureData, null, 2));
 
