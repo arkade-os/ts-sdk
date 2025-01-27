@@ -169,7 +169,9 @@ export class ArkProvider extends BaseArkProvider {
         return data.txid;
     }
 
-    async subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void> {
+    async subscribeToEvents(
+        callback: (event: ArkEvent) => void
+    ): Promise<() => void> {
         const url = `${this.serverUrl}/v1/events`;
         let abortController = new AbortController();
 
@@ -184,7 +186,9 @@ export class ArkProvider extends BaseArkProvider {
                     });
 
                     if (!response.ok) {
-                        throw new Error(`Unexpected status ${response.status} when fetching event stream`);
+                        throw new Error(
+                            `Unexpected status ${response.status} when fetching event stream`
+                        );
                     }
 
                     if (!response.body) {
