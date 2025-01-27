@@ -8,7 +8,6 @@ import {
 } from "./base";
 import type { VirtualCoin } from "../types/wallet";
 import { VtxoTree } from "../core/vtxoTree";
-import { EventSource } from "eventsource";
 
 // Define event types
 export interface ArkEvent {
@@ -170,33 +169,70 @@ export class ArkProvider extends BaseArkProvider {
         return data.txid;
     }
 
-    async subscribeToEvents(
-        callback: (event: ArkEvent) => void
-    ): Promise<() => void> {
+    async subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void> {
         const url = `${this.serverUrl}/v1/events`;
-        const eventSource = new EventSource(url, {
-            fetch: (input, init) =>
-                fetch(input, {
-                    ...init,
-                    headers: {
-                        ...init?.headers,
-                        Accept: "text/event-stream",
-                    },
-                }),
-        });
+        let abortController = new AbortController();
 
-        eventSource.onmessage = (event) => {
-            const data = JSON.parse(event.data) as ArkEvent;
-            callback(data);
-        };
+        (async () => {
+            while (!abortController.signal.aborted) {
+                try {
+                    const response = await fetch(url, {
+                        headers: {
+                            Accept: "application/json",
+                        },
+                        signal: abortController.signal,
+                    });
 
-        eventSource.onerror = (err) => {
-            console.error("EventSource error:", err);
-            // You might want to implement reconnection logic here
-        };
+                    if (!response.ok) {
+                        throw new Error(`Unexpected status ${response.status} when fetching event stream`);
+                    }
+
+                    if (!response.body) {
+                        throw new Error("Response body is null");
+                    }
+
+                    const reader = response.body.getReader();
+                    const decoder = new TextDecoder();
+                    let buffer = "";
+
+                    while (!abortController.signal.aborted) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        // Append new data to buffer and split by newlines
+                        buffer += decoder.decode(value, { stream: true });
+                        const lines = buffer.split("\n");
+
+                        // Process all complete lines
+                        for (let i = 0; i < lines.length - 1; i++) {
+                            const line = lines[i].trim();
+                            if (!line) continue;
+
+                            try {
+                                const data = JSON.parse(line);
+                                callback(data);
+                            } catch (err) {
+                                console.error("Failed to parse event:", err);
+                            }
+                        }
+
+                        // Keep the last partial line in the buffer
+                        buffer = lines[lines.length - 1];
+                    }
+                } catch (error) {
+                    if (!abortController.signal.aborted) {
+                        console.error("Event stream error:", error);
+                    }
+                }
+            }
+        })();
 
         // Return unsubscribe function
-        return () => eventSource.close();
+        return () => {
+            abortController.abort();
+            // Create a new controller for potential future subscriptions
+            abortController = new AbortController();
+        };
     }
 
     async registerInputsForNextRound(

@@ -42,12 +42,10 @@
     "@noble/secp256k1": "2.2.3",
     "@scure/base": "1.2.1",
     "@scure/btc-signer": "1.5.0",
-    "bip68": "1.0.4",
-    "eventsource": "3.0.2"
+    "bip68": "1.0.4"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
-    "@types/eventsource": "1.1.15",
     "@types/node": "22.10.2",
     "@typescript-eslint/eslint-plugin": "8.18.2",
     "@typescript-eslint/parser": "8.18.2",

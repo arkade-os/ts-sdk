@@ -29,16 +29,10 @@ importers:
       bip68:
         specifier: 1.0.4
         version: 1.0.4
-      eventsource:
-        specifier: 3.0.2
-        version: 3.0.2
     devDependencies:
       '@eslint/js':
         specifier: ^9.17.0
         version: 9.17.0
-      '@types/eventsource':
-        specifier: 1.1.15
-        version: 1.1.15
       '@types/node':
         specifier: 22.10.2
         version: 22.10.2
@@ -453,9 +447,6 @@ packages:
   '@types/estree@1.0.6':
     resolution: {integrity: sha512-AYnb1nQyY49te+VRAVgmzfcgjYS91mY5P0TKUDCLEM+gNnA+3T6rWITXRLYCpahpqSQbN5cE+gHpnPyXjHWxcw==}
 
-  '@types/eventsource@1.1.15':
-    resolution: {integrity: sha512-XQmGcbnxUNa06HR3VBVkc9+A2Vpi9ZyLJcdS5dwaQQ/4ZMWFO+5c90FnMUpbtMZwB/FChoYHwuVg8TvkECacTA==}
-
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
 
@@ -748,14 +739,6 @@ packages:
 
   eventemitter3@5.0.1:
     resolution: {integrity: sha512-GWkBvjiSZK87ELrYOSESUYeVIc9mvLLf/nXalMOS5dYrgZq9o5OVkbZAVM06CVxYsCwH9BDZFPlQTlPA1j4ahA==}
-
-  eventsource-parser@3.0.0:
-    resolution: {integrity: sha512-T1C0XCUimhxVQzW4zFipdx0SficT651NnkR0ZSH3yQwh+mFMdLfgjABVi4YtMTtaL4s168593DaoaRLMqryavA==}
-    engines: {node: '>=18.0.0'}
-
-  eventsource@3.0.2:
-    resolution: {integrity: sha512-YolzkJNxsTL3tCJMWFxpxtG2sCjbZ4LQUBUrkdaJK0ub0p6lmJt+2+1SwhKjLc652lpH9L/79Ptez972H9tphw==}
-    engines: {node: '>=18.0.0'}
 
   execa@8.0.1:
     resolution: {integrity: sha512-VyhnebXciFV2DESc+p6B+y0LjSm0krU4OgJN44qFAhBY0TJ+1V61tYD2+wHusZ6F9n5K+vl8k0sTy7PEfV4qpg==}
@@ -1612,8 +1595,6 @@ snapshots:
 
   '@types/estree@1.0.6': {}
 
-  '@types/eventsource@1.1.15': {}
-
   '@types/json-schema@7.0.15': {}
 
   '@types/node@22.10.2':
@@ -1970,12 +1951,6 @@ snapshots:
   esutils@2.0.3: {}
 
   eventemitter3@5.0.1: {}
-
-  eventsource-parser@3.0.0: {}
-
-  eventsource@3.0.2:
-    dependencies:
-      eventsource-parser: 3.0.0
 
   execa@8.0.1:
     dependencies:
