@@ -1,7 +1,7 @@
 import { Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
-import { aggregateKeys } from "./musig2";
+import { aggregateKeys } from "../musig2";
 
 // Node represents a transaction and its parent txid in a vtxo tree
 export interface TreeNode {

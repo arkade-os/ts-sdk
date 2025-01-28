@@ -1,5 +1,5 @@
 import * as musig2 from "../core/musig2";
-import { VtxoTree } from "./vtxoTree.js";
+import { VtxoTree } from "./tree/vtxoTree.js";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";

@@ -1,7 +1,8 @@
 import type { Coin, Outpoint, VirtualCoin } from "../types/wallet";
 import type { UTXO, VTXO } from "../types/internal";
 import type { ArkEvent } from "./ark";
-import { VtxoTree } from "../core/vtxoTree";
+import { VtxoTree } from "../core/tree/vtxoTree";
+import { TreeNonces, TreePartialSigs } from "../core/signingSession";
 
 export interface OnchainProvider {
     getCoins(address: string): Promise<Coin[]>;
@@ -63,7 +64,7 @@ export type SigningStartEvent = {
 export type SigningNoncesGeneratedEvent = {
     type: SettlementEventType.SigningNoncesGenerated;
     id: string;
-    treeNonces: string;
+    treeNonces: TreeNonces;
 };
 
 export type SettlementEvent =
@@ -107,12 +108,12 @@ export interface ArkProvider {
     submitTreeNonces(
         settlementID: string,
         pubkey: string,
-        nonces: string
+        nonces: TreeNonces
     ): Promise<void>;
     submitTreeSignatures(
         settlementID: string,
         pubkey: string,
-        signatures: string
+        signatures: TreePartialSigs
     ): Promise<void>;
     submitSignedForfeitTxs(
         signedForfeitTxs: string[],
@@ -166,13 +167,13 @@ export abstract class BaseArkProvider implements ArkProvider {
     abstract submitTreeNonces(
         settlementID: string,
         pubkey: string,
-        treeNonces: string
+        treeNonces: TreeNonces
     ): Promise<void>;
 
     abstract submitTreeSignatures(
         settlementID: string,
         pubkey: string,
-        treeSignatures: string
+        treeSignatures: TreePartialSigs
     ): Promise<void>;
 
     abstract submitSignedForfeitTxs(

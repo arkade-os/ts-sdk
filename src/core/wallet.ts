@@ -33,7 +33,6 @@ import {
 } from "../providers/base";
 import { clearInterval, setInterval } from "timers";
 import { TreeSignerSession } from "./signingSession";
-import { decodeNoncesMatrix, encodeMatrix } from "./encoding";
 import { buildForfeitTxs } from "./forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
@@ -543,17 +542,11 @@ export class Wallet implements IWallet {
         );
 
         signingSession.setKeys(event.cosignersPublicKeys.map(hex.decode));
-        const nonces = signingSession.getNonces();
-        const serializedNonces = hex.encode(
-            encodeMatrix(
-                nonces.map((row) => row.map((nonce) => nonce.pubNonce))
-            )
-        );
 
         await this.arkProvider.submitTreeNonces(
             event.id,
             hex.encode(signingSession.publicKey),
-            serializedNonces
+            signingSession.getNonces()
         );
 
         return signingSession;
@@ -567,18 +560,13 @@ export class Wallet implements IWallet {
             throw new Error("Ark provider not configured");
         }
 
-        const combinedNonces = decodeNoncesMatrix(hex.decode(event.treeNonces));
-        signingSession.setAggregatedNonces(combinedNonces);
+        signingSession.setAggregatedNonces(event.treeNonces);
         const signatures = signingSession.sign();
 
         await this.arkProvider.submitTreeSignatures(
             event.id,
             hex.encode(signingSession.publicKey),
-            hex.encode(
-                encodeMatrix(
-                    signatures.map((row) => row.map((s) => s.encode()))
-                )
-            )
+            signatures
         );
     }
 
