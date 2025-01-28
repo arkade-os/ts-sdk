@@ -131,7 +131,7 @@ export class VtxoTapscript {
 export function checkSequenceVerifyScript(
     timelock: RelativeTimelock,
     pubkey: Bytes
-) {
+): Uint8Array {
     if (pubkey.length !== 32) {
         throw new Error("Invalid pubkey length");
     }
