@@ -157,7 +157,7 @@ describe('Wallet SDK Integration Tests', () => {
     await carolWallet.sendBitcoin({
       address: daveOffchainAddress!,
       amount: sendAmount,
-    })
+    }, false)
 
     // Wait for the transaction to be processed
     await new Promise(resolve => setTimeout(resolve, 500))
