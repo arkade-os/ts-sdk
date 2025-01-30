@@ -1,22 +1,19 @@
 {
     "compilerOptions": {
         "target": "es2020",
-        "module": "commonjs",
+        "module": "esnext",
+        "moduleResolution": "node",
         "declaration": true,
         "outDir": "./dist",
         "strict": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
-        "moduleResolution": "node",
         "resolveJsonModule": true,
         "isolatedModules": true
     },
     "include": [
-        "src",
-        "test/integration.test.ts", 
-        "test/wallet.test.ts", 
-        "test/esplora.test.ts"    
+        "src"
     ],
     "exclude": [
         "node_modules",

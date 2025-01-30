@@ -2,9 +2,17 @@
   "name": "@arklabs/wallet-sdk",
   "version": "0.0.5",
   "description": "Bitcoin wallet SDK with Taproot and Ark integration",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
   "type": "module",
+  "main": "./dist/cjs/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/cjs/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
   "files": [
     "dist"
   ],
@@ -13,7 +21,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc && tsc -p tsconfig.cjs.json",
     "test": "vitest run",
     "test:unit": "vitest run --exclude test/integration.test.ts",
     "test:setup": "node test/setup.js",
