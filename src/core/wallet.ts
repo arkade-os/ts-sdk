@@ -250,7 +250,10 @@ export class Wallet implements IWallet {
         return txid;
     }
 
-    async sendOffchain(params: SendBitcoinParams): Promise<string> {
+    async sendOffchain(
+        params: SendBitcoinParams,
+        zeroFee: boolean = false
+    ): Promise<string> {
         if (
             !this.arkProvider ||
             !this.offchainAddress ||
@@ -260,10 +263,10 @@ export class Wallet implements IWallet {
         }
 
         const virtualCoins = await this.getVirtualCoins();
-        const feeRate = params.feeRate || Wallet.FEE_RATE;
 
-        // Ensure fee is an integer by rounding up
-        const estimatedFee = Math.ceil(174 * feeRate);
+        const estimatedFee = zeroFee
+            ? 0
+            : Math.ceil(174 * (params.feeRate || Wallet.FEE_RATE));
         const totalNeeded = params.amount + estimatedFee;
 
         const selected = await selectVirtualCoins(virtualCoins, totalNeeded);
