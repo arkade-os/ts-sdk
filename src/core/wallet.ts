@@ -171,7 +171,10 @@ export class Wallet implements IWallet {
         return this.arkProvider.getVirtualCoins(address.offchain);
     }
 
-    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
+    async sendBitcoin(
+        params: SendBitcoinParams,
+        zeroFee: boolean = true
+    ): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }
@@ -182,7 +185,7 @@ export class Wallet implements IWallet {
 
         // If Ark is configured and amount is suitable, send via offchain
         if (this.arkProvider && this.isOffchainSuitable(params)) {
-            return this.sendOffchain(params);
+            return this.sendOffchain(params, zeroFee);
         }
 
         // Otherwise, send via onchain
@@ -252,7 +255,7 @@ export class Wallet implements IWallet {
 
     async sendOffchain(
         params: SendBitcoinParams,
-        zeroFee: boolean = false
+        zeroFee: boolean = true
     ): Promise<string> {
         if (
             !this.arkProvider ||
