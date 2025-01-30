@@ -252,7 +252,7 @@ export class Wallet implements IWallet {
 
     async sendOffchain(
         params: SendBitcoinParams,
-        zeroFee: boolean = false
+        zeroFee: boolean = true
     ): Promise<string> {
         if (
             !this.arkProvider ||
