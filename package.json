@@ -8,9 +8,6 @@
   "files": [
     "dist"
   ],
-  "engines": {
-    "node": "23.3.0"
-  },
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
