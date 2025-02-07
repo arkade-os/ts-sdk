@@ -97,9 +97,7 @@ export interface ArkProvider {
     getVirtualCoins(address: string): Promise<VirtualCoin[]>;
     submitVirtualTx(psbtBase64: string): Promise<string>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
-    registerInputsForNextRound(
-        inputs: Input[],
-    ): Promise<{ requestId: string }>;
+    registerInputsForNextRound(inputs: Input[]): Promise<{ requestId: string }>;
     registerOutputsForNextRound(
         requestId: string,
         outputs: Output[],
@@ -156,7 +154,7 @@ export abstract class BaseArkProvider implements ArkProvider {
     ): Promise<() => void>;
 
     abstract registerInputsForNextRound(
-        inputs: Input[],
+        inputs: Input[]
     ): Promise<{ requestId: string }>;
 
     abstract registerOutputsForNextRound(

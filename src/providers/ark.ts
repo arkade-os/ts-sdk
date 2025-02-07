@@ -233,7 +233,7 @@ export class ArkProvider extends BaseArkProvider {
     }
 
     async registerInputsForNextRound(
-        inputs: Input[],
+        inputs: Input[]
     ): Promise<{ requestId: string }> {
         const url = `${this.serverUrl}/v1/round/registerInputs`;
         const vtxoInputs: ProtoTypes.Input[] = [];
@@ -298,7 +298,7 @@ export class ArkProvider extends BaseArkProvider {
                 musig2: {
                     cosignersPublicKeys,
                     signingAll,
-                }
+                },
             }),
         });
 
@@ -638,12 +638,20 @@ function decodeNoncesMatrix(matrix: Uint8Array): TreeNonces {
 
 function encodeNoncesMatrix(nonces: TreeNonces): string {
     return hex.encode(
-        encodeMatrix(nonces.map((row) => row.map((nonce) => nonce ? nonce.pubNonce : new Uint8Array())))
+        encodeMatrix(
+            nonces.map((row) =>
+                row.map((nonce) => (nonce ? nonce.pubNonce : new Uint8Array()))
+            )
+        )
     );
 }
 
 function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
     return hex.encode(
-        encodeMatrix(signatures.map((row) => row.map((s) => s ? s.encode() : new Uint8Array())))
+        encodeMatrix(
+            signatures.map((row) =>
+                row.map((s) => (s ? s.encode() : new Uint8Array()))
+            )
+        )
     );
 }

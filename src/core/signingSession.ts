@@ -44,7 +44,8 @@ export class TreeSignerSession implements SignerSession {
         const nonces: TreeNonces = [];
 
         for (const levelNonces of this.myNonces) {
-            const levelPubNonces: (Pick<musig2.Nonces, "pubNonce"> | null)[] = [];
+            const levelPubNonces: (Pick<musig2.Nonces, "pubNonce"> | null)[] =
+                [];
             for (const nonce of levelNonces) {
                 if (!nonce) {
                     levelPubNonces.push(null);
@@ -117,7 +118,7 @@ export class TreeSignerSession implements SignerSession {
     private signPartial(
         tx: Transaction,
         levelIndex: number,
-        nodeIndex: number,
+        nodeIndex: number
     ): musig2.PartialSig | null {
         if (!this.myNonces || !this.aggregateNonces) {
             throw new Error("session not properly initialized");
@@ -142,7 +143,7 @@ export class TreeSignerSession implements SignerSession {
                 finalKey,
                 this.tree,
                 this.rootSharedOutputAmount,
-                tx,
+                tx
             );
             prevoutAmounts.push(prevout.amount);
             prevoutScripts.push(prevout.script);
@@ -227,7 +228,7 @@ function getPrevOutput(
     finalKey: Uint8Array,
     vtxoTree: VtxoTree,
     sharedOutputAmount: bigint,
-    partial: Transaction,
+    partial: Transaction
 ): PrevOutput {
     // Generate P2TR script
     const pkScript = Script.encode(["OP_1", finalKey.slice(1)]);

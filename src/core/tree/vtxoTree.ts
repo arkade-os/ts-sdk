@@ -213,10 +213,8 @@ export class VtxoTree {
                 taprootTweak: tapTreeRoot,
             });
 
-
             if (
-                hex.encode(finalKey) !==
-                hex.encode(previousScriptKey.slice(2))
+                hex.encode(finalKey) !== hex.encode(previousScriptKey.slice(2))
             ) {
                 throw ErrInternalKey;
             }
@@ -323,13 +321,15 @@ const VTXO_TREE_EXPIRY_PSBT_KEY = new Uint8Array(
     "expiry".split("").map((c) => c.charCodeAt(0))
 );
 
-export function getVtxoTreeExpiry(input: { unknown?: { key: Uint8Array; value: Uint8Array }[] }): RelativeTimelock | null {
+export function getVtxoTreeExpiry(input: {
+    unknown?: { key: Uint8Array; value: Uint8Array }[];
+}): RelativeTimelock | null {
     if (!input.unknown) return null;
-    
+
     for (const u of input.unknown) {
         // Check if key contains the VTXO tree expiry key
         if (u.key.length < VTXO_TREE_EXPIRY_PSBT_KEY.length) continue;
-        
+
         let found = true;
         for (let i = 0; i < VTXO_TREE_EXPIRY_PSBT_KEY.length; i++) {
             if (u.key[i] !== VTXO_TREE_EXPIRY_PSBT_KEY[i]) {
@@ -337,7 +337,7 @@ export function getVtxoTreeExpiry(input: { unknown?: { key: Uint8Array; value: U
                 break;
             }
         }
-        
+
         if (found) {
             const value = ScriptNum(6, true).decode(u.value);
             const { blocks, seconds } = bip68.decode(Number(value));
@@ -347,13 +347,13 @@ export function getVtxoTreeExpiry(input: { unknown?: { key: Uint8Array; value: U
             };
         }
     }
-    
+
     return null;
 }
 
 function parsePrefixedCosignerKey(key: Uint8Array): boolean {
     if (key.length < COSIGNER_KEY_PREFIX.length) return false;
-    
+
     for (let i = 0; i < COSIGNER_KEY_PREFIX.length; i++) {
         if (key[i] !== COSIGNER_KEY_PREFIX[i]) return false;
     }

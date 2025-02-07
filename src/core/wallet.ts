@@ -410,15 +410,13 @@ export class Wallet implements IWallet {
 
         // register inputs
         const { requestId } =
-            await this.arkProvider!.registerInputsForNextRound(
-                params.inputs,
-            );
+            await this.arkProvider!.registerInputsForNextRound(params.inputs);
 
         // register outputs
         await this.arkProvider!.registerOutputsForNextRound(
             requestId,
             params.outputs,
-            [hex.encode(vtxoTreePublicKey)],
+            [hex.encode(vtxoTreePublicKey)]
         );
 
         // start pinging every seconds
