@@ -99,11 +99,12 @@ export interface ArkProvider {
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
     registerInputsForNextRound(
         inputs: Input[],
-        vtxoTreeSigningPublicKey: string
     ): Promise<{ requestId: string }>;
     registerOutputsForNextRound(
         requestId: string,
-        outputs: Output[]
+        outputs: Output[],
+        vtxoTreeSigningPublicKeys: string[],
+        signAll: boolean
     ): Promise<void>;
     submitTreeNonces(
         settlementID: string,
@@ -156,12 +157,13 @@ export abstract class BaseArkProvider implements ArkProvider {
 
     abstract registerInputsForNextRound(
         inputs: Input[],
-        vtxoTreeSigningPublicKey: string
     ): Promise<{ requestId: string }>;
 
     abstract registerOutputsForNextRound(
         requestId: string,
-        outputs: Output[]
+        outputs: Output[],
+        vtxoTreeSigningPublicKeys: string[],
+        signAll: boolean
     ): Promise<void>;
 
     abstract submitTreeNonces(

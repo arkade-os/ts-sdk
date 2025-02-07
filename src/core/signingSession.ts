@@ -1,5 +1,5 @@
 import * as musig2 from "../core/musig2";
-import { VtxoTree } from "./tree/vtxoTree.js";
+import { getCosignerKeys, VtxoTree } from "./tree/vtxoTree";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
@@ -7,22 +7,20 @@ import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 export const ErrMissingVtxoTree = new Error("missing vtxo tree");
 export const ErrMissingAggregateKey = new Error("missing aggregate key");
 
-export type TreeNonces = Pick<musig2.Nonces, "pubNonce">[][];
-export type TreePartialSigs = musig2.PartialSig[][];
+export type TreeNonces = (Pick<musig2.Nonces, "pubNonce"> | null)[][];
+export type TreePartialSigs = (musig2.PartialSig | null)[][];
 
 // Signer session defines the methods to participate in a cooperative signing process
 // with participants of a settlement. It holds the state of the musig2 nonces and allows to
 // create the partial signatures for each transaction in the vtxo tree
 export interface SignerSession {
     getNonces(): TreeNonces;
-    setKeys(keys: Uint8Array[]): void;
     setAggregatedNonces(nonces: TreeNonces): void;
     sign(): TreePartialSigs;
 }
 
 export class TreeSignerSession implements SignerSession {
-    private myNonces: musig2.Nonces[][] | null = null;
-    private keys: Uint8Array[] | null = null;
+    private myNonces: (musig2.Nonces | null)[][] | null = null;
     private aggregateNonces: TreeNonces | null = null;
 
     constructor(
@@ -46,19 +44,18 @@ export class TreeSignerSession implements SignerSession {
         const nonces: TreeNonces = [];
 
         for (const levelNonces of this.myNonces) {
-            const levelPubNonces: Pick<musig2.Nonces, "pubNonce">[] = [];
+            const levelPubNonces: (Pick<musig2.Nonces, "pubNonce"> | null)[] = [];
             for (const nonce of levelNonces) {
+                if (!nonce) {
+                    levelPubNonces.push(null);
+                    continue;
+                }
                 levelPubNonces.push({ pubNonce: nonce.pubNonce });
             }
             nonces.push(levelPubNonces);
         }
 
         return nonces;
-    }
-
-    setKeys(keys: Uint8Array[]) {
-        if (this.keys) throw new Error("keys already set");
-        this.keys = keys;
     }
 
     setAggregatedNonces(nonces: TreeNonces) {
@@ -68,7 +65,6 @@ export class TreeSignerSession implements SignerSession {
 
     sign(): TreePartialSigs {
         if (!this.tree) throw ErrMissingVtxoTree;
-        if (!this.keys) throw ErrMissingAggregateKey;
         if (!this.aggregateNonces) throw new Error("nonces not set");
         if (!this.myNonces) throw new Error("nonces not generated");
 
@@ -79,14 +75,18 @@ export class TreeSignerSession implements SignerSession {
             levelIndex < this.tree.levels.length;
             levelIndex++
         ) {
-            const levelSigs: musig2.PartialSig[] = [];
+            const levelSigs: (musig2.PartialSig | null)[] = [];
             const level = this.tree.levels[levelIndex];
 
             for (let nodeIndex = 0; nodeIndex < level.length; nodeIndex++) {
                 const node = level[nodeIndex];
                 const tx = Transaction.fromPSBT(base64.decode(node.tx));
                 const sig = this.signPartial(tx, levelIndex, nodeIndex);
-                levelSigs.push(sig);
+                if (sig) {
+                    levelSigs.push(sig);
+                } else {
+                    levelSigs.push(null);
+                }
             }
 
             sigs.push(levelSigs);
@@ -117,28 +117,32 @@ export class TreeSignerSession implements SignerSession {
     private signPartial(
         tx: Transaction,
         levelIndex: number,
-        nodeIndex: number
-    ): musig2.PartialSig {
-        if (!this.myNonces || !this.aggregateNonces || !this.keys) {
+        nodeIndex: number,
+    ): musig2.PartialSig | null {
+        if (!this.myNonces || !this.aggregateNonces) {
             throw new Error("session not properly initialized");
         }
 
         const myNonce = this.myNonces[levelIndex][nodeIndex];
-        const aggNonce = this.aggregateNonces[levelIndex][nodeIndex];
+        if (!myNonce) return null;
 
+        const aggNonce = this.aggregateNonces[levelIndex][nodeIndex];
+        if (!aggNonce) throw new Error("missing aggregate nonce");
         const prevoutAmounts: bigint[] = [];
         const prevoutScripts: Uint8Array[] = [];
 
-        const { finalKey } = musig2.aggregateKeys(this.keys, true, {
+        const cosigners = getCosignerKeys(tx);
+
+        const { finalKey } = musig2.aggregateKeys(cosigners, true, {
             taprootTweak: this.scriptRoot,
         });
 
         for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
             const prevout = getPrevOutput(
-                finalKey.slice(1),
+                finalKey,
                 this.tree,
                 this.rootSharedOutputAmount,
-                tx
+                tx,
             );
             prevoutAmounts.push(prevout.amount);
             prevoutScripts.push(prevout.script);
@@ -156,7 +160,7 @@ export class TreeSignerSession implements SignerSession {
             myNonce.pubNonce,
             this.secretKey,
             aggNonce.pubNonce,
-            this.keys,
+            cosigners,
             message,
             {
                 taprootTweak: this.scriptRoot,
@@ -220,13 +224,13 @@ interface PrevOutput {
 }
 
 function getPrevOutput(
-    finalAggregatedKey: Uint8Array,
+    finalKey: Uint8Array,
     vtxoTree: VtxoTree,
     sharedOutputAmount: bigint,
-    partial: Transaction
+    partial: Transaction,
 ): PrevOutput {
     // Generate P2TR script
-    const pkScript = Script.encode(["OP_1", finalAggregatedKey]);
+    const pkScript = Script.encode(["OP_1", finalKey.slice(1)]);
     // Get root node
     const rootNode = vtxoTree.levels[0][0];
     if (!rootNode) throw new Error("empty vtxo tree");

@@ -4,6 +4,8 @@ import { utils } from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import { execSync } from 'child_process'
 
+const arkdExec = process.env.ARK_ENV === 'master' ? 'docker exec -t arkd' : 'nigiri'
+
 describe('Wallet SDK Integration Tests', () => {
   // Generate random keys for all participants
   const alicePrivateKeyBytes = utils.randomPrivateKeyBytes()
@@ -31,7 +33,7 @@ describe('Wallet SDK Integration Tests', () => {
 
   beforeAll(async () => {
     // Check if there's enough offchain balance before proceeding
-    const balanceOutput = execSync('nigiri ark balance').toString()
+    const balanceOutput = execSync(`${arkdExec} ark balance`).toString()
     const balance = JSON.parse(balanceOutput)
     const offchainBalance = balance.offchain_balance.total
 
@@ -83,7 +85,7 @@ describe('Wallet SDK Integration Tests', () => {
   it('should settle a VTXO', { timeout: 60000}, async () => {
     const frankOffchainAddress = frankWallet.getAddress().offchain?.address
     const fundAmount = 1000 
-    execSync(`nigiri ark send --to ${frankOffchainAddress} --amount ${fundAmount} --password secret`)
+    execSync(`${arkdExec} ark send --to ${frankOffchainAddress} --amount ${fundAmount} --password secret`)
 
     await new Promise(resolve => setTimeout(resolve, 1000))
 
@@ -166,7 +168,7 @@ describe('Wallet SDK Integration Tests', () => {
 
     // Use a smaller amount for testing
     const fundAmount = 10000 
-    execSync(`nigiri ark send --to ${carolOffchainAddress} --amount ${fundAmount} --password secret`)
+    execSync(`${arkdExec} ark send --to ${carolOffchainAddress} --amount ${fundAmount} --password secret`)
 
     await new Promise(resolve => setTimeout(resolve, 1000))
 

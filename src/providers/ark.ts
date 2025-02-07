@@ -234,7 +234,6 @@ export class ArkProvider extends BaseArkProvider {
 
     async registerInputsForNextRound(
         inputs: Input[],
-        vtxoTreeSigningPublicKey: string
     ): Promise<{ requestId: string }> {
         const url = `${this.serverUrl}/v1/round/registerInputs`;
         const vtxoInputs: ProtoTypes.Input[] = [];
@@ -264,7 +263,6 @@ export class ArkProvider extends BaseArkProvider {
             body: JSON.stringify({
                 inputs: vtxoInputs,
                 notes: noteInputs,
-                ephemeralPubkey: vtxoTreeSigningPublicKey,
             }),
         });
 
@@ -279,7 +277,9 @@ export class ArkProvider extends BaseArkProvider {
 
     async registerOutputsForNextRound(
         requestId: string,
-        outputs: Output[]
+        outputs: Output[],
+        cosignersPublicKeys: string[],
+        signingAll = false
     ): Promise<void> {
         const url = `${this.serverUrl}/v1/round/registerOutputs`;
         const response = await fetch(url, {
@@ -295,6 +295,10 @@ export class ArkProvider extends BaseArkProvider {
                         amount: output.amount.toString(10),
                     })
                 ),
+                musig2: {
+                    cosignersPublicKeys,
+                    signingAll,
+                }
             }),
         });
 
@@ -539,11 +543,12 @@ export class ArkProvider extends BaseArkProvider {
 function encodeMatrix(matrix: Uint8Array[][]): Uint8Array {
     // Calculate total size needed:
     // 4 bytes for number of rows
-    // For each row: 4 bytes for length + sum of encoded cell lengths
+    // For each row: 4 bytes for length + sum of encoded cell lengths + isNil byte * cell count
     let totalSize = 4;
     for (const row of matrix) {
         totalSize += 4; // row length
         for (const cell of row) {
+            totalSize += 1;
             totalSize += cell.length;
         }
     }
@@ -565,6 +570,12 @@ function encodeMatrix(matrix: Uint8Array[][]): Uint8Array {
 
         // Write each cell
         for (const cell of row) {
+            const notNil = cell.length > 0;
+            view.setInt8(offset, notNil ? 1 : 0);
+            offset += 1;
+            if (!notNil) {
+                continue;
+            }
             new Uint8Array(buffer).set(cell, offset);
             offset += cell.length;
         }
@@ -599,13 +610,19 @@ function decodeMatrix(matrix: Uint8Array, cellLength: number): Uint8Array[][] {
 
         // Read each cell in the row
         for (let j = 0; j < rowLength; j++) {
-            const cell = new Uint8Array(
-                matrix.buffer,
-                matrix.byteOffset + offset,
-                cellLength
-            );
-            row.push(new Uint8Array(cell));
-            offset += cellLength;
+            const notNil = view.getUint8(offset) === 1;
+            offset += 1;
+            if (notNil) {
+                const cell = new Uint8Array(
+                    matrix.buffer,
+                    matrix.byteOffset + offset,
+                    cellLength
+                );
+                row.push(new Uint8Array(cell));
+                offset += cellLength;
+            } else {
+                row.push(new Uint8Array());
+            }
         }
 
         result.push(row);
@@ -621,12 +638,12 @@ function decodeNoncesMatrix(matrix: Uint8Array): TreeNonces {
 
 function encodeNoncesMatrix(nonces: TreeNonces): string {
     return hex.encode(
-        encodeMatrix(nonces.map((row) => row.map((nonce) => nonce.pubNonce)))
+        encodeMatrix(nonces.map((row) => row.map((nonce) => nonce ? nonce.pubNonce : new Uint8Array())))
     );
 }
 
 function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
     return hex.encode(
-        encodeMatrix(signatures.map((row) => row.map((s) => s.encode())))
+        encodeMatrix(signatures.map((row) => row.map((s) => s ? s.encode() : new Uint8Array())))
     );
 }

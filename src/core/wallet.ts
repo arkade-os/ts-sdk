@@ -412,13 +412,13 @@ export class Wallet implements IWallet {
         const { requestId } =
             await this.arkProvider!.registerInputsForNextRound(
                 params.inputs,
-                hex.encode(vtxoTreePublicKey)
             );
 
         // register outputs
         await this.arkProvider!.registerOutputsForNextRound(
             requestId,
-            params.outputs
+            params.outputs,
+            [hex.encode(vtxoTreePublicKey)],
         );
 
         // start pinging every seconds
@@ -446,7 +446,7 @@ export class Wallet implements IWallet {
         const sweepTapscript = checkSequenceVerifyScript(
             {
                 value: info.vtxoTreeExpiry || info.roundLifetime,
-                type: "seconds",
+                type: info.vtxoTreeExpiry >= 512n ? "seconds" : "blocks",
             }, // TODO: remove roundLifetime
             hex.decode(info.pubkey).slice(1)
         );
@@ -546,8 +546,6 @@ export class Wallet implements IWallet {
             sweepTapTreeRoot,
             sharedOutput.amount
         );
-
-        signingSession.setKeys(event.cosignersPublicKeys.map(hex.decode));
 
         await this.arkProvider.submitTreeNonces(
             event.id,
