@@ -112,30 +112,20 @@ export class ArkProvider extends BaseArkProvider {
         }
         const data = await response.json();
 
-        // Convert from server format to our internal VTXO format
-        return [...(data.spendableVtxos || []), ...(data.spentVtxos || [])].map(
-            (vtxo) => ({
-                txid: vtxo.outpoint.txid,
-                vout: vtxo.outpoint.vout,
-                value: Number(vtxo.amount),
-                status: {
-                    confirmed: !!vtxo.roundTxid,
-                },
-                virtualStatus: {
-                    state: vtxo.spent
-                        ? "spent"
-                        : vtxo.swept
-                          ? "swept"
-                          : vtxo.isPending
-                            ? "pending"
-                            : "settled",
-                    batchTxID: vtxo.roundTxid,
-                    batchExpiry: vtxo.expireAt
-                        ? Number(vtxo.expireAt)
-                        : undefined,
-                },
-            })
-        );
+        // Convert from server format to our internal VTXO format and only return spendable coins (settled or pending)
+        return [...(data.spendableVtxos || [])].map((vtxo) => ({
+            txid: vtxo.outpoint.txid,
+            vout: vtxo.outpoint.vout,
+            value: Number(vtxo.amount),
+            status: {
+                confirmed: !!vtxo.roundTxid,
+            },
+            virtualStatus: {
+                state: vtxo.isPending ? "pending" : "settled",
+                batchTxID: vtxo.roundTxid,
+                batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
+            },
+        }));
     }
 
     async submitVirtualTx(psbtBase64: string): Promise<string> {
@@ -168,7 +158,8 @@ export class ArkProvider extends BaseArkProvider {
         }
 
         const data = await response.json();
-        return data.txid;
+        // Handle both current and future response formats
+        return data.txid || data.signedRedeemTx;
     }
 
     async subscribeToEvents(

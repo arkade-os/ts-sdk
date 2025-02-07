@@ -103,10 +103,11 @@ export interface Wallet {
     getBalance(): Promise<WalletBalance>;
     getCoins(): Promise<Coin[]>;
     getVirtualCoins(): Promise<VirtualCoin[]>;
-    sendBitcoin(params: SendBitcoinParams): Promise<string>;
+    sendBitcoin(params: SendBitcoinParams, zeroFee?: boolean): Promise<string>;
     sendOnchain(params: SendBitcoinParams): Promise<string>;
-    sendOffchain(params: SendBitcoinParams): Promise<string>;
     settle(params: SettleParams): Promise<string>;
+    // TODO: remove zeroFee with transaction v3
+    sendOffchain(params: SendBitcoinParams, zeroFee?: boolean): Promise<string>;
     signMessage(message: string): Promise<string>;
     verifyMessage(
         message: string,
