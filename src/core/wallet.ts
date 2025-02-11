@@ -27,6 +27,7 @@ import { secp256k1 } from "@noble/curves/secp256k1";
 import {
     ArkInfo,
     FinalizationEvent,
+    SettlementEvent,
     SettlementEventType,
     SigningNoncesGeneratedEvent,
     SigningStartEvent,
@@ -399,7 +400,10 @@ export class Wallet implements IWallet {
         return this.arkProvider.submitVirtualTx(base64.encode(psbt));
     }
 
-    async settle(params: SettleParams): Promise<string> {
+    async settle(
+        params: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string> {
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
         }
@@ -452,6 +456,9 @@ export class Wallet implements IWallet {
         const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
 
         for await (const event of settlementStream) {
+            if (eventCallback) {
+                eventCallback(event);
+            }
             switch (event.type) {
                 // the settlement failed
                 case SettlementEventType.Failed:

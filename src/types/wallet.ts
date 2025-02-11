@@ -1,4 +1,4 @@
-import { Output, VtxoInput } from "../providers/base";
+import { Output, SettlementEvent, VtxoInput } from "../providers/base";
 import type { NetworkName } from "./networks";
 
 export interface Identity {
@@ -105,7 +105,10 @@ export interface Wallet {
     getVirtualCoins(): Promise<VirtualCoin[]>;
     sendBitcoin(params: SendBitcoinParams, zeroFee?: boolean): Promise<string>;
     sendOnchain(params: SendBitcoinParams): Promise<string>;
-    settle(params: SettleParams): Promise<string>;
+    settle(
+        params: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string>;
     // TODO: remove zeroFee with transaction v3
     sendOffchain(params: SendBitcoinParams, zeroFee?: boolean): Promise<string>;
     signMessage(message: string): Promise<string>;
