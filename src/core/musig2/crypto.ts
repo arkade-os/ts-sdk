@@ -1,3 +1,6 @@
+// original source:
+// https://github.com/reardencode/musig-js/blob/master/base_crypto.ts
+
 // BigInt / Uint8Array versions of Crypto functions that do not require point
 // math. If your JS interpreter has BigInt, you can use all of these. If not,
 // you'll need to either shim it in or override more of these functions.
