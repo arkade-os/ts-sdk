@@ -648,7 +648,7 @@ export class Wallet implements IWallet {
             );
 
             const fees = TxWeightEstimator.create()
-                .addP2PKHInput() // connector
+                .addKeySpendInput() // connector
                 .addTapscriptInput(
                     64 * 2, // TODO: handle conditional script
                     forfeitTapLeafScript[1].length,

@@ -40,6 +40,14 @@ export class TxWeightEstimator {
         return new TxWeightEstimator(false, 0, 0, 0, 0, 0);
     }
 
+    addKeySpendInput(isDefault: boolean = true): TxWeightEstimator {
+        this.inputCount++;
+        this.inputWitnessSize += 64 + 1 + (isDefault ? 0 : 1);
+        this.inputSize += TxWeightEstimator.INPUT_SIZE;
+        this.hasWitness = true;
+        return this;
+    }
+
     addP2PKHInput(): TxWeightEstimator {
         this.inputCount++;
         this.inputWitnessSize++;
