@@ -34,8 +34,10 @@ import {
 } from "../providers/base";
 import { clearInterval, setInterval } from "timers";
 import { TreeSignerSession } from "./signingSession";
-import { buildForfeitTxs } from "./forfeit";
+import { buildForfeitTx } from "./forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
+import { validateVtxoTree } from "./tree/validation";
+import { TransactionOutput } from "@scure/btc-signer/psbt";
 
 export class Wallet implements IWallet {
     private identity: Identity;
@@ -534,7 +536,11 @@ export class Wallet implements IWallet {
         }
 
         // validate the unsigned vtxo tree
-        vtxoTree.validate(event.unsignedSettlementTx, sweepTapTreeRoot);
+        validateVtxoTree(
+            event.unsignedSettlementTx,
+            vtxoTree,
+            sweepTapTreeRoot
+        );
 
         // TODO check if our registered outputs are in the vtxo tree
 
@@ -588,9 +594,8 @@ export class Wallet implements IWallet {
             throw new Error("Ark provider not configured");
         }
 
-        const connectors = event.connectors.map((connector) =>
-            btc.Transaction.fromPSBT(base64.decode(connector))
-        );
+        // validate the connectors vtxo tree
+        event.connectors.validate();
 
         const forfeitAddress = btc
             .Address(this.network)
@@ -658,37 +663,62 @@ export class Wallet implements IWallet {
                 .vsize()
                 .fee(event.minRelayFeeRate);
 
-            for (const connectorTx of connectors) {
-                const forfeitTxs = buildForfeitTxs({
-                    connectorTx,
-                    connectorAmount: infos.dust,
-                    feeAmount: fees,
-                    serverScript,
-                    vtxoAmount: BigInt(vtxo.value),
-                    vtxoInput: input.outpoint,
-                    vtxoScript: ArkAddress.fromTapscripts(
-                        hex.decode(infos.pubkey),
-                        input.tapscripts,
-                        this.network
-                    ).script,
-                });
+            const connectorsLeaves = event.connectors.leaves();
+            const connectorOutpoint = event.connectorsIndex.get(
+                `${vtxo.txid}:${vtxo.vout}`
+            );
+            if (!connectorOutpoint) {
+                throw new Error("Connector outpoint not found");
+            }
 
-                for (const forfeitTx of forfeitTxs) {
-                    // add the tapscript
-                    forfeitTx.updateInput(1, {
-                        tapLeafScript: [forfeitTapLeafScript],
-                    });
-
-                    forfeitTx.signIdx(
-                        this.identity.privateKey(),
-                        1,
-                        undefined,
-                        Buffer.alloc(32)
+            let connectorOutput: TransactionOutput | undefined;
+            for (const leaf of connectorsLeaves) {
+                if (leaf.txid === connectorOutpoint.txid) {
+                    const connectorTx = btc.Transaction.fromPSBT(
+                        base64.decode(leaf.tx)
                     );
-
-                    signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
+                    connectorOutput = connectorTx.getOutput(
+                        connectorOutpoint.vout
+                    );
+                    break;
                 }
             }
+            if (
+                !connectorOutput ||
+                !connectorOutput.amount ||
+                !connectorOutput.script
+            ) {
+                throw new Error("Connector output not found");
+            }
+
+            const forfeitTx = buildForfeitTx({
+                connectorInput: connectorOutpoint,
+                connectorAmount: connectorOutput.amount,
+                feeAmount: fees,
+                serverScript,
+                connectorScript: connectorOutput.script,
+                vtxoAmount: BigInt(vtxo.value),
+                vtxoInput: input.outpoint,
+                vtxoScript: ArkAddress.fromTapscripts(
+                    hex.decode(infos.pubkey),
+                    input.tapscripts,
+                    this.network
+                ).script,
+            });
+
+            // add the tapscript
+            forfeitTx.updateInput(1, {
+                tapLeafScript: [forfeitTapLeafScript],
+            });
+
+            forfeitTx.signIdx(
+                this.identity.privateKey(),
+                1,
+                undefined,
+                Buffer.alloc(32)
+            );
+
+            signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
         }
 
         await this.arkProvider.submitSignedForfeitTxs(signedForfeits);

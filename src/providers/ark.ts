@@ -6,8 +6,8 @@ import {
     SettlementEvent,
     ArkInfo,
 } from "./base";
-import type { VirtualCoin } from "../types/wallet";
-import { VtxoTree } from "../core/tree/vtxoTree";
+import type { Outpoint, VirtualCoin } from "../types/wallet";
+import { TxTree } from "../core/tree/vtxoTree";
 import { TreeNonces, TreePartialSigs } from "../core/signingSession";
 import { hex } from "@scure/base";
 
@@ -42,11 +42,17 @@ namespace ProtoTypes {
         reason: string;
     }
 
-    interface RoundFinalizationEvent {
+    export interface RoundFinalizationEvent {
         id: string;
         roundTx: string;
         vtxoTree: Tree;
-        connectors: string[];
+        connectors: Tree;
+        connectorsIndex: {
+            [key: string]: {
+                txid: string;
+                vout: number;
+            };
+        };
         minRelayFeeRate: string;
     }
 
@@ -452,7 +458,17 @@ export class ArkProvider extends BaseArkProvider {
         }
     }
 
-    private toVtxoTree(t: ProtoTypes.Tree): VtxoTree {
+    private toConnectorsIndex(
+        connectorsIndex: ProtoTypes.RoundFinalizationEvent["connectorsIndex"]
+    ): Map<string, Outpoint> {
+        return new Map(
+            Object.entries(connectorsIndex).map(([key, value]) => [
+                key,
+                { txid: value.txid, vout: value.vout },
+            ])
+        );
+    }
+    private toVtxoTree(t: ProtoTypes.Tree): TxTree {
         // collect the parent txids to determine later if a node is a leaf
         const parentTxids = new Set<string>();
         t.levels.forEach((level) =>
@@ -463,7 +479,7 @@ export class ArkProvider extends BaseArkProvider {
             })
         );
 
-        return new VtxoTree(
+        return new TxTree(
             t.levels.map((level) =>
                 level.nodes.map((node) => ({
                     txid: node.txid,
@@ -485,7 +501,10 @@ export class ArkProvider extends BaseArkProvider {
                 id: data.roundFinalization.id,
                 roundTx: data.roundFinalization.roundTx,
                 vtxoTree: this.toVtxoTree(data.roundFinalization.vtxoTree),
-                connectors: data.roundFinalization.connectors,
+                connectors: this.toVtxoTree(data.roundFinalization.connectors),
+                connectorsIndex: this.toConnectorsIndex(
+                    data.roundFinalization.connectorsIndex
+                ),
                 // divide by 1000 to convert to sat/vbyte
                 minRelayFeeRate:
                     BigInt(data.roundFinalization.minRelayFeeRate) /

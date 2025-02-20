@@ -1,7 +1,7 @@
 import type { Coin, Outpoint, VirtualCoin } from "../types/wallet";
 import type { UTXO, VTXO } from "../types/internal";
 import type { ArkEvent } from "./ark";
-import { VtxoTree } from "../core/tree/vtxoTree";
+import { TxTree } from "../core/tree/vtxoTree";
 import { TreeNonces, TreePartialSigs } from "../core/signingSession";
 
 export interface OnchainProvider {
@@ -36,9 +36,10 @@ export type FinalizationEvent = {
     type: SettlementEventType.Finalization;
     id: string;
     roundTx: string;
-    vtxoTree: VtxoTree;
-    connectors: string[];
+    vtxoTree: TxTree;
+    connectors: TxTree;
     minRelayFeeRate: bigint; // Using bigint for int64
+    connectorsIndex: Map<string, Outpoint>; // `vtxoTxid:vtxoIndex` -> connectorOutpoint
 };
 
 export type FinalizedEvent = {
@@ -57,7 +58,7 @@ export type SigningStartEvent = {
     type: SettlementEventType.SigningStart;
     id: string;
     cosignersPublicKeys: string[];
-    unsignedVtxoTree: VtxoTree;
+    unsignedVtxoTree: TxTree;
     unsignedSettlementTx: string;
 };
 

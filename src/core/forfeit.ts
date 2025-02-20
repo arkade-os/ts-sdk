@@ -1,115 +1,65 @@
-import { hex } from "@scure/base";
 import { SigHash, Transaction } from "@scure/btc-signer";
-import { sha256x2 } from "@scure/btc-signer/utils";
 import { Outpoint } from "../types/wallet";
 
-type WitnessUtxo = {
-    script: Uint8Array;
-    amount: bigint;
-};
-
 interface ForfeitTxParams {
-    connectorTx: Transaction;
+    connectorInput: Outpoint;
     vtxoInput: Outpoint;
     vtxoAmount: bigint;
     connectorAmount: bigint;
     feeAmount: bigint;
     vtxoScript: Uint8Array;
+    connectorScript: Uint8Array;
     serverScript: Uint8Array;
     txLocktime?: number;
 }
 
-export function buildForfeitTxs({
-    connectorTx,
+export function buildForfeitTx({
+    connectorInput,
     vtxoInput,
     vtxoAmount,
     connectorAmount,
     feeAmount,
     vtxoScript,
+    connectorScript,
     serverScript,
     txLocktime,
-}: ForfeitTxParams): Transaction[] {
-    const [connectors, prevouts] = getConnectorInputs(
-        connectorTx,
-        connectorAmount
-    );
-    const forfeitTxs: Transaction[] = [];
+}: ForfeitTxParams): Transaction {
+    const tx = new Transaction({
+        version: 2,
+        lockTime: txLocktime,
+    });
 
-    for (let i = 0; i < connectors.length; i++) {
-        const connectorInput = connectors[i];
-        const connectorPrevout = prevouts[i];
+    // Add connector input
+    tx.addInput({
+        txid: connectorInput.txid,
+        index: connectorInput.vout,
+        witnessUtxo: {
+            script: connectorScript,
+            amount: connectorAmount,
+        },
+        sequence: 0xffffffff,
+    });
 
-        // Create new transaction
-        const tx = new Transaction({
-            version: 2,
-            lockTime: txLocktime,
-        });
+    // Add VTXO input
+    tx.addInput({
+        txid: vtxoInput.txid,
+        index: vtxoInput.vout,
+        witnessUtxo: {
+            script: vtxoScript,
+            amount: vtxoAmount,
+        },
+        sequence: txLocktime ? 0xfffffffe : 0xffffffff, // MAX_SEQUENCE - 1 if locktime is set
+        sighashType: SigHash.DEFAULT,
+    });
 
-        // Add connector input
-        tx.addInput({
-            txid: connectorInput.txid,
-            index: connectorInput.vout,
-            witnessUtxo: connectorPrevout,
-            sequence: 0xffffffff, // MAX_SEQUENCE
-        });
+    const amount =
+        BigInt(vtxoAmount) + BigInt(connectorAmount) - BigInt(feeAmount);
 
-        // Add VTXO input
-        tx.addInput({
-            txid: vtxoInput.txid,
-            index: vtxoInput.vout,
-            witnessUtxo: {
-                script: vtxoScript,
-                amount: vtxoAmount,
-            },
-            sequence: txLocktime ? 0xfffffffe : 0xffffffff, // MAX_SEQUENCE - 1 if locktime is set
-            sighashType: SigHash.DEFAULT,
-        });
+    // Add main output to server
+    tx.addOutput({
+        script: serverScript,
+        amount,
+    });
 
-        const amount =
-            BigInt(vtxoAmount) + BigInt(connectorAmount) - BigInt(feeAmount);
-
-        // Add main output to server
-        tx.addOutput({
-            script: serverScript,
-            amount,
-        });
-
-        forfeitTxs.push(tx);
-    }
-
-    return forfeitTxs;
-}
-
-// extract outpoints and witness utxos from a connector transaction
-function getConnectorInputs(
-    tx: Transaction,
-    connectorAmount: bigint
-): [Outpoint[], WitnessUtxo[]] {
-    const outpoints: Outpoint[] = [];
-    const witnessUtxos: WitnessUtxo[] = [];
-    const txid = hex.encode(sha256x2(tx.toBytes(true)).reverse());
-
-    for (let vout = 0; vout < tx.outputsLength; vout++) {
-        const output = tx.getOutput(vout);
-        if (!output.amount) {
-            continue;
-        }
-        if (BigInt(output.amount) === BigInt(connectorAmount)) {
-            outpoints.push({
-                txid,
-                vout,
-            });
-
-            if (!output.script) {
-                throw new Error("Output script is undefined");
-            }
-
-            witnessUtxos.push({
-                script: output.script,
-                amount: output.amount,
-            });
-        }
-    }
-
-    return [outpoints, witnessUtxos];
+    return tx;
 }

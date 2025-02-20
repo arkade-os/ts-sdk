@@ -1,5 +1,5 @@
 import * as musig2 from "../core/musig2";
-import { getCosignerKeys, VtxoTree } from "./tree/vtxoTree";
+import { getCosignerKeys, TxTree } from "./tree/vtxoTree";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
@@ -25,7 +25,7 @@ export class TreeSignerSession implements SignerSession {
 
     constructor(
         private secretKey: Uint8Array,
-        private tree: VtxoTree,
+        private tree: TxTree,
         private scriptRoot: Uint8Array,
         private rootSharedOutputAmount: bigint
     ) {}
@@ -175,7 +175,7 @@ export class TreeSignerSession implements SignerSession {
 export async function validateTreeSigs(
     finalAggregatedKey: Uint8Array,
     sharedOutputAmount: bigint,
-    vtxoTree: VtxoTree
+    vtxoTree: TxTree
 ): Promise<void> {
     // Iterate through each level of the tree
     for (const level of vtxoTree.levels) {
@@ -226,7 +226,7 @@ interface PrevOutput {
 
 function getPrevOutput(
     finalKey: Uint8Array,
-    vtxoTree: VtxoTree,
+    vtxoTree: TxTree,
     sharedOutputAmount: bigint,
     partial: Transaction
 ): PrevOutput {
