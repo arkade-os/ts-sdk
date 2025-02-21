@@ -681,8 +681,8 @@ export class Wallet implements IWallet {
                             connectorOutpoint.vout
                         );
                         break;
-                    } catch (e) {
-                        console.error(e);
+                    } catch {
+                        throw new Error("Invalid connector tx");
                     }
                 }
             }
