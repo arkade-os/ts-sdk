@@ -468,7 +468,7 @@ export class ArkProvider extends BaseArkProvider {
             ])
         );
     }
-    private toVtxoTree(t: ProtoTypes.Tree): TxTree {
+    private toTxTree(t: ProtoTypes.Tree): TxTree {
         // collect the parent txids to determine later if a node is a leaf
         const parentTxids = new Set<string>();
         t.levels.forEach((level) =>
@@ -500,8 +500,8 @@ export class ArkProvider extends BaseArkProvider {
                 type: SettlementEventType.Finalization,
                 id: data.roundFinalization.id,
                 roundTx: data.roundFinalization.roundTx,
-                vtxoTree: this.toVtxoTree(data.roundFinalization.vtxoTree),
-                connectors: this.toVtxoTree(data.roundFinalization.connectors),
+                vtxoTree: this.toTxTree(data.roundFinalization.vtxoTree),
+                connectors: this.toTxTree(data.roundFinalization.connectors),
                 connectorsIndex: this.toConnectorsIndex(
                     data.roundFinalization.connectorsIndex
                 ),
@@ -536,7 +536,7 @@ export class ArkProvider extends BaseArkProvider {
                 type: SettlementEventType.SigningStart,
                 id: data.roundSigning.id,
                 cosignersPublicKeys: data.roundSigning.cosignersPubkeys,
-                unsignedVtxoTree: this.toVtxoTree(
+                unsignedVtxoTree: this.toTxTree(
                     data.roundSigning.unsignedVtxoTree
                 ),
                 unsignedSettlementTx: data.roundSigning.unsignedRoundTx,
