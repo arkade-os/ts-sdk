@@ -1,6 +1,6 @@
 import { Wallet, InMemoryKey } from '../src'
 import { expect, describe, it, beforeAll } from 'vitest'
-import { utils } from '@scure/btc-signer'
+import { utils } from '@arklabs/btc-signer'
 import { hex } from '@scure/base'
 import { execSync } from 'child_process'
 

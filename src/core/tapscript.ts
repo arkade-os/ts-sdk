@@ -1,7 +1,7 @@
 import * as bip68 from "bip68";
-import * as btc from "@scure/btc-signer";
-import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment";
-import { Bytes } from "@scure/btc-signer/utils";
+import * as btc from "@arklabs/btc-signer";
+import { TAP_LEAF_VERSION } from "@arklabs/btc-signer/payment";
+import { Bytes } from "@arklabs/btc-signer/utils";
 
 export interface DefaultTapscriptOptions {
     pubKey: Bytes;

@@ -1,6 +1,6 @@
 import * as bip68 from "bip68";
-import { ScriptNum, Transaction } from "@scure/btc-signer";
-import { sha256x2 } from "@scure/btc-signer/utils";
+import { ScriptNum, Transaction } from "@arklabs/btc-signer";
+import { sha256x2 } from "@arklabs/btc-signer/utils";
 import { RelativeTimelock } from "../tapscript";
 import { base64, hex } from "@scure/base";
 

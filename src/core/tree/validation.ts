@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@arklabs/btc-signer";
 import { base64 } from "@scure/base";
-import { sha256x2 } from "@scure/btc-signer/utils";
+import { sha256x2 } from "@arklabs/btc-signer/utils";
 import { aggregateKeys } from "../musig2";
 import { getCosignerKeys, TreeNode, TxTree, TxTreeError } from "./vtxoTree";
 
