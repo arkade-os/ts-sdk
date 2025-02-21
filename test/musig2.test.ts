@@ -21,7 +21,6 @@ describe('musig2', () => {
       const {
         secNonce,
         secretKey,
-        pubNonce,
         publicKeys,
         message,
         options,
@@ -30,7 +29,6 @@ describe('musig2', () => {
 
       const signature = sign(
         hex.decode(secNonce),
-        hex.decode(pubNonce),
         hex.decode(secretKey),
         hex.decode(aggNonce),
         publicKeys.map(key => hex.decode(key)),

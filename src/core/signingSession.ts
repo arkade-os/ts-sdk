@@ -158,7 +158,6 @@ export class TreeSignerSession implements SignerSession {
 
         return musig2.sign(
             myNonce.secNonce,
-            myNonce.pubNonce,
             this.secretKey,
             aggNonce.pubNonce,
             cosigners,

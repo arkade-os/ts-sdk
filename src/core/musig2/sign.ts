@@ -1,17 +1,8 @@
-import { nobleCrypto } from "./crypto";
-import * as musig from "@brandonblack/musig";
-
+import * as musig from "@scure/btc-signer/musig2";
 import { bytesToNumberBE } from "@noble/curves/abstract/utils";
 import { CURVE } from "@noble/secp256k1";
-import { aggregateKeys, sortKeys } from "./keys";
+import { aggregateKeys } from "./keys";
 import { schnorr } from "@noble/curves/secp256k1";
-
-export class SignError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "SignError";
-    }
-}
 
 // Add this error type for decode failures
 export class PartialSignatureError extends Error {
@@ -76,47 +67,34 @@ export class PartialSig {
  */
 export function sign(
     secNonce: Uint8Array,
-    pubNonce: Uint8Array,
     privateKey: Uint8Array,
     combinedNonce: Uint8Array,
     publicKeys: Uint8Array[],
     message: Uint8Array,
     options?: SignOptions
 ): PartialSig {
-    const musig2 = musig.MuSigFactory(nobleCrypto);
-    musig2.addExternalNonce(pubNonce, secNonce);
+    let tweakBytes: Uint8Array | undefined;
 
-    const { preTweakedKey } = aggregateKeys(
-        options?.sortKeys ? sortKeys(publicKeys) : publicKeys,
-        true
-    );
+    if (options?.taprootTweak !== undefined) {
+        const { preTweakedKey } = aggregateKeys(
+            options?.sortKeys ? musig.sortKeys(publicKeys) : publicKeys,
+            true
+        );
 
-    if (!options?.taprootTweak) {
-        throw new SignError("Taproot tweak is required");
+        tweakBytes = schnorr.utils.taggedHash(
+            "TapTweak",
+            preTweakedKey.subarray(1),
+            options.taprootTweak
+        );
     }
 
-    if (preTweakedKey.length !== 33) {
-        throw new SignError("Pre-tweaked key is not 33 bytes");
-    }
-    const tweakBytes = schnorr.utils.taggedHash(
-        "TapTweak",
-        preTweakedKey.subarray(1),
-        options.taprootTweak
-    );
-
-    const sessionKey = musig2.startSigningSession(
+    const session = new musig.Session(
         combinedNonce,
+        options?.sortKeys ? musig.sortKeys(publicKeys) : publicKeys,
         message,
-        options?.sortKeys ? sortKeys(publicKeys) : publicKeys,
-        { tweak: tweakBytes, xOnly: true }
+        tweakBytes ? [tweakBytes] : undefined,
+        tweakBytes ? [true] : undefined
     );
-
-    const partialSig = musig2.partialSign({
-        sessionKey,
-        publicNonce: pubNonce,
-        secretKey: privateKey,
-        verify: true,
-    });
-
+    const partialSig = session.sign(secNonce, privateKey);
     return PartialSig.decode(partialSig);
 }
