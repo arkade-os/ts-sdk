@@ -674,13 +674,17 @@ export class Wallet implements IWallet {
             let connectorOutput: TransactionOutput | undefined;
             for (const leaf of connectorsLeaves) {
                 if (leaf.txid === connectorOutpoint.txid) {
-                    const connectorTx = btc.Transaction.fromPSBT(
-                        base64.decode(leaf.tx)
-                    );
-                    connectorOutput = connectorTx.getOutput(
-                        connectorOutpoint.vout
-                    );
-                    break;
+                    try {
+                        const connectorTx = btc.Transaction.fromPSBT(
+                            base64.decode(leaf.tx)
+                        );
+                        connectorOutput = connectorTx.getOutput(
+                            connectorOutpoint.vout
+                        );
+                        break;
+                    } catch (e) {
+                        console.error(e);
+                    }
                 }
             }
             if (
