@@ -36,7 +36,7 @@ import { clearInterval, setInterval } from "timers";
 import { TreeSignerSession } from "./signingSession";
 import { buildForfeitTx } from "./forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
-import { validateVtxoTree } from "./tree/validation";
+import { validateConnectorsTree, validateVtxoTree } from "./tree/validation";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
 
 export class Wallet implements IWallet {
@@ -594,8 +594,7 @@ export class Wallet implements IWallet {
             throw new Error("Ark provider not configured");
         }
 
-        // validate the connectors vtxo tree
-        event.connectors.validate();
+        validateConnectorsTree(event.roundTx, event.connectors);
 
         const forfeitAddress = btc
             .Address(this.network)

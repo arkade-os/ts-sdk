@@ -35,6 +35,40 @@ export const ErrInvalidNodeTransaction = new TxTreeError(
     "invalid node transaction"
 );
 
+const SHARED_OUTPUT_INDEX = 0;
+const CONNECTORS_OUTPUT_INDEX = 1;
+
+export function validateConnectorsTree(
+    settlementTxB64: string,
+    connectorsTree: TxTree
+): void {
+    connectorsTree.validate();
+
+    const rootNode = connectorsTree.root();
+    if (!rootNode) throw ErrEmptyTree;
+
+    const rootTx = Transaction.fromPSBT(base64.decode(rootNode.tx));
+    if (rootTx.inputsLength !== 1) throw ErrNumberOfInputs;
+
+    const rootInput = rootTx.getInput(0);
+
+    const settlementTx = Transaction.fromPSBT(base64.decode(settlementTxB64));
+    if (settlementTx.outputsLength <= CONNECTORS_OUTPUT_INDEX)
+        throw ErrInvalidSettlementTxOutputs;
+
+    const expectedRootTxid = hex.encode(
+        sha256x2(settlementTx.toBytes(true)).reverse()
+    );
+
+    if (!rootInput.txid) throw ErrWrongSettlementTxid;
+
+    if (hex.encode(rootInput.txid) !== expectedRootTxid)
+        throw ErrWrongSettlementTxid;
+
+    if (rootInput.index !== CONNECTORS_OUTPUT_INDEX)
+        throw ErrWrongSettlementTxid;
+}
+
 export function validateVtxoTree(
     settlementTx: string,
     vtxoTree: TxTree,
@@ -52,13 +86,11 @@ export function validateVtxoTree(
         throw ErrInvalidSettlementTx;
     }
 
-    if (settlementTransaction.outputsLength <= TxTree.SHARED_OUTPUT_INDEX) {
+    if (settlementTransaction.outputsLength <= SHARED_OUTPUT_INDEX) {
         throw ErrInvalidSettlementTxOutputs;
     }
 
-    const sharedOutput = settlementTransaction.getOutput(
-        TxTree.SHARED_OUTPUT_INDEX
-    );
+    const sharedOutput = settlementTransaction.getOutput(SHARED_OUTPUT_INDEX);
     if (!sharedOutput?.amount) throw ErrInvalidSettlementTxOutputs;
     const sharedOutputAmount = sharedOutput.amount;
 
@@ -93,7 +125,7 @@ export function validateVtxoTree(
     );
     if (
         hex.encode(Buffer.from(rootInput.txid)) !== settlementTxid ||
-        rootInput.index !== TxTree.SHARED_OUTPUT_INDEX
+        rootInput.index !== SHARED_OUTPUT_INDEX
     ) {
         throw ErrWrongSettlementTxid;
     }

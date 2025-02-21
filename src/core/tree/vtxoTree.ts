@@ -25,8 +25,6 @@ export const ErrParentNotFound = new TxTreeError("parent not found");
 // TxTree is represented as a matrix of Node objects
 // the first level of the matrix is the root of the tree
 export class TxTree {
-    // SHARED_OUTPUT_INDEX is the index of the shared output in a settlement transaction
-    static SHARED_OUTPUT_INDEX = 0;
     private tree: TreeNode[][];
 
     constructor(tree: TreeNode[][]) {
