@@ -1,6 +1,6 @@
-import { promisify } from 'util'
-import { setTimeout } from 'timers'
-import { execSync, spawn } from 'child_process'
+const { promisify } = require('util')
+const { setTimeout } = require('timers')
+const { execSync, spawn } = require('child_process')
 
 const sleep = promisify(setTimeout)
 
