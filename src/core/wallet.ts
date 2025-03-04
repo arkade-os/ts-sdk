@@ -1,6 +1,6 @@
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha256";
-import * as btc from "@arklabs/btc-signer";
+import * as btc from "@scure/btc-signer";
 
 import type {
     Wallet as IWallet,
@@ -22,7 +22,7 @@ import { ArkAddress } from "../core/address";
 import { checkSequenceVerifyScript, VtxoTapscript } from "../core/tapscript";
 import { selectCoins, selectVirtualCoins } from "../utils/coinselect";
 import { getNetwork, Network, NetworkName } from "../types/networks";
-import { TAP_LEAF_VERSION, tapLeafHash } from "@arklabs/btc-signer/payment";
+import { TAP_LEAF_VERSION, tapLeafHash } from "@scure/btc-signer/payment";
 import { secp256k1 } from "@noble/curves/secp256k1";
 import {
     ArkInfo,
@@ -37,7 +37,7 @@ import { TreeSignerSession } from "./signingSession";
 import { buildForfeitTx } from "./forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "./tree/validation";
-import { TransactionOutput } from "@arklabs/btc-signer/psbt";
+import { TransactionOutput } from "@scure/btc-signer/psbt";
 
 export class Wallet implements IWallet {
     private identity: Identity;

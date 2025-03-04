@@ -1,4 +1,4 @@
-import * as musig from "@arklabs/btc-signer/musig2";
+import * as musig from "@scure/btc-signer/musig2";
 import { bytesToNumberBE } from "@noble/curves/abstract/utils";
 import { CURVE } from "@noble/secp256k1";
 import { aggregateKeys } from "./keys";

@@ -1,4 +1,4 @@
-import * as musig from "@arklabs/btc-signer/musig2";
+import * as musig from "@scure/btc-signer/musig2";
 import { schnorr } from "@noble/curves/secp256k1";
 
 interface KeyAggOptions {

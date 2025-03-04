@@ -1,6 +1,6 @@
 import { schnorr } from "@noble/curves/secp256k1";
 import { Identity } from "../types/wallet";
-import { pubSchnorr, randomPrivateKeyBytes } from "@arklabs/btc-signer/utils";
+import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
 
 // Interface for external signers

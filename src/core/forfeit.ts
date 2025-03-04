@@ -1,4 +1,4 @@
-import { SigHash, Transaction } from "@arklabs/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer";
 import { Outpoint } from "../types/wallet";
 
 interface ForfeitTxParams {

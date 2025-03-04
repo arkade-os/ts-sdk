@@ -45,11 +45,11 @@
     "precommit": "lint-staged"
   },
   "dependencies": {
-    "@arklabs/btc-signer": "1.6.0",
     "@noble/curves": "1.7.0",
     "@noble/hashes": "1.6.1",
     "@noble/secp256k1": "2.2.3",
     "@scure/base": "1.2.1",
+    "@scure/btc-signer": "1.7.0",
     "bip68": "1.0.4"
   },
   "devDependencies": {

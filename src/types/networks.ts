@@ -1,4 +1,4 @@
-import { NETWORK, TEST_NETWORK } from "@arklabs/btc-signer";
+import { NETWORK, TEST_NETWORK } from "@scure/btc-signer";
 
 export type NetworkName =
     | "bitcoin"

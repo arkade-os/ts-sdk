@@ -1,6 +1,6 @@
 import * as musig2 from "../core/musig2";
 import { getCosignerKeys, TxTree } from "./tree/vtxoTree";
-import { Script, SigHash, Transaction } from "@arklabs/btc-signer";
+import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 
