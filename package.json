@@ -26,6 +26,7 @@
     "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist",
     "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
     "test": "vitest run",
+    "test:master": "ARK_ENV=master vitest run",
     "test:unit": "vitest run --exclude test/integration.test.ts",
     "test:setup": "node test/setup.js",
     "test:setup-master": "node test/setup.js master",
