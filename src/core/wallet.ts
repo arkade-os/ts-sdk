@@ -674,9 +674,7 @@ export class Wallet implements IWallet {
                         );
                     }
 
-                    const inputTxId = Buffer.from(
-                        settlementInput.txid
-                    ).toString("hex");
+                    const inputTxId = hex.encode(settlementInput.txid);
                     if (inputTxId !== input.outpoint.txid) continue;
                     if (settlementInput.index !== input.outpoint.vout) continue;
 
