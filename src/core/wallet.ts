@@ -12,8 +12,8 @@ import type {
     VirtualCoin,
     Identity,
     SettleParams,
-    OffchainInfo,
-    ForfeitVtxoInput,
+    VtxoTaprootAddress,
+    SpendableVtxo,
 } from "../types/wallet";
 import { ESPLORA_URL, EsploraProvider } from "../providers/esplora";
 import { ArkProvider } from "../providers/ark";
@@ -46,11 +46,11 @@ export class Wallet implements IWallet {
     private arkProvider?: ArkProvider;
     private unsubscribeEvents?: () => void;
     private onchainAddress: string;
-    private offchainAddress?: OffchainInfo;
+    private offchainAddress?: VtxoTaprootAddress;
+    private boardingAddress?: VtxoTaprootAddress;
     private onchainP2TR: ReturnType<typeof btc.p2tr>;
     private offchainTapscript?: VtxoTapscript;
 
-    public boardingAddress?: string;
     public boardingTapscript?: VtxoTapscript;
 
     static DUST_AMOUNT = BigInt(546); // Bitcoin dust limit in satoshis = 546
@@ -100,7 +100,13 @@ export class Wallet implements IWallet {
                     forfeit: [hex.encode(bareVtxoTapscript.getForfeitScript())],
                 },
             };
-            this.boardingAddress = boardingTapscript.toP2TR().address;
+            this.boardingAddress = {
+                address: boardingTapscript.toP2TR().address!,
+                scripts: {
+                    exit: [hex.encode(boardingTapscript.getExitScript())],
+                    forfeit: [hex.encode(boardingTapscript.getForfeitScript())],
+                },
+            };
             // Save tapscripts
             this.offchainTapscript = bareVtxoTapscript;
             this.boardingTapscript = boardingTapscript;
@@ -126,6 +132,7 @@ export class Wallet implements IWallet {
                 address: this.onchainAddress,
                 ark: this.offchainAddress.address,
             });
+            addressInfo.boarding = this.boardingAddress;
         }
 
         return addressInfo;
@@ -182,7 +189,7 @@ export class Wallet implements IWallet {
         return this.onchainProvider.getCoins(address.onchain);
     }
 
-    async getForfeitVtxoInputs(): Promise<(ForfeitVtxoInput & VirtualCoin)[]> {
+    async getVtxos(): Promise<(SpendableVtxo & VirtualCoin)[]> {
         if (!this.arkProvider) {
             return [];
         }
@@ -221,6 +228,33 @@ export class Wallet implements IWallet {
         }
 
         return this.arkProvider.getVirtualCoins(address.offchain.address);
+    }
+
+    async getBoardingUtxos(): Promise<SpendableVtxo[]> {
+        if (!this.arkProvider) {
+            return [];
+        }
+
+        if (!this.boardingAddress) {
+            throw new Error("Boarding address not configured");
+        }
+
+        const boardingUtxos = await this.onchainProvider.getCoins(
+            this.boardingAddress.address
+        );
+
+        return boardingUtxos.map((coin) => ({
+            ...coin,
+            outpoint: {
+                txid: coin.txid,
+                vout: coin.vout,
+            },
+            forfeitScript: this.boardingAddress!.scripts.forfeit[0],
+            tapscripts: [
+                ...this.boardingAddress!.scripts.forfeit,
+                ...this.boardingAddress!.scripts.exit,
+            ],
+        }));
     }
 
     async sendBitcoin(
@@ -449,9 +483,10 @@ export class Wallet implements IWallet {
 
         const sweepTapscript = checkSequenceVerifyScript(
             {
+                // TODO: remove roundLifetime
                 value: info.vtxoTreeExpiry || info.roundLifetime,
                 type: info.vtxoTreeExpiry >= 512n ? "seconds" : "blocks",
-            }, // TODO: remove roundLifetime
+            },
             hex.decode(info.pubkey).slice(1)
         );
 
@@ -594,59 +629,82 @@ export class Wallet implements IWallet {
             throw new Error("Ark provider not configured");
         }
 
-        validateConnectorsTree(event.roundTx, event.connectors);
-
+        // parse the server forfeit address
+        // server is expecting funds to be sent to this address
         const forfeitAddress = btc
             .Address(this.network)
             .decode(infos.forfeitAddress);
         const serverScript = btc.OutScript.encode(forfeitAddress);
 
-        const vtxos = await this.getVirtualCoins();
-
+        // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        for (const input of inputs) {
-            if (typeof input === "string") continue; // exclude notes
+        const vtxos = await this.getVirtualCoins();
+        const settlementPsbt = btc.Transaction.fromPSBT(
+            base64.decode(event.roundTx)
+        );
+        let hasBoardingUtxos = false;
+        let connectorsTreeValid = false;
 
+        for (const input of inputs) {
+            if (typeof input === "string") continue; // skip notes
+
+            // compute the tapLeafScript from the forfeit script
+            const forfeitTapLeafScript = getTapLeafScript(input, this.network);
+
+            // check if the input is an offchain "virtual" coin
             const vtxo = vtxos.find(
                 (vtxo) =>
                     vtxo.txid === input.outpoint.txid &&
                     vtxo.vout === input.outpoint.vout
             );
+            // boarding utxo, we need to sign the settlement tx
             if (!vtxo) {
-                // TODO: handle boarding utxos, sign the settlement tx
-                throw new Error("Vtxo not found");
+                hasBoardingUtxos = true;
+
+                for (let i = 0; i < settlementPsbt.inputsLength; i++) {
+                    const settlementInput = settlementPsbt.getInput(i);
+
+                    if (
+                        !settlementInput.txid ||
+                        settlementInput.index === undefined
+                    ) {
+                        throw new Error(
+                            "Invalid settlement psbt, cannot sign boarding utxo"
+                        );
+                    }
+
+                    const inputTxId = Buffer.from(
+                        settlementInput.txid
+                    ).toString("hex");
+                    if (inputTxId !== input.outpoint.txid) continue;
+                    if (settlementInput.index !== input.outpoint.vout) continue;
+
+                    // input found in the settlement tx, sign it
+                    settlementPsbt.updateInput(i, {
+                        tapLeafScript: [forfeitTapLeafScript],
+                    });
+                    if (
+                        !settlementPsbt.signIdx(
+                            this.identity.privateKey(),
+                            i,
+                            undefined,
+                            Buffer.alloc(32)
+                        )
+                    ) {
+                        throw new Error("Failed to sign settlement tx");
+                    }
+                }
+
+                continue;
             }
 
-            const forfeitLeafHash = tapLeafHash(
-                hex.decode(input.forfeitScript),
-                TAP_LEAF_VERSION
-            );
-            const taprootTree = btc.taprootListToTree(
-                input.tapscripts.map((script) => ({
-                    script: hex.decode(script),
-                }))
-            );
-            const p2tr = btc.p2tr(
-                btc.TAPROOT_UNSPENDABLE_KEY,
-                taprootTree,
-                this.network,
-                true
-            );
-
-            if (!p2tr.leaves || !p2tr.tapLeafScript)
-                throw new Error("invalid vtxo tapscripts");
-
-            const tapLeafScriptIndex = p2tr.leaves?.findIndex(
-                (leaf) => hex.encode(leaf.hash) === hex.encode(forfeitLeafHash)
-            );
-            if (tapLeafScriptIndex === -1 || tapLeafScriptIndex === undefined) {
-                throw new Error(
-                    "forfeit tapscript not found in vtxo tapscripts"
-                );
+            if (!connectorsTreeValid) {
+                // validate that the connectors tree is valid and contains our expected connectors
+                validateConnectorsTree(event.roundTx, event.connectors);
+                connectorsTreeValid = true;
             }
 
-            const forfeitTapLeafScript = p2tr.tapLeafScript[tapLeafScriptIndex];
             const forfeitControlBlock = btc.TaprootControlBlock.encode(
                 forfeitTapLeafScript[0]
             );
@@ -724,7 +782,12 @@ export class Wallet implements IWallet {
             signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
         }
 
-        await this.arkProvider.submitSignedForfeitTxs(signedForfeits);
+        await this.arkProvider.submitSignedForfeitTxs(
+            signedForfeits,
+            hasBoardingUtxos
+                ? base64.encode(settlementPsbt.toPSBT())
+                : undefined
+        );
     }
 
     async signMessage(message: string): Promise<string> {
@@ -756,4 +819,33 @@ export class Wallet implements IWallet {
             this.unsubscribeEvents();
         }
     }
+}
+
+function getTapLeafScript(input: SpendableVtxo, network: Network) {
+    const forfeitLeafHash = tapLeafHash(
+        hex.decode(input.forfeitScript),
+        TAP_LEAF_VERSION
+    );
+    const taprootTree = btc.taprootListToTree(
+        input.tapscripts.map((script) => ({
+            script: hex.decode(script),
+        }))
+    );
+    const p2tr = btc.p2tr(
+        btc.TAPROOT_UNSPENDABLE_KEY,
+        taprootTree,
+        network,
+        true
+    );
+    if (!p2tr.leaves || !p2tr.tapLeafScript)
+        throw new Error("invalid vtxo tapscripts");
+
+    const tapLeafScriptIndex = p2tr.leaves?.findIndex(
+        (leaf) => hex.encode(leaf.hash) === hex.encode(forfeitLeafHash)
+    );
+    if (tapLeafScriptIndex === -1 || tapLeafScriptIndex === undefined) {
+        throw new Error("forfeit tapscript not found in vtxo tapscripts");
+    }
+
+    return p2tr.tapLeafScript[tapLeafScriptIndex];
 }

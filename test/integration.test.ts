@@ -82,15 +82,39 @@ describe('Wallet SDK Integration Tests', () => {
     })
   })
 
+  it('should settle a boarding UTXO', { timeout: 60000}, async () => {
+    const frankAddresses = frankWallet.getAddress()
+    const boardingAddress = frankAddresses.boarding
+    const offchainAddress = frankAddresses.offchain
+
+    // faucet 
+    execSync(`nigiri faucet ${boardingAddress?.address} 0.001`) // 
+
+    await new Promise(resolve => setTimeout(resolve, 5000))
+
+    const boardingInputs = await frankWallet.getBoardingUtxos()
+    expect(boardingInputs.length).toBeGreaterThanOrEqual(1)
+    
+
+    const settleTxid = await frankWallet.settle({
+      inputs: boardingInputs,
+      outputs: [{
+        address: offchainAddress!.address,
+        amount: BigInt(100000)
+      }]
+    })
+
+    expect(settleTxid).toBeDefined()    
+  })
+
   it('should settle a VTXO', { timeout: 60000}, async () => {
     const frankOffchainAddress = frankWallet.getAddress().offchain?.address
-    const fundAmount = 1000 
-    execSync(`${arkdExec} ark send --to ${frankOffchainAddress} --amount ${fundAmount} --password secret`)
+    execSync(`${arkdExec} ark send --to ${frankOffchainAddress} --amount 1000 --password secret`)
 
     await new Promise(resolve => setTimeout(resolve, 1000))
 
-    const virtualCoins = await frankWallet.getForfeitVtxoInputs()
-    expect(virtualCoins).toHaveLength(1)
+    const virtualCoins = await frankWallet.getVtxos()
+    expect(virtualCoins.length).toBeGreaterThanOrEqual(1)
     const vtxo = virtualCoins[0]
     expect(vtxo.outpoint.txid).toBeDefined()
 
@@ -98,12 +122,10 @@ describe('Wallet SDK Integration Tests', () => {
       inputs: [vtxo],
       outputs: [{
         address: frankOffchainAddress!,
-        amount: BigInt(fundAmount)
+        amount: BigInt(vtxo.value)
       }]
     })
 
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
     expect(settleTxid).toBeDefined()
   })
 
