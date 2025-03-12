@@ -676,7 +676,7 @@ export class Wallet implements IWallet {
                         settlementInput.index === undefined
                     ) {
                         throw new Error(
-                            "Invalid settlement psbt, cannot sign boarding utxo"
+                            "The server returned incomplete data. No settlement input found in the PSBT"
                         );
                     }
 
