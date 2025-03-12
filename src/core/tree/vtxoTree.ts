@@ -196,7 +196,7 @@ export function getCosignerKeys(tx: Transaction): Uint8Array[] {
 
     for (const unknown of input.unknown) {
         const ok = parsePrefixedCosignerKey(
-            Buffer.concat([new Uint8Array([unknown[0].type]), unknown[0].key])
+            new Uint8Array([unknown[0].type, ...unknown[0].key])
         );
 
         if (!ok) continue;

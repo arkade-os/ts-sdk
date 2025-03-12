@@ -46,6 +46,33 @@ describe('Wallet SDK Integration Tests', () => {
     }
   })
 
+  it('should settle a boarding UTXO', { timeout: 60000}, async () => {
+    const alice = createTestWallet()
+
+    const aliceAddresses = alice.wallet.getAddress()
+    const boardingAddress = aliceAddresses.boarding
+    const offchainAddress = aliceAddresses.offchain
+
+    // faucet 
+    execSync(`nigiri faucet ${boardingAddress?.address} 0.001`) // 
+
+    await new Promise(resolve => setTimeout(resolve, 5000))
+
+    const boardingInputs = await alice.wallet.getBoardingUtxos()
+    expect(boardingInputs.length).toBeGreaterThanOrEqual(1)
+    
+
+    const settleTxid = await alice.wallet.settle({
+      inputs: boardingInputs,
+      outputs: [{
+        address: offchainAddress!.address,
+        amount: BigInt(100000)
+      }]
+    })
+
+    expect(settleTxid).toBeDefined()    
+  })
+
   it('should settle a VTXO', { timeout: 60000}, async () => {
     // Create fresh wallet instance for this test
     const alice = createTestWallet()
@@ -57,7 +84,7 @@ describe('Wallet SDK Integration Tests', () => {
 
     await new Promise(resolve => setTimeout(resolve, 1000))
 
-    const virtualCoins = await alice.wallet.getForfeitVtxoInputs()
+    const virtualCoins = await alice.wallet.getVtxos()
     expect(virtualCoins).toHaveLength(1)
     const vtxo = virtualCoins[0]
     expect(vtxo.outpoint.txid).toBeDefined()
@@ -70,8 +97,6 @@ describe('Wallet SDK Integration Tests', () => {
       }]
     })
 
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
     expect(settleTxid).toBeDefined()
   })
 
@@ -285,8 +310,8 @@ describe('Wallet SDK Integration Tests', () => {
     expect(bobsReceiveTx.key.roundTxid).toBeDefined()
 
     // Bob settles the received VTXO
-    const bobInputs = await bob.wallet.getForfeitVtxoInputs()
-    const settleTxid = await bob.wallet.settle({
+    const bobInputs = await bob.wallet.getVtxos()
+    await bob.wallet.settle({
       inputs: bobInputs,
       outputs: [{
         address: bobOffchainAddress!,

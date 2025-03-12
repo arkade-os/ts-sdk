@@ -42,16 +42,19 @@ export interface Recipient {
     amount: number;
 }
 
-export type ForfeitVtxoInput = VtxoInput & {
+// SpendableVtxo embed the forfeit script to use as spending path for the boarding utxo or vtxo
+export type SpendableVtxo = VtxoInput & {
     forfeitScript: string;
 };
 
 export interface SettleParams {
-    inputs: (string | ForfeitVtxoInput)[];
+    inputs: (string | SpendableVtxo)[];
     outputs: Output[];
 }
 
-export interface OffchainInfo {
+// VtxoTaprootAddress embed the tapscripts composing the address
+// it admits the internal key is the unspendable x-only public key
+export interface VtxoTaprootAddress {
     address: string;
     scripts: {
         exit: string[];
@@ -61,8 +64,8 @@ export interface OffchainInfo {
 
 export interface AddressInfo {
     onchain: string;
-    offchain?: OffchainInfo;
-    boarding?: string;
+    offchain?: VtxoTaprootAddress;
+    boarding?: VtxoTaprootAddress;
     bip21: string;
 }
 

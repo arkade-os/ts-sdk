@@ -124,7 +124,7 @@ export function validateVtxoTree(
         sha256x2(settlementTransaction.toBytes(true)).reverse()
     );
     if (
-        hex.encode(Buffer.from(rootInput.txid)) !== settlementTxid ||
+        hex.encode(rootInput.txid) !== settlementTxid ||
         rootInput.index !== SHARED_OUTPUT_INDEX
     ) {
         throw ErrWrongSettlementTxid;
