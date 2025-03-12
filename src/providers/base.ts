@@ -208,27 +208,6 @@ export abstract class BaseArkProvider implements ArkProvider {
 
     abstract getEventStream(): AsyncIterableIterator<SettlementEvent>;
 
-    protected convertVTXOsToVirtualCoin(vtxos: VTXO[]): VirtualCoin[] {
-        return vtxos.map((vtxo) => ({
-            txid: vtxo.txid,
-            vout: vtxo.vout,
-            value: vtxo.value,
-            status: {
-                confirmed:
-                    vtxo.status.state === "settled" &&
-                    !!vtxo.status.batchOutpoint,
-                block_height: undefined,
-                block_hash: undefined,
-                block_time: undefined,
-            },
-            virtualStatus: {
-                state: vtxo.status.state,
-                batchTxID: vtxo.status.batchOutpoint?.txid,
-                batchExpiry: vtxo.status.batchExpiry,
-            },
-        }));
-    }
-
     get url(): string {
         return this.serverUrl;
     }

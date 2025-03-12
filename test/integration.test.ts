@@ -54,7 +54,7 @@ describe('Wallet SDK Integration Tests', () => {
     const offchainAddress = aliceAddresses.offchain
 
     // faucet 
-    execSync(`nigiri faucet ${boardingAddress?.address} 0.001`) // 
+    execSync(`nigiri faucet ${boardingAddress?.address} 0.001`) 
 
     await new Promise(resolve => setTimeout(resolve, 5000))
 
@@ -227,9 +227,24 @@ describe('Wallet SDK Integration Tests', () => {
     expect((await alice.wallet.getVirtualCoins()).length).toBe(0)
     expect((await bob.wallet.getVirtualCoins()).length).toBe(0)
 
-    // Fund Alice's offchain wallet
-    const fundAmount = 10000
-    execSync(`${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`)
+    // Alice onboarding
+    const boardingAmount = 10000
+    const boardingAddress = alice.wallet.getAddress().boarding?.address
+    execSync(`nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`)
+
+    await new Promise(resolve => setTimeout(resolve, 5000))
+
+    // Get boarding utxos
+    const boardingInputs = await alice.wallet.getBoardingUtxos()
+    expect(boardingInputs.length).toBeGreaterThanOrEqual(1)
+
+    await alice.wallet.settle({
+      inputs: boardingInputs,
+      outputs: [{
+        address: aliceOffchainAddress!,
+        amount: BigInt(boardingAmount)
+      }]
+    })
 
     // Wait for the transaction to be processed
     await new Promise(resolve => setTimeout(resolve, 1000))
@@ -239,12 +254,12 @@ describe('Wallet SDK Integration Tests', () => {
     expect(virtualCoins).toHaveLength(1)
     const vtxo = virtualCoins[0]
     expect(vtxo.txid).toBeDefined()
-    expect(vtxo.value).toBe(fundAmount)
-    expect(vtxo.virtualStatus.state).toBe('pending')
+    expect(vtxo.value).toBe(boardingAmount)
+    expect(vtxo.virtualStatus.state).toBe('settled')
 
     // Check Alice's balance after funding
     const aliceBalanceAfterFunding = await alice.wallet.getBalance()
-    expect(aliceBalanceAfterFunding.offchain.total).toBe(fundAmount)
+    expect(aliceBalanceAfterFunding.offchain.total).toBe(boardingAmount)
 
     // Check history before sending to bob
     let aliceHistory = await alice.wallet.getTransactionHistory()
@@ -253,12 +268,9 @@ describe('Wallet SDK Integration Tests', () => {
 
     // Check funding transaction
     expect(aliceHistory[0].type).toBe(TxType.TxReceived)
-    expect(aliceHistory[0].amount).toBe(fundAmount)
-    expect(aliceHistory[0].settled).toBe(false)
-    expect(aliceHistory[0].key.redeemTxid.length).toBeGreaterThan(0)
-
-    const fundingTxId = aliceHistory[0].key.redeemTxid
-
+    expect(aliceHistory[0].amount).toBe(boardingAmount)
+    expect(aliceHistory[0].settled).toBe(true)
+    expect(aliceHistory[0].key.boardingTxid.length).toBeGreaterThan(0)
 
     // Send from Alice to Bob offchain
     const sendAmount = 5000
@@ -275,7 +287,7 @@ describe('Wallet SDK Integration Tests', () => {
     const aliceFinalBalance = await alice.wallet.getBalance()
     const bobFinalBalance = await bob.wallet.getBalance()
     expect(bobFinalBalance.offchain.total).toBe(sendAmount)
-    expect(aliceFinalBalance.offchain.total).toBe(fundAmount - sendAmount - fee)
+    expect(aliceFinalBalance.offchain.total).toBe(boardingAmount - sendAmount - fee)
 
     // Get transaction history for Alice
     aliceHistory = await alice.wallet.getTransactionHistory()
@@ -285,11 +297,10 @@ describe('Wallet SDK Integration Tests', () => {
     const [sendTx, fundingTx] = aliceHistory
 
     // Check funding transaction
-    expect(fundingTx.key.redeemTxid).toBe(fundingTxId)
     expect(fundingTx.type).toBe(TxType.TxReceived)
-    expect(fundingTx.amount).toBe(fundAmount)
+    expect(fundingTx.amount).toBe(boardingAmount)
     expect(fundingTx.settled).toBe(true)
-    expect(fundingTx.key.redeemTxid.length).toBeGreaterThan(0)
+    expect(fundingTx.key.boardingTxid.length).toBeGreaterThan(0)
     
     // Check send transaction
     expect(sendTx.type).toBe(TxType.TxSent)
@@ -307,7 +318,7 @@ describe('Wallet SDK Integration Tests', () => {
     expect(bobsReceiveTx.type).toBe(TxType.TxReceived)
     expect(bobsReceiveTx.amount).toBe(sendAmount)
     expect(bobsReceiveTx.settled).toBe(false)
-    expect(bobsReceiveTx.key.roundTxid).toBeDefined()
+    expect(bobsReceiveTx.key.redeemTxid.length).toBeGreaterThan(0)
 
     // Bob settles the received VTXO
     const bobInputs = await bob.wallet.getVtxos()
