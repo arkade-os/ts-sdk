@@ -1,8 +1,9 @@
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha256";
 import * as btc from "@scure/btc-signer";
+import { vtxosToTxs } from "../utils/transactionHistory";
 
-import type {
+import {
     Wallet as IWallet,
     WalletConfig,
     WalletBalance,
@@ -14,6 +15,8 @@ import type {
     SettleParams,
     OffchainInfo,
     ForfeitVtxoInput,
+    ArkTransaction,
+    TxType,
 } from "../types/wallet";
 import { ESPLORA_URL, EsploraProvider } from "../providers/esplora";
 import { ArkProvider } from "../providers/ark";
@@ -193,10 +196,10 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const virtualCoins = await this.arkProvider.getVirtualCoins(
+        const { spendableVtxos } = await this.arkProvider.getVirtualCoins(
             address.offchain.address
         );
-        return virtualCoins.map((vtxo) => ({
+        return spendableVtxos.map((vtxo) => ({
             ...vtxo,
             outpoint: {
                 txid: vtxo.txid,
@@ -220,7 +223,125 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        return this.arkProvider.getVirtualCoins(address.offchain.address);
+        return this.arkProvider
+            .getVirtualCoins(address.offchain.address)
+            .then(({ spendableVtxos }) => spendableVtxos);
+    }
+
+    async getTransactionHistory(): Promise<ArkTransaction[]> {
+        if (!this.arkProvider) {
+            return [];
+        }
+
+        const { spendableVtxos, spentVtxos } =
+            await this.arkProvider.getVirtualCoins(
+                this.offchainAddress!.address
+            );
+        const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
+
+        // convert VTXOs to offchain transactions
+        const offchainTxs = vtxosToTxs(
+            spendableVtxos,
+            spentVtxos,
+            roundsToIgnore
+        );
+
+        const txs = [...boardingTxs, ...offchainTxs];
+
+        // sort transactions by creation time in descending order (newest first)
+        txs.sort(
+            (a, b) =>
+                new Date(b.createdAt).getTime() -
+                new Date(a.createdAt).getTime()
+        );
+
+        return txs;
+    }
+
+    private async getBoardingUtxos(): Promise<{
+        utxos: VirtualCoin[];
+        ignoreVtxos: Set<string>;
+    }> {
+        if (!this.boardingAddress || !this.boardingTapscript) {
+            return { utxos: [], ignoreVtxos: new Set() };
+        }
+
+        const txs = await this.onchainProvider.getTransactions(
+            this.boardingAddress
+        );
+        const utxos: VirtualCoin[] = [];
+        const ignoreVtxos = new Set<string>();
+
+        for (const tx of txs) {
+            for (let i = 0; i < tx.vout.length; i++) {
+                const vout = tx.vout[i];
+                if (vout.scriptpubkey_address === this.boardingAddress) {
+                    const spentStatuses =
+                        await this.onchainProvider.getTxOutspends(tx.txid);
+                    const spentStatus = spentStatuses[i];
+
+                    if (spentStatus?.spent) {
+                        ignoreVtxos.add(spentStatus.txid);
+                    }
+
+                    utxos.push({
+                        txid: tx.txid,
+                        vout: i,
+                        value: Number(vout.value),
+                        status: {
+                            confirmed: tx.status.confirmed,
+                            block_time: tx.status.block_time,
+                        },
+                        virtualStatus: {
+                            state: spentStatus?.spent ? "swept" : "pending",
+                            batchTxID: spentStatus?.spent
+                                ? spentStatus.txid
+                                : undefined,
+                        },
+                        createdAt: new Date(tx.status.block_time * 1000),
+                    });
+                }
+            }
+        }
+
+        return { utxos, ignoreVtxos };
+    }
+
+    private async getBoardingTxs(): Promise<{
+        boardingTxs: ArkTransaction[];
+        roundsToIgnore: Set<string>;
+    }> {
+        const { utxos, ignoreVtxos: roundsToIgnore } =
+            await this.getBoardingUtxos();
+        const unconfirmedTxs: ArkTransaction[] = [];
+        const confirmedTxs: ArkTransaction[] = [];
+
+        for (const utxo of utxos) {
+            const tx: ArkTransaction = {
+                key: {
+                    boardingTxid: utxo.txid,
+                    roundTxid: "",
+                    redeemTxid: "",
+                },
+                amount: utxo.value,
+                type: TxType.TxReceived,
+                settled: utxo.virtualStatus.state === "swept",
+                createdAt: utxo.status.block_time
+                    ? new Date(utxo.status.block_time * 1000).toISOString()
+                    : new Date().toISOString(),
+            };
+
+            if (!utxo.status.block_time) {
+                unconfirmedTxs.push(tx);
+            } else {
+                confirmedTxs.push(tx);
+            }
+        }
+
+        return {
+            boardingTxs: [...unconfirmedTxs, ...confirmedTxs],
+            roundsToIgnore,
+        };
     }
 
     async sendBitcoin(
@@ -245,9 +366,12 @@ export class Wallet implements IWallet {
     }
 
     private isOffchainSuitable(params: SendBitcoinParams): boolean {
-        // TODO: Add proper logic to determine if transaction is suitable for offchain
-        // For now, just check if amount is greater than dust
-        return params.amount > Wallet.DUST_AMOUNT;
+        try {
+            ArkAddress.decode(params.address);
+            return true;
+        } catch (e) {
+            return false;
+        }
     }
 
     async sendOnchain(params: SendBitcoinParams): Promise<string> {

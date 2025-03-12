@@ -95,7 +95,10 @@ export interface ArkInfo {
 
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
-    getVirtualCoins(address: string): Promise<VirtualCoin[]>;
+    getVirtualCoins(address: string): Promise<{
+        spendableVtxos: VirtualCoin[];
+        spentVtxos: VirtualCoin[];
+    }>;
     submitVirtualTx(psbtBase64: string): Promise<string>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
     registerInputsForNextRound(inputs: Input[]): Promise<{ requestId: string }>;
@@ -123,12 +126,28 @@ export interface ArkProvider {
     getEventStream(): AsyncIterableIterator<SettlementEvent>;
 }
 
+export type ExplorerTransaction = {
+    txid: string;
+    vout: {
+        scriptpubkey_address: string;
+        value: bigint;
+    }[];
+    status: {
+        confirmed: boolean;
+        block_time: number;
+    };
+};
+
 export abstract class BaseOnchainProvider implements OnchainProvider {
     constructor(protected baseUrl: string) {}
 
     abstract getCoins(address: string): Promise<Coin[]>;
     abstract getFeeRate(): Promise<number>;
     abstract broadcastTransaction(txHex: string): Promise<string>;
+    abstract getTransactions(address: string): Promise<ExplorerTransaction[]>;
+    abstract getTxOutspends(
+        txid: string
+    ): Promise<{ spent: boolean; txid: string }[]>;
 
     protected convertUTXOsToCoin(utxos: UTXO[]): Coin[] {
         return utxos.map((utxo) => ({
@@ -148,7 +167,10 @@ export abstract class BaseArkProvider implements ArkProvider {
 
     abstract getInfo(): Promise<ArkInfo>;
 
-    abstract getVirtualCoins(address: string): Promise<VirtualCoin[]>;
+    abstract getVirtualCoins(address: string): Promise<{
+        spendableVtxos: VirtualCoin[];
+        spentVtxos: VirtualCoin[];
+    }>;
     abstract submitVirtualTx(psbtBase64: string): Promise<string>;
     abstract subscribeToEvents(
         callback: (event: ArkEvent) => void

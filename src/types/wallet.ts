@@ -96,6 +96,27 @@ export interface Coin extends Outpoint {
 
 export interface VirtualCoin extends Coin {
     virtualStatus: VirtualStatus;
+    spentBy?: string;
+    createdAt: Date;
+}
+
+export enum TxType {
+    TxSent = "SENT",
+    TxReceived = "RECEIVED",
+}
+
+export interface TxKey {
+    boardingTxid: string;
+    roundTxid: string;
+    redeemTxid: string;
+}
+
+export interface ArkTransaction {
+    key: TxKey;
+    type: TxType;
+    amount: number;
+    settled: boolean;
+    createdAt: string;
 }
 
 export interface Wallet {

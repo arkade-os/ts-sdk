@@ -2,6 +2,7 @@ import { BaseOnchainProvider } from "./base";
 import type { NetworkName } from "../types/networks";
 import type { UTXO } from "../types/internal";
 import { Coin } from "../types/wallet";
+import type { ExplorerTransaction } from "./base";
 
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.space/api",
@@ -53,5 +54,27 @@ export class EsploraProvider extends BaseOnchainProvider {
         }
 
         return response.text(); // Returns the txid
+    }
+
+    async getTxOutspends(
+        txid: string
+    ): Promise<{ spent: boolean; txid: string }[]> {
+        const response = await fetch(`${this.baseUrl}/tx/${txid}/outspends`);
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Failed to get transaction outspends: ${error}`);
+        }
+
+        return response.json();
+    }
+
+    async getTransactions(address: string): Promise<ExplorerTransaction[]> {
+        const response = await fetch(`${this.baseUrl}/address/${address}/txs`);
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Failed to get transactions: ${error}`);
+        }
+
+        return response.json();
     }
 }
