@@ -696,7 +696,9 @@ export class Wallet implements IWallet {
                             ZERO_32
                         )
                     ) {
-                        throw new Error("Unable to sign the settlement transaction. Check your private key");
+                        throw new Error(
+                            "Unable to sign the settlement transaction. Check your private key"
+                        );
                     }
                 }
 
