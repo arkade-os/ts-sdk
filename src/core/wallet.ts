@@ -39,6 +39,12 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "./tree/validation";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
 
+const ZERO_32 = new Uint8Array([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+]);
+
 export class Wallet implements IWallet {
     private identity: Identity;
     private network: Network;
@@ -400,9 +406,9 @@ export class Wallet implements IWallet {
                             internalKey: btc.TAPROOT_UNSPENDABLE_KEY,
                             merklePath: selectedLeaf.path,
                         },
-                        Buffer.concat([
-                            selectedLeaf.script,
-                            Buffer.from([TAP_LEAF_VERSION]),
+                        new Uint8Array([
+                            ...selectedLeaf.script,
+                            TAP_LEAF_VERSION,
                         ]),
                     ],
                 ],
@@ -687,7 +693,7 @@ export class Wallet implements IWallet {
                             this.identity.privateKey(),
                             i,
                             undefined,
-                            Buffer.alloc(32)
+                            ZERO_32
                         )
                     ) {
                         throw new Error("Failed to sign settlement tx");
@@ -774,7 +780,7 @@ export class Wallet implements IWallet {
                 this.identity.privateKey(),
                 1,
                 undefined,
-                Buffer.alloc(32)
+                ZERO_32
             );
 
             signedForfeits.push(base64.encode(forfeitTx.toPSBT()));

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ArkAddress } from '../src/core/address';
 import fixtures from './fixtures/encoding.json';
+import { hex } from '@scure/base';
 
 describe('ArkAddress', () => {
   describe('valid addresses', () => {
@@ -13,10 +14,10 @@ describe('ArkAddress', () => {
         expect(['ark', 'tark']).toContain(addr.hrp);
         
         // Check server public key matches expected
-        expect(Buffer.from(addr.serverPubKey).toString('hex')).toBe(fixture.expectedServerKey.slice(2)); // Remove '02' prefix
+        expect(hex.encode(addr.serverPubKey)).toBe(fixture.expectedServerKey.slice(2)); // Remove '02' prefix
         
         // Check VTXO taproot key matches expected
-        expect(Buffer.from(addr.tweakedPubKey).toString('hex')).toBe(fixture.expectedUserKey.slice(2)); // Remove '02' prefix
+        expect(hex.encode(addr.tweakedPubKey)).toBe(fixture.expectedUserKey.slice(2)); // Remove '02' prefix
         
         // Test encoding
         const encoded = addr.encode();

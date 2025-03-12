@@ -16,7 +16,7 @@ async function execCommand(command) {
       // If the error indicates the wallet is already initialized, we can continue
       if (error.stderr && error.stderr.toString().includes('wallet already initialized')) {
         console.log('Wallet already initialized, continuing...')
-        resolve(Buffer.from(''))
+        resolve(new Uint8Array([]))
       } else {
         reject(error)
       }
