@@ -82,9 +82,7 @@ export type SettlementEvent =
 
 export interface ArkInfo {
     pubkey: string;
-    vtxoTreeExpiry: bigint;
-    // roundLifetime is the same as vtxoTreeExpiry, only kept for backwards compatibility
-    roundLifetime: bigint;
+    batchExpiry: bigint;
     unilateralExitDelay: bigint;
     roundInterval: bigint;
     network: string;
@@ -139,7 +137,11 @@ export class RestArkProvider implements ArkProvider {
                 `Failed to get server info: ${response.statusText}`
             );
         }
-        return response.json();
+        const fromServer = await response.json();
+        return {
+            ...fromServer,
+            batchExpiry: fromServer.vtxoTreeExpiry,
+        };
     }
 
     async getVirtualCoins(address: string): Promise<VirtualCoin[]> {

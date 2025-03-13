@@ -575,9 +575,8 @@ export class Wallet {
 
         const sweepTapscript = checkSequenceVerifyScript(
             {
-                // TODO: remove roundLifetime
-                value: info.vtxoTreeExpiry || info.roundLifetime,
-                type: info.vtxoTreeExpiry >= 512n ? "seconds" : "blocks",
+                value: info.batchExpiry,
+                type: info.batchExpiry >= 512n ? "seconds" : "blocks",
             },
             hex.decode(info.pubkey).slice(1)
         );
