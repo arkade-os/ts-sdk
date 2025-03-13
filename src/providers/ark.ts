@@ -1,13 +1,5 @@
-import {
-    BaseArkProvider,
-    SettlementEventType,
-    Input,
-    Output,
-    SettlementEvent,
-    ArkInfo,
-} from "./base";
-import type { Outpoint, VirtualCoin } from "../types/wallet";
 import { TxTree } from "../core/tree/vtxoTree";
+import { Outpoint, VirtualCoin } from "../core/wallet";
 import { TreeNonces, TreePartialSigs } from "../core/signingSession";
 import { hex } from "@scure/base";
 
@@ -23,82 +15,123 @@ export interface ArkEvent {
     };
 }
 
-// ProtoTypes namespace defines unexported types representing the raw data received from the server
-namespace ProtoTypes {
-    interface Node {
-        txid: string;
-        tx: string;
-        parentTxid: string;
-    }
-    interface TreeLevel {
-        nodes: Node[];
-    }
-    export interface Tree {
-        levels: TreeLevel[];
-    }
+export type NoteInput = string;
 
-    interface RoundFailed {
-        id: string;
-        reason: string;
-    }
+export type VtxoInput = {
+    outpoint: Outpoint;
+    tapscripts: string[];
+};
 
-    export interface RoundFinalizationEvent {
-        id: string;
-        roundTx: string;
-        vtxoTree: Tree;
-        connectors: Tree;
-        connectorsIndex: {
-            [key: string]: {
-                txid: string;
-                vout: number;
-            };
-        };
-        minRelayFeeRate: string;
-    }
+export type Input = NoteInput | VtxoInput;
 
-    interface RoundFinalizedEvent {
-        id: string;
-        roundTxid: string;
-    }
+export type Output = {
+    address: string; // onchain or off-chain
+    amount: bigint; // Amount to send in satoshis
+};
 
-    interface RoundSigningEvent {
-        id: string;
-        cosignersPubkeys: string[];
-        unsignedVtxoTree: Tree;
-        unsignedRoundTx: string;
-    }
-
-    interface RoundSigningNoncesGeneratedEvent {
-        id: string;
-        treeNonces: string;
-    }
-
-    // Update the EventData interface to match the Golang structure
-    export interface EventData {
-        roundFailed?: RoundFailed;
-        roundFinalization?: RoundFinalizationEvent;
-        roundFinalized?: RoundFinalizedEvent;
-        roundSigning?: RoundSigningEvent;
-        roundSigningNoncesGenerated?: RoundSigningNoncesGeneratedEvent;
-    }
-
-    export interface Input {
-        outpoint: {
-            txid: string;
-            vout: number;
-        };
-        tapscripts: {
-            scripts: string[];
-        };
-    }
-
-    export interface Output {
-        address: string;
-        amount: string;
-    }
+export enum SettlementEventType {
+    Finalization = "finalization",
+    Finalized = "finalized",
+    Failed = "failed",
+    SigningStart = "signing_start",
+    SigningNoncesGenerated = "signing_nonces_generated",
 }
 
-export class ArkProvider extends BaseArkProvider {
+export type FinalizationEvent = {
+    type: SettlementEventType.Finalization;
+    id: string;
+    roundTx: string;
+    vtxoTree: TxTree;
+    connectors: TxTree;
+    minRelayFeeRate: bigint; // Using bigint for int64
+    connectorsIndex: Map<string, Outpoint>; // `vtxoTxid:vtxoIndex` -> connectorOutpoint
+};
+
+export type FinalizedEvent = {
+    type: SettlementEventType.Finalized;
+    id: string;
+    roundTxid: string;
+};
+
+export type FailedEvent = {
+    type: SettlementEventType.Failed;
+    id: string;
+    reason: string;
+};
+
+export type SigningStartEvent = {
+    type: SettlementEventType.SigningStart;
+    id: string;
+    cosignersPublicKeys: string[];
+    unsignedVtxoTree: TxTree;
+    unsignedSettlementTx: string;
+};
+
+export type SigningNoncesGeneratedEvent = {
+    type: SettlementEventType.SigningNoncesGenerated;
+    id: string;
+    treeNonces: TreeNonces;
+};
+
+export type SettlementEvent =
+    | FinalizationEvent
+    | FinalizedEvent
+    | FailedEvent
+    | SigningStartEvent
+    | SigningNoncesGeneratedEvent;
+
+export interface ArkInfo {
+    pubkey: string;
+    batchExpiry: bigint;
+    unilateralExitDelay: bigint;
+    roundInterval: bigint;
+    network: string;
+    dust: bigint;
+    boardingDescriptorTemplate: string;
+    vtxoDescriptorTemplates: string[];
+    forfeitAddress: string;
+    marketHour?: {
+        start: number;
+        end: number;
+    };
+}
+
+export interface ArkProvider {
+    getInfo(): Promise<ArkInfo>;
+    getVirtualCoins(address: string): Promise<{
+        spendableVtxos: VirtualCoin[];
+        spentVtxos: VirtualCoin[];
+    }>;
+    submitVirtualTx(psbtBase64: string): Promise<string>;
+    subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
+    registerInputsForNextRound(inputs: Input[]): Promise<{ requestId: string }>;
+    registerOutputsForNextRound(
+        requestId: string,
+        outputs: Output[],
+        vtxoTreeSigningPublicKeys: string[],
+        signAll?: boolean
+    ): Promise<void>;
+    submitTreeNonces(
+        settlementID: string,
+        pubkey: string,
+        nonces: TreeNonces
+    ): Promise<void>;
+    submitTreeSignatures(
+        settlementID: string,
+        pubkey: string,
+        signatures: TreePartialSigs
+    ): Promise<void>;
+    submitSignedForfeitTxs(
+        signedForfeitTxs: string[],
+        signedRoundTx?: string
+    ): Promise<void>;
+    ping(paymentID: string): Promise<void>;
+    getEventStream(): AsyncIterableIterator<SettlementEvent>;
+}
+
+export class RestArkProvider implements ArkProvider {
+    constructor(public serverUrl: string) {}
+
     async getInfo(): Promise<ArkInfo> {
         const url = `${this.serverUrl}/v1/info`;
         const response = await fetch(url);
@@ -107,7 +140,11 @@ export class ArkProvider extends BaseArkProvider {
                 `Failed to get server info: ${response.statusText}`
             );
         }
-        return response.json();
+        const fromServer = await response.json();
+        return {
+            ...fromServer,
+            batchExpiry: fromServer.vtxoTreeExpiry,
+        };
     }
 
     async getVirtualCoins(address: string): Promise<{
@@ -683,4 +720,79 @@ function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
             )
         )
     );
+}
+
+// ProtoTypes namespace defines unexported types representing the raw data received from the server
+namespace ProtoTypes {
+    interface Node {
+        txid: string;
+        tx: string;
+        parentTxid: string;
+    }
+    interface TreeLevel {
+        nodes: Node[];
+    }
+    export interface Tree {
+        levels: TreeLevel[];
+    }
+
+    interface RoundFailed {
+        id: string;
+        reason: string;
+    }
+
+    export interface RoundFinalizationEvent {
+        id: string;
+        roundTx: string;
+        vtxoTree: Tree;
+        connectors: Tree;
+        connectorsIndex: {
+            [key: string]: {
+                txid: string;
+                vout: number;
+            };
+        };
+        minRelayFeeRate: string;
+    }
+
+    interface RoundFinalizedEvent {
+        id: string;
+        roundTxid: string;
+    }
+
+    interface RoundSigningEvent {
+        id: string;
+        cosignersPubkeys: string[];
+        unsignedVtxoTree: Tree;
+        unsignedRoundTx: string;
+    }
+
+    interface RoundSigningNoncesGeneratedEvent {
+        id: string;
+        treeNonces: string;
+    }
+
+    // Update the EventData interface to match the Golang structure
+    export interface EventData {
+        roundFailed?: RoundFailed;
+        roundFinalization?: RoundFinalizationEvent;
+        roundFinalized?: RoundFinalizedEvent;
+        roundSigning?: RoundSigningEvent;
+        roundSigningNoncesGenerated?: RoundSigningNoncesGeneratedEvent;
+    }
+
+    export interface Input {
+        outpoint: {
+            txid: string;
+            vout: number;
+        };
+        tapscripts: {
+            scripts: string[];
+        };
+    }
+
+    export interface Output {
+        address: string;
+        amount: string;
+    }
 }

@@ -1,10 +1,32 @@
 import { InMemoryKey } from "./core/identity";
 import { ArkAddress } from "./core/address";
 import { VtxoTapscript } from "./core/tapscript";
-import { Wallet } from "./core/wallet";
-import type { WalletConfig } from "./types/wallet";
-import { ESPLORA_URL } from "./providers/esplora";
-import { SettlementEvent, SettlementEventType } from "./providers/base";
+import { Wallet, WalletConfig } from "./core/wallet";
+import {
+    ESPLORA_URL,
+    EsploraProvider,
+    OnchainProvider,
+} from "./providers/onchain";
+import {
+    SettlementEvent,
+    SettlementEventType,
+    RestArkProvider,
+    ArkProvider,
+} from "./providers/ark";
 
-export type { WalletConfig, SettlementEvent, SettlementEventType };
-export { Wallet, InMemoryKey, ESPLORA_URL, ArkAddress, VtxoTapscript };
+export type {
+    WalletConfig,
+    SettlementEvent,
+    SettlementEventType,
+    OnchainProvider,
+    ArkProvider,
+};
+export {
+    Wallet,
+    InMemoryKey,
+    ESPLORA_URL,
+    EsploraProvider,
+    RestArkProvider,
+    ArkAddress,
+    VtxoTapscript,
+};

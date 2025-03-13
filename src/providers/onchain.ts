@@ -1,8 +1,5 @@
-import { BaseOnchainProvider } from "./base";
-import type { NetworkName } from "../types/networks";
-import type { UTXO } from "../types/internal";
-import { Coin } from "../types/wallet";
-import type { ExplorerTransaction } from "./base";
+import type { NetworkName } from "../core/networks";
+import { Coin } from "../core/wallet";
 
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.space/api",
@@ -12,17 +9,30 @@ export const ESPLORA_URL: Record<NetworkName, string> = {
     regtest: "http://localhost:3000",
 };
 
-export class EsploraProvider extends BaseOnchainProvider {
-    constructor(protected baseUrl: string) {
-        super(baseUrl);
-    }
+export type ExplorerTransaction = {
+    txid: string;
+    vout: {
+        scriptpubkey_address: string;
+        value: bigint;
+    }[];
+    status: {
+        confirmed: boolean;
+        block_time: number;
+    };
+};
+
+export interface OnchainProvider {
+    getCoins(address: string): Promise<Coin[]>;
+    getFeeRate(): Promise<number>;
+    broadcastTransaction(txHex: string): Promise<string>;
+    getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
+    getTransactions(address: string): Promise<ExplorerTransaction[]>;
+}
+
+export class EsploraProvider implements OnchainProvider {
+    constructor(private baseUrl: string) {}
 
     async getCoins(address: string): Promise<Coin[]> {
-        const utxos = await this.getUTXOs(address);
-        return this.convertUTXOsToCoin(utxos);
-    }
-
-    private async getUTXOs(address: string): Promise<UTXO[]> {
         const response = await fetch(`${this.baseUrl}/address/${address}/utxo`);
         if (!response.ok) {
             throw new Error(`Failed to fetch UTXOs: ${response.statusText}`);

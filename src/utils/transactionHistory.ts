@@ -1,5 +1,4 @@
-import { VirtualCoin } from "../types/wallet";
-import { ArkTransaction, TxType, TxKey } from "../types/wallet";
+import { ArkTransaction, TxType, TxKey, VirtualCoin } from "../core/wallet";
 
 /**
  * Helper function to find vtxos that were spent in a settlement

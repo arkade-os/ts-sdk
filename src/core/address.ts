@@ -1,6 +1,6 @@
 import { bech32m, hex } from "@scure/base";
 import { Bytes, TAPROOT_UNSPENDABLE_KEY } from "@scure/btc-signer/utils";
-import { networks } from "../types/networks";
+import { networks } from "./networks";
 import { p2tr, Script, taprootListToTree } from "@scure/btc-signer";
 
 /**

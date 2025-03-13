@@ -1,5 +1,5 @@
 import { SigHash, Transaction } from "@scure/btc-signer";
-import { Outpoint } from "../types/wallet";
+import { Outpoint } from "./wallet";
 
 interface ForfeitTxParams {
     connectorInput: Outpoint;

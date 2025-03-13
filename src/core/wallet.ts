@@ -1,32 +1,22 @@
+import { clearInterval, setInterval } from "timers";
 import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha256";
 import * as btc from "@scure/btc-signer";
-import { vtxosToTxs } from "../utils/transactionHistory";
+import { secp256k1 } from "@noble/curves/secp256k1";
+import { TAP_LEAF_VERSION, tapLeafHash } from "@scure/btc-signer/payment";
+import { TransactionOutput } from "@scure/btc-signer/psbt";
 
-import {
-    Wallet as IWallet,
-    WalletConfig,
-    WalletBalance,
-    SendBitcoinParams,
-    AddressInfo,
-    Coin,
-    VirtualCoin,
-    Identity,
-    SettleParams,
-    ArkTransaction,
-    TxType,
-    VtxoTaprootAddress,
-    SpendableVtxo,
-} from "../types/wallet";
-import { ESPLORA_URL, EsploraProvider } from "../providers/esplora";
-import { ArkProvider } from "../providers/ark";
+import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../core/address";
 import { checkSequenceVerifyScript, VtxoTapscript } from "../core/tapscript";
 import { selectCoins, selectVirtualCoins } from "../utils/coinselect";
-import { getNetwork, Network, NetworkName } from "../types/networks";
-import { TAP_LEAF_VERSION, tapLeafHash } from "@scure/btc-signer/payment";
-import { secp256k1 } from "@noble/curves/secp256k1";
+import { getNetwork, Network, NetworkName } from "./networks";
+import {
+    ESPLORA_URL,
+    EsploraProvider,
+    OnchainProvider,
+} from "../providers/onchain";
 import {
     ArkInfo,
     FinalizationEvent,
@@ -34,13 +24,16 @@ import {
     SettlementEventType,
     SigningNoncesGeneratedEvent,
     SigningStartEvent,
-} from "../providers/base";
-import { clearInterval, setInterval } from "timers";
+    ArkProvider,
+    Output,
+    VtxoInput,
+    RestArkProvider,
+} from "../providers/ark";
 import { TreeSignerSession } from "./signingSession";
 import { buildForfeitTx } from "./forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "./tree/validation";
-import { TransactionOutput } from "@scure/btc-signer/psbt";
+import { Identity } from "./identity";
 
 const ZERO_32 = new Uint8Array([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -48,10 +41,125 @@ const ZERO_32 = new Uint8Array([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ]);
 
-export class Wallet implements IWallet {
+export interface WalletConfig {
+    network: NetworkName;
+    identity: Identity;
+    esploraUrl?: string;
+    arkServerUrl?: string;
+    arkServerPublicKey?: string;
+}
+
+export interface WalletBalance {
+    onchain: {
+        confirmed: number;
+        unconfirmed: number;
+        total: number;
+    };
+    offchain: {
+        swept: number;
+        settled: number;
+        pending: number;
+        total: number;
+    };
+    total: number;
+}
+
+export interface SendBitcoinParams {
+    address: string;
+    amount: number;
+    feeRate?: number;
+    memo?: string;
+}
+
+export interface Recipient {
+    address: string;
+    amount: number;
+}
+
+// SpendableVtxo embed the forfeit script to use as spending path for the boarding utxo or vtxo
+export type SpendableVtxo = VtxoInput & {
+    forfeitScript: string;
+};
+
+export interface SettleParams {
+    inputs: (string | SpendableVtxo)[];
+    outputs: Output[];
+}
+
+// VtxoTaprootAddress embed the tapscripts composing the address
+// it admits the internal key is the unspendable x-only public key
+export interface VtxoTaprootAddress {
+    address: string;
+    scripts: {
+        exit: string[];
+        forfeit: string[];
+    };
+}
+
+export interface AddressInfo {
+    onchain: string;
+    offchain?: VtxoTaprootAddress;
+    boarding?: VtxoTaprootAddress;
+    bip21: string;
+}
+
+export interface TapscriptInfo {
+    offchain?: string[];
+    boarding?: string[];
+}
+
+export interface Status {
+    confirmed: boolean;
+    block_height?: number;
+    block_hash?: string;
+    block_time?: number;
+}
+
+export interface VirtualStatus {
+    state: "pending" | "settled" | "swept" | "spent";
+    batchTxID?: string;
+    batchExpiry?: number;
+}
+
+export interface Outpoint {
+    txid: string;
+    vout: number;
+}
+
+export interface Coin extends Outpoint {
+    value: number;
+    status: Status;
+}
+
+export interface VirtualCoin extends Coin {
+    virtualStatus: VirtualStatus;
+    spentBy?: string;
+    createdAt: Date;
+}
+
+export enum TxType {
+    TxSent = "SENT",
+    TxReceived = "RECEIVED",
+}
+
+export interface TxKey {
+    boardingTxid: string;
+    roundTxid: string;
+    redeemTxid: string;
+}
+
+export interface ArkTransaction {
+    key: TxKey;
+    type: TxType;
+    amount: number;
+    settled: boolean;
+    createdAt: string;
+}
+
+export class Wallet {
     private identity: Identity;
     private network: Network;
-    private onchainProvider: EsploraProvider;
+    private onchainProvider: OnchainProvider;
     private arkProvider?: ArkProvider;
     private unsubscribeEvents?: () => void;
     private onchainAddress: string;
@@ -80,10 +188,7 @@ export class Wallet implements IWallet {
 
         // Setup Ark provider and derive offchain address if configured
         if (config.arkServerUrl && config.arkServerPublicKey) {
-            this.arkProvider = new ArkProvider(
-                config.arkServerUrl,
-                config.arkServerPublicKey
-            );
+            this.arkProvider = new RestArkProvider(config.arkServerUrl);
 
             // Generate tapscripts for Offchain and Boarding address
             const serverPubKey = hex.decode(config.arkServerPublicKey);
@@ -606,9 +711,8 @@ export class Wallet implements IWallet {
 
         const sweepTapscript = checkSequenceVerifyScript(
             {
-                // TODO: remove roundLifetime
-                value: info.vtxoTreeExpiry || info.roundLifetime,
-                type: info.vtxoTreeExpiry >= 512n ? "seconds" : "blocks",
+                value: info.batchExpiry,
+                type: info.batchExpiry >= 512n ? "seconds" : "blocks",
             },
             hex.decode(info.pubkey).slice(1)
         );

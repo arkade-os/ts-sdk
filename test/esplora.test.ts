@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EsploraProvider } from '../src/providers/esplora'
-import type { UTXO } from '../src/types/internal'
-
+import { EsploraProvider } from '../src/providers/onchain'
+import { Coin } from '../src/core/wallet'
 // Mock fetch
 const mockFetch = vi.fn()
 global.fetch = mockFetch
@@ -12,7 +11,7 @@ describe('EsploraProvider', () => {
   })
 
   describe('getCoins', () => {
-    const mockUTXOs: UTXO[] = [{
+    const mockUTXOs: Coin[] = [{
       txid: '1234',
       vout: 0,
       value: 100000,
