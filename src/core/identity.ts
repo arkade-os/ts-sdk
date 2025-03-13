@@ -1,5 +1,4 @@
 import { schnorr } from "@noble/curves/secp256k1";
-import { Identity } from "../types/wallet";
 import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
 
@@ -7,6 +6,12 @@ import { hex } from "@scure/base";
 export interface ExternalSignerInterface {
     sign(message: Uint8Array): Promise<Uint8Array>;
     getPublicKey(): Uint8Array;
+}
+
+export interface Identity {
+    sign(message: Uint8Array): Promise<Uint8Array>;
+    xOnlyPublicKey(): Uint8Array;
+    privateKey(): Uint8Array;
 }
 
 export class InMemoryKey implements Identity {

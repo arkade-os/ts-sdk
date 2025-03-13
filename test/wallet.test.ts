@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { Wallet } from '../src/core/wallet'
 import { InMemoryKey } from '../src/core/identity'
 import { hex } from '@scure/base'
-import type { UTXO } from '../src/types/internal'
-import type { VirtualCoin } from '../src/types/wallet'
+import type { Coin } from '../src/core/wallet'
 
 // Mock fetch
 const mockFetch = vi.fn()
@@ -30,7 +29,7 @@ describe('Wallet', () => {
   })
 
   describe('getBalance', () => {
-    const mockUTXOs: UTXO[] = [{
+    const mockUTXOs: Coin[] = [{
       txid: hex.encode(new Uint8Array(32).fill(1)),
       vout: 0,
       value: 100000,
@@ -104,7 +103,7 @@ describe('Wallet', () => {
   })
 
   describe('getCoins', () => {
-    const mockUTXOs: UTXO[] = [{
+    const mockUTXOs: Coin[] = [{
       txid: hex.encode(new Uint8Array(32).fill(1)),
       vout: 0,
       value: 100000,
