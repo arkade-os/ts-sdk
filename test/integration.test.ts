@@ -3,7 +3,7 @@ import { expect, describe, it, beforeAll } from 'vitest'
 import { utils } from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import { execSync } from 'child_process'
-import { TxType } from '../src/types/wallet'
+import { TxType } from '../src/core/wallet'
 
 const arkdExec = process.env.ARK_ENV === 'master' ? 'docker exec -t arkd' : 'nigiri'
 
