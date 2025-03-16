@@ -3,6 +3,7 @@ import { expect, describe, it, beforeAll } from 'vitest'
 import { utils } from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import { execSync } from 'child_process'
+import { BareWallet } from '../src/core/wallet'
 
 const arkdExec = process.env.ARK_ENV === 'master' ? 'docker exec -t arkd' : 'nigiri'
 
@@ -19,9 +20,6 @@ describe('Wallet SDK Integration Tests', () => {
   const carolPrivateKeyHex = hex.encode(carolPrivateKeyBytes)
   const davePrivateKeyHex = hex.encode(davePrivateKeyBytes)
   const frankPrivateKeyHex = hex.encode(frankPrivateKeyBytes)
-  // Deterministic server public key from mnemonic "abandon" x24
-  const ARK_SERVER_PUBKEY = '038a9bbb1fb2aa92b9557dd0b39a85f31d204f58b41c62ea112d6ad148a9881285'
-  const ARK_SERVER_XONLY_PUBKEY = ARK_SERVER_PUBKEY.slice(2) // Remove '03' prefix
   // Onchain wallets (Alice and Bob)
   let aliceWallet: Wallet
   let bobWallet: Wallet
@@ -45,12 +43,14 @@ describe('Wallet SDK Integration Tests', () => {
     const aliceIdentity = InMemoryKey.fromHex(alicePrivateKeyHex)
     const bobIdentity = InMemoryKey.fromHex(bobPrivateKeyHex)
 
-    aliceWallet = new Wallet({
+    aliceWallet = new BareWallet()
+    await aliceWallet.init({
       network: 'regtest',
       identity: aliceIdentity,
     })
 
-    bobWallet = new Wallet({
+    bobWallet = new BareWallet()
+    await bobWallet.init({
       network: 'regtest',
       identity: bobIdentity,
     })
@@ -60,30 +60,30 @@ describe('Wallet SDK Integration Tests', () => {
     const daveIdentity = InMemoryKey.fromHex(davePrivateKeyHex)
     const frankIdentity = InMemoryKey.fromHex(frankPrivateKeyHex)
 
-    carolWallet = new Wallet({
+    carolWallet = new BareWallet()
+    await carolWallet.init({
       network: 'regtest',
       identity: carolIdentity,
       arkServerUrl: 'http://localhost:7070',
-      arkServerPublicKey: ARK_SERVER_XONLY_PUBKEY
     })
 
-    daveWallet = new Wallet({
+    daveWallet = new BareWallet()
+    await daveWallet.init({
       network: 'regtest',
       identity: daveIdentity,
       arkServerUrl: 'http://localhost:7070',
-      arkServerPublicKey: ARK_SERVER_XONLY_PUBKEY
     })
 
-    frankWallet = new Wallet({
+    frankWallet = new BareWallet()
+    await frankWallet.init({
       network: 'regtest',
       identity: frankIdentity,
       arkServerUrl: 'http://localhost:7070',
-      arkServerPublicKey: ARK_SERVER_XONLY_PUBKEY
     })
   })
 
   it('should settle a boarding UTXO', { timeout: 60000}, async () => {
-    const frankAddresses = frankWallet.getAddress()
+    const frankAddresses = await frankWallet.getAddress()
     const boardingAddress = frankAddresses.boarding
     const offchainAddress = frankAddresses.offchain
 
@@ -108,7 +108,8 @@ describe('Wallet SDK Integration Tests', () => {
   })
 
   it('should settle a VTXO', { timeout: 60000}, async () => {
-    const frankOffchainAddress = frankWallet.getAddress().offchain?.address
+    const frankAddresses = await frankWallet.getAddress()
+    const frankOffchainAddress = frankAddresses.offchain?.address
     execSync(`${arkdExec} ark send --to ${frankOffchainAddress} --amount 1000 --password secret`)
 
     await new Promise(resolve => setTimeout(resolve, 1000))
@@ -131,8 +132,8 @@ describe('Wallet SDK Integration Tests', () => {
 
   it('should perform a complete onchain roundtrip payment', { timeout: 30000 }, async () => {
     // Get addresses
-    const aliceAddress = aliceWallet.getAddress().onchain
-    const bobAddress = bobWallet.getAddress().onchain
+    const aliceAddress = (await aliceWallet.getAddress()).onchain
+    const bobAddress = (await bobWallet.getAddress()).onchain
 
     // Initial balance check
     const aliceInitialBalance = await aliceWallet.getBalance()
@@ -173,8 +174,8 @@ describe('Wallet SDK Integration Tests', () => {
 
   it('should perform a complete offchain roundtrip payment', { timeout: 60000 }, async () => {
     // Get addresses
-    const carolOffchainAddress = carolWallet.getAddress().offchain?.address
-    const daveOffchainAddress = daveWallet.getAddress().offchain?.address
+    const carolOffchainAddress = (await carolWallet.getAddress()).offchain?.address
+    const daveOffchainAddress = (await daveWallet.getAddress()).offchain?.address
     expect(carolOffchainAddress).toBeDefined()
     expect(daveOffchainAddress).toBeDefined()
 
@@ -185,8 +186,8 @@ describe('Wallet SDK Integration Tests', () => {
     expect(daveInitialBalance.offchain.total).toBe(0)
 
     // Initial virtual coins check
-    expect((await carolWallet.getVirtualCoins()).length).toBe(0)
-    expect((await daveWallet.getVirtualCoins()).length).toBe(0)
+    expect((await carolWallet.getVtxos()).length).toBe(0)
+    expect((await daveWallet.getVtxos()).length).toBe(0)
 
     // Use a smaller amount for testing
     const fundAmount = 10000 
@@ -195,7 +196,7 @@ describe('Wallet SDK Integration Tests', () => {
     await new Promise(resolve => setTimeout(resolve, 1000))
 
     // Check virtual coins after funding
-    const virtualCoins = await carolWallet.getVirtualCoins()
+    const virtualCoins = await carolWallet.getVtxos()
 
     // Verify we have a pending virtual coin
     expect(virtualCoins).toHaveLength(1)

@@ -11,6 +11,11 @@
       "import": "./dist/esm/index.js",
       "require": "./dist/index.js",
       "default": "./dist/esm/index.js"
+    },
+    "./sw": {
+      "import": "./dist/browser/sw.js",
+      "require": "./dist/browser/sw.js",
+      "default": "./dist/browser/sw.js"
     }
   },
   "files": [
@@ -21,10 +26,11 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "rm -rf dist && pnpm run build:esm && pnpm run build:cjs && pnpm run build:types",
+    "build": "rm -rf dist && pnpm run build:esm && pnpm run build:cjs && pnpm run build:types && pnpm run build:browser",
     "build:esm": "tsc -p tsconfig.json --outDir dist/esm",
     "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist",
     "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
+    "build:browser": "node scripts/build-browser.js",
     "test": "vitest run",
     "test:master": "ARK_ENV=master vitest run",
     "test:unit": "vitest run --exclude test/integration.test.ts",
@@ -36,6 +42,7 @@
     "test:integration-master": "ARK_ENV=master vitest run test/integration.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:sw": "node test/serve.js",
     "format": "prettier --write src",
     "lint": "prettier --check src",
     "audit": "pnpm audit",
@@ -61,6 +68,7 @@
     "@typescript-eslint/eslint-plugin": "8.18.2",
     "@typescript-eslint/parser": "8.18.2",
     "@vitest/coverage-v8": "2.1.8",
+    "esbuild": "^0.20.1",
     "eslint": "^9.17.0",
     "husky": "9.1.7",
     "lint-staged": "15.3.0",

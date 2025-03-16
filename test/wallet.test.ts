@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { Wallet } from '../src/core/wallet'
+import { BareWallet } from '../src/core/wallet'
 import { InMemoryKey } from '../src/core/identity'
 import { hex } from '@scure/base'
 import type { Coin } from '../src/core/wallet'
@@ -21,7 +21,7 @@ describe('Wallet', () => {
   // Test vector from BIP340
   const mockPrivKeyHex = 'ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2'
   // X-only pubkey (without the 02/03 prefix)
-  const mockServerKeyHex = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
+  const mockServerKeyHex = '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
   const mockIdentity = InMemoryKey.fromHex(mockPrivKeyHex)
 
   beforeEach(() => {
@@ -47,7 +47,8 @@ describe('Wallet', () => {
         json: () => Promise.resolve(mockUTXOs)
       })
 
-      const wallet = new Wallet({
+      const wallet = new BareWallet()
+      await wallet.init({
         network: 'mutinynet',
         identity: mockIdentity,
       })
@@ -82,6 +83,15 @@ describe('Wallet', () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
+          json: () => Promise.resolve({
+            pubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+          })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
           json: () => Promise.resolve(mockUTXOs)
         })
         .mockResolvedValueOnce({
@@ -89,11 +99,11 @@ describe('Wallet', () => {
           json: () => Promise.resolve(mockServerResponse)
         })
 
-      const wallet = new Wallet({
+      const wallet = new BareWallet()
+      await wallet.init({
         network: 'mutinynet',
         identity: mockIdentity,
         arkServerUrl: 'http://localhost:7070',
-        arkServerPublicKey: mockServerKeyHex
       })
 
       const balance = await wallet.getBalance()
@@ -121,7 +131,8 @@ describe('Wallet', () => {
         json: () => Promise.resolve(mockUTXOs)
       })
 
-      const wallet = new Wallet({
+      const wallet = new BareWallet()
+      await wallet.init({
         network: 'mutinynet',
         identity: mockIdentity,
       })
@@ -149,7 +160,8 @@ describe('Wallet', () => {
     })
 
     it('should throw error when amount is less than dust', async () => {
-      const wallet = new Wallet({
+      const wallet = new BareWallet()
+      await wallet.init({
         network: 'mutinynet',
         identity: mockIdentity
       })
@@ -161,7 +173,8 @@ describe('Wallet', () => {
     })
 
     it('should throw error when amount is negative', async () => {
-      const wallet = new Wallet({
+      const wallet = new BareWallet()
+      await wallet.init({
         network: 'mutinynet',
         identity: mockIdentity
       })
@@ -170,6 +183,57 @@ describe('Wallet', () => {
         address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
         amount: -1000
       })).rejects.toThrow('Amount must be positive')
+    })
+  })
+
+  describe('getInfos', () => {
+    const mockArkInfo = {
+      pubkey: mockServerKeyHex,
+      batchExpiry: BigInt(144),
+      unilateralExitDelay: BigInt(144),
+      roundInterval: BigInt(144),
+      network: 'mutinynet',
+      dust: BigInt(1000),
+      boardingDescriptorTemplate: 'boarding_template',
+      vtxoDescriptorTemplates: ['vtxo_template'],
+      forfeitAddress: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+      marketHour: {
+        start: 0,
+        end: 24
+      }
+    }
+
+    it('should initialize with ark provider when configured', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          ...mockArkInfo,
+          vtxoTreeExpiry: mockArkInfo.batchExpiry // Server response uses vtxoTreeExpiry
+        })
+      })
+
+      const wallet = new BareWallet()
+      await wallet.init({
+        network: 'mutinynet',
+        identity: mockIdentity,
+        arkServerUrl: 'http://localhost:7070'
+      })
+
+      // Verify ark provider is configured by checking if offchain address is available
+      const address = await wallet.getAddress()
+      expect(address.offchain).toBeDefined()
+    })
+
+    it('should not have ark features when ark provider is not configured', async () => {
+      const wallet = new BareWallet()
+      await wallet.init({
+        network: 'mutinynet',
+        identity: mockIdentity
+      })
+
+      // Verify ark provider is not configured by checking if offchain address is undefined
+      const address = await wallet.getAddress()
+      expect(address.offchain).toBeUndefined()
     })
   })
 })
