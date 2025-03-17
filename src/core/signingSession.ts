@@ -3,6 +3,7 @@ import { getCosignerKeys, TxTree } from "./tree/vtxoTree";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
+import { randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 
 export const ErrMissingVtxoTree = new Error("missing vtxo tree");
 export const ErrMissingAggregateKey = new Error("missing aggregate key");
@@ -35,7 +36,7 @@ export class TreeSignerSession implements SignerSession {
     constructor(private secretKey: Uint8Array) {}
 
     static random(): TreeSignerSession {
-        const secretKey = secp256k1.utils.randomPrivateKey();
+        const secretKey = randomPrivateKeyBytes();
         return new TreeSignerSession(secretKey);
     }
 

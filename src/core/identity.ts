@@ -1,21 +1,21 @@
-import { schnorr } from "@noble/curves/secp256k1";
 import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
 import { TreeSignerSession } from "./signingSession";
 import { SignerSession } from "./signingSession";
+import { Transaction } from "@scure/btc-signer";
 
-// Interface for external signers
-export interface ExternalSignerInterface {
-    sign(message: Uint8Array): Promise<Uint8Array>;
-    getPublicKey(): Uint8Array;
-}
+const ZERO_32 = new Uint8Array([
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+]);
 
 export interface Identity {
-    sign(message: Uint8Array): Promise<Uint8Array>;
+    // if inputIndexes is not provided, try to sign all inputs
+    sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
     xOnlyPublicKey(): Uint8Array;
-    privateKey(): Uint8Array;
     // TODO deterministic signer session
-    getSignerSession(): SignerSession;
+    signerSession(): SignerSession;
 }
 
 export class InMemoryKey implements Identity {
@@ -33,47 +33,30 @@ export class InMemoryKey implements Identity {
         return new InMemoryKey(hex.decode(privateKeyHex));
     }
 
-    async sign(message: Uint8Array): Promise<Uint8Array> {
-        return schnorr.sign(message, this.key);
+    async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
+        const txCpy = tx.clone();
+
+        if (!inputIndexes) {
+            if (!txCpy.sign(this.key, undefined, ZERO_32)) {
+                throw new Error("Failed to sign transaction");
+            }
+            return txCpy;
+        }
+
+        for (const inputIndex of inputIndexes) {
+            if (!txCpy.signIdx(this.key, inputIndex, undefined, ZERO_32)) {
+                throw new Error(`Failed to sign input #${inputIndex}`);
+            }
+        }
+
+        return txCpy;
     }
 
     xOnlyPublicKey(): Uint8Array {
         return pubSchnorr(this.key);
     }
 
-    privateKey(): Uint8Array {
-        return this.key;
-    }
-
-    getSignerSession(): SignerSession {
-        return TreeSignerSession.random();
-    }
-}
-
-export class ExternalSigner implements Identity {
-    private signer: ExternalSignerInterface;
-
-    private constructor(signer: ExternalSignerInterface) {
-        this.signer = signer;
-    }
-
-    static fromSigner(signer: ExternalSignerInterface): ExternalSigner {
-        return new ExternalSigner(signer);
-    }
-
-    async sign(message: Uint8Array): Promise<Uint8Array> {
-        return this.signer.sign(message);
-    }
-
-    xOnlyPublicKey(): Uint8Array {
-        return this.signer.getPublicKey();
-    }
-
-    privateKey(): Uint8Array {
-        throw new Error("External signer does not expose private key");
-    }
-
-    getSignerSession(): SignerSession {
+    signerSession(): SignerSession {
         return TreeSignerSession.random();
     }
 }
