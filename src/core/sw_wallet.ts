@@ -14,6 +14,7 @@ import { Response } from "../sw/response";
 import { hex } from "@scure/base";
 import { SettlementEvent } from "../providers/ark";
 
+// ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
 export class ServiceWorkerWallet implements IWallet {
     private serviceWorker?: ServiceWorker;
 
@@ -64,10 +65,8 @@ export class ServiceWorkerWallet implements IWallet {
 
             if (existingRegistration) {
                 registration = existingRegistration;
-                console.log("Using existing service worker registration");
             } else {
                 registration = await navigator.serviceWorker.register(path);
-                console.log("New service worker registered");
             }
 
             const sw =
@@ -104,8 +103,6 @@ export class ServiceWorkerWallet implements IWallet {
                 arkServerUrl: config.arkServerUrl || "",
                 arkServerPubKey: config.arkServerPubKey,
             };
-
-            console.log("Initializing wallet in service worker", message);
 
             await this.sendMessage(message);
         } catch (error) {
@@ -272,17 +269,5 @@ export class ServiceWorkerWallet implements IWallet {
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
         }
-    }
-
-    async subscribeToEvents(_: string, __: string, ___: string): Promise<void> {
-        throw new Error("Method not implemented.");
-    }
-
-    async signMessage(_: string): Promise<string> {
-        throw new Error("Method not implemented.");
-    }
-
-    async verifyMessage(_: string, __: string, ___: string): Promise<boolean> {
-        throw new Error("Method not implemented.");
     }
 }

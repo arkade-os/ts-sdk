@@ -147,27 +147,11 @@ export interface IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
-
-    // Message signing and verification
-    signMessage(message: string): Promise<string>;
-    verifyMessage(
-        message: string,
-        signature: string,
-        address: string
-    ): Promise<boolean>;
-
-    // Event handling
-    subscribeToEvents(
-        message: string,
-        signature: string,
-        address: string
-    ): Promise<void>;
 }
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
-    private unsubscribeEvents?: () => void;
-
+    // TODO get dust from ark server?
     static DUST_AMOUNT = BigInt(546); // Bitcoin dust limit in satoshis = 546
     static FEE_RATE = 1; // sats/vbyte
 
@@ -333,10 +317,6 @@ export class Wallet implements IWallet {
     }
 
     async getCoins(): Promise<Coin[]> {
-        if (!this.onchainProvider) {
-            throw new Error("wallet not initialized");
-        }
-
         // TODO: add caching logic to lower the number of requests to provider
         const address = await this.getAddress();
         return this.onchainProvider.getCoins(address.onchain);
@@ -384,10 +364,6 @@ export class Wallet implements IWallet {
     }
 
     async getBoardingUtxos(): Promise<(SpendableVtxo & Coin)[]> {
-        if (!this.onchainProvider) {
-            return [];
-        }
-
         if (!this.boardingAddress) {
             throw new Error("Boarding address not configured");
         }
@@ -438,16 +414,6 @@ export class Wallet implements IWallet {
     }
 
     private async sendOnchain(params: SendBitcoinParams): Promise<string> {
-        if (
-            !this.onchainP2TR ||
-            !this.onchainAddress ||
-            !this.network ||
-            !this.identity ||
-            !this.onchainProvider
-        ) {
-            throw new Error("wallet not initialized");
-        }
-
         const coins = await this.getCoins();
         const feeRate = params.feeRate || Wallet.FEE_RATE;
 
@@ -509,8 +475,7 @@ export class Wallet implements IWallet {
         if (
             !this.arkProvider ||
             !this.offchainAddress ||
-            !this.offchainTapscript ||
-            !this.identity
+            !this.offchainTapscript
         ) {
             throw new Error("wallet not initialized");
         }
@@ -642,16 +607,15 @@ export class Wallet implements IWallet {
                     },
                 ],
             };
-
-            console.log("Settling with params", params);
         }
 
         // register inputs
-        const { requestId } =
-            await this.arkProvider!.registerInputsForNextRound(params.inputs);
+        const { requestId } = await this.arkProvider.registerInputsForNextRound(
+            params.inputs
+        );
 
         // register outputs
-        await this.arkProvider!.registerOutputsForNextRound(
+        await this.arkProvider.registerOutputsForNextRound(
             requestId,
             params.outputs,
             [hex.encode(vtxoTreePublicKey)]
@@ -822,8 +786,8 @@ export class Wallet implements IWallet {
         inputs: SettleParams["inputs"],
         infos: ArkInfo
     ) {
-        if (!this.arkProvider || !this.network || !this.identity) {
-            throw new Error("wallet not initialized");
+        if (!this.arkProvider) {
+            throw new Error("Ark provider not configured");
         }
 
         // parse the server forfeit address
@@ -985,39 +949,6 @@ export class Wallet implements IWallet {
                 ? base64.encode(settlementPsbt.toPSBT())
                 : undefined
         );
-    }
-
-    async signMessage(message: string): Promise<string> {
-        if (!this.identity) {
-            throw new Error("wallet not initialized");
-        }
-        const messageHash = sha256(new TextEncoder().encode(message));
-        const signature = await this.identity.sign(messageHash);
-        return hex.encode(signature);
-    }
-
-    /* eslint-disable @typescript-eslint/no-unused-vars */
-    async verifyMessage(
-        _message: string,
-        _signature: string,
-        _address: string
-    ): Promise<boolean> {
-        throw new Error("Method not implemented.");
-    }
-
-    async subscribeToEvents(
-        _message: string,
-        _signature: string,
-        _address: string
-    ): Promise<void> {
-        throw new Error("Method not implemented.");
-    }
-    /* eslint-enable @typescript-eslint/no-unused-vars */
-
-    dispose() {
-        if (this.unsubscribeEvents) {
-            this.unsubscribeEvents();
-        }
     }
 }
 
