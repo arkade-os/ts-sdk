@@ -1,5 +1,5 @@
 import {
-    Wallet,
+    IWallet,
     WalletConfig,
     WalletBalance,
     SendBitcoinParams,
@@ -14,7 +14,7 @@ import { Response } from "../sw/response";
 import { hex } from "@scure/base";
 import { SettlementEvent } from "../providers/ark";
 
-export class ServiceWorkerWallet implements Wallet {
+export class ServiceWorkerWallet implements IWallet {
     private serviceWorker?: ServiceWorker;
 
     private async sendMessage<T extends Message.Base>(
@@ -102,6 +102,7 @@ export class ServiceWorkerWallet implements Wallet {
                 privateKey: hex.encode(config.identity.privateKey()),
                 network: config.network,
                 arkServerUrl: config.arkServerUrl || "",
+                arkServerPubKey: config.arkServerPubKey,
             };
 
             console.log("Initializing wallet in service worker", message);

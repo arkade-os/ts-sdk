@@ -1,9 +1,9 @@
-import { Wallet, InMemoryKey } from '../src'
 import { expect, describe, it, beforeAll } from 'vitest'
 import { utils } from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import { execSync } from 'child_process'
-import { BareWallet } from '../src/core/wallet'
+import { Wallet } from '../src/core/wallet'
+import { InMemoryKey } from '../src/core/identity'
 
 const arkdExec = process.env.ARK_ENV === 'master' ? 'docker exec -t arkd' : 'nigiri'
 
@@ -43,14 +43,12 @@ describe('Wallet SDK Integration Tests', () => {
     const aliceIdentity = InMemoryKey.fromHex(alicePrivateKeyHex)
     const bobIdentity = InMemoryKey.fromHex(bobPrivateKeyHex)
 
-    aliceWallet = new BareWallet()
-    await aliceWallet.init({
+    aliceWallet = await Wallet.create({
       network: 'regtest',
       identity: aliceIdentity,
     })
 
-    bobWallet = new BareWallet()
-    await bobWallet.init({
+    bobWallet = await Wallet.create({
       network: 'regtest',
       identity: bobIdentity,
     })
@@ -60,22 +58,19 @@ describe('Wallet SDK Integration Tests', () => {
     const daveIdentity = InMemoryKey.fromHex(davePrivateKeyHex)
     const frankIdentity = InMemoryKey.fromHex(frankPrivateKeyHex)
 
-    carolWallet = new BareWallet()
-    await carolWallet.init({
+    carolWallet = await Wallet.create({
       network: 'regtest',
       identity: carolIdentity,
       arkServerUrl: 'http://localhost:7070',
     })
 
-    daveWallet = new BareWallet()
-    await daveWallet.init({
+    daveWallet = await Wallet.create({
       network: 'regtest',
       identity: daveIdentity,
       arkServerUrl: 'http://localhost:7070',
     })
 
-    frankWallet = new BareWallet()
-    await frankWallet.init({
+    frankWallet = await Wallet.create({
       network: 'regtest',
       identity: frankIdentity,
       arkServerUrl: 'http://localhost:7070',

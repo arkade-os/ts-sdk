@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { BareWallet } from '../src/core/wallet'
+import { Wallet } from '../src/core/wallet'
 import { InMemoryKey } from '../src/core/identity'
 import { hex } from '@scure/base'
 import type { Coin } from '../src/core/wallet'
@@ -47,8 +47,7 @@ describe('Wallet', () => {
         json: () => Promise.resolve(mockUTXOs)
       })
 
-      const wallet = new BareWallet()
-      await wallet.init({
+      const wallet = await Wallet.create({
         network: 'mutinynet',
         identity: mockIdentity,
       })
@@ -99,8 +98,7 @@ describe('Wallet', () => {
           json: () => Promise.resolve(mockServerResponse)
         })
 
-      const wallet = new BareWallet()
-      await wallet.init({
+      const wallet = await Wallet.create({
         network: 'mutinynet',
         identity: mockIdentity,
         arkServerUrl: 'http://localhost:7070',
@@ -131,8 +129,7 @@ describe('Wallet', () => {
         json: () => Promise.resolve(mockUTXOs)
       })
 
-      const wallet = new BareWallet()
-      await wallet.init({
+      const wallet = await Wallet.create({
         network: 'mutinynet',
         identity: mockIdentity,
       })
@@ -160,8 +157,7 @@ describe('Wallet', () => {
     })
 
     it('should throw error when amount is less than dust', async () => {
-      const wallet = new BareWallet()
-      await wallet.init({
+      const wallet = await Wallet.create({
         network: 'mutinynet',
         identity: mockIdentity
       })
@@ -173,8 +169,7 @@ describe('Wallet', () => {
     })
 
     it('should throw error when amount is negative', async () => {
-      const wallet = new BareWallet()
-      await wallet.init({
+      const wallet = await Wallet.create({
         network: 'mutinynet',
         identity: mockIdentity
       })
@@ -212,8 +207,7 @@ describe('Wallet', () => {
         })
       })
 
-      const wallet = new BareWallet()
-      await wallet.init({
+      const wallet = await Wallet.create({
         network: 'mutinynet',
         identity: mockIdentity,
         arkServerUrl: 'http://localhost:7070'
@@ -225,8 +219,7 @@ describe('Wallet', () => {
     })
 
     it('should not have ark features when ark provider is not configured', async () => {
-      const wallet = new BareWallet()
-      await wallet.init({
+      const wallet = await Wallet.create({
         network: 'mutinynet',
         identity: mockIdentity
       })

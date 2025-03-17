@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 
 import { InMemoryKey } from "../core/identity";
-import { BareWallet } from "../core/wallet";
+import { IWallet, Wallet } from "../core/wallet";
 import { Message } from "./message";
 import { Response } from "./response";
 
@@ -24,7 +24,7 @@ if (typeof crypto === "undefined" || !crypto.getRandomValues) {
     });
 }
 
-const wallet = new BareWallet();
+let wallet: IWallet | undefined;
 
 // handler for the INIT_WALLET message
 async function handleInitWallet(event: ExtendableMessageEvent) {
@@ -37,10 +37,11 @@ async function handleInitWallet(event: ExtendableMessageEvent) {
     }
 
     try {
-        await wallet.init({
+        wallet = await Wallet.create({
             network: message.network,
             identity: InMemoryKey.fromHex(message.privateKey),
             arkServerUrl: message.arkServerUrl,
+            arkServerPubKey: message.arkServerPubKey,
         });
         console.log("Wallet initialized in service worker", wallet);
 

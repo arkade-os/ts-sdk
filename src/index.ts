@@ -1,7 +1,7 @@
 import { InMemoryKey } from "./core/identity";
 import { ArkAddress } from "./core/address";
 import { VtxoTapscript } from "./core/tapscript";
-import { BareWallet, Wallet, WalletConfig } from "./core/wallet";
+import { Wallet, IWallet, WalletConfig } from "./core/wallet";
 import { ServiceWorkerWallet } from "./core/sw_wallet";
 import {
     ESPLORA_URL,
@@ -17,14 +17,14 @@ import {
 
 export type {
     WalletConfig,
-    Wallet,
+    IWallet as Wallet,
     SettlementEvent,
     SettlementEventType,
     OnchainProvider,
     ArkProvider,
 };
 export {
-    BareWallet,
+    Wallet as BareWallet,
     ServiceWorkerWallet,
     InMemoryKey,
     ESPLORA_URL,

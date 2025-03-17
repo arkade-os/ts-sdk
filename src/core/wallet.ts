@@ -44,6 +44,7 @@ export interface WalletConfig {
     identity: Identity;
     esploraUrl?: string;
     arkServerUrl?: string;
+    arkServerPubKey?: string;
 }
 
 export interface WalletBalance {
@@ -132,10 +133,7 @@ export interface VirtualCoin extends Coin {
     virtualStatus: VirtualStatus;
 }
 
-export interface Wallet {
-    // Core initialization
-    init(config: WalletConfig): Promise<void>;
-
+export interface IWallet {
     // Address and balance management
     getAddress(): Promise<AddressInfo>;
     getBalance(): Promise<WalletBalance>;
@@ -166,76 +164,75 @@ export interface Wallet {
     ): Promise<void>;
 }
 
-// BareWallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
-export class BareWallet implements Wallet {
-    private identity?: Identity;
-    private network?: Network;
-    private onchainProvider?: OnchainProvider;
-    private arkProvider?: ArkProvider;
+// Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
+export class Wallet implements IWallet {
     private unsubscribeEvents?: () => void;
-    private onchainAddress?: string;
-    private offchainAddress?: VtxoTaprootAddress;
-    private boardingAddress?: VtxoTaprootAddress;
-    private onchainP2TR?: ReturnType<typeof btc.p2tr>;
-    private offchainTapscript?: VtxoTapscript;
 
     static DUST_AMOUNT = BigInt(546); // Bitcoin dust limit in satoshis = 546
     static FEE_RATE = 1; // sats/vbyte
 
-    private initialized = false;
+    private constructor(
+        private identity: Identity,
+        private network: Network,
+        private onchainProvider: OnchainProvider,
+        private onchainP2TR: ReturnType<typeof btc.p2tr>,
+        private arkProvider?: ArkProvider,
+        private offchainAddress?: VtxoTaprootAddress,
+        private boardingAddress?: VtxoTaprootAddress,
+        private offchainTapscript?: VtxoTapscript
+    ) {}
 
-    async init(config: WalletConfig): Promise<void> {
-        if (this.initialized) {
-            throw new Error("wallet already initialized");
-        }
-
-        this.identity = config.identity;
-        this.network = getNetwork(config.network as NetworkName);
-        this.onchainProvider = new EsploraProvider(
+    static async create(config: WalletConfig): Promise<Wallet> {
+        const network = getNetwork(config.network as NetworkName);
+        const onchainProvider = new EsploraProvider(
             config.esploraUrl || ESPLORA_URL[config.network as NetworkName]
         );
 
         // Derive onchain address
-        const pubkey = this.identity.xOnlyPublicKey();
+        const pubkey = config.identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
         }
 
+        let arkProvider: ArkProvider | undefined;
         if (config.arkServerUrl) {
-            this.arkProvider = new RestArkProvider(config.arkServerUrl);
+            arkProvider = new RestArkProvider(config.arkServerUrl);
         }
 
         // Save onchain Taproot address key-path only
-        this.onchainP2TR = btc.p2tr(pubkey, undefined, this.network);
-        this.onchainAddress = this.onchainP2TR.address!;
+        const onchainP2TR = btc.p2tr(pubkey, undefined, network);
 
-        if (this.arkProvider) {
-            const info = await this.arkProvider.getInfo();
+        if (arkProvider) {
+            let serverPubKeyHex = config.arkServerPubKey;
+            if (!serverPubKeyHex) {
+                const info = await arkProvider.getInfo();
+                serverPubKeyHex = info.pubkey;
+            }
             // Generate tapscripts for offchain and boarding address
-            const serverPubKey = hex.decode(info.pubkey).slice(1);
+            const serverPubKey = hex.decode(serverPubKeyHex).slice(1);
             const bareVtxoTapscript = VtxoTapscript.createBareVtxo(
                 pubkey,
                 serverPubKey,
-                this.network
+                network
             );
             const boardingTapscript = VtxoTapscript.createBoarding(
                 pubkey,
                 serverPubKey,
-                this.network
+                network
             );
             // Save offchain and boarding address
-            this.offchainAddress = {
+            const offchainAddress = {
                 address: new ArkAddress(
                     serverPubKey,
                     bareVtxoTapscript.toP2TR().tweakedPubkey,
-                    this.network
+                    network
                 ).encode(),
                 scripts: {
                     exit: [hex.encode(bareVtxoTapscript.getExitScript())],
                     forfeit: [hex.encode(bareVtxoTapscript.getForfeitScript())],
                 },
             };
-            this.boardingAddress = {
+            const boardingAddress = {
                 address: boardingTapscript.toP2TR().address!,
                 scripts: {
                     exit: [hex.encode(boardingTapscript.getExitScript())],
@@ -243,17 +240,33 @@ export class BareWallet implements Wallet {
                 },
             };
             // Save tapscripts
-            this.offchainTapscript = bareVtxoTapscript;
+            const offchainTapscript = bareVtxoTapscript;
+
+            return new Wallet(
+                config.identity,
+                network,
+                onchainProvider,
+                onchainP2TR,
+                arkProvider,
+                offchainAddress,
+                boardingAddress,
+                offchainTapscript
+            );
         }
 
-        this.initialized = true;
+        return new Wallet(
+            config.identity,
+            network,
+            onchainProvider,
+            onchainP2TR
+        );
+    }
+
+    get onchainAddress(): string {
+        return this.onchainP2TR.address || "";
     }
 
     getAddress(): Promise<AddressInfo> {
-        if (!this.onchainAddress) {
-            throw new Error("wallet not initialized");
-        }
-
         const addressInfo: AddressInfo = {
             onchain: this.onchainAddress,
             bip21: BIP21.create({
@@ -265,7 +278,7 @@ export class BareWallet implements Wallet {
         if (this.arkProvider && this.offchainAddress) {
             addressInfo.offchain = this.offchainAddress;
             addressInfo.bip21 = BIP21.create({
-                address: this.onchainAddress,
+                address: this.onchainP2TR.address,
                 ark: this.offchainAddress.address,
             });
             addressInfo.boarding = this.boardingAddress;
@@ -405,7 +418,7 @@ export class BareWallet implements Wallet {
             throw new Error("Amount must be positive");
         }
 
-        if (params.amount < BareWallet.DUST_AMOUNT) {
+        if (params.amount < Wallet.DUST_AMOUNT) {
             throw new Error("Amount is below dust limit");
         }
 
@@ -421,7 +434,7 @@ export class BareWallet implements Wallet {
     private isOffchainSuitable(params: SendBitcoinParams): boolean {
         // TODO: Add proper logic to determine if transaction is suitable for offchain
         // For now, just check if amount is greater than dust
-        return params.amount > BareWallet.DUST_AMOUNT;
+        return params.amount > Wallet.DUST_AMOUNT;
     }
 
     private async sendOnchain(params: SendBitcoinParams): Promise<string> {
@@ -436,7 +449,7 @@ export class BareWallet implements Wallet {
         }
 
         const coins = await this.getCoins();
-        const feeRate = params.feeRate || BareWallet.FEE_RATE;
+        const feeRate = params.feeRate || Wallet.FEE_RATE;
 
         // Ensure fee is an integer by rounding up
         const estimatedFee = Math.ceil(174 * feeRate);
@@ -506,7 +519,7 @@ export class BareWallet implements Wallet {
 
         const estimatedFee = zeroFee
             ? 0
-            : Math.ceil(174 * (params.feeRate || BareWallet.FEE_RATE));
+            : Math.ceil(174 * (params.feeRate || Wallet.FEE_RATE));
         const totalNeeded = params.amount + estimatedFee;
 
         const selected = selectVirtualCoins(virtualCoins, totalNeeded);

@@ -28,6 +28,7 @@ export namespace Message {
         privateKey: string;
         arkServerUrl: string;
         network: NetworkName;
+        arkServerPubKey?: string;
     }
 
     export function isInitWallet(message: Base): message is InitWallet {
@@ -38,7 +39,10 @@ export namespace Message {
             "arkServerUrl" in message &&
             typeof message.arkServerUrl === "string" &&
             "network" in message &&
-            typeof message.network === "string"
+            typeof message.network === "string" &&
+            ("arkServerPubKey" in message
+                ? typeof message.arkServerPubKey === "string"
+                : true)
         );
     }
 
