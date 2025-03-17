@@ -14,23 +14,38 @@ export type TreePartialSigs = (musig2.PartialSig | null)[][];
 // with participants of a settlement. It holds the state of the musig2 nonces and allows to
 // create the partial signatures for each transaction in the vtxo tree
 export interface SignerSession {
+    getPublicKey(): Uint8Array;
+    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void;
     getNonces(): TreeNonces;
     setAggregatedNonces(nonces: TreeNonces): void;
     sign(): TreePartialSigs;
 }
 
 export class TreeSignerSession implements SignerSession {
+    static NOT_INITIALIZED = new Error(
+        "session not initialized, call init method"
+    );
+
     private myNonces: (musig2.Nonces | null)[][] | null = null;
     private aggregateNonces: TreeNonces | null = null;
+    private tree: TxTree | null = null;
+    private scriptRoot: Uint8Array | null = null;
+    private rootSharedOutputAmount: bigint | null = null;
 
-    constructor(
-        private secretKey: Uint8Array,
-        private tree: TxTree,
-        private scriptRoot: Uint8Array,
-        private rootSharedOutputAmount: bigint
-    ) {}
+    constructor(private secretKey: Uint8Array) {}
 
-    get publicKey(): Uint8Array {
+    static random(): TreeSignerSession {
+        const secretKey = secp256k1.utils.randomPrivateKey();
+        return new TreeSignerSession(secretKey);
+    }
+
+    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void {
+        this.tree = tree;
+        this.scriptRoot = scriptRoot;
+        this.rootSharedOutputAmount = rootInputAmount;
+    }
+
+    getPublicKey(): Uint8Array {
         return secp256k1.getPublicKey(this.secretKey);
     }
 
@@ -120,6 +135,10 @@ export class TreeSignerSession implements SignerSession {
         levelIndex: number,
         nodeIndex: number
     ): musig2.PartialSig | null {
+        if (!this.tree || !this.scriptRoot || !this.rootSharedOutputAmount) {
+            throw TreeSignerSession.NOT_INITIALIZED;
+        }
+
         if (!this.myNonces || !this.aggregateNonces) {
             throw new Error("session not properly initialized");
         }

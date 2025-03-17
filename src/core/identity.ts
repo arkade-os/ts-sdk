@@ -1,6 +1,8 @@
 import { schnorr } from "@noble/curves/secp256k1";
 import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
+import { TreeSignerSession } from "./signingSession";
+import { SignerSession } from "./signingSession";
 
 // Interface for external signers
 export interface ExternalSignerInterface {
@@ -12,6 +14,8 @@ export interface Identity {
     sign(message: Uint8Array): Promise<Uint8Array>;
     xOnlyPublicKey(): Uint8Array;
     privateKey(): Uint8Array;
+    // TODO deterministic signer session
+    getSignerSession(): SignerSession;
 }
 
 export class InMemoryKey implements Identity {
@@ -40,6 +44,10 @@ export class InMemoryKey implements Identity {
     privateKey(): Uint8Array {
         return this.key;
     }
+
+    getSignerSession(): SignerSession {
+        return TreeSignerSession.random();
+    }
 }
 
 export class ExternalSigner implements Identity {
@@ -63,5 +71,9 @@ export class ExternalSigner implements Identity {
 
     privateKey(): Uint8Array {
         throw new Error("External signer does not expose private key");
+    }
+
+    getSignerSession(): SignerSession {
+        return TreeSignerSession.random();
     }
 }

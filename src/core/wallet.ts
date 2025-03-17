@@ -2,7 +2,6 @@ import { base64, hex } from "@scure/base";
 import { sha256 } from "@noble/hashes/sha256";
 import * as btc from "@scure/btc-signer";
 import { TAP_LEAF_VERSION, tapLeafHash } from "@scure/btc-signer/payment";
-import { secp256k1 } from "@noble/curves/secp256k1";
 import { clearInterval, setInterval } from "timers";
 
 import { BIP21 } from "../utils/bip21";
@@ -27,12 +26,13 @@ import {
     VtxoInput,
     RestArkProvider,
 } from "../providers/ark";
-import { TreeSignerSession } from "./signingSession";
+import { SignerSession } from "./signingSession";
 import { buildForfeitTx } from "./forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "./tree/validation";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { Identity } from "./identity";
+import { secp256k1 } from "@noble/curves/secp256k1";
 
 const ZERO_32 = new Uint8Array([
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -536,19 +536,18 @@ export class Wallet {
             throw new Error("Ark provider not configured");
         }
 
-        // generate a vtxo tree signing key
-        const vtxoTreeSigningKey = secp256k1.utils.randomPrivateKey();
-        const vtxoTreePublicKey = secp256k1.getPublicKey(vtxoTreeSigningKey);
-
         // register inputs
         const { requestId } =
             await this.arkProvider!.registerInputsForNextRound(params.inputs);
 
+        // session holds the state of the musig2 signing process of the vtxo tree
+        const session = this.identity.getSignerSession();
+
         // register outputs
-        await this.arkProvider!.registerOutputsForNextRound(
+        await this.arkProvider.registerOutputsForNextRound(
             requestId,
             params.outputs,
-            [hex.encode(vtxoTreePublicKey)]
+            [hex.encode(session.getPublicKey())]
         );
 
         // start pinging every seconds
@@ -566,10 +565,6 @@ export class Wallet {
         // listen to settlement events
         const settlementStream = this.arkProvider.getEventStream();
         let step: SettlementEventType | undefined;
-
-        // the signing session holds the state of the musig2 signing process of the vtxo tree
-        // it is created when the vtxo tree is received in Signing event
-        let signingSession: TreeSignerSession | undefined;
 
         const info = await this.arkProvider.getInfo();
 
@@ -602,10 +597,13 @@ export class Wallet {
                         continue;
                     }
                     stopPing();
-                    signingSession = await this.handleSettlementSigningEvent(
+                    if (!session) {
+                        throw new Error("Signing session not found");
+                    }
+                    await this.handleSettlementSigningEvent(
                         event,
                         sweepTapTreeRoot,
-                        vtxoTreeSigningKey
+                        session
                     );
                     break;
                 // the musig2 nonces of the vtxo tree transactions are generated
@@ -615,12 +613,12 @@ export class Wallet {
                         continue;
                     }
                     stopPing();
-                    if (!signingSession) {
+                    if (!session) {
                         throw new Error("Signing session not found");
                     }
                     await this.handleSettlementSigningNoncesGeneratedEvent(
                         event,
-                        signingSession
+                        session
                     );
                     break;
                 // the vtxo tree is signed, craft, sign and submit forfeit transactions
@@ -654,8 +652,8 @@ export class Wallet {
     private async handleSettlementSigningEvent(
         event: SigningStartEvent,
         sweepTapTreeRoot: Uint8Array,
-        vtxoTreeSigningKey: Uint8Array
-    ): Promise<TreeSignerSession> {
+        session: SignerSession
+    ) {
         const vtxoTree = event.unsignedVtxoTree;
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
@@ -677,36 +675,29 @@ export class Wallet {
             throw new Error("Shared output not found");
         }
 
-        const signingSession = new TreeSignerSession(
-            vtxoTreeSigningKey,
-            vtxoTree,
-            sweepTapTreeRoot,
-            sharedOutput.amount
-        );
+        session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
         await this.arkProvider.submitTreeNonces(
             event.id,
-            hex.encode(signingSession.publicKey),
-            signingSession.getNonces()
+            hex.encode(session.getPublicKey()),
+            session.getNonces()
         );
-
-        return signingSession;
     }
 
     private async handleSettlementSigningNoncesGeneratedEvent(
         event: SigningNoncesGeneratedEvent,
-        signingSession: TreeSignerSession
+        session: SignerSession
     ) {
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
         }
 
-        signingSession.setAggregatedNonces(event.treeNonces);
-        const signatures = signingSession.sign();
+        session.setAggregatedNonces(event.treeNonces);
+        const signatures = session.sign();
 
         await this.arkProvider.submitTreeSignatures(
             event.id,
-            hex.encode(signingSession.publicKey),
+            hex.encode(session.getPublicKey()),
             signatures
         );
     }
