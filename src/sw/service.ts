@@ -7,17 +7,11 @@ import { Response } from "./response";
 
 declare const self: ServiceWorkerGlobalScope & typeof globalThis;
 
-// Ensure crypto is available in the service worker context
+// ensure crypto is available in the service worker context
 if (typeof crypto === "undefined" || !crypto.getRandomValues) {
     Object.defineProperty(self, "crypto", {
         value: {
-            getRandomValues: function (buffer: Uint8Array) {
-                for (let i = 0; i < buffer.length; i++) {
-                    buffer[i] = Math.floor(Math.random() * 256);
-                }
-                return buffer;
-            },
-            subtle: {}, // Add subtle property to match Web Crypto API
+            getRandomValues: Crypto.prototype.getRandomValues,
         },
         writable: false,
         configurable: false,

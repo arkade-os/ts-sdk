@@ -41,7 +41,8 @@ export namespace Message {
             "network" in message &&
             typeof message.network === "string" &&
             ("arkServerPubKey" in message
-                ? typeof message.arkServerPubKey === "string"
+                ? typeof message.arkServerPubKey === "string" ||
+                  message.arkServerPubKey === undefined
                 : true)
         );
     }
