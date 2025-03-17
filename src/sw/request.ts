@@ -1,7 +1,7 @@
 import { NetworkName } from "../core/networks";
 import { SettleParams, SendBitcoinParams } from "../core/wallet";
 
-export namespace Message {
+export namespace Request {
     export type Type =
         | "INIT_WALLET"
         | "SETTLE"

@@ -9,7 +9,7 @@ import {
     SpendableVtxo,
     VirtualCoin,
 } from "./wallet";
-import { Message } from "../sw/message";
+import { Request } from "../sw/request";
 import { Response } from "../sw/response";
 import { hex } from "@scure/base";
 import { SettlementEvent } from "../providers/ark";
@@ -18,7 +18,7 @@ import { SettlementEvent } from "../providers/ark";
 export class ServiceWorkerWallet implements IWallet {
     private serviceWorker?: ServiceWorker;
 
-    private async sendMessage<T extends Message.Base>(
+    private async sendMessage<T extends Request.Base>(
         message: T
     ): Promise<Response.Base> {
         if (!this.serviceWorker) {
@@ -96,7 +96,7 @@ export class ServiceWorkerWallet implements IWallet {
 
     async init(config: WalletConfig): Promise<void> {
         try {
-            const message: Message.InitWallet = {
+            const message: Request.InitWallet = {
                 type: "INIT_WALLET",
                 privateKey: hex.encode(config.identity.privateKey()),
                 network: config.network,
@@ -113,7 +113,7 @@ export class ServiceWorkerWallet implements IWallet {
     }
 
     async getAddress(): Promise<AddressInfo> {
-        const message: Message.GetAddress = {
+        const message: Request.GetAddress = {
             type: "GET_ADDRESS",
         };
 
@@ -129,7 +129,7 @@ export class ServiceWorkerWallet implements IWallet {
     }
 
     async getBalance(): Promise<WalletBalance> {
-        const message: Message.GetBalance = {
+        const message: Request.GetBalance = {
             type: "GET_BALANCE",
         };
 
@@ -145,7 +145,7 @@ export class ServiceWorkerWallet implements IWallet {
     }
 
     async getCoins(): Promise<Coin[]> {
-        const message: Message.GetCoins = {
+        const message: Request.GetCoins = {
             type: "GET_COINS",
         };
 
@@ -161,7 +161,7 @@ export class ServiceWorkerWallet implements IWallet {
     }
 
     async getVtxos(): Promise<(SpendableVtxo & VirtualCoin)[]> {
-        const message: Message.GetVtxos = {
+        const message: Request.GetVtxos = {
             type: "GET_VTXOS",
         };
 
@@ -177,7 +177,7 @@ export class ServiceWorkerWallet implements IWallet {
     }
 
     async getBoardingUtxos(): Promise<(SpendableVtxo & Coin)[]> {
-        const message: Message.GetBoardingUtxos = {
+        const message: Request.GetBoardingUtxos = {
             type: "GET_BOARDING_UTXOS",
         };
 
@@ -196,7 +196,7 @@ export class ServiceWorkerWallet implements IWallet {
         params: SendBitcoinParams,
         zeroFee?: boolean
     ): Promise<string> {
-        const message: Message.SendBitcoin = {
+        const message: Request.SendBitcoin = {
             type: "SEND_BITCOIN",
             params,
             zeroFee,
@@ -217,7 +217,7 @@ export class ServiceWorkerWallet implements IWallet {
         params?: SettleParams,
         callback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        const message: Message.Settle = {
+        const message: Request.Settle = {
             type: "SETTLE",
             params,
         };

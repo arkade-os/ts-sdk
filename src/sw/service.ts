@@ -2,7 +2,7 @@
 
 import { InMemoryKey } from "../core/identity";
 import { IWallet, Wallet } from "../core/wallet";
-import { Message } from "./message";
+import { Request } from "./request";
 import { Response } from "./response";
 
 declare const self: ServiceWorkerGlobalScope & typeof globalThis;
@@ -23,7 +23,7 @@ let wallet: IWallet | undefined;
 // handler for the INIT_WALLET message
 async function handleInitWallet(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isInitWallet(message)) {
+    if (!Request.isInitWallet(message)) {
         console.error("Invalid INIT_WALLET message format", message);
         event.source?.postMessage(
             Response.error("Invalid INIT_WALLET message format")
@@ -51,7 +51,7 @@ async function handleInitWallet(event: ExtendableMessageEvent) {
 // handler for the SETTLE message
 async function handleSettle(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isSettle(message)) {
+    if (!Request.isSettle(message)) {
         console.error("Invalid SETTLE message format", message);
         event.source?.postMessage(
             Response.error("Invalid SETTLE message format")
@@ -82,7 +82,7 @@ async function handleSettle(event: ExtendableMessageEvent) {
 // handler for the SEND_BITCOIN message
 async function handleSendBitcoin(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isSendBitcoin(message)) {
+    if (!Request.isSendBitcoin(message)) {
         console.error("Invalid SEND_BITCOIN message format", message);
         event.source?.postMessage(
             Response.error("Invalid SEND_BITCOIN message format")
@@ -110,7 +110,7 @@ async function handleSendBitcoin(event: ExtendableMessageEvent) {
 // handler for the GET_ADDRESS message
 async function handleGetAddress(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isGetAddress(message)) {
+    if (!Request.isGetAddress(message)) {
         console.error("Invalid GET_ADDRESS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_ADDRESS message format")
@@ -138,7 +138,7 @@ async function handleGetAddress(event: ExtendableMessageEvent) {
 // handler for the GET_BALANCE message
 async function handleGetBalance(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isGetBalance(message)) {
+    if (!Request.isGetBalance(message)) {
         console.error("Invalid GET_BALANCE message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_BALANCE message format")
@@ -166,7 +166,7 @@ async function handleGetBalance(event: ExtendableMessageEvent) {
 // handler for the GET_COINS message
 async function handleGetCoins(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isGetCoins(message)) {
+    if (!Request.isGetCoins(message)) {
         console.error("Invalid GET_COINS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_COINS message format")
@@ -194,7 +194,7 @@ async function handleGetCoins(event: ExtendableMessageEvent) {
 // handler for the GET_VTXOS message
 async function handleGetVtxos(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isGetVtxos(message)) {
+    if (!Request.isGetVtxos(message)) {
         console.error("Invalid GET_VTXOS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_VTXOS message format")
@@ -222,7 +222,7 @@ async function handleGetVtxos(event: ExtendableMessageEvent) {
 // handler for the GET_BOARDING_UTXOS message
 async function handleGetBoardingUtxos(event: ExtendableMessageEvent) {
     const message = event.data;
-    if (!Message.isGetBoardingUtxos(message)) {
+    if (!Request.isGetBoardingUtxos(message)) {
         console.error("Invalid GET_BOARDING_UTXOS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_BOARDING_UTXOS message format")
@@ -250,7 +250,7 @@ async function handleGetBoardingUtxos(event: ExtendableMessageEvent) {
 // Handle messages from the client
 self.addEventListener("message", async (event: ExtendableMessageEvent) => {
     const message = event.data;
-    if (!Message.isBase(message)) {
+    if (!Request.isBase(message)) {
         event.source?.postMessage(Response.error("Invalid message format"));
         return;
     }
