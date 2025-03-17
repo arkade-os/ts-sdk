@@ -24,6 +24,7 @@ let wallet: IWallet | undefined;
 async function handleInitWallet(event: ExtendableMessageEvent) {
     const message = event.data;
     if (!Message.isInitWallet(message)) {
+        console.error("Invalid INIT_WALLET message format", message);
         event.source?.postMessage(
             Response.error("Invalid INIT_WALLET message format")
         );
@@ -37,11 +38,10 @@ async function handleInitWallet(event: ExtendableMessageEvent) {
             arkServerUrl: message.arkServerUrl,
             arkServerPubKey: message.arkServerPubKey,
         });
-        console.log("Wallet initialized in service worker", wallet);
 
         event.source?.postMessage(Response.walletInitialized);
     } catch (error: unknown) {
-        console.error("Error initializing wallet in service worker", error);
+        console.error("Error initializing wallet:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
@@ -61,6 +61,7 @@ async function handleSettle(event: ExtendableMessageEvent) {
 
     try {
         if (!wallet) {
+            console.error("Wallet not initialized");
             event.source?.postMessage(Response.error("Wallet not initialized"));
             return;
         }
@@ -71,6 +72,7 @@ async function handleSettle(event: ExtendableMessageEvent) {
 
         event.source?.postMessage(Response.settleSuccess(txid));
     } catch (error: unknown) {
+        console.error("Error settling:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
@@ -81,6 +83,7 @@ async function handleSettle(event: ExtendableMessageEvent) {
 async function handleSendBitcoin(event: ExtendableMessageEvent) {
     const message = event.data;
     if (!Message.isSendBitcoin(message)) {
+        console.error("Invalid SEND_BITCOIN message format", message);
         event.source?.postMessage(
             Response.error("Invalid SEND_BITCOIN message format")
         );
@@ -88,6 +91,7 @@ async function handleSendBitcoin(event: ExtendableMessageEvent) {
     }
 
     if (!wallet) {
+        console.error("Wallet not initialized");
         event.source?.postMessage(Response.error("Wallet not initialized"));
         return;
     }
@@ -96,6 +100,7 @@ async function handleSendBitcoin(event: ExtendableMessageEvent) {
         const txid = await wallet.sendBitcoin(message.params, message.zeroFee);
         event.source?.postMessage(Response.sendBitcoinSuccess(txid));
     } catch (error: unknown) {
+        console.error("Error sending bitcoin:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
@@ -106,6 +111,7 @@ async function handleSendBitcoin(event: ExtendableMessageEvent) {
 async function handleGetAddress(event: ExtendableMessageEvent) {
     const message = event.data;
     if (!Message.isGetAddress(message)) {
+        console.error("Invalid GET_ADDRESS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_ADDRESS message format")
         );
@@ -113,6 +119,7 @@ async function handleGetAddress(event: ExtendableMessageEvent) {
     }
 
     if (!wallet) {
+        console.error("Wallet not initialized");
         event.source?.postMessage(Response.error("Wallet not initialized"));
         return;
     }
@@ -121,6 +128,7 @@ async function handleGetAddress(event: ExtendableMessageEvent) {
         const address = await wallet.getAddress();
         event.source?.postMessage(Response.address(address));
     } catch (error: unknown) {
+        console.error("Error getting address:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
@@ -131,6 +139,7 @@ async function handleGetAddress(event: ExtendableMessageEvent) {
 async function handleGetBalance(event: ExtendableMessageEvent) {
     const message = event.data;
     if (!Message.isGetBalance(message)) {
+        console.error("Invalid GET_BALANCE message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_BALANCE message format")
         );
@@ -138,6 +147,7 @@ async function handleGetBalance(event: ExtendableMessageEvent) {
     }
 
     if (!wallet) {
+        console.error("Wallet not initialized");
         event.source?.postMessage(Response.error("Wallet not initialized"));
         return;
     }
@@ -146,6 +156,7 @@ async function handleGetBalance(event: ExtendableMessageEvent) {
         const balance = await wallet.getBalance();
         event.source?.postMessage(Response.balance(balance));
     } catch (error: unknown) {
+        console.error("Error getting balance:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
@@ -156,6 +167,7 @@ async function handleGetBalance(event: ExtendableMessageEvent) {
 async function handleGetCoins(event: ExtendableMessageEvent) {
     const message = event.data;
     if (!Message.isGetCoins(message)) {
+        console.error("Invalid GET_COINS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_COINS message format")
         );
@@ -163,6 +175,7 @@ async function handleGetCoins(event: ExtendableMessageEvent) {
     }
 
     if (!wallet) {
+        console.error("Wallet not initialized");
         event.source?.postMessage(Response.error("Wallet not initialized"));
         return;
     }
@@ -171,6 +184,7 @@ async function handleGetCoins(event: ExtendableMessageEvent) {
         const coins = await wallet.getCoins();
         event.source?.postMessage(Response.coins(coins));
     } catch (error: unknown) {
+        console.error("Error getting coins:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
@@ -181,6 +195,7 @@ async function handleGetCoins(event: ExtendableMessageEvent) {
 async function handleGetVtxos(event: ExtendableMessageEvent) {
     const message = event.data;
     if (!Message.isGetVtxos(message)) {
+        console.error("Invalid GET_VTXOS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_VTXOS message format")
         );
@@ -188,6 +203,7 @@ async function handleGetVtxos(event: ExtendableMessageEvent) {
     }
 
     if (!wallet) {
+        console.error("Wallet not initialized");
         event.source?.postMessage(Response.error("Wallet not initialized"));
         return;
     }
@@ -196,6 +212,7 @@ async function handleGetVtxos(event: ExtendableMessageEvent) {
         const vtxos = await wallet.getVtxos();
         event.source?.postMessage(Response.vtxos(vtxos));
     } catch (error: unknown) {
+        console.error("Error getting vtxos:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
@@ -206,6 +223,7 @@ async function handleGetVtxos(event: ExtendableMessageEvent) {
 async function handleGetBoardingUtxos(event: ExtendableMessageEvent) {
     const message = event.data;
     if (!Message.isGetBoardingUtxos(message)) {
+        console.error("Invalid GET_BOARDING_UTXOS message format", message);
         event.source?.postMessage(
             Response.error("Invalid GET_BOARDING_UTXOS message format")
         );
@@ -213,6 +231,7 @@ async function handleGetBoardingUtxos(event: ExtendableMessageEvent) {
     }
 
     if (!wallet) {
+        console.error("Wallet not initialized");
         event.source?.postMessage(Response.error("Wallet not initialized"));
         return;
     }
@@ -221,6 +240,7 @@ async function handleGetBoardingUtxos(event: ExtendableMessageEvent) {
         const boardingUtxos = await wallet.getBoardingUtxos();
         event.source?.postMessage(Response.boardingUtxos(boardingUtxos));
     } catch (error: unknown) {
+        console.error("Error getting boarding utxos:", error);
         const errorMessage =
             error instanceof Error ? error.message : "Unknown error occurred";
         event.source?.postMessage(Response.error(errorMessage));
