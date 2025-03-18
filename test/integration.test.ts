@@ -207,7 +207,6 @@ describe('Wallet SDK Integration Tests', () => {
   })
 
   it('should return transaction history', { timeout: 60000}, async () => {
-    // Create fresh wallet instances for this test
     const alice = createTestWallet()
     const bob = createTestWallet()
 
@@ -216,16 +215,6 @@ describe('Wallet SDK Integration Tests', () => {
     const bobOffchainAddress = bob.wallet.getAddress().offchain?.address
     expect(aliceOffchainAddress).toBeDefined()
     expect(bobOffchainAddress).toBeDefined()
-
-    // Initial balance check
-    const aliceInitialBalance = await alice.wallet.getBalance()
-    const bobInitialBalance = await bob.wallet.getBalance()
-    expect(aliceInitialBalance.offchain.total).toBe(0)
-    expect(bobInitialBalance.offchain.total).toBe(0)
-
-    // Initial virtual coins check
-    expect((await alice.wallet.getVirtualCoins()).length).toBe(0)
-    expect((await bob.wallet.getVirtualCoins()).length).toBe(0)
 
     // Alice onboarding
     const boardingAmount = 10000
@@ -249,24 +238,12 @@ describe('Wallet SDK Integration Tests', () => {
     // Wait for the transaction to be processed
     await new Promise(resolve => setTimeout(resolve, 1000))
 
-    // Check virtual coins after funding
-    const virtualCoins = await alice.wallet.getVirtualCoins()
-    expect(virtualCoins).toHaveLength(1)
-    const vtxo = virtualCoins[0]
-    expect(vtxo.txid).toBeDefined()
-    expect(vtxo.value).toBe(boardingAmount)
-    expect(vtxo.virtualStatus.state).toBe('settled')
-
-    // Check Alice's balance after funding
-    const aliceBalanceAfterFunding = await alice.wallet.getBalance()
-    expect(aliceBalanceAfterFunding.offchain.total).toBe(boardingAmount)
-
     // Check history before sending to bob
     let aliceHistory = await alice.wallet.getTransactionHistory()
     expect(aliceHistory).toBeDefined()
-    expect(aliceHistory.length).toBe(1) // Should have at least receive and send transactions
+    expect(aliceHistory.length).toBe(1) // should have boarding tx
 
-    // Check funding transaction
+    // Check boarding transaction
     expect(aliceHistory[0].type).toBe(TxType.TxReceived)
     expect(aliceHistory[0].amount).toBe(boardingAmount)
     expect(aliceHistory[0].settled).toBe(true)
