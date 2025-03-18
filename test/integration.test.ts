@@ -321,7 +321,7 @@ describe('Wallet SDK Integration Tests', () => {
     expect(bobsReceiveTx.key.redeemTxid.length).toBeGreaterThan(0)
 
     // Bob settles the received VTXO
-    const bobInputs = await bob.wallet.getVtxos()
+    let bobInputs = await bob.wallet.getVtxos()
     await bob.wallet.settle({
       inputs: bobInputs,
       outputs: [{
@@ -338,6 +338,35 @@ describe('Wallet SDK Integration Tests', () => {
     expect(bobsReceiveTxAfterSettling.type).toBe(TxType.TxReceived)
     expect(bobsReceiveTxAfterSettling.amount).toBe(sendAmount)
     expect(bobsReceiveTxAfterSettling.settled).toBe(true)
+
+    // Bob does a collaborative exit to alice's boarding address
+    bobInputs = await bob.wallet.getVtxos()
+    const amount = bobInputs.reduce((acc, input) => acc + input.value, 0)
+    const bobExitTxid = await bob.wallet.settle({
+      inputs: bobInputs,
+      outputs: [{
+        address: boardingAddress!,
+        amount: BigInt(amount)
+      }]
+    })
+
+    expect(bobExitTxid).toBeDefined()
+
+    // Check bob's history
+    const bobHistoryAfterExit = await bob.wallet.getTransactionHistory()
+    expect(bobHistoryAfterExit).toBeDefined()
+    expect(bobHistoryAfterExit.length).toBe(2)
+    const [bobsExitTx] = bobHistoryAfterExit
+    expect(bobsExitTx.type).toBe(TxType.TxSent)
+    expect(bobsExitTx.amount).toBe(amount)
+
+    // Check alice's history
+    const aliceHistoryAfterExit = await alice.wallet.getTransactionHistory()
+    expect(aliceHistoryAfterExit).toBeDefined()
+    expect(aliceHistoryAfterExit.length).toBe(3)
+    const [alicesExitTx] = aliceHistoryAfterExit
+    expect(alicesExitTx.type).toBe(TxType.TxReceived)
+    expect(alicesExitTx.amount).toBe(amount)
   })
 
 })

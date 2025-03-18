@@ -430,7 +430,7 @@ export class Wallet {
                 settled: utxo.virtualStatus.state === "swept",
                 createdAt: utxo.status.block_time
                     ? new Date(utxo.status.block_time * 1000).toISOString()
-                    : new Date().toISOString(),
+                    : new Date(Date.now()).toISOString(),
             };
 
             if (!utxo.status.block_time) {
@@ -486,7 +486,7 @@ export class Wallet {
         }
 
         // If Ark is configured and amount is suitable, send via offchain
-        if (this.arkProvider && this.isOffchainSuitable(params)) {
+        if (this.arkProvider && this.isOffchainSuitable(params.address)) {
             return this.sendOffchain(params, zeroFee);
         }
 
@@ -494,9 +494,9 @@ export class Wallet {
         return this.sendOnchain(params);
     }
 
-    private isOffchainSuitable(params: SendBitcoinParams): boolean {
+    private isOffchainSuitable(address: string): boolean {
         try {
-            ArkAddress.decode(params.address);
+            ArkAddress.decode(address);
             return true;
         } catch (e) {
             return false;
@@ -667,14 +667,23 @@ export class Wallet {
         const { requestId } =
             await this.arkProvider!.registerInputsForNextRound(params.inputs);
 
+        const hasOffchainOutputs = params.outputs.some((output) =>
+            this.isOffchainSuitable(output.address)
+        );
+
         // session holds the state of the musig2 signing process of the vtxo tree
-        const session = this.identity.signerSession();
+        let session: SignerSession | undefined;
+        const signingPublicKeys: string[] = [];
+        if (hasOffchainOutputs) {
+            session = this.identity.signerSession();
+            signingPublicKeys.push(hex.encode(session.getPublicKey()));
+        }
 
         // register outputs
         await this.arkProvider.registerOutputsForNextRound(
             requestId,
             params.outputs,
-            [hex.encode(session.getPublicKey())]
+            signingPublicKeys
         );
 
         // start pinging every seconds
@@ -692,6 +701,11 @@ export class Wallet {
         // listen to settlement events
         const settlementStream = this.arkProvider.getEventStream();
         let step: SettlementEventType | undefined;
+        if (!hasOffchainOutputs) {
+            // if there are no offchain outputs, we don't have to handle musig2 tree signatures
+            // we can directly advance to the finalization step
+            step = SettlementEventType.SigningNoncesGenerated;
+        }
 
         const info = await this.arkProvider.getInfo();
 
@@ -724,14 +738,16 @@ export class Wallet {
                         continue;
                     }
                     stopPing();
-                    if (!session) {
-                        throw new Error("Signing session not found");
+                    if (hasOffchainOutputs) {
+                        if (!session) {
+                            throw new Error("Signing session not found");
+                        }
+                        await this.handleSettlementSigningEvent(
+                            event,
+                            sweepTapTreeRoot,
+                            session
+                        );
                     }
-                    await this.handleSettlementSigningEvent(
-                        event,
-                        sweepTapTreeRoot,
-                        session
-                    );
                     break;
                 // the musig2 nonces of the vtxo tree transactions are generated
                 // the server expects now the partial musig2 signatures
@@ -740,13 +756,15 @@ export class Wallet {
                         continue;
                     }
                     stopPing();
-                    if (!session) {
-                        throw new Error("Signing session not found");
+                    if (hasOffchainOutputs) {
+                        if (!session) {
+                            throw new Error("Signing session not found");
+                        }
+                        await this.handleSettlementSigningNoncesGeneratedEvent(
+                            event,
+                            session
+                        );
                     }
-                    await this.handleSettlementSigningNoncesGeneratedEvent(
-                        event,
-                        session
-                    );
                     break;
                 // the vtxo tree is signed, craft, sign and submit forfeit transactions
                 // if any boarding utxos are involved, the settlement tx is also signed
