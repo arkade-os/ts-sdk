@@ -236,7 +236,7 @@ describe('Wallet SDK Integration Tests', () => {
     })
 
     // Wait for the transaction to be processed
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    execSync('nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)')
 
     // Check history before sending to bob
     let aliceHistory = await alice.wallet.getTransactionHistory()

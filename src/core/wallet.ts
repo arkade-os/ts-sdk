@@ -144,7 +144,7 @@ export interface ArkTransaction {
     type: TxType;
     amount: number;
     settled: boolean;
-    createdAt: string;
+    createdAt: number;
 }
 
 export class Wallet {
@@ -359,9 +359,12 @@ export class Wallet {
 
         // sort transactions by creation time in descending order (newest first)
         txs.sort(
-            (a, b) =>
-                new Date(b.createdAt).getTime() -
-                new Date(a.createdAt).getTime()
+            // place createdAt = 0 (unconfirmed txs) first, then descending
+            (a, b) => {
+                if (a.createdAt === 0) return -1;
+                if (b.createdAt === 0) return 1;
+                return b.createdAt - a.createdAt;
+            }
         );
 
         return txs;
@@ -409,7 +412,9 @@ export class Wallet {
                                 ? spentStatus.txid
                                 : undefined,
                         },
-                        createdAt: new Date(tx.status.block_time * 1000),
+                        createdAt: tx.status.confirmed
+                            ? new Date(tx.status.block_time * 1000)
+                            : new Date(0),
                     });
                 }
             }
@@ -429,8 +434,8 @@ export class Wallet {
                 type: TxType.TxReceived,
                 settled: utxo.virtualStatus.state === "swept",
                 createdAt: utxo.status.block_time
-                    ? new Date(utxo.status.block_time * 1000).toISOString()
-                    : new Date(Date.now()).toISOString(),
+                    ? new Date(utxo.status.block_time * 1000).getTime()
+                    : 0,
             };
 
             if (!utxo.status.block_time) {

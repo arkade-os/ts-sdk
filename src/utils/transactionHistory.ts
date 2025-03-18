@@ -120,7 +120,7 @@ export function vtxosToTxs(
             key: txKey,
             amount: vtxo.value - settleAmount - spentAmount,
             type: TxType.TxReceived,
-            createdAt: vtxo.createdAt.toISOString(),
+            createdAt: vtxo.createdAt.getTime(),
             settled,
         });
     }
@@ -167,16 +167,10 @@ export function vtxosToTxs(
             key: txKey,
             amount: spentAmount - resultedAmount,
             type: TxType.TxSent,
-            createdAt: vtxo.createdAt.toISOString(),
+            createdAt: vtxo.createdAt.getTime(),
             settled: true,
         });
     }
-
-    // sort by createdAt in descending order
-    txs.sort(
-        (a, b) =>
-            new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
 
     return txs;
 }
