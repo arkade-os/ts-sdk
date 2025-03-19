@@ -5,6 +5,9 @@ import { VtxoTapscript } from "./core/tapscript";
 import { IWallet, WalletConfig, ArkTransaction, TxType } from "./core/wallet";
 import { Wallet } from "./core/wallet/wallet";
 import { ServiceWorkerWallet } from "./core/wallet/serviceWorkerWallet";
+import { Worker } from "./sw/worker";
+import { Request } from "./sw/request";
+import { Response } from "./sw/response";
 import {
     ESPLORA_URL,
     EsploraProvider,
@@ -37,4 +40,7 @@ export {
     ArkAddress,
     VtxoTapscript,
     TxType,
+    Worker,
+    Request,
+    Response,
 };
