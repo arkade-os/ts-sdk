@@ -38,37 +38,6 @@ console.log('Boarding Address:', addresses.boarding)
 console.log('BIP21 URI:', addresses.bip21)
 ```
 
-### Running the wallet in a service worker
-
-1. Create a service worker file
-
-```typescript
-// service-worker.ts
-import { Worker } from '@arklabs/wallet-sdk'
-
-// Worker is a class handling the communication between the main thread and the service worker
-new Worker().start()
-```
-
-2. Instantiate the ServiceWorkerWallet
-
-```typescript
-// specify the path to the service worker file
-// this will automatically register the service worker
-const wallet = await ServiceWorkerWallet.create('/service-worker.js')
-
-// initialize the wallet
-await wallet.init({
-  network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
-  identity: identity,
-  // Esplora API, can be left empty mempool.space API will be used
-  esploraUrl: 'https://mutinynet.com/api', 
-  // OPTIONAL Ark Server connection information
-  arkServerUrl: 'https://master.mutinynet.arklabs.to',
-  arkServerPublicKey: 'd45fc69d4ff1f45cbba36ab1037261863c3a49c4910bc183ae975247358920b6'
-})
-```
-
 ### Sending Bitcoin
 
 ```typescript
@@ -121,6 +90,37 @@ console.log('History:', history)
     redeemTxid: '...'    // for regular transactions
   }
 }
+```
+
+### Running the wallet in a service worker
+
+1. Create a service worker file
+
+```typescript
+// service-worker.ts
+import { Worker } from '@arklabs/wallet-sdk'
+
+// Worker is a class handling the communication between the main thread and the service worker
+new Worker().start()
+```
+
+2. Instantiate the ServiceWorkerWallet
+
+```typescript
+// specify the path to the service worker file
+// this will automatically register the service worker
+const wallet = await ServiceWorkerWallet.create('/service-worker.js')
+
+// initialize the wallet
+await wallet.init({
+  network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
+  identity: identity,
+  // Esplora API, can be left empty mempool.space API will be used
+  esploraUrl: 'https://mutinynet.com/api', 
+  // OPTIONAL Ark Server connection information
+  arkServerUrl: 'https://master.mutinynet.arklabs.to',
+  arkServerPublicKey: 'd45fc69d4ff1f45cbba36ab1037261863c3a49c4910bc183ae975247358920b6'
+})
 ```
 
 ## API Reference
