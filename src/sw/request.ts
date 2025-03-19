@@ -11,7 +11,9 @@ export namespace Request {
         | "GET_VTXOS"
         | "GET_VIRTUAL_COINS"
         | "GET_BOARDING_UTXOS"
-        | "SEND_BITCOIN";
+        | "SEND_BITCOIN"
+        | "GET_TRANSACTION_HISTORY"
+        | "GET_STATUS";
 
     export interface Base {
         type: Type;
@@ -125,5 +127,23 @@ export namespace Request {
             "amount" in message.params &&
             typeof message.params.amount === "number"
         );
+    }
+
+    export interface GetTransactionHistory extends Base {
+        type: "GET_TRANSACTION_HISTORY";
+    }
+
+    export function isGetTransactionHistory(
+        message: Base
+    ): message is GetTransactionHistory {
+        return message.type === "GET_TRANSACTION_HISTORY";
+    }
+
+    export interface GetStatus extends Base {
+        type: "GET_STATUS";
+    }
+
+    export function isGetStatus(message: Base): message is GetStatus {
+        return message.type === "GET_STATUS";
     }
 }

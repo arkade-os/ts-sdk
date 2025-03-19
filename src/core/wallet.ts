@@ -154,6 +154,7 @@ export interface IWallet {
     getCoins(): Promise<Coin[]>;
     getVtxos(): Promise<(SpendableVtxo & VirtualCoin)[]>;
     getBoardingUtxos(): Promise<(SpendableVtxo & Coin)[]>;
+    getTransactionHistory(): Promise<ArkTransaction[]>;
 
     // Transaction operations
     sendBitcoin(params: SendBitcoinParams, zeroFee?: boolean): Promise<string>;

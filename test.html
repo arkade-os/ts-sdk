@@ -187,9 +187,47 @@
         .progress-item:last-child {
             border-bottom: none;
         }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #1a73e8;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        .loading-text {
+            color: #1a73e8;
+            font-weight: 500;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        body.loading button {
+            pointer-events: none;
+            opacity: 0.6;
+        }
     </style>
 </head>
 <body>
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text">Initializing wallet service...</div>
+    </div>
     <div class="page-layout">
         <div class="main-content">
             <div class="container">
@@ -228,6 +266,7 @@
                         <button id="getCoins">Get Coins</button>
                         <button id="getVtxos">Get VTXOs</button>
                         <button id="getBoardingUtxos">Get Boarding UTXOs</button>
+                        <button id="getHistory">Get History</button>
                     </div>
                     <div id="operationStatus" class="status"></div>
                 </div>
@@ -247,10 +286,38 @@
     </div>
 
     <script type="module">
-        import { ServiceWorkerWallet, InMemoryKey } from '/dist/browser/index.js';
+        import { ServiceWorkerWallet } from '/dist/browser/index.js';
 
-        const wallet = new ServiceWorkerWallet();
-        wallet.setupServiceWorker().catch(console.error);
+        let wallet;
+        
+        function setLoading(isLoading) {
+            const overlay = document.getElementById('loadingOverlay');
+            document.body.classList.toggle('loading', isLoading);
+            if (isLoading) {
+                overlay.style.display = 'flex';
+            } else {
+                overlay.style.display = 'none';
+            }
+        }
+
+        async function initialize() {
+            setLoading(true);
+            try {
+                wallet = await ServiceWorkerWallet.create();
+                appendLog('Service worker wallet created successfully');
+            } catch (error) {
+                console.error('Error creating wallet:', error);
+                appendLog(`Failed to create service worker wallet: ${error.message}`);
+                updateStatus(initStatus, `Error creating wallet service: ${error.message}`, true);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initialize();
+        });
+
         const log = document.getElementById('log');
         const initStatus = document.getElementById('initStatus');
         const operationStatus = document.getElementById('operationStatus');
@@ -293,7 +360,7 @@
             try {
                 const config = {
                     network,
-                    identity: InMemoryKey.fromHex(privateKey),
+                    privateKey,
                     arkServerUrl: document.getElementById('arkServerUrl').value
                 };
 
@@ -302,11 +369,8 @@
                     arkServerUrl: config.arkServerUrl
                 }));
 
-                appendLog("Wallet instance created successfully");
-                
-                appendLog("Starting wallet initialization...");
                 await wallet.init(config);
-                appendLog("Wallet initialization completed successfully");
+                appendLog("Wallet created and initialized successfully");
                 
                 updateStatus(initStatus, 'Wallet initialized successfully');
             } catch (error) {
@@ -461,6 +525,34 @@
                 operationStatus.innerHTML = '';
                 operationStatus.appendChild(resultDiv);
                 appendLog(`Error getting boarding UTXOs: ${error.message}`);
+            }
+        });
+
+        // Get Transaction History
+        document.getElementById('getHistory').addEventListener('click', async () => {
+            if (!checkWalletState()) return;
+
+            try {
+                const history = await wallet.getTransactionHistory();
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'operation-result';
+                resultDiv.innerHTML = `
+                    <div class="label">Transaction History</div>
+                    <pre>${JSON.stringify(history, null, 2)}</pre>
+                `;
+                operationStatus.innerHTML = '';
+                operationStatus.appendChild(resultDiv);
+                appendLog('Successfully retrieved transaction history');
+            } catch (error) {
+                const resultDiv = document.createElement('div');
+                resultDiv.className = 'operation-result error';
+                resultDiv.innerHTML = `
+                    <div class="label">Error Getting Transaction History</div>
+                    <pre>${error.message}</pre>
+                `;
+                operationStatus.innerHTML = '';
+                operationStatus.appendChild(resultDiv);
+                appendLog(`Error getting transaction history: ${error.message}`);
             }
         });
 

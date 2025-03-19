@@ -1,9 +1,9 @@
 import {
-    SettleParams,
     WalletBalance,
     Coin,
     SpendableVtxo,
     VirtualCoin,
+    ArkTransaction,
 } from "../core/wallet";
 import { SettlementEvent } from "../providers/ark";
 import { AddressInfo } from "../core/wallet";
@@ -20,6 +20,8 @@ export namespace Response {
         | "VIRTUAL_COINS"
         | "BOARDING_UTXOS"
         | "SEND_BITCOIN_SUCCESS"
+        | "TRANSACTION_HISTORY"
+        | "WALLET_STATUS"
         | "ERROR";
 
     export interface Base {
@@ -208,6 +210,52 @@ export namespace Response {
             type: "SEND_BITCOIN_SUCCESS",
             success: true,
             txid,
+        };
+    }
+
+    export interface TransactionHistory extends Base {
+        type: "TRANSACTION_HISTORY";
+        success: true;
+        transactions: ArkTransaction[];
+    }
+
+    export function isTransactionHistory(
+        response: Base
+    ): response is TransactionHistory {
+        return (
+            response.type === "TRANSACTION_HISTORY" && response.success === true
+        );
+    }
+
+    export function transactionHistory(
+        transactions: ArkTransaction[]
+    ): TransactionHistory {
+        return {
+            type: "TRANSACTION_HISTORY",
+            success: true,
+            transactions,
+        };
+    }
+
+    export interface WalletStatus extends Base {
+        type: "WALLET_STATUS";
+        success: true;
+        status: {
+            walletInitialized: boolean;
+        };
+    }
+
+    export function isWalletStatus(response: Base): response is WalletStatus {
+        return response.type === "WALLET_STATUS" && response.success === true;
+    }
+
+    export function walletStatus(walletInitialized: boolean): WalletStatus {
+        return {
+            type: "WALLET_STATUS",
+            success: true,
+            status: {
+                walletInitialized,
+            },
         };
     }
 }

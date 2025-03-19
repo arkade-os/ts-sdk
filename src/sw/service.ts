@@ -247,6 +247,50 @@ async function handleGetBoardingUtxos(event: ExtendableMessageEvent) {
     }
 }
 
+// Add this handler function with the other handlers
+async function handleGetTransactionHistory(event: ExtendableMessageEvent) {
+    const message = event.data;
+    if (!Request.isGetTransactionHistory(message)) {
+        console.error(
+            "Invalid GET_TRANSACTION_HISTORY message format",
+            message
+        );
+        event.source?.postMessage(
+            Response.error("Invalid GET_TRANSACTION_HISTORY message format")
+        );
+        return;
+    }
+
+    if (!wallet) {
+        console.error("Wallet not initialized");
+        event.source?.postMessage(Response.error("Wallet not initialized"));
+        return;
+    }
+
+    try {
+        const transactions = await wallet.getTransactionHistory();
+        event.source?.postMessage(Response.transactionHistory(transactions));
+    } catch (error: unknown) {
+        console.error("Error getting transaction history:", error);
+        const errorMessage =
+            error instanceof Error ? error.message : "Unknown error occurred";
+        event.source?.postMessage(Response.error(errorMessage));
+    }
+}
+
+async function handleGetStatus(event: ExtendableMessageEvent) {
+    const message = event.data;
+    if (!Request.isGetStatus(message)) {
+        console.error("Invalid GET_STATUS message format", message);
+        event.source?.postMessage(
+            Response.error("Invalid GET_STATUS message format")
+        );
+        return;
+    }
+
+    event.source?.postMessage(Response.walletStatus(wallet !== undefined));
+}
+
 // Handle messages from the client
 self.addEventListener("message", async (event: ExtendableMessageEvent) => {
     const message = event.data;
@@ -295,6 +339,16 @@ self.addEventListener("message", async (event: ExtendableMessageEvent) => {
 
         case "GET_BOARDING_UTXOS": {
             await handleGetBoardingUtxos(event);
+            break;
+        }
+
+        case "GET_TRANSACTION_HISTORY": {
+            await handleGetTransactionHistory(event);
+            break;
+        }
+
+        case "GET_STATUS": {
+            await handleGetStatus(event);
             break;
         }
 

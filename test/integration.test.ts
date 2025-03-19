@@ -2,7 +2,7 @@ import { expect, describe, it, beforeAll } from 'vitest'
 import { utils } from '@scure/btc-signer'
 import { hex } from '@scure/base'
 import { execSync } from 'child_process'
-import { TxType, Wallet } from '../src/core/wallet'
+import { IWallet, TxType, Wallet } from '../src/core/wallet'
 import { InMemoryKey } from '../src/core/identity'
 
 const arkdExec = process.env.ARK_ENV === 'master' ? 'docker exec -t arkd' : 'nigiri'
@@ -11,7 +11,7 @@ const arkdExec = process.env.ARK_ENV === 'master' ? 'docker exec -t arkd' : 'nig
 const ARK_SERVER_PUBKEY = '038a9bbb1fb2aa92b9557dd0b39a85f31d204f58b41c62ea112d6ad148a9881285'
 
 interface TestWallet {
-  wallet: Wallet
+  wallet: IWallet
   privateKeyHex: string
 }
 

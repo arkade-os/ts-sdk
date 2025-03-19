@@ -1,6 +1,5 @@
 import {
     IWallet,
-    WalletConfig,
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
@@ -8,16 +7,110 @@ import {
     Coin,
     SpendableVtxo,
     VirtualCoin,
+    ArkTransaction,
+    WalletConfig,
 } from "./wallet";
 import { Request } from "../sw/request";
 import { Response } from "../sw/response";
-import { hex } from "@scure/base";
 import { SettlementEvent } from "../providers/ark";
 
 // ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
 export class ServiceWorkerWallet implements IWallet {
     private serviceWorker?: ServiceWorker;
 
+    static async create(
+        svcWorkerPath = "/sw.js"
+    ): Promise<ServiceWorkerWallet> {
+        try {
+            const wallet = new ServiceWorkerWallet();
+            await wallet.setupServiceWorker(svcWorkerPath);
+            return wallet;
+        } catch (error) {
+            throw new Error(
+                `Failed to initialize service worker wallet: ${error}`
+            );
+        }
+    }
+
+    async init(
+        config: Omit<WalletConfig, "identity"> & { privateKey: string },
+        failIfInitialized = false
+    ): Promise<void> {
+        // Check if wallet is already initialized
+        const statusMessage: Request.GetStatus = {
+            type: "GET_STATUS",
+        };
+        const response = await this.sendMessage(statusMessage);
+
+        if (
+            Response.isWalletStatus(response) &&
+            response.status.walletInitialized
+        ) {
+            if (failIfInitialized) {
+                throw new Error("Wallet already initialized");
+            }
+            return;
+        }
+
+        // If not initialized, proceed with initialization
+        const message: Request.InitWallet = {
+            type: "INIT_WALLET",
+            privateKey: config.privateKey,
+            network: config.network,
+            arkServerUrl: config.arkServerUrl || "",
+            arkServerPubKey: config.arkServerPubKey,
+        };
+
+        await this.sendMessage(message);
+    }
+
+    // register the service worker
+    private async setupServiceWorker(path: string): Promise<void> {
+        // check if service workers are supported
+        if (!("serviceWorker" in navigator)) {
+            throw new Error(
+                "Service workers are not supported in this browser"
+            );
+        }
+
+        try {
+            // check for existing registration
+            const existingRegistration =
+                await navigator.serviceWorker.getRegistration(path);
+            let registration: ServiceWorkerRegistration;
+
+            if (existingRegistration) {
+                registration = existingRegistration;
+            } else {
+                registration = await navigator.serviceWorker.register(path);
+            }
+
+            const sw =
+                registration.active ||
+                registration.waiting ||
+                registration.installing;
+            if (!sw) {
+                throw new Error("Failed to get service worker instance");
+            }
+            this.serviceWorker = sw;
+
+            // wait for the service worker to be ready
+            if (this.serviceWorker?.state !== "activated") {
+                await new Promise<void>((resolve) => {
+                    if (!this.serviceWorker) return resolve();
+                    this.serviceWorker.addEventListener("statechange", () => {
+                        if (this.serviceWorker?.state === "activated") {
+                            resolve();
+                        }
+                    });
+                });
+            }
+        } catch (error) {
+            throw new Error(`Failed to setup service worker: ${error}`);
+        }
+    }
+
+    // send a message and wait for a response
     private async sendMessage<T extends Request.Base>(
         message: T
     ): Promise<Response.Base> {
@@ -47,69 +140,6 @@ export class ServiceWorkerWallet implements IWallet {
                 reject(new Error("Service worker not initialized"));
             }
         });
-    }
-
-    async setupServiceWorker(path = "/sw.js"): Promise<void> {
-        // Check if service workers are supported
-        if (!("serviceWorker" in navigator)) {
-            throw new Error(
-                "Service workers are not supported in this browser"
-            );
-        }
-
-        try {
-            // Check for existing registration
-            const existingRegistration =
-                await navigator.serviceWorker.getRegistration(path);
-            let registration: ServiceWorkerRegistration;
-
-            if (existingRegistration) {
-                registration = existingRegistration;
-            } else {
-                registration = await navigator.serviceWorker.register(path);
-            }
-
-            const sw =
-                registration.active ||
-                registration.waiting ||
-                registration.installing;
-            if (!sw) {
-                throw new Error("Failed to get service worker instance");
-            }
-            this.serviceWorker = sw;
-
-            // Wait for the service worker to be ready
-            if (this.serviceWorker?.state !== "activated") {
-                await new Promise<void>((resolve) => {
-                    if (!this.serviceWorker) return resolve();
-                    this.serviceWorker.addEventListener("statechange", () => {
-                        if (this.serviceWorker?.state === "activated") {
-                            resolve();
-                        }
-                    });
-                });
-            }
-        } catch (error) {
-            throw new Error(`Failed to setup service worker: ${error}`);
-        }
-    }
-
-    async init(config: WalletConfig): Promise<void> {
-        try {
-            const message: Request.InitWallet = {
-                type: "INIT_WALLET",
-                privateKey: hex.encode(config.identity.privateKey()),
-                network: config.network,
-                arkServerUrl: config.arkServerUrl || "",
-                arkServerPubKey: config.arkServerPubKey,
-            };
-
-            await this.sendMessage(message);
-        } catch (error) {
-            throw new Error(
-                `Failed to initialize service worker wallet: ${error}`
-            );
-        }
     }
 
     async getAddress(): Promise<AddressInfo> {
@@ -268,6 +298,22 @@ export class ServiceWorkerWallet implements IWallet {
             });
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
+        }
+    }
+
+    async getTransactionHistory(): Promise<ArkTransaction[]> {
+        const message: Request.GetTransactionHistory = {
+            type: "GET_TRANSACTION_HISTORY",
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isTransactionHistory(response)) {
+                return response.transactions;
+            }
+            throw new Error("Unexpected response type");
+        } catch (error) {
+            throw new Error(`Failed to get transaction history: ${error}`);
         }
     }
 }
