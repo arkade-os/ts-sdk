@@ -1,5 +1,5 @@
-import type { NetworkName } from "../core/networks";
-import { Coin } from "../core/wallet";
+import type { NetworkName } from "../networks";
+import { Coin } from "../wallet";
 
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.space/api",

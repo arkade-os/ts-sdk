@@ -2,21 +2,21 @@ import { base64, hex } from "@scure/base";
 import * as btc from "@scure/btc-signer";
 import { TAP_LEAF_VERSION, tapLeafHash } from "@scure/btc-signer/payment";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
-import { vtxosToTxs } from "../../utils/transactionHistory";
-import { BIP21 } from "../../utils/bip21";
+import { vtxosToTxs } from "../utils/transactionHistory";
+import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../address";
 import {
     checkSequenceVerifyScript,
     RelativeTimelock,
     VtxoTapscript,
 } from "../tapscript";
-import { selectCoins, selectVirtualCoins } from "../../utils/coinselect";
+import { selectCoins, selectVirtualCoins } from "../utils/coinselect";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
     EsploraProvider,
     OnchainProvider,
-} from "../../providers/onchain";
+} from "../providers/onchain";
 import {
     ArkInfo,
     FinalizationEvent,
@@ -26,10 +26,10 @@ import {
     SigningStartEvent,
     ArkProvider,
     RestArkProvider,
-} from "../../providers/ark";
+} from "../providers/ark";
 import { SignerSession } from "../signingSession";
 import { buildForfeitTx } from "../forfeit";
-import { TxWeightEstimator } from "../../utils/txSizeEstimator";
+import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "../tree/validation";
 import { Identity } from "../identity";
 import {

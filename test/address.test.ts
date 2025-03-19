@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ArkAddress } from '../src/core/address';
+import { ArkAddress } from '../src/address';
 import fixtures from './fixtures/encoding.json';
 import { hex } from '@scure/base';
 

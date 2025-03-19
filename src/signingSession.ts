@@ -1,4 +1,4 @@
-import * as musig2 from "../core/musig2";
+import * as musig2 from "./musig2";
 import { getCosignerKeys, TxTree } from "./tree/vtxoTree";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";

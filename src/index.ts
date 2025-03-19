@@ -1,13 +1,13 @@
-import { InMemoryKey } from "./core/identity/inMemoryKey";
-import { Identity } from "./core/identity";
-import { ArkAddress } from "./core/address";
-import { VtxoTapscript } from "./core/tapscript";
-import { IWallet, WalletConfig, ArkTransaction, TxType } from "./core/wallet";
-import { Wallet } from "./core/wallet/wallet";
-import { ServiceWorkerWallet } from "./core/wallet/serviceWorkerWallet";
-import { Worker } from "./sw/worker";
-import { Request } from "./sw/request";
-import { Response } from "./sw/response";
+import { InMemoryKey } from "./identity/inMemoryKey";
+import { Identity } from "./identity";
+import { ArkAddress } from "./address";
+import { VtxoTapscript } from "./tapscript";
+import { IWallet, WalletConfig, ArkTransaction, TxType } from "./wallet";
+import { Wallet } from "./wallet/wallet";
+import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import { Worker } from "./wallet/serviceWorker/worker";
+import { Request } from "./wallet/serviceWorker/request";
+import { Response } from "./wallet/serviceWorker/response";
 import {
     ESPLORA_URL,
     EsploraProvider,

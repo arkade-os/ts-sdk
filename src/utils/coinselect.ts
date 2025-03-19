@@ -1,4 +1,4 @@
-import type { Coin, VirtualCoin } from "../core/wallet";
+import type { Coin, VirtualCoin } from "../wallet";
 
 /**
  * Select coins to reach a target amount, prioritizing those closer to expiry

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { aggregateKeys } from '../src/core/musig2/keys'
-import { sign } from '../src/core/musig2/sign'
+import { sign, aggregateKeys } from '../src/musig2'
 import testData from './fixtures/musig2.json'
 import { hex } from '@scure/base'
 

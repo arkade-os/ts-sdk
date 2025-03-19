@@ -1,5 +1,5 @@
-import { NetworkName } from "../core/networks";
-import { SettleParams, SendBitcoinParams } from "../core/wallet";
+import { NetworkName } from "../../networks";
+import { SettleParams, SendBitcoinParams } from "..";
 
 export namespace Request {
     export type Type =

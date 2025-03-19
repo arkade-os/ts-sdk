@@ -4,9 +4,9 @@ import {
     SpendableVtxo,
     VirtualCoin,
     ArkTransaction,
-} from "../core/wallet";
-import { SettlementEvent } from "../providers/ark";
-import { AddressInfo } from "../core/wallet";
+    AddressInfo,
+} from "..";
+import { SettlementEvent } from "../../providers/ark";
 
 export namespace Response {
     export type Type =

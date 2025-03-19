@@ -1,4 +1,4 @@
-import { Output, SettlementEvent, VtxoInput } from "../../providers/ark";
+import { Output, SettlementEvent, VtxoInput } from "../providers/ark";
 import { Identity } from "../identity";
 import { NetworkName } from "../networks";
 import { RelativeTimelock } from "../tapscript";

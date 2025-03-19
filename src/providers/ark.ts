@@ -1,6 +1,6 @@
-import { TxTree } from "../core/tree/vtxoTree";
-import { Outpoint, VirtualCoin } from "../core/wallet";
-import { TreeNonces, TreePartialSigs } from "../core/signingSession";
+import { TxTree } from "../tree/vtxoTree";
+import { Outpoint, VirtualCoin } from "../wallet";
+import { TreeNonces, TreePartialSigs } from "../signingSession";
 import { hex } from "@scure/base";
 
 // Define event types

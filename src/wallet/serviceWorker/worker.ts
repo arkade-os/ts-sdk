@@ -1,9 +1,9 @@
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
-import { InMemoryKey } from "../core/identity/inMemoryKey";
-import { IWallet } from "../core/wallet";
-import { Wallet } from "../core/wallet/wallet";
+import { InMemoryKey } from "../../identity/inMemoryKey";
+import { IWallet } from "..";
+import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 
