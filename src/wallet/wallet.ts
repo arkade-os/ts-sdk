@@ -27,7 +27,7 @@ import {
     ArkProvider,
     RestArkProvider,
 } from "../providers/ark";
-import { SignerSession } from "../signingSession";
+import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "../tree/validation";

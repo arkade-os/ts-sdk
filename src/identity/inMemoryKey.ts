@@ -2,7 +2,7 @@ import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer";
 import { Identity } from ".";
-import { SignerSession, TreeSignerSession } from "../signingSession";
+import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 
 const ZERO_32 = new Uint8Array(32).fill(0);
 
