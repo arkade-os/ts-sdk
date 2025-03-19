@@ -9,10 +9,10 @@ import {
     VirtualCoin,
     ArkTransaction,
     WalletConfig,
-} from "./wallet";
-import { Request } from "../sw/request";
-import { Response } from "../sw/response";
-import { SettlementEvent } from "../providers/ark";
+} from ".";
+import { Request } from "../../sw/request";
+import { Response } from "../../sw/response";
+import { SettlementEvent } from "../../providers/ark";
 
 // ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
 export class ServiceWorkerWallet implements IWallet {

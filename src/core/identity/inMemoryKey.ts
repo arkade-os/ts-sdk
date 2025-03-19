@@ -1,18 +1,10 @@
 import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
-import { TreeSignerSession } from "./signingSession";
-import { SignerSession } from "./signingSession";
 import { Transaction } from "@scure/btc-signer";
+import { Identity } from ".";
+import { SignerSession, TreeSignerSession } from "../signingSession";
 
 const ZERO_32 = new Uint8Array(32).fill(0);
-
-export interface Identity {
-    // if inputIndexes is not provided, try to sign all inputs
-    sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
-    xOnlyPublicKey(): Uint8Array;
-    // TODO deterministic signer session
-    signerSession(): SignerSession;
-}
 
 export class InMemoryKey implements Identity {
     private key: Uint8Array;

@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
 
-import { InMemoryKey } from "../core/identity";
-import { IWallet, Wallet } from "../core/wallet";
+import { InMemoryKey } from "../core/identity/inMemoryKey";
+import { IWallet } from "../core/wallet";
+import { Wallet } from "../core/wallet/wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 

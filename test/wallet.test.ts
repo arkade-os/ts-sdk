@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { Wallet } from '../src/core/wallet'
-import { InMemoryKey } from '../src/core/identity'
 import { hex } from '@scure/base'
+import { Wallet, InMemoryKey } from '../src'
 import type { Coin } from '../src/core/wallet'
 
 // Mock fetch

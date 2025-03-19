@@ -1,8 +1,10 @@
-import { InMemoryKey } from "./core/identity";
+import { InMemoryKey } from "./core/identity/inMemoryKey";
+import { Identity } from "./core/identity";
 import { ArkAddress } from "./core/address";
 import { VtxoTapscript } from "./core/tapscript";
-import { Wallet, IWallet, WalletConfig } from "./core/wallet";
-import { ServiceWorkerWallet } from "./core/sw_wallet";
+import { IWallet, WalletConfig, ArkTransaction, TxType } from "./core/wallet";
+import { Wallet } from "./core/wallet/wallet";
+import { ServiceWorkerWallet } from "./core/wallet/serviceWorkerWallet";
 import {
     ESPLORA_URL,
     EsploraProvider,
@@ -17,14 +19,16 @@ import {
 
 export type {
     WalletConfig,
-    IWallet as Wallet,
+    IWallet,
     SettlementEvent,
     SettlementEventType,
     OnchainProvider,
     ArkProvider,
+    Identity,
+    ArkTransaction,
 };
 export {
-    Wallet as BareWallet,
+    Wallet,
     ServiceWorkerWallet,
     InMemoryKey,
     ESPLORA_URL,
@@ -32,4 +36,5 @@ export {
     RestArkProvider,
     ArkAddress,
     VtxoTapscript,
+    TxType,
 };
