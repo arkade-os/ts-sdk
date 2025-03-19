@@ -18,9 +18,7 @@ import { SettlementEvent } from "../../providers/ark";
 export class ServiceWorkerWallet implements IWallet {
     private serviceWorker?: ServiceWorker;
 
-    static async create(
-        svcWorkerPath = "/sw.js"
-    ): Promise<ServiceWorkerWallet> {
+    static async create(svcWorkerPath: string): Promise<ServiceWorkerWallet> {
         try {
             const wallet = new ServiceWorkerWallet();
             await wallet.setupServiceWorker(svcWorkerPath);

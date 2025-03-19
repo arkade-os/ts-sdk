@@ -303,7 +303,7 @@
         async function initialize() {
             setLoading(true);
             try {
-                wallet = await ServiceWorkerWallet.create();
+                wallet = await ServiceWorkerWallet.create('/sw.js');
                 appendLog('Service worker wallet created successfully');
             } catch (error) {
                 console.error('Error creating wallet:', error);

@@ -1,4 +1,4 @@
-import { Worker } from "../../src/sw/worker";
+import { Worker } from "../../src/wallet/serviceWorker/worker";
 
 // ensure crypto is available in the service worker context
 if (typeof crypto === "undefined" || !crypto.getRandomValues) {

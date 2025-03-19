@@ -5,11 +5,7 @@ import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../address";
-import {
-    checkSequenceVerifyScript,
-    RelativeTimelock,
-    VtxoTapscript,
-} from "../tapscript";
+import { checkSequenceVerifyScript, VtxoTapscript } from "../tapscript";
 import { selectCoins, selectVirtualCoins } from "../utils/coinselect";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
