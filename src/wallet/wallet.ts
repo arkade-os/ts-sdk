@@ -81,7 +81,7 @@ export class Wallet implements IWallet {
         const onchainP2TR = btc.p2tr(pubkey, undefined, network);
 
         if (arkProvider) {
-            let serverPubKeyHex = config.arkServerPubKey;
+            let serverPubKeyHex = config.arkServerPublicKey;
             let boardingTimelock = config.boardingTimelock;
             if (!serverPubKeyHex || !boardingTimelock) {
                 const info = await arkProvider.getInfo();

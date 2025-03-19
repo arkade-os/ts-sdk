@@ -23,7 +23,7 @@ async function createTestWallet(): Promise<TestWallet> {
     network: 'regtest',
     identity,
     arkServerUrl: 'http://localhost:7070',
-    arkServerPubKey: ARK_SERVER_PUBKEY
+    arkServerPublicKey: ARK_SERVER_PUBKEY
   })
 
   return {

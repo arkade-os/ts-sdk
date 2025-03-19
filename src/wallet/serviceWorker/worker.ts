@@ -36,7 +36,7 @@ export class Worker {
                 network: message.network,
                 identity: InMemoryKey.fromHex(message.privateKey),
                 arkServerUrl: message.arkServerUrl,
-                arkServerPubKey: message.arkServerPubKey,
+                arkServerPublicKey: message.arkServerPublicKey,
             });
 
             event.source?.postMessage(Response.walletInitialized);

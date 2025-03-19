@@ -56,7 +56,7 @@ export class ServiceWorkerWallet implements IWallet {
             privateKey: config.privateKey,
             network: config.network,
             arkServerUrl: config.arkServerUrl || "",
-            arkServerPubKey: config.arkServerPubKey,
+            arkServerPublicKey: config.arkServerPublicKey,
         };
 
         await this.sendMessage(message);

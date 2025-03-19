@@ -27,7 +27,7 @@ const wallet = await Wallet.create({
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://master.mutinynet.arklabs.to',
-  arkServerPubKey: 'd45fc69d4ff1f45cbba36ab1037261863c3a49c4910bc183ae975247358920b6'
+  arkServerPublicKey: 'd45fc69d4ff1f45cbba36ab1037261863c3a49c4910bc183ae975247358920b6'
 })
 
 // Get wallet addresses
@@ -65,7 +65,7 @@ await wallet.init({
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://master.mutinynet.arklabs.to',
-  arkServerPubKey: 'd45fc69d4ff1f45cbba36ab1037261863c3a49c4910bc183ae975247358920b6'
+  arkServerPublicKey: 'd45fc69d4ff1f45cbba36ab1037261863c3a49c4910bc183ae975247358920b6'
 })
 ```
 
@@ -140,7 +140,7 @@ interface WalletConfig {
   /** Ark server URL (optional) */
   arkServerUrl?: string;
   /** Ark server public key (optional) */
-  arkServerPubKey?: string;
+  arkServerPublicKey?: string;
 }
 ```
 

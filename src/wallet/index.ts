@@ -8,7 +8,7 @@ export interface WalletConfig {
     identity: Identity;
     esploraUrl?: string;
     arkServerUrl?: string;
-    arkServerPubKey?: string;
+    arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
 }
 
