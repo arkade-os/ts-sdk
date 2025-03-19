@@ -5,7 +5,11 @@ import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { BIP21 } from "../../utils/bip21";
 import { ArkAddress } from "../address";
-import { checkSequenceVerifyScript, VtxoTapscript } from "../tapscript";
+import {
+    checkSequenceVerifyScript,
+    RelativeTimelock,
+    VtxoTapscript,
+} from "../tapscript";
 import { selectCoins, selectVirtualCoins } from "../../utils/coinselect";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
@@ -82,9 +86,14 @@ export class Wallet implements IWallet {
 
         if (arkProvider) {
             let serverPubKeyHex = config.arkServerPubKey;
-            if (!serverPubKeyHex) {
+            let boardingTimelock = config.boardingTimelock;
+            if (!serverPubKeyHex || !boardingTimelock) {
                 const info = await arkProvider.getInfo();
                 serverPubKeyHex = info.pubkey;
+                boardingTimelock = {
+                    value: info.unilateralExitDelay,
+                    type: info.unilateralExitDelay < 512 ? "blocks" : "seconds",
+                };
             }
             // Generate tapscripts for offchain and boarding address
             const serverPubKey = hex.decode(serverPubKeyHex).slice(1);
@@ -96,6 +105,7 @@ export class Wallet implements IWallet {
             const boardingTapscript = VtxoTapscript.createBoarding(
                 pubkey,
                 serverPubKey,
+                boardingTimelock,
                 network
             );
             // Save offchain and boarding address

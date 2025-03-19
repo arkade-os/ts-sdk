@@ -35,7 +35,7 @@ const server = http.createServer((req, res) => {
 
     // Serve test.html for root
     if (req.url === '/') {
-        fs.readFile(path.join(__dirname, '../test.html'), (err, data) => {
+        fs.readFile(path.join(__dirname, './test.html'), (err, data) => {
             if (err) {
                 res.writeHead(500);
                 res.end('Error loading test.html');
@@ -51,10 +51,10 @@ const server = http.createServer((req, res) => {
     let filePath;
     if (req.url.startsWith('/dist/')) {
         // Direct request to dist folder
-        filePath = path.join(__dirname, '..', req.url);
+        filePath = path.join(__dirname, '../..', req.url);
     } else {
         // Try dist/browser for other module requests
-        filePath = path.join(__dirname, '../dist/browser', req.url);
+        filePath = path.join(__dirname, '../../dist/browser', req.url);
     }
 
     // Add .js extension if no extension exists

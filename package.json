@@ -11,11 +11,6 @@
       "import": "./dist/esm/index.js",
       "require": "./dist/index.js",
       "default": "./dist/esm/index.js"
-    },
-    "./sw": {
-      "import": "./dist/browser/sw.js",
-      "require": "./dist/browser/sw.js",
-      "default": "./dist/browser/sw.js"
     }
   },
   "files": [
@@ -26,7 +21,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "rm -rf dist && pnpm run build:esm && pnpm run build:cjs && pnpm run build:types && pnpm run build:browser",
+    "build": "rm -rf dist && pnpm run build:esm && pnpm run build:cjs && pnpm run build:types",
     "build:esm": "tsc -p tsconfig.json --outDir dist/esm",
     "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist",
     "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
@@ -42,7 +37,7 @@
     "test:integration-master": "ARK_ENV=master vitest run test/integration.test.ts",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:sw": "node test/serve.js",
+    "test:sw": "pnpm run build:browser && node test/serviceWorker/serve.js",
     "format": "prettier --write src",
     "lint": "prettier --check src",
     "audit": "pnpm audit",

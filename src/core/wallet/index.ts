@@ -1,6 +1,7 @@
 import { Output, SettlementEvent, VtxoInput } from "../../providers/ark";
 import { Identity } from "../identity";
 import { NetworkName } from "../networks";
+import { RelativeTimelock } from "../tapscript";
 
 export interface WalletConfig {
     network: NetworkName;
@@ -8,6 +9,7 @@ export interface WalletConfig {
     esploraUrl?: string;
     arkServerUrl?: string;
     arkServerPubKey?: string;
+    boardingTimelock?: RelativeTimelock;
 }
 
 export interface WalletBalance {

@@ -1,25 +1,26 @@
 const esbuild = require('esbuild');
 
 async function build(options = {}) {
-    const {
-        watch = false,
-        production = process.env.NODE_ENV === 'production'
-    } = options;
+    const { watch = false } = options;
+
+    // Fail if running in production
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('This build script should not be run in production mode');
+    }
 
     const commonConfig = {
         bundle: true,
         format: 'esm',
         target: ['es2020'],
         platform: 'browser',
-        sourcemap: !production,
-        minify: production,
+        sourcemap: true,
+        minify: false,
         define: {
-            'process.env.NODE_ENV': JSON.stringify(production ? 'production' : 'development')
+            'process.env.NODE_ENV': JSON.stringify('development')
         },
         logLevel: 'info',
         treeShaking: true,
-        legalComments: production ? 'none' : 'inline',
-        drop: production ? ['console', 'debugger'] : [],
+        legalComments: 'inline',
         metafile: true
     };
 
@@ -34,7 +35,7 @@ async function build(options = {}) {
         // Build service worker bundle
         const swCtx = await esbuild.context({
             ...commonConfig,
-            entryPoints: ['src/sw/service.ts'],
+            entryPoints: ['test/serviceWorker/service.ts'],
             outfile: 'dist/browser/sw.js',
         });
 
@@ -77,8 +78,7 @@ async function build(options = {}) {
 // Parse command line arguments
 const args = process.argv.slice(2);
 const options = {
-    watch: args.includes('--watch'),
-    production: args.includes('--production') || process.env.NODE_ENV === 'production'
+    watch: args.includes('--watch')
 };
 
 build(options); 

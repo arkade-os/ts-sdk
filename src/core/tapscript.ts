@@ -24,11 +24,6 @@ export class VtxoTapscript {
         value: 144n,
         type: "blocks",
     }; // 1 day in blocks
-    // TODO change to 3 months in blocks
-    static readonly BOARDING_TIMELOCK: RelativeTimelock = {
-        value: this.DEFAULT_TIMELOCK.value * 2n,
-        type: this.DEFAULT_TIMELOCK.type,
-    };
 
     readonly pubKey: Bytes;
     readonly serverPubKey: Bytes;
@@ -115,13 +110,14 @@ export class VtxoTapscript {
     static createBoarding(
         pubKey: Bytes,
         serverPubKey: Bytes,
+        csvTimelock: RelativeTimelock,
         network?: typeof btc.NETWORK
     ): VtxoTapscript {
         return new VtxoTapscript(
             {
                 pubKey,
                 serverPubKey,
-                csvTimelock: this.BOARDING_TIMELOCK,
+                csvTimelock,
             },
             network
         );
