@@ -85,7 +85,7 @@ describe('Wallet SDK Integration Tests', () => {
     const virtualCoins = await alice.wallet.getVtxos()
     expect(virtualCoins).toHaveLength(1)
     const vtxo = virtualCoins[0]
-    expect(vtxo.outpoint.txid).toBeDefined()
+    expect(vtxo.txid).toBeDefined()
 
     const settleTxid = await alice.wallet.settle({
       inputs: [vtxo],

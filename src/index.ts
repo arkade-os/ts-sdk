@@ -1,8 +1,17 @@
 import { InMemoryKey } from "./identity/inMemoryKey";
 import { Identity } from "./identity";
-import { ArkAddress } from "./address";
-import { VtxoTapscript } from "./tapscript";
-import { IWallet, WalletConfig, ArkTransaction, TxType } from "./wallet";
+import { ArkAddress } from "./script/address";
+import { DefaultVtxo } from "./script/default";
+import { VtxoScript } from "./script/base";
+import {
+    IWallet,
+    WalletConfig,
+    ArkTransaction,
+    TxType,
+    Coin,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+} from "./wallet";
 import { Wallet } from "./wallet/wallet";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -29,6 +38,9 @@ export type {
     ArkProvider,
     Identity,
     ArkTransaction,
+    Coin,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
 };
 export {
     Wallet,
@@ -38,7 +50,8 @@ export {
     EsploraProvider,
     RestArkProvider,
     ArkAddress,
-    VtxoTapscript,
+    DefaultVtxo,
+    VtxoScript,
     TxType,
     Worker,
     Request,

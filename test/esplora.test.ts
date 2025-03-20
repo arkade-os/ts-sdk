@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EsploraProvider } from '../src/providers/onchain'
-import { Coin } from '../src/wallet'
+import { EsploraProvider, Coin } from '../src'
 // Mock fetch
 const mockFetch = vi.fn()
 global.fetch = mockFetch
