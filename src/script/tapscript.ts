@@ -8,7 +8,20 @@ export type RelativeTimelock = {
     type: "seconds" | "blocks";
 };
 
-export interface ArkTapscript<Params, SizeArgs = never> {
+export enum TapscriptType {
+    Multisig = "multisig",
+    CSVMultisig = "csv-multisig",
+    ConditionCSVMultisig = "condition-csv-multisig",
+    ConditionMultisig = "condition-multisig",
+    CLTVMultisig = "cltv-multisig",
+}
+
+export interface ArkTapscript<
+    T extends TapscriptType,
+    Params,
+    SizeArgs = never,
+> {
+    type: T;
     params: Params;
     script: Uint8Array;
     witnessSize(args: SizeArgs): number;
@@ -16,7 +29,7 @@ export interface ArkTapscript<Params, SizeArgs = never> {
 
 export function decodeTapscript(
     script: Uint8Array
-): ArkTapscript<any, any | undefined> {
+): ArkTapscript<TapscriptType, any, any | undefined> {
     const types = [
         MultisigTapscript,
         CSVMultisigTapscript,
@@ -41,7 +54,7 @@ export function decodeTapscript(
  * from the specified pubkeys.
  */
 export namespace MultisigTapscript {
-    export type Type = ArkTapscript<Params>;
+    export type Type = ArkTapscript<TapscriptType.Multisig, Params>;
 
     export enum MultisigType {
         CHECKSIG,
@@ -72,6 +85,7 @@ export namespace MultisigTapscript {
 
         if (params.type === MultisigType.CHECKSIGADD) {
             return {
+                type: TapscriptType.Multisig,
                 params,
                 script: p2tr_ms(params.pubkeys.length, params.pubkeys).script,
                 witnessSize: () => params.pubkeys.length * 64,
@@ -91,6 +105,7 @@ export namespace MultisigTapscript {
         }
 
         return {
+            type: TapscriptType.Multisig,
             params,
             script: Script.encode(asm),
             witnessSize: () => params.pubkeys.length * 64,
@@ -178,6 +193,7 @@ export namespace MultisigTapscript {
         }
 
         return {
+            type: TapscriptType.Multisig,
             params: { pubkeys, type: MultisigType.CHECKSIGADD },
             script,
             witnessSize: () => pubkeys.length * 64,
@@ -237,10 +253,15 @@ export namespace MultisigTapscript {
         }
 
         return {
+            type: TapscriptType.Multisig,
             params: { pubkeys, type: MultisigType.CHECKSIG },
             script,
             witnessSize: () => pubkeys.length * 64,
         };
+    }
+
+    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+        return tapscript.type === TapscriptType.Multisig;
     }
 }
 
@@ -251,7 +272,7 @@ export namespace MultisigTapscript {
  * This is the standard exit closure and it is also used for the sweep closure in vtxo trees.
  */
 export namespace CSVMultisigTapscript {
-    export type Type = ArkTapscript<Params>;
+    export type Type = ArkTapscript<TapscriptType.CSVMultisig, Params>;
 
     export type Params = {
         timelock: RelativeTimelock;
@@ -284,6 +305,7 @@ export namespace CSVMultisigTapscript {
         ]);
 
         return {
+            type: TapscriptType.CSVMultisig,
             params,
             script,
             witnessSize: () => params.pubkeys.length * 64,
@@ -343,6 +365,7 @@ export namespace CSVMultisigTapscript {
         }
 
         return {
+            type: TapscriptType.CSVMultisig,
             params: {
                 timelock,
                 ...multisig.params,
@@ -350,6 +373,10 @@ export namespace CSVMultisigTapscript {
             script,
             witnessSize: () => multisig.params.pubkeys.length * 64,
         };
+    }
+
+    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+        return tapscript.type === TapscriptType.CSVMultisig;
     }
 }
 
@@ -359,7 +386,7 @@ export namespace CSVMultisigTapscript {
  * (timelock and signatures).
  */
 export namespace ConditionCSVMultisigTapscript {
-    export type Type = ArkTapscript<Params, number>;
+    export type Type = ArkTapscript<TapscriptType.ConditionCSVMultisig, Params>;
 
     export type Params = {
         conditionScript: Bytes;
@@ -373,6 +400,7 @@ export namespace ConditionCSVMultisigTapscript {
         ]);
 
         return {
+            type: TapscriptType.ConditionCSVMultisig,
             params,
             script,
             witnessSize: (conditionSize: number) =>
@@ -430,6 +458,7 @@ export namespace ConditionCSVMultisigTapscript {
         }
 
         return {
+            type: TapscriptType.ConditionCSVMultisig,
             params: {
                 conditionScript,
                 ...csvMultisig.params,
@@ -439,6 +468,10 @@ export namespace ConditionCSVMultisigTapscript {
                 conditionSize + csvMultisig.params.pubkeys.length * 64,
         };
     }
+
+    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+        return tapscript.type === TapscriptType.ConditionCSVMultisig;
+    }
 }
 
 /**
@@ -447,7 +480,7 @@ export namespace ConditionCSVMultisigTapscript {
  * (multi-signature).
  */
 export namespace ConditionMultisigTapscript {
-    export type Type = ArkTapscript<Params, number>;
+    export type Type = ArkTapscript<TapscriptType.ConditionMultisig, Params>;
 
     export type Params = {
         conditionScript: Bytes;
@@ -461,6 +494,7 @@ export namespace ConditionMultisigTapscript {
         ]);
 
         return {
+            type: TapscriptType.ConditionMultisig,
             params,
             script,
             witnessSize: (conditionSize: number) =>
@@ -518,6 +552,7 @@ export namespace ConditionMultisigTapscript {
         }
 
         return {
+            type: TapscriptType.ConditionMultisig,
             params: {
                 conditionScript,
                 ...multisig.params,
@@ -527,6 +562,10 @@ export namespace ConditionMultisigTapscript {
                 conditionSize + multisig.params.pubkeys.length * 64,
         };
     }
+
+    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+        return tapscript.type === TapscriptType.ConditionMultisig;
+    }
 }
 
 /**
@@ -535,7 +574,7 @@ export namespace ConditionMultisigTapscript {
  * forfeit closure conditions can be met.
  */
 export namespace CLTVMultisigTapscript {
-    export type Type = ArkTapscript<Params>;
+    export type Type = ArkTapscript<TapscriptType.CLTVMultisig, Params>;
 
     export type Params = {
         absoluteTimelock: bigint;
@@ -552,6 +591,7 @@ export namespace CLTVMultisigTapscript {
         ]);
 
         return {
+            type: TapscriptType.CLTVMultisig,
             params,
             script,
             witnessSize: () => params.pubkeys.length * 64,
@@ -605,6 +645,7 @@ export namespace CLTVMultisigTapscript {
         }
 
         return {
+            type: TapscriptType.CLTVMultisig,
             params: {
                 absoluteTimelock,
                 ...multisig.params,
@@ -612,5 +653,9 @@ export namespace CLTVMultisigTapscript {
             script,
             witnessSize: () => multisig.params.pubkeys.length * 64,
         };
+    }
+
+    export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
+        return tapscript.type === TapscriptType.CLTVMultisig;
     }
 }

@@ -47,6 +47,7 @@ import {
 import { Bytes } from "@scure/btc-signer/utils";
 import { EncodedVtxoScript, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
+import { makeVirtualTx } from "../utils/psbt";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -537,64 +538,39 @@ export class Wallet implements IWallet {
             throw new Error("Insufficient funds");
         }
 
-        let tx = new btc.Transaction({
-            allowUnknownOutputs: true,
-            disableScriptCheck: true,
-            allowUnknownInputs: true,
-        });
-
         const selectedLeaf = this.offchainTapscript.forfeit();
         if (!selectedLeaf) {
             throw new Error("Selected leaf not found");
         }
 
-        // Add inputs with proper taproot script information
-        for (const input of selected.inputs) {
-            // Add taproot input
-            tx.addInput({
-                txid: input.txid,
-                index: input.vout,
-                witnessUtxo: {
-                    script: this.offchainTapscript.pkScript,
-                    amount: BigInt(input.value),
-                },
-                tapInternalKey: undefined,
-                tapLeafScript: [
-                    [
-                        {
-                            version: TAP_LEAF_VERSION,
-                            internalKey: btc.TAPROOT_UNSPENDABLE_KEY,
-                            merklePath: selectedLeaf.path,
-                        },
-                        new Uint8Array([
-                            ...selectedLeaf.script,
-                            TAP_LEAF_VERSION,
-                        ]),
-                    ],
-                ],
-            });
-        }
+        const outputs = [
+            {
+                address: params.address,
+                amount: BigInt(params.amount),
+            },
+        ];
 
-        // Add payment output
-        const paymentAddress = ArkAddress.decode(params.address);
-        tx.addOutput({
-            script: paymentAddress.pkScript,
-            amount: BigInt(params.amount),
-        });
-
-        // Add change output if needed
+        // add change output if needed
         if (selected.changeAmount > 0) {
-            tx.addOutput({
-                script: this.offchainTapscript.pkScript,
+            outputs.push({
+                address: this.offchainAddress.encode(),
                 amount: BigInt(selected.changeAmount),
             });
         }
 
-        // Sign inputs
+        let tx = makeVirtualTx(
+            selected.inputs.map((input) => ({
+                ...input,
+                ...selectedLeaf,
+                scripts: this.offchainTapscript!.encode(),
+            })),
+            outputs
+        );
+
         tx = await this.identity.sign(tx);
-        const psbt = tx.toPSBT();
-        // Broadcast to Ark
-        return this.arkProvider.submitVirtualTx(base64.encode(psbt));
+        const psbt = base64.encode(tx.toPSBT());
+
+        return this.arkProvider.submitVirtualTx(psbt);
     }
 
     async settle(

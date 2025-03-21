@@ -29,6 +29,21 @@ import {
     RestArkProvider,
     ArkProvider,
 } from "./providers/ark";
+import {
+    ArkTapscript,
+    CLTVMultisigTapscript,
+    ConditionCSVMultisigTapscript,
+    ConditionMultisigTapscript,
+    CSVMultisigTapscript,
+    decodeTapscript,
+    MultisigTapscript,
+    TapscriptType,
+} from "./script/tapscript";
+import {
+    addConditionWitness,
+    CONDITION_WITNESS_KEY_PREFIX,
+    makeVirtualTx,
+} from "./utils/psbt";
 
 export type {
     WalletConfig,
@@ -42,6 +57,7 @@ export type {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    ArkTapscript,
 };
 export {
     Wallet,
@@ -58,4 +74,14 @@ export {
     Worker,
     Request,
     Response,
+    decodeTapscript,
+    MultisigTapscript,
+    CSVMultisigTapscript,
+    ConditionCSVMultisigTapscript,
+    ConditionMultisigTapscript,
+    CLTVMultisigTapscript,
+    addConditionWitness,
+    CONDITION_WITNESS_KEY_PREFIX,
+    TapscriptType,
+    makeVirtualTx,
 };

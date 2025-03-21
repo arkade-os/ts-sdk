@@ -1,8 +1,20 @@
 import { expect, describe, it, beforeAll } from "vitest";
-import { utils } from "@scure/btc-signer";
-import { hex } from "@scure/base";
+import { Transaction, utils } from "@scure/btc-signer";
+import { base64, hex } from "@scure/base";
 import { execSync } from "child_process";
-import { IWallet, TxType, Wallet, InMemoryKey } from "../src";
+import {
+    IWallet,
+    TxType,
+    Wallet,
+    InMemoryKey,
+    VHTLC,
+    Identity,
+    addConditionWitness,
+    RestArkProvider,
+    makeVirtualTx,
+} from "../src";
+import { networks } from "../src/networks";
+import { hash160 } from "@scure/btc-signer/utils";
 
 const arkdExec =
     process.env.ARK_ENV === "master" ? "docker exec -t arkd" : "nigiri";
@@ -11,15 +23,21 @@ const arkdExec =
 const ARK_SERVER_PUBKEY =
     "038a9bbb1fb2aa92b9557dd0b39a85f31d204f58b41c62ea112d6ad148a9881285";
 
+const X_ONLY_PUBLIC_KEY = hex.decode(ARK_SERVER_PUBKEY).slice(1);
+
 interface TestWallet {
     wallet: IWallet;
-    privateKeyHex: string;
+    identity: InMemoryKey;
+}
+
+function createTestIdentity(): InMemoryKey {
+    const privateKeyBytes = utils.randomPrivateKeyBytes();
+    const privateKeyHex = hex.encode(privateKeyBytes);
+    return InMemoryKey.fromHex(privateKeyHex);
 }
 
 async function createTestWallet(): Promise<TestWallet> {
-    const privateKeyBytes = utils.randomPrivateKeyBytes();
-    const privateKeyHex = hex.encode(privateKeyBytes);
-    const identity = InMemoryKey.fromHex(privateKeyHex);
+    const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
         network: "regtest",
@@ -30,7 +48,7 @@ async function createTestWallet(): Promise<TestWallet> {
 
     return {
         wallet,
-        privateKeyHex,
+        identity,
     };
 }
 
@@ -391,5 +409,81 @@ describe("Wallet SDK Integration Tests", () => {
         const [alicesExitTx] = aliceHistoryAfterExit;
         expect(alicesExitTx.type).toBe(TxType.TxReceived);
         expect(alicesExitTx.amount).toBe(amount);
+    });
+
+    it("should be able to claim a vthlc", { timeout: 60000 }, async () => {
+        const alice = createTestIdentity();
+        const bob = createTestIdentity();
+
+        const preimage = Uint8Array.from("preimage");
+        const preimageHash = hash160(preimage);
+
+        const vhtlcScript = new VHTLC.Script({
+            preimageHash,
+            sender: alice.xOnlyPublicKey(),
+            receiver: bob.xOnlyPublicKey(),
+            server: X_ONLY_PUBLIC_KEY,
+            refundLocktime: BigInt(100),
+            unilateralClaimDelay: {
+                type: "blocks",
+                value: 100n,
+            },
+            unilateralRefundDelay: {
+                type: "blocks",
+                value: 50n,
+            },
+            unilateralRefundWithoutReceiverDelay: {
+                type: "blocks",
+                value: 50n,
+            },
+        });
+
+        const address = vhtlcScript
+            .address(networks.regtest.ark, X_ONLY_PUBLIC_KEY)
+            .encode();
+
+        // fund the vhtlc address
+        const fundAmount = 1000;
+        execSync(
+            `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`
+        );
+
+        // bob special identity to sign with the preimage
+        const bobVHTLCIdentity: Identity = {
+            sign: async (tx: Transaction, inputIndexes?: number[]) => {
+                const cpy = tx.clone();
+                addConditionWitness(0, cpy, [preimage]);
+                return bob.sign(cpy, inputIndexes);
+            },
+            xOnlyPublicKey: bob.xOnlyPublicKey,
+            signerSession: bob.signerSession,
+        };
+
+        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
+        expect(spendableVtxos).toHaveLength(1);
+        const vtxo = spendableVtxos[0];
+
+        const tx = makeVirtualTx(
+            [
+                {
+                    ...vtxo,
+                    ...vhtlcScript.claim(),
+                    scripts: vhtlcScript.encode(),
+                },
+            ],
+            [
+                {
+                    address,
+                    amount: BigInt(fundAmount),
+                },
+            ]
+        );
+
+        const signedTx = await bobVHTLCIdentity.sign(tx);
+        const txid = await arkProvider.submitVirtualTx(
+            base64.encode(signedTx.toPSBT())
+        );
+        expect(txid).toBeDefined();
     });
 });
