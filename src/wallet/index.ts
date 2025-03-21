@@ -1,7 +1,7 @@
 import { Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
 import { NetworkName } from "../networks";
-import { RelativeTimelock } from "../script/closure";
+import { RelativeTimelock } from "../script/tapscript";
 import { TaprootLeaf } from "@scure/btc-signer/payment";
 import { EncodedVtxoScript } from "../script/base";
 

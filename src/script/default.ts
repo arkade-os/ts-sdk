@@ -1,7 +1,11 @@
 import { TaprootLeaf } from "@scure/btc-signer/payment";
 import { Bytes } from "@scure/btc-signer/utils";
 import { VtxoScript } from "./base";
-import { exitClosure, forfeitClosure, RelativeTimelock } from "./closure";
+import {
+    CSVMultisigTapscript,
+    MultisigTapscript,
+    RelativeTimelock,
+} from "./tapscript";
 import { hex } from "@scure/base";
 
 // DefaultVtxo is the default implementation of a VtxoScript.
@@ -31,8 +35,15 @@ export namespace DefaultVtxo {
                 csvTimelock = Script.DEFAULT_TIMELOCK,
             } = options;
 
-            const forfeitScript = forfeitClosure([pubKey, serverPubKey]);
-            const exitScript = exitClosure(csvTimelock, [pubKey]);
+            const forfeitScript = MultisigTapscript.encode({
+                pubkeys: [pubKey, serverPubKey],
+            }).script;
+
+            const exitScript = CSVMultisigTapscript.encode({
+                timelock: csvTimelock,
+                pubkeys: [pubKey],
+            }).script;
+
             super([forfeitScript, exitScript]);
 
             this.forfeitScript = hex.encode(forfeitScript);

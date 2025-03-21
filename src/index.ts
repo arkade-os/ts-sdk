@@ -1,6 +1,7 @@
 import { InMemoryKey } from "./identity/inMemoryKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
+import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
 import { VtxoScript } from "./script/base";
 import {
@@ -52,6 +53,7 @@ export {
     ArkAddress,
     DefaultVtxo,
     VtxoScript,
+    VHTLC,
     TxType,
     Worker,
     Request,

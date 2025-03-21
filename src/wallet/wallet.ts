@@ -45,8 +45,8 @@ import {
     WalletConfig,
 } from ".";
 import { Bytes } from "@scure/btc-signer/utils";
-import { exitClosure } from "../script/closure";
 import { EncodedVtxoScript, VtxoScript } from "../script/base";
+import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -702,13 +702,13 @@ export class Wallet implements IWallet {
 
         const info = await this.arkProvider.getInfo();
 
-        const sweepTapscript = exitClosure(
-            {
+        const sweepTapscript = CSVMultisigTapscript.encode({
+            timelock: {
                 value: info.batchExpiry,
                 type: info.batchExpiry >= 512n ? "seconds" : "blocks",
             },
-            [hex.decode(info.pubkey).slice(1)]
-        );
+            pubkeys: [hex.decode(info.pubkey).slice(1)],
+        }).script;
 
         const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
 
@@ -927,10 +927,12 @@ export class Wallet implements IWallet {
                 forfeitTapLeafScript[0]
             );
 
+            const tapscript = decodeTapscript(input.script);
+
             const fees = TxWeightEstimator.create()
                 .addKeySpendInput() // connector
                 .addTapscriptInput(
-                    64 * 2, // TODO: handle conditional script
+                    tapscript.witnessSize(100), // TODO: handle conditional script
                     forfeitTapLeafScript[1].length,
                     forfeitControlBlock.length
                 )
