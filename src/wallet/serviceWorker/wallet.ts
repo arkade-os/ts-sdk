@@ -8,6 +8,8 @@ import {
     VirtualCoin,
     ArkTransaction,
     WalletConfig,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -189,9 +191,7 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async getVtxos(): Promise<
-        (TaprootLeaf & EncodedVtxoScript & VirtualCoin)[]
-    > {
+    async getVtxos(): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
         };
@@ -207,9 +207,7 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async getBoardingUtxos(): Promise<
-        (TaprootLeaf & EncodedVtxoScript & Coin)[]
-    > {
+    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
         const message: Request.GetBoardingUtxos = {
             type: "GET_BOARDING_UTXOS",
         };

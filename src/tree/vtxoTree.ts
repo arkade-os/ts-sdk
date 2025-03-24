@@ -1,8 +1,8 @@
 import * as bip68 from "bip68";
 import { ScriptNum, Transaction } from "@scure/btc-signer";
 import { sha256x2 } from "@scure/btc-signer/utils";
-import { RelativeTimelock } from "../script/default";
 import { base64, hex } from "@scure/base";
+import { RelativeTimelock } from "../script/tapscript";
 
 // Node represents a transaction and its parent txid in a vtxo tree
 export interface TreeNode {

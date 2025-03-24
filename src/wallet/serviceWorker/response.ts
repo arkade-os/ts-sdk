@@ -1,13 +1,12 @@
-import { TaprootLeaf } from "@scure/btc-signer/payment";
 import {
     WalletBalance,
     Coin,
     VirtualCoin,
     ArkTransaction,
     AddressInfo,
+    IWallet,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
-import { EncodedVtxoScript } from "../../script/base";
 
 export namespace Response {
     export type Type =
@@ -138,7 +137,7 @@ export namespace Response {
     export interface Vtxos extends Base {
         type: "VTXOS";
         success: true;
-        vtxos: (TaprootLeaf & EncodedVtxoScript & VirtualCoin)[];
+        vtxos: Awaited<ReturnType<IWallet["getVtxos"]>>;
     }
 
     export function isVtxos(response: Base): response is Vtxos {
@@ -146,7 +145,7 @@ export namespace Response {
     }
 
     export function vtxos(
-        vtxos: (TaprootLeaf & EncodedVtxoScript & VirtualCoin)[]
+        vtxos: Awaited<ReturnType<IWallet["getVtxos"]>>
     ): Vtxos {
         return {
             type: "VTXOS",
@@ -176,7 +175,7 @@ export namespace Response {
     export interface BoardingUtxos extends Base {
         type: "BOARDING_UTXOS";
         success: true;
-        boardingUtxos: (TaprootLeaf & EncodedVtxoScript & Coin)[];
+        boardingUtxos: Awaited<ReturnType<IWallet["getBoardingUtxos"]>>;
     }
 
     export function isBoardingUtxos(response: Base): response is BoardingUtxos {
@@ -184,7 +183,7 @@ export namespace Response {
     }
 
     export function boardingUtxos(
-        boardingUtxos: (TaprootLeaf & EncodedVtxoScript & Coin)[]
+        boardingUtxos: Awaited<ReturnType<IWallet["getBoardingUtxos"]>>
     ): BoardingUtxos {
         return {
             type: "BOARDING_UTXOS",
