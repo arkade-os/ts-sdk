@@ -145,7 +145,7 @@ export class Wallet implements IWallet {
             throw new Error("Boarding address not configured");
         }
         return this.boardingTapscript.address(
-            this.network.ark,
+            this.network.hrp,
             this.arkServerPublicKey
         );
     }
@@ -162,7 +162,7 @@ export class Wallet implements IWallet {
             throw new Error("Offchain address not configured");
         }
         return this.offchainTapscript.address(
-            this.network.ark,
+            this.network.hrp,
             this.arkServerPublicKey
         );
     }

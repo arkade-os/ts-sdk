@@ -439,7 +439,7 @@ describe("Wallet SDK Integration Tests", () => {
         });
 
         const address = vhtlcScript
-            .address(networks.regtest.ark, X_ONLY_PUBLIC_KEY)
+            .address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY)
             .encode();
 
         // fund the vhtlc address

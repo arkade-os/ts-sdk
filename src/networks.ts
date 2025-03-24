@@ -8,7 +8,7 @@ export type NetworkName =
     | "regtest";
 
 export interface Network {
-    ark: string;
+    hrp: string;
     bech32: string;
     pubKeyHash: number;
     scriptHash: number;
@@ -34,9 +34,9 @@ export const networks = {
     ),
 };
 
-function withArkPrefix(network: Omit<Network, "ark">, prefix: string): Network {
+function withArkPrefix(network: Omit<Network, "hrp">, prefix: string): Network {
     return {
         ...network,
-        ark: prefix,
+        hrp: prefix,
     };
 }
