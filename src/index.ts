@@ -42,7 +42,7 @@ import {
 import {
     addConditionWitness,
     CONDITION_WITNESS_KEY_PREFIX,
-    makeVirtualTx,
+    createVirtualTx,
 } from "./utils/psbt";
 
 export type {
@@ -83,5 +83,5 @@ export {
     addConditionWitness,
     CONDITION_WITNESS_KEY_PREFIX,
     TapscriptType,
-    makeVirtualTx,
+    createVirtualTx as makeVirtualTx,
 };

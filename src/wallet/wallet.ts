@@ -49,7 +49,7 @@ import {
 import { Bytes } from "@scure/btc-signer/utils";
 import { scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
-import { makeVirtualTx } from "../utils/psbt";
+import { createVirtualTx } from "../utils/psbt";
 import { Transaction } from "@scure/btc-signer";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
@@ -557,7 +557,7 @@ export class Wallet implements IWallet {
             });
         }
 
-        let tx = makeVirtualTx(
+        let tx = createVirtualTx(
             selected.inputs.map((input) => ({
                 ...input,
                 tapLeafScript: selectedLeaf,

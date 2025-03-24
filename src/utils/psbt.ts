@@ -35,7 +35,7 @@ export function addConditionWitness(
     });
 }
 
-export function makeVirtualTx(
+export function createVirtualTx(
     inputs: ({ tapLeafScript: TapLeafScript } & EncodedVtxoScript &
         Pick<VirtualCoin, "txid" | "vout" | "value">)[],
     outputs: Output[]
