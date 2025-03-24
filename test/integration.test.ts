@@ -11,7 +11,7 @@ import {
     Identity,
     addConditionWitness,
     RestArkProvider,
-    makeVirtualTx,
+    createVirtualTx,
 } from "../src";
 import { networks } from "../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -464,7 +464,7 @@ describe("Wallet SDK Integration Tests", () => {
         expect(spendableVtxos).toHaveLength(1);
         const vtxo = spendableVtxos[0];
 
-        const tx = makeVirtualTx(
+        const tx = createVirtualTx(
             [
                 {
                     ...vtxo,

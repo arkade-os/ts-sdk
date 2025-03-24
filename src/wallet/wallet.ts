@@ -51,6 +51,7 @@ import { scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 import { createVirtualTx } from "../utils/psbt";
 import { Transaction } from "@scure/btc-signer";
+import { ArkNote } from "../arknote";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -578,6 +579,19 @@ export class Wallet implements IWallet {
     ): Promise<string> {
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
+        }
+
+        // validate arknotes inputs
+        if (params?.inputs) {
+            for (const input of params.inputs) {
+                if (typeof input === "string") {
+                    try {
+                        ArkNote.fromString(input);
+                    } catch (e) {
+                        throw new Error(`Invalid arknote "${input}"`);
+                    }
+                }
+            }
         }
 
         // if no params are provided, use all boarding and offchain utxos as inputs

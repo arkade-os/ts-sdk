@@ -44,6 +44,7 @@ import {
     CONDITION_WITNESS_KEY_PREFIX,
     createVirtualTx,
 } from "./utils/psbt";
+import { ArkNote, ArkNoteData } from "./arknote";
 
 export type {
     WalletConfig,
@@ -83,5 +84,7 @@ export {
     addConditionWitness,
     CONDITION_WITNESS_KEY_PREFIX,
     TapscriptType,
-    createVirtualTx as makeVirtualTx,
+    createVirtualTx,
+    ArkNote,
+    ArkNoteData,
 };
