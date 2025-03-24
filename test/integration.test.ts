@@ -468,7 +468,7 @@ describe("Wallet SDK Integration Tests", () => {
             [
                 {
                     ...vtxo,
-                    ...vhtlcScript.claim(),
+                    tapLeafScript: vhtlcScript.claim(),
                     scripts: vhtlcScript.encode(),
                 },
             ],

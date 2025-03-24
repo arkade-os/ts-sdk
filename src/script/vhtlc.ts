@@ -9,8 +9,7 @@ import {
     RelativeTimelock,
 } from "./tapscript";
 import { hex } from "@scure/base";
-import { VtxoScript } from "./base";
-import { TaprootLeaf } from "@scure/btc-signer/payment";
+import { TapLeafScript, VtxoScript } from "./base";
 
 // VHTLC is an Hashed Timelock Contract VtxoScript implementation
 // - claim (preimage + receiver)
@@ -105,70 +104,28 @@ export namespace VHTLC {
             );
         }
 
-        claim(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) => hex.encode(leaf.script) === this.claimScript
-            );
-            if (!leaf) {
-                throw new Error("Claim script not found");
-            }
-            return leaf;
+        claim(): TapLeafScript {
+            return this.findLeaf(this.claimScript);
         }
 
-        refund(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) => hex.encode(leaf.script) === this.refundScript
-            );
-            if (!leaf) {
-                throw new Error("Refund script not found");
-            }
-            return leaf;
+        refund(): TapLeafScript {
+            return this.findLeaf(this.refundScript);
         }
 
-        refundWithoutReceiver(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) =>
-                    hex.encode(leaf.script) === this.refundWithoutReceiverScript
-            );
-            if (!leaf) {
-                throw new Error("Refund without receiver script not found");
-            }
-            return leaf;
+        refundWithoutReceiver(): TapLeafScript {
+            return this.findLeaf(this.refundWithoutReceiverScript);
         }
 
-        unilateralClaim(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) => hex.encode(leaf.script) === this.unilateralClaimScript
-            );
-            if (!leaf) {
-                throw new Error("Unilateral claim script not found");
-            }
-            return leaf;
+        unilateralClaim(): TapLeafScript {
+            return this.findLeaf(this.unilateralClaimScript);
         }
 
-        unilateralRefund(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) =>
-                    hex.encode(leaf.script) === this.unilateralRefundScript
-            );
-            if (!leaf) {
-                throw new Error("Unilateral refund script not found");
-            }
-            return leaf;
+        unilateralRefund(): TapLeafScript {
+            return this.findLeaf(this.unilateralRefundScript);
         }
 
-        unilateralRefundWithoutReceiver(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) =>
-                    hex.encode(leaf.script) ===
-                    this.unilateralRefundWithoutReceiverScript
-            );
-            if (!leaf) {
-                throw new Error(
-                    "Unilateral refund without receiver script not found"
-                );
-            }
-            return leaf;
+        unilateralRefundWithoutReceiver(): TapLeafScript {
+            return this.findLeaf(this.unilateralRefundWithoutReceiverScript);
         }
     }
 }

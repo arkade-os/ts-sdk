@@ -2,8 +2,7 @@ import { Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
 import { NetworkName } from "../networks";
 import { RelativeTimelock } from "../script/tapscript";
-import { TaprootLeaf } from "@scure/btc-signer/payment";
-import { EncodedVtxoScript } from "../script/base";
+import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 
 export interface WalletConfig {
     network: NetworkName;
@@ -42,7 +41,10 @@ export interface Recipient {
 }
 
 export interface SettleParams {
-    inputs: (string | (TaprootLeaf & Outpoint & EncodedVtxoScript))[];
+    inputs: (
+        | string
+        | ({ tapLeafScript: TapLeafScript } & Outpoint & EncodedVtxoScript)
+    )[];
     outputs: Output[];
 }
 
@@ -117,8 +119,14 @@ export interface ArkTransaction {
 }
 
 // ExtendedCoin and ExtendedVirtualCoin contains the utxo/vtxo data along with the vtxo script locking it
-export type ExtendedCoin = TaprootLeaf & EncodedVtxoScript & Coin;
-export type ExtendedVirtualCoin = TaprootLeaf & EncodedVtxoScript & VirtualCoin;
+export type ExtendedCoin = {
+    tapLeafScript: TapLeafScript;
+} & EncodedVtxoScript &
+    Coin;
+export type ExtendedVirtualCoin = {
+    tapLeafScript: TapLeafScript;
+} & EncodedVtxoScript &
+    VirtualCoin;
 
 export interface IWallet {
     // Address and balance management

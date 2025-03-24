@@ -1,15 +1,13 @@
-import {
-    DEFAULT_SEQUENCE,
-    RawWitness,
-    TAPROOT_UNSPENDABLE_KEY,
-    Transaction,
-} from "@scure/btc-signer";
-import { TaprootLeaf } from "@scure/btc-signer/payment";
+import { DEFAULT_SEQUENCE, RawWitness, Transaction } from "@scure/btc-signer";
 import { VirtualCoin } from "../wallet";
 import { Output } from "../providers/ark";
-import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment";
 import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
-import { EncodedVtxoScript, VtxoScript } from "../script/base";
+import {
+    EncodedVtxoScript,
+    scriptFromTapLeafScript,
+    TapLeafScript,
+    VtxoScript,
+} from "../script/base";
 import { ArkAddress } from "../script/address";
 
 // Constant for condition witness key prefix
@@ -38,14 +36,15 @@ export function addConditionWitness(
 }
 
 export function makeVirtualTx(
-    inputs: (TaprootLeaf &
-        EncodedVtxoScript &
+    inputs: ({ tapLeafScript: TapLeafScript } & EncodedVtxoScript &
         Pick<VirtualCoin, "txid" | "vout" | "value">)[],
     outputs: Output[]
 ) {
     let lockTime: number | undefined;
     for (const input of inputs) {
-        const tapscript = decodeTapscript(input.script);
+        const tapscript = decodeTapscript(
+            scriptFromTapLeafScript(input.tapLeafScript)
+        );
         if (CLTVMultisigTapscript.is(tapscript)) {
             lockTime = Number(tapscript.params.absoluteTimelock);
         }
@@ -65,16 +64,7 @@ export function makeVirtualTx(
                 script: VtxoScript.decode(input.scripts).pkScript,
                 amount: BigInt(input.value),
             },
-            tapLeafScript: [
-                [
-                    {
-                        version: TAP_LEAF_VERSION,
-                        internalKey: TAPROOT_UNSPENDABLE_KEY,
-                        merklePath: input.path,
-                    },
-                    new Uint8Array([...input.script, TAP_LEAF_VERSION]),
-                ],
-            ],
+            tapLeafScript: [input.tapLeafScript],
         });
     }
 

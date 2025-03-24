@@ -1,11 +1,11 @@
 import { base64, hex } from "@scure/base";
-import * as btc from "@scure/btc-signer";
 import {
-    TAP_LEAF_VERSION,
+    Address,
+    OutScript,
+    p2tr,
     tapLeafHash,
-    TaprootLeaf,
 } from "@scure/btc-signer/payment";
-import { TransactionOutput } from "@scure/btc-signer/psbt";
+import { TaprootControlBlock, TransactionOutput } from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../script/address";
@@ -36,6 +36,8 @@ import {
     AddressInfo,
     ArkTransaction,
     Coin,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
     IWallet,
     SendBitcoinParams,
     SettleParams,
@@ -45,9 +47,10 @@ import {
     WalletConfig,
 } from ".";
 import { Bytes } from "@scure/btc-signer/utils";
-import { EncodedVtxoScript, VtxoScript } from "../script/base";
+import { scriptFromTapLeafScript, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 import { makeVirtualTx } from "../utils/psbt";
+import { Transaction } from "@scure/btc-signer";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -59,7 +62,7 @@ export class Wallet implements IWallet {
         private identity: Identity,
         private network: Network,
         private onchainProvider: OnchainProvider,
-        private onchainP2TR: ReturnType<typeof btc.p2tr>,
+        private onchainP2TR: ReturnType<typeof p2tr>,
         private arkProvider?: ArkProvider,
         private arkServerPublicKey?: Bytes,
         private offchainTapscript?: DefaultVtxo.Script,
@@ -84,7 +87,7 @@ export class Wallet implements IWallet {
         }
 
         // Save onchain Taproot address key-path only
-        const onchainP2TR = btc.p2tr(pubkey, undefined, network);
+        const onchainP2TR = p2tr(pubkey, undefined, network);
 
         if (arkProvider) {
             let serverPubKeyHex = config.arkServerPublicKey;
@@ -254,9 +257,7 @@ export class Wallet implements IWallet {
         return this.onchainProvider.getCoins(address.onchain);
     }
 
-    async getVtxos(): Promise<
-        (TaprootLeaf & EncodedVtxoScript & VirtualCoin)[]
-    > {
+    async getVtxos(): Promise<ExtendedVirtualCoin[]> {
         if (!this.arkProvider || !this.offchainTapscript) {
             return [];
         }
@@ -276,7 +277,7 @@ export class Wallet implements IWallet {
 
         return spendableVtxos.map((vtxo) => ({
             ...vtxo,
-            ...forfeit,
+            tapLeafScript: forfeit,
             scripts: encodedOffchainTapscript,
         }));
     }
@@ -407,9 +408,7 @@ export class Wallet implements IWallet {
         };
     }
 
-    async getBoardingUtxos(): Promise<
-        (TaprootLeaf & EncodedVtxoScript & Coin)[]
-    > {
+    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
         if (!this.boardingAddress || !this.boardingTapscript) {
             throw new Error("Boarding address not configured");
         }
@@ -423,7 +422,7 @@ export class Wallet implements IWallet {
 
         return boardingUtxos.map((utxo) => ({
             ...utxo,
-            ...forfeit,
+            tapLeafScript: forfeit,
             scripts: encodedBoardingTapscript,
         }));
     }
@@ -473,7 +472,7 @@ export class Wallet implements IWallet {
         }
 
         // Create transaction
-        let tx = new btc.Transaction();
+        let tx = new Transaction();
 
         // Add inputs
         for (const input of selected.inputs) {
@@ -561,7 +560,7 @@ export class Wallet implements IWallet {
         let tx = makeVirtualTx(
             selected.inputs.map((input) => ({
                 ...input,
-                ...selectedLeaf,
+                tapLeafScript: selectedLeaf,
                 scripts: this.offchainTapscript!.encode(),
             })),
             outputs
@@ -594,19 +593,11 @@ export class Wallet implements IWallet {
                 (sum, input) => sum + input.value,
                 0
             );
-            const boardingUtxosInputs = boardingUtxos.map((utxo) => ({
-                ...utxo,
-                ...this.boardingTapscript!.forfeit(),
-            }));
 
             const vtxos = await this.getVtxos();
             amount += vtxos.reduce((sum, input) => sum + input.value, 0);
-            const vtxosInputs = vtxos.map((utxo) => ({
-                ...utxo,
-                ...this.offchainTapscript!.forfeit(),
-            }));
 
-            const inputs = [...boardingUtxosInputs, ...vtxosInputs];
+            const inputs = [...boardingUtxos, ...vtxos];
 
             if (inputs.length === 0) {
                 throw new Error("No inputs found");
@@ -783,7 +774,7 @@ export class Wallet implements IWallet {
         // TODO check if our registered outputs are in the vtxo tree
 
         const settlementPsbt = base64.decode(event.unsignedSettlementTx);
-        const settlementTx = btc.Transaction.fromPSBT(settlementPsbt);
+        const settlementTx = Transaction.fromPSBT(settlementPsbt);
         const sharedOutput = settlementTx.getOutput(0);
         if (!sharedOutput?.amount) {
             throw new Error("Shared output not found");
@@ -827,18 +818,16 @@ export class Wallet implements IWallet {
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
-        const forfeitAddress = btc
-            .Address(this.network)
-            .decode(infos.forfeitAddress);
-        const serverPkScript = btc.OutScript.encode(forfeitAddress);
+        const forfeitAddress = Address(this.network).decode(
+            infos.forfeitAddress
+        );
+        const serverPkScript = OutScript.encode(forfeitAddress);
 
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
         const vtxos = await this.getVirtualCoins();
-        let settlementPsbt = btc.Transaction.fromPSBT(
-            base64.decode(event.roundTx)
-        );
+        let settlementPsbt = Transaction.fromPSBT(base64.decode(event.roundTx));
         let hasBoardingUtxos = false;
         let connectorsTreeValid = false;
 
@@ -849,14 +838,6 @@ export class Wallet implements IWallet {
             const vtxo = vtxos.find(
                 (vtxo) => vtxo.txid === input.txid && vtxo.vout === input.vout
             );
-            const forfeitTapLeafScript: [any, any] = [
-                {
-                    version: TAP_LEAF_VERSION,
-                    internalKey: btc.TAPROOT_UNSPENDABLE_KEY,
-                    merklePath: input.path,
-                },
-                new Uint8Array([...input.script, TAP_LEAF_VERSION]),
-            ];
 
             // boarding utxo, we need to sign the settlement tx
             if (!vtxo) {
@@ -881,7 +862,7 @@ export class Wallet implements IWallet {
 
                     // input found in the settlement tx, sign it
                     settlementPsbt.updateInput(i, {
-                        tapLeafScript: [forfeitTapLeafScript],
+                        tapLeafScript: [input.tapLeafScript],
                     });
                     inputIndexes.push(i);
                 }
@@ -899,17 +880,18 @@ export class Wallet implements IWallet {
                 connectorsTreeValid = true;
             }
 
-            const forfeitControlBlock = btc.TaprootControlBlock.encode(
-                forfeitTapLeafScript[0]
+            const forfeitControlBlock = TaprootControlBlock.encode(
+                input.tapLeafScript[0]
             );
-
-            const tapscript = decodeTapscript(input.script);
+            const tapscript = decodeTapscript(
+                scriptFromTapLeafScript(input.tapLeafScript)
+            );
 
             const fees = TxWeightEstimator.create()
                 .addKeySpendInput() // connector
                 .addTapscriptInput(
                     tapscript.witnessSize(100), // TODO: handle conditional script
-                    forfeitTapLeafScript[1].length,
+                    input.tapLeafScript[1].length - 1,
                     forfeitControlBlock.length
                 )
                 .addP2WKHOutput()
@@ -928,7 +910,7 @@ export class Wallet implements IWallet {
             for (const leaf of connectorsLeaves) {
                 if (leaf.txid === connectorOutpoint.txid) {
                     try {
-                        const connectorTx = btc.Transaction.fromPSBT(
+                        const connectorTx = Transaction.fromPSBT(
                             base64.decode(leaf.tx)
                         );
                         connectorOutput = connectorTx.getOutput(
@@ -961,7 +943,7 @@ export class Wallet implements IWallet {
 
             // add the tapscript
             forfeitTx.updateInput(1, {
-                tapLeafScript: [forfeitTapLeafScript],
+                tapLeafScript: [input.tapLeafScript],
             });
 
             // do not sign the connector input

@@ -2,7 +2,6 @@ import {
     Address,
     p2tr,
     TAP_LEAF_VERSION,
-    TaprootLeaf,
     taprootListToTree,
 } from "@scure/btc-signer/payment";
 import {
@@ -14,8 +13,21 @@ import { ArkAddress } from "./address";
 import { Script } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 
+export type TapLeafScript = [
+    {
+        version: number;
+        internalKey: Bytes;
+        merklePath: Bytes[];
+    },
+    Bytes,
+];
+
+export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
+    return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
+}
+
 export class VtxoScript {
-    readonly leaves: TaprootLeaf[];
+    readonly leaves: TapLeafScript[];
     readonly tweakedPublicKey: Bytes;
 
     static decode(scripts: string[]): VtxoScript {
@@ -29,11 +41,14 @@ export class VtxoScript {
 
         const payment = p2tr(TAPROOT_UNSPENDABLE_KEY, tapTree, undefined, true);
 
-        if (!payment.leaves || payment.leaves.length !== scripts.length) {
+        if (
+            !payment.tapLeafScript ||
+            payment.tapLeafScript.length !== scripts.length
+        ) {
             throw new Error("invalid scripts");
         }
 
-        this.leaves = payment.leaves;
+        this.leaves = payment.tapLeafScript;
         this.tweakedPublicKey = payment.tweakedPubkey;
     }
 
@@ -48,11 +63,22 @@ export class VtxoScript {
     get pkScript(): Bytes {
         return Script.encode(["OP_1", this.tweakedPublicKey]);
     }
+
     onchainAddress(network: BTC_NETWORK): string {
         return Address(network).encode({
             type: "tr",
             pubkey: this.tweakedPublicKey,
         });
+    }
+
+    findLeaf(scriptHex: string): TapLeafScript {
+        const leaf = this.leaves.find(
+            (leaf) => hex.encode(scriptFromTapLeafScript(leaf)) === scriptHex
+        )!;
+        if (!leaf) {
+            throw new Error(`leaf '${scriptHex}' not found`);
+        }
+        return leaf;
     }
 }
 

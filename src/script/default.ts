@@ -1,6 +1,5 @@
-import { TaprootLeaf } from "@scure/btc-signer/payment";
 import { Bytes } from "@scure/btc-signer/utils";
-import { VtxoScript } from "./base";
+import { TapLeafScript, VtxoScript } from "./base";
 import {
     CSVMultisigTapscript,
     MultisigTapscript,
@@ -50,26 +49,12 @@ export namespace DefaultVtxo {
             this.exitScript = hex.encode(exitScript);
         }
 
-        forfeit(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) => hex.encode(leaf.script) === this.forfeitScript
-            );
-            if (!leaf) {
-                throw new Error("forfeit script not found");
-            }
-
-            return leaf;
+        forfeit(): TapLeafScript {
+            return this.findLeaf(this.forfeitScript);
         }
 
-        exit(): TaprootLeaf {
-            const leaf = this.leaves.find(
-                (leaf) => hex.encode(leaf.script) === this.exitScript
-            );
-            if (!leaf) {
-                throw new Error("exit script not found");
-            }
-
-            return leaf;
+        exit(): TapLeafScript {
+            return this.findLeaf(this.exitScript);
         }
     }
 }
