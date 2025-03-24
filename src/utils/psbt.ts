@@ -10,6 +10,8 @@ import {
 } from "../script/base";
 import { ArkAddress } from "../script/address";
 
+const ARK_UNKNOWN_KEY_TYPE = 255;
+
 // Constant for condition witness key prefix
 export const CONDITION_WITNESS_KEY_PREFIX = new TextEncoder().encode(
     "condition"
@@ -26,7 +28,7 @@ export function addConditionWitness(
         unknown: [
             [
                 {
-                    type: 255,
+                    type: ARK_UNKNOWN_KEY_TYPE,
                     key: CONDITION_WITNESS_KEY_PREFIX,
                 },
                 witnessBytes,
