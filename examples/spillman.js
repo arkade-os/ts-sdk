@@ -44,6 +44,13 @@ async function main() {
         arkServerUrl: "http://localhost:7070",
     });
 
+    const aliceWallet = await Wallet.create({
+        identity: alice,
+        network: "regtest",
+        esploraUrl: "http://localhost:3000",
+        arkServerUrl: "http://localhost:7070",
+    });
+
     console.log("Fetching current chain tip...");
     const chainTip = await fetch(
         "http://localhost:3000/blocks/tip/height"
@@ -116,6 +123,10 @@ async function main() {
     const bobAddress = await bobWallet.getAddress();
     console.log("\nBob's receiving address:", bobAddress.offchain.address);
 
+    // Alice's receiving address
+    const aliceAddress = await aliceWallet.getAddress();
+    console.log("\nAlice's receiving address:", aliceAddress.offchain.address);
+
     // Bob has to keep track of the channel states
     // it means he has to store the list of virtual txs signed by Alice
     const bobChannelStates = [];
@@ -130,6 +141,10 @@ async function main() {
                 address: bobAddress.offchain.address,
                 amount: BigInt(1000),
             },
+            {
+                address: aliceAddress.offchain.address,
+                amount: BigInt(channelCapacity - 1000),
+            },
         ]
     );
     bobChannelStates.push(await alice.sign(tx1));
@@ -143,6 +158,10 @@ async function main() {
             {
                 address: bobAddress.offchain.address,
                 amount: BigInt(1500),
+            },
+            {
+                address: aliceAddress.offchain.address,
+                amount: BigInt(channelCapacity - 1500),
             },
         ]
     );
