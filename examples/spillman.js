@@ -93,7 +93,7 @@ async function main() {
         .encode();
     console.log("\nSpillman Channel Address:", address);
 
-    // Use faucet to fund the Spillman Channel address using arkdExec
+    // Use faucet to fund the Spillman Channel address
     // in a real scenario, it should be funded by Alice herself
     const channelCapacity = 10_000;
     console.log(`\nFunding channel with ${channelCapacity} sats...`);
