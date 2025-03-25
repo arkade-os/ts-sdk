@@ -2,7 +2,7 @@
 //
 // The Spillman Taproot Script is a contract that allows two parties to create an unidirectional payment channel.
 // Alice updates the channel state by signing virtual transactions without submitting them to the ark Server.
-// Bob can closes the channel at any time by signing the last virtual tx and submitting it to the ark Server.
+// Bob can close the channel at any time by signing the last virtual tx and submitting it to the ark Server.
 //
 // Usage:
 // node examples/spillman.js
