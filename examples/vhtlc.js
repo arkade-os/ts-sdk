@@ -16,8 +16,8 @@ const {
     addConditionWitness,
     RestArkProvider,
     createVirtualTx,
+    networks,
 } = require("../dist/index.js");
-const { networks } = require("../dist/networks.js");
 const { hash160 } = require("@scure/btc-signer/utils");
 const { base64, hex } = require("@scure/base");
 const { utils } = require("@scure/btc-signer");

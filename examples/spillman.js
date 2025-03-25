@@ -16,10 +16,10 @@ const {
     MultisigTapscript,
     CLTVMultisigTapscript,
     CSVMultisigTapscript,
+    networks,
 } = require("../dist/index.js");
-const { networks } = require("../dist/networks.js");
 const { base64, hex } = require("@scure/base");
-const { Transaction, utils } = require("@scure/btc-signer");
+const { utils } = require("@scure/btc-signer");
 const { execSync } = require("child_process");
 
 const SERVER_PUBLIC_KEY = hex.decode(
