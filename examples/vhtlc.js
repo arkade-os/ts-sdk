@@ -116,7 +116,7 @@ async function main() {
 
     switch (action) {
         case "claim": {
-            // Create a special identity interface letting Bob to reveal as preimage in the unknown PSBT field
+            // Create a special identity interface allowing Bob to reveal his preimage in as a key/value in a PSBT input map
             // the server is needed by the ark server to verify the claim script.
             const bobVHTLCIdentity = {
                 sign: async (tx, inputIndexes) => {
