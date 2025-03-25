@@ -69,7 +69,7 @@ async function main() {
     //   unilateralRefundWithoutReceiver: (Bob + Ark Server after 3 blocks)
     //
     // onchain paths are needed to avoid Bob and Alice to trust the Ark Server
-    // it the server is not responsive or malicious, the funds can still be spent.
+    // if the server is not responsive or malicious, the funds can still be spent.
     //
     const vhtlcScript = new VHTLC.Script({
         preimageHash,
