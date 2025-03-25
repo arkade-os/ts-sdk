@@ -1,8 +1,8 @@
 // This example shows how to create a Virtual Hash Time Lock Contract (VHTLC)
 // and how to spend it.
 //
-// The VHTLC is a contract that allows Bob to claim a coin after 10 blocks if he reveals the preimage.
-// If Bob doesn't reveal the preimage, Alice can spend the VHTLC alone after 10 blocks.
+// The VHTLC is a contract that allows Bob to claim a coin after 10 blocks if he reveals a secret.
+// If Bob doesn't reveal the secret, Alice can spend the VHTLC alone after 10 blocks.
 // If Bob and Alice wants to cancel the swap, they can collaborate to spend the VHTLC together.
 //
 // Usage:
