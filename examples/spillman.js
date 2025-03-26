@@ -178,23 +178,59 @@ async function main() {
     bobChannelStates.push(await bob.sign(signedTx2));
     console.log("Bob signed transaction 2");
 
-    // to close the channel, Alice or Bob can submit the last virtual tx to the server
-    console.log("\nClosing channel...");
-    const lastState = bobChannelStates[bobChannelStates.length - 1];
-    const txid = await arkProvider.submitVirtualTx(
-        base64.encode(lastState.toPSBT())
-    );
-    console.log("Channel closed successfully!");
-    console.log("Final transaction ID:", txid);
+    const action = Math.random() > 0.5 ? "close" : "refund";
 
-    console.log("\nFinal Balances:");
-    console.log("Alice's final balance:", channelCapacity - 1500, "sats");
-    console.log("Bob's final balance:", 1500, "sats");
+    if (action === "close") {
+        // to close the channel, Alice or Bob can submit the last virtual tx to the server
+        console.log("\nClosing channel...");
+        const lastState = bobChannelStates[bobChannelStates.length - 1];
+        const txid = await arkProvider.submitVirtualTx(
+            base64.encode(lastState.toPSBT())
+        );
+        console.log("Channel closed successfully!");
+        console.log("Final transaction ID:", txid);
 
-    console.log("\nChannel Summary:");
-    console.log("Initial capacity:", channelCapacity, "sats");
-    console.log("Final amount sent to Bob:", 1500, "sats");
-    console.log("Number of state updates:", bobChannelStates.length);
+        console.log("\nFinal Balances:");
+        console.log("Alice's final balance:", channelCapacity - 1500, "sats");
+        console.log("Bob's final balance:", 1500, "sats");
+
+        console.log("\nChannel Summary:");
+        console.log("Initial capacity:", channelCapacity, "sats");
+        console.log("Final amount sent to Bob:", 1500, "sats");
+        console.log("Number of state updates:", bobChannelStates.length);
+    } else {
+        execSync(`nigiri rpc generatetoaddress 11 $(nigiri rpc getnewaddress)`);
+
+        console.log("\nRefunding channel...");
+        // after 10 blocks, Alice can spend without Bob's signature
+        const tx = createVirtualTx(
+            [
+                {
+                    ...input,
+                    tapLeafScript: virtualSpillmanChannel.findLeaf(
+                        hex.encode(refundScript)
+                    ),
+                },
+            ],
+            [
+                {
+                    address: aliceAddress.offchain.address,
+                    amount: BigInt(channelCapacity),
+                },
+            ]
+        );
+        const signedTx = await alice.sign(tx);
+        console.log("Alice signed the refund transaction");
+        const txid = await arkProvider.submitVirtualTx(
+            base64.encode(signedTx.toPSBT())
+        );
+        console.log("Channel refunded successfully!");
+        console.log("Final transaction ID:", txid);
+
+        console.log("\nFinal Balances:");
+        console.log("Alice's final balance:", channelCapacity, "sats");
+        console.log("Bob's final balance:", 0, "sats");
+    }
 }
 
 async function fundAddress(address, amount) {
