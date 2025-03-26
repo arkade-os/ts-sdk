@@ -65,6 +65,8 @@ async function main() {
     //   unilateralUpdate: (Alice + Bob after 1 block)
     //   unilateralRefund: (Alice + Bob after 2 blocks)
     //
+    //   unilateralUpdate's timelock should be smaller than unilateralRefund's timelock.
+    //   this ensures that a unilateralUpdate is always possible before a unilateralRefund.
     //
     const updateScript = MultisigTapscript.encode({
         pubkeys: [alice.xOnlyPublicKey(), bob.xOnlyPublicKey()],
