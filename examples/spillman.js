@@ -65,8 +65,8 @@ async function main() {
     //   unilateralUpdate: (Alice + Bob after 1 block)
     //   unilateralRefund: (Alice + Bob after 2 blocks)
     //
-
-    const updateSript = MultisigTapscript.encode({
+    //
+    const updateScript = MultisigTapscript.encode({
         pubkeys: [alice.xOnlyPublicKey(), bob.xOnlyPublicKey()],
     }).script;
 
@@ -75,17 +75,21 @@ async function main() {
         absoluteTimelock: BigInt(chainTip + 10),
     }).script;
 
+    const unilateralUpdateScript = CSVMultisigTapscript.encode({
+        pubkeys: [alice.xOnlyPublicKey(), bob.xOnlyPublicKey()],
+        timelock: { type: "blocks", value: 1n },
+    }).script;
+
+    const unilateralRefundScript = CSVMultisigTapscript.encode({
+        pubkeys: [alice.xOnlyPublicKey()],
+        timelock: { type: "blocks", value: 2n },
+    }).script;
+
     const virtualSpillmanChannel = new VtxoScript([
-        updateSript,
+        updateScript,
         refundScript,
-        CSVMultisigTapscript.encode({
-            pubkeys: [alice.xOnlyPublicKey(), bob.xOnlyPublicKey()],
-            timelock: { type: "blocks", value: 1n },
-        }).script,
-        CSVMultisigTapscript.encode({
-            pubkeys: [alice.xOnlyPublicKey()],
-            timelock: { type: "blocks", value: 2n },
-        }).script,
+        unilateralUpdateScript,
+        unilateralRefundScript,
     ]);
 
     const address = virtualSpillmanChannel
@@ -96,11 +100,7 @@ async function main() {
     // Use faucet to fund the Spillman Channel address
     // in a real scenario, it should be funded by Alice herself
     const channelCapacity = 10_000;
-    console.log(`\nFunding channel with ${channelCapacity} sats...`);
-    execSync(
-        `${arkdExec} ark send --to ${address} --amount ${channelCapacity} --password secret`
-    );
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await fundAddress(address, channelCapacity);
 
     // Get the virtual coins for the Spillman Channel address
     console.log("Fetching virtual coins...");
@@ -110,14 +110,18 @@ async function main() {
     if (spendableVtxos.length === 0) {
         throw new Error("No spendable virtual coins found");
     }
-    console.log(`Found ${spendableVtxos.length} spendable virtual coins`);
 
     const vtxo = spendableVtxos[0];
     const input = {
         ...vtxo,
-        tapLeafScript: virtualSpillmanChannel.findLeaf(hex.encode(updateSript)),
+        tapLeafScript: virtualSpillmanChannel.findLeaf(
+            hex.encode(updateScript)
+        ),
         scripts: virtualSpillmanChannel.encode(),
     };
+
+    console.log("Alice's balance:", vtxo.value, "sats");
+    console.log("Bob's balance:", "0 sats");
 
     // Bob's receiving address
     const bobAddress = await bobWallet.getAddress();
@@ -147,8 +151,10 @@ async function main() {
             },
         ]
     );
-    bobChannelStates.push(await alice.sign(tx1));
-    console.log("Transaction 1 signed by Alice");
+    const signedTx1 = await alice.sign(tx1);
+    console.log("Alice signed transaction 1");
+    bobChannelStates.push(await bob.sign(signedTx1));
+    console.log("Bob signed transaction 1");
 
     // Alice updates the state, sending 500 sats more to Bob
     console.log("\nAlice sends 500 more sats to Bob");
@@ -165,22 +171,36 @@ async function main() {
             },
         ]
     );
-    bobChannelStates.push(await alice.sign(tx2));
-    console.log("Transaction 2 signed by Alice");
+    const signedTx2 = await alice.sign(tx2);
+    console.log("Alice signed transaction 2");
+    bobChannelStates.push(await bob.sign(signedTx2));
+    console.log("Bob signed transaction 2");
 
-    // to close the channel, Bob can sign and submit the last virtual tx
+    // to close the channel, Alice or Bob can submit the last virtual tx to the server
     console.log("\nClosing channel...");
     const lastState = bobChannelStates[bobChannelStates.length - 1];
-    const signedTx = await bob.sign(lastState);
     const txid = await arkProvider.submitVirtualTx(
-        base64.encode(signedTx.toPSBT())
+        base64.encode(lastState.toPSBT())
     );
-    console.log("Channel closed successfully by Bob!");
+    console.log("Channel closed successfully!");
     console.log("Final transaction ID:", txid);
+
+    console.log("\nFinal Balances:");
+    console.log("Alice's final balance:", channelCapacity - 1500, "sats");
+    console.log("Bob's final balance:", 1500, "sats");
+
     console.log("\nChannel Summary:");
-    console.log("- Initial capacity:", channelCapacity, "sats");
-    console.log("- Final amount sent to Bob:", 1500, "sats");
-    console.log("- Number of state updates:", bobChannelStates.length);
+    console.log("Initial capacity:", channelCapacity, "sats");
+    console.log("Final amount sent to Bob:", 1500, "sats");
+    console.log("Number of state updates:", bobChannelStates.length);
+}
+
+async function fundAddress(address, amount) {
+    console.log(`\nFunding address with ${amount} sats...`);
+    execSync(
+        `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 
 main().catch(console.error);

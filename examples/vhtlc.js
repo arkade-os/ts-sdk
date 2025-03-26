@@ -8,7 +8,7 @@
 // Usage:
 // node examples/vhtlc.js claim (bob reveals the preimage)
 // node examples/vhtlc.js refund (alice and bob collaborate to spend the VHTLC)
-// node examples/vhtlc.js refundAlone (alice spends the VHTLC alone)
+// node examples/vhtlc.js unilateralRefund (alice spends the VHTLC alone)
 //
 const {
     InMemoryKey,
@@ -30,9 +30,9 @@ const SERVER_PUBLIC_KEY = hex.decode(
 const action = process.argv[2];
 const arkdExec = process.argv[3] || "docker exec -t arkd";
 
-if (!action || !["claim", "refund", "refundAlone"].includes(action)) {
+if (!action || !["claim", "refund", "unilateralRefund"].includes(action)) {
     console.error("Usage: node examples/vhtlc.js <action> [arkdExec]");
-    console.error("action: claim | refund | refundAlone");
+    console.error("action: claim | refund | unilateralRefund");
     console.error("arkdExec: docker exec -t arkd | nigiri");
     process.exit(1);
 }
@@ -40,11 +40,11 @@ if (!action || !["claim", "refund", "refundAlone"].includes(action)) {
 // Alice is the vtxo owner, she offers the coin in exchange for the Bob's secret
 // to make the swap safe, she funds a VHTLC with Bob's public key as receiver
 const alice = InMemoryKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
-// Bob is the receiver of the VHTLC, he is the one generating the preimage
+// Bob is the receiver of the VHTLC, he is the one generating the secret
 const bob = InMemoryKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
 
-const preimage = Uint8Array.from("I'm bob secret");
-const preimageHash = hash160(preimage);
+const secret = Uint8Array.from("I'm bob secret");
+const preimageHash = hash160(secret);
 
 async function main() {
     const chainTip = await fetch(
@@ -63,10 +63,19 @@ async function main() {
     //   refund: (Bob + Alice + Ark Server)
     //   refundWithoutReceiver: (Alice + Ark Server at chainTip + 10 blocks)
     //
+    //   refundWithoutReceiver must be locked by an absolute TimeLock
+    //   to prevent Alice to double spend the VTXO in case Bob claimed the VHTLC
+    //
     // onchain paths:
     //   unilateralClaim: (Bob + preimage after 1 blocks)
     //   unilateralRefund: (Bob + Alice + Ark Server after 2 blocks)
     //   unilateralRefundWithoutReceiver: (Bob + Ark Server after 3 blocks)
+    //
+    //   onchain paths are locked by relative TimeLocks. Their value determines the priority of the paths.
+    //   - unilateralClaim's timelock should be the smaller one, the secret reveal has always max priority.
+    //   - unilateralRefund's timelock should be the second smaller one.
+    //   - unilateralRefundWithoutReceiver's timelock should be greater than the other two.
+    //   thus, we ensure that a claim is always possible before a refund. And a collaborative refund is always possible before an unilateral refund.
     //
     // onchain paths are needed to avoid Bob and Alice to trust the Ark Server
     // if the server is not responsive or malicious, the funds can still be spent.
@@ -99,10 +108,7 @@ async function main() {
     // Use faucet to fund the VHTLC address using arkdExec
     // in a real scenario, it should be funded by Alice herself
     const fundAmount = 1000;
-    execSync(
-        `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`
-    );
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await fundAddress(address, fundAmount);
 
     // Get the virtual coins for the VHTLC address
     const arkProvider = new RestArkProvider("http://localhost:7070");
@@ -116,12 +122,13 @@ async function main() {
 
     switch (action) {
         case "claim": {
-            // Create a special identity interface allowing Bob to reveal his preimage in as a key/value in a PSBT input map
-            // the server is needed by the ark server to verify the claim script.
             const bobVHTLCIdentity = {
+                // Signing a VTHLC needs an extra witness element to be added to the PSBT input
+                // This witness must satisfy the preimageHash condition
                 sign: async (tx, inputIndexes) => {
                     const cpy = tx.clone();
-                    addConditionWitness(0, cpy, [preimage]);
+                    // reveal the secret in the PSBT, thus the server can verify the claim script
+                    addConditionWitness(0, cpy, [secret]);
                     return bob.sign(cpy, inputIndexes);
                 },
                 xOnlyPublicKey: bob.xOnlyPublicKey,
@@ -181,7 +188,7 @@ async function main() {
             console.log("Successfully refunded VHTLC! Transaction ID:", txid);
             break;
         }
-        case "refundAlone": {
+        case "unilateralRefund": {
             // Generate 11 blocks to ensure the locktime period has passed
             execSync(
                 `nigiri rpc generatetoaddress 11 $(nigiri rpc getnewaddress)`
@@ -219,6 +226,14 @@ async function main() {
         default:
             throw new Error(`Unsupported action: ${action}`);
     }
+}
+
+async function fundAddress(address, amount) {
+    console.log(`\nFunding address with ${amount} sats...`);
+    execSync(
+        `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 }
 
 main().catch(console.error);
