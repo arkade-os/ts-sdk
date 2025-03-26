@@ -51,10 +51,10 @@
     "precommit": "lint-staged"
   },
   "dependencies": {
-    "@noble/curves": "1.7.0",
-    "@noble/hashes": "1.6.1",
+    "@noble/curves": "1.8.1",
+    "@noble/hashes": "1.7.1",
     "@noble/secp256k1": "2.2.3",
-    "@scure/base": "1.2.1",
+    "@scure/base": "1.2.4",
     "@scure/btc-signer": "1.7.0",
     "bip68": "1.0.4"
   },
@@ -81,5 +81,6 @@
   ],
   "author": "Ark Labs",
   "license": "MIT",
-  "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321"
+  "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
+  "type": "module"
 }
