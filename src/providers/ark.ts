@@ -442,7 +442,7 @@ export class RestArkProvider implements ArkProvider {
     }
 
     async *getEventStream(
-        signal?: AbortSignal
+        signal: AbortSignal
     ): AsyncIterableIterator<SettlementEvent> {
         const url = `${this.serverUrl}/v1/events`;
 
