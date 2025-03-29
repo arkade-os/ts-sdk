@@ -1,6 +1,6 @@
-const { promisify } = require("util");
-const { setTimeout } = require("timers");
-const { execSync } = require("child_process");
+import { promisify } from "util";
+import { setTimeout } from "timers";
+import { execSync } from "child_process";
 
 let arkdExec = "nigiri ";
 
