@@ -240,7 +240,7 @@ describe("Wallet SDK Integration Tests", () => {
             );
 
             // Wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+            await new Promise((resolve) => setTimeout(resolve, 5000));
 
             // Final balance check
             const aliceFinalBalance = await alice.wallet.getBalance();
@@ -315,7 +315,7 @@ describe("Wallet SDK Integration Tests", () => {
         );
 
         // Wait for the transaction to be processed
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Check final balances
         const aliceFinalBalance = await alice.wallet.getBalance();
