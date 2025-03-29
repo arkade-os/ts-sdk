@@ -672,96 +672,107 @@ export class Wallet implements IWallet {
             }
         };
 
+        const abortController = new AbortController();
         // listen to settlement events
-        const settlementStream = this.arkProvider.getEventStream();
-        let step: SettlementEventType | undefined;
-        if (!hasOffchainOutputs) {
-            // if there are no offchain outputs, we don't have to handle musig2 tree signatures
-            // we can directly advance to the finalization step
-            step = SettlementEventType.SigningNoncesGenerated;
-        }
-
-        const info = await this.arkProvider.getInfo();
-
-        const sweepTapscript = CSVMultisigTapscript.encode({
-            timelock: {
-                value: info.batchExpiry,
-                type: info.batchExpiry >= 512n ? "seconds" : "blocks",
-            },
-            pubkeys: [hex.decode(info.pubkey).slice(1)],
-        }).script;
-
-        const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
-
-        for await (const event of settlementStream) {
-            if (eventCallback) {
-                eventCallback(event);
-            }
-            switch (event.type) {
-                // the settlement failed
-                case SettlementEventType.Failed:
-                    if (step === undefined) {
-                        continue;
-                    }
-                    stopPing();
-                    throw new Error(event.reason);
-                // the server has started the signing process of the vtxo tree transactions
-                // the server expects the partial musig2 nonces for each tx
-                case SettlementEventType.SigningStart:
-                    if (step !== undefined) {
-                        continue;
-                    }
-                    stopPing();
-                    if (hasOffchainOutputs) {
-                        if (!session) {
-                            throw new Error("Signing session not found");
-                        }
-                        await this.handleSettlementSigningEvent(
-                            event,
-                            sweepTapTreeRoot,
-                            session
-                        );
-                    }
-                    break;
-                // the musig2 nonces of the vtxo tree transactions are generated
-                // the server expects now the partial musig2 signatures
-                case SettlementEventType.SigningNoncesGenerated:
-                    if (step !== SettlementEventType.SigningStart) {
-                        continue;
-                    }
-                    stopPing();
-                    if (hasOffchainOutputs) {
-                        if (!session) {
-                            throw new Error("Signing session not found");
-                        }
-                        await this.handleSettlementSigningNoncesGeneratedEvent(
-                            event,
-                            session
-                        );
-                    }
-                    break;
-                // the vtxo tree is signed, craft, sign and submit forfeit transactions
-                // if any boarding utxos are involved, the settlement tx is also signed
-                case SettlementEventType.Finalization:
-                    if (step !== SettlementEventType.SigningNoncesGenerated) {
-                        continue;
-                    }
-                    stopPing();
-                    await this.handleSettlementFinalizationEvent(
-                        event,
-                        params.inputs,
-                        info
-                    );
-                    break;
-                // the settlement is done, last event to be received
-                case SettlementEventType.Finalized:
-                    if (step !== SettlementEventType.Finalization) {
-                        continue;
-                    }
-                    return event.roundTxid;
+        try {
+            const settlementStream = this.arkProvider.getEventStream(
+                abortController.signal
+            );
+            let step: SettlementEventType | undefined;
+            if (!hasOffchainOutputs) {
+                // if there are no offchain outputs, we don't have to handle musig2 tree signatures
+                // we can directly advance to the finalization step
+                step = SettlementEventType.SigningNoncesGenerated;
             }
 
-            step = event.type;
+            const info = await this.arkProvider.getInfo();
+
+            const sweepTapscript = CSVMultisigTapscript.encode({
+                timelock: {
+                    value: info.batchExpiry,
+                    type: info.batchExpiry >= 512n ? "seconds" : "blocks",
+                },
+                pubkeys: [hex.decode(info.pubkey).slice(1)],
+            }).script;
+
+            const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
+
+            for await (const event of settlementStream) {
+                if (eventCallback) {
+                    eventCallback(event);
+                }
+                switch (event.type) {
+                    // the settlement failed
+                    case SettlementEventType.Failed:
+                        if (step === undefined) {
+                            continue;
+                        }
+                        stopPing();
+                        throw new Error(event.reason);
+                    // the server has started the signing process of the vtxo tree transactions
+                    // the server expects the partial musig2 nonces for each tx
+                    case SettlementEventType.SigningStart:
+                        if (step !== undefined) {
+                            continue;
+                        }
+                        stopPing();
+                        if (hasOffchainOutputs) {
+                            if (!session) {
+                                throw new Error("Signing session not found");
+                            }
+                            await this.handleSettlementSigningEvent(
+                                event,
+                                sweepTapTreeRoot,
+                                session
+                            );
+                        }
+                        break;
+                    // the musig2 nonces of the vtxo tree transactions are generated
+                    // the server expects now the partial musig2 signatures
+                    case SettlementEventType.SigningNoncesGenerated:
+                        if (step !== SettlementEventType.SigningStart) {
+                            continue;
+                        }
+                        stopPing();
+                        if (hasOffchainOutputs) {
+                            if (!session) {
+                                throw new Error("Signing session not found");
+                            }
+                            await this.handleSettlementSigningNoncesGeneratedEvent(
+                                event,
+                                session
+                            );
+                        }
+                        break;
+                    // the vtxo tree is signed, craft, sign and submit forfeit transactions
+                    // if any boarding utxos are involved, the settlement tx is also signed
+                    case SettlementEventType.Finalization:
+                        if (
+                            step !== SettlementEventType.SigningNoncesGenerated
+                        ) {
+                            continue;
+                        }
+                        stopPing();
+                        await this.handleSettlementFinalizationEvent(
+                            event,
+                            params.inputs,
+                            info
+                        );
+                        break;
+                    // the settlement is done, last event to be received
+                    case SettlementEventType.Finalized:
+                        if (step !== SettlementEventType.Finalization) {
+                            continue;
+                        }
+                        abortController.abort();
+                        return event.roundTxid;
+                }
+
+                step = event.type;
+            }
+        } catch (error) {
+            abortController.abort();
+            throw error;
         }
 
         throw new Error("Settlement failed");

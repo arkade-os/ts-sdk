@@ -126,7 +126,7 @@ export interface ArkProvider {
         signedRoundTx?: string
     ): Promise<void>;
     ping(paymentID: string): Promise<void>;
-    getEventStream(): AsyncIterableIterator<SettlementEvent>;
+    getEventStream(signal: AbortSignal): AsyncIterableIterator<SettlementEvent>;
 }
 
 export class RestArkProvider implements ArkProvider {
@@ -441,15 +441,18 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async *getEventStream(): AsyncIterableIterator<SettlementEvent> {
+    async *getEventStream(
+        signal?: AbortSignal
+    ): AsyncIterableIterator<SettlementEvent> {
         const url = `${this.serverUrl}/v1/events`;
 
-        while (true) {
+        while (!signal?.aborted) {
             try {
                 const response = await fetch(url, {
                     headers: {
                         Accept: "application/json",
                     },
+                    signal,
                 });
 
                 if (!response.ok) {
@@ -466,7 +469,7 @@ export class RestArkProvider implements ArkProvider {
                 const decoder = new TextDecoder();
                 let buffer = "";
 
-                while (true) {
+                while (!signal?.aborted) {
                     const { done, value } = await reader.read();
                     if (done) {
                         break;
@@ -499,6 +502,9 @@ export class RestArkProvider implements ArkProvider {
                     buffer = lines[lines.length - 1];
                 }
             } catch (error) {
+                if (error instanceof Error && error.name === "AbortError") {
+                    break;
+                }
                 console.error("Event stream error:", error);
                 throw error;
             }
