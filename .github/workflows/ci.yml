@@ -60,5 +60,14 @@ jobs:
     - name: Run integration tests
       run: pnpm test:integration-master
 
+    - name: Capture arkd logs
+      if: always()
+      run: |
+        docker logs $(docker ps -q --filter name=arkd) > arkd.log || true
+        if [ -f arkd.log ]; then
+          echo "=== arkd logs ==="
+          cat arkd.log
+        fi
+
     - name: Check TypeScript compilation
       run: pnpm build 
