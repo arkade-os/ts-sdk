@@ -143,7 +143,8 @@ export class RestArkProvider implements ArkProvider {
         const fromServer = await response.json();
         return {
             ...fromServer,
-            batchExpiry: fromServer.vtxoTreeExpiry,
+            unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
+            batchExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
         };
     }
 

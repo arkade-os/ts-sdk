@@ -240,7 +240,7 @@ describe("Wallet SDK Integration Tests", () => {
             );
 
             // Wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 500));
+            await new Promise((resolve) => setTimeout(resolve, 3000));
 
             // Final balance check
             const aliceFinalBalance = await alice.wallet.getBalance();
@@ -315,11 +315,13 @@ describe("Wallet SDK Integration Tests", () => {
         );
 
         // Wait for the transaction to be processed
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 3000));
 
         // Check final balances
         const aliceFinalBalance = await alice.wallet.getBalance();
         const bobFinalBalance = await bob.wallet.getBalance();
+        console.log("aliceFinalBalance", aliceFinalBalance);
+        console.log("bobFinalBalance", bobFinalBalance);
         expect(bobFinalBalance.offchain.total).toBe(sendAmount);
         expect(aliceFinalBalance.offchain.total).toBe(
             boardingAmount - sendAmount - fee

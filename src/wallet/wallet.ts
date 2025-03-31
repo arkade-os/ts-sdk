@@ -92,13 +92,16 @@ export class Wallet implements IWallet {
 
         if (arkProvider) {
             let serverPubKeyHex = config.arkServerPublicKey;
-            let boardingTimelock = config.boardingTimelock;
-            if (!serverPubKeyHex || !boardingTimelock) {
+            let exitTimelock = config.boardingTimelock;
+            if (!serverPubKeyHex || !exitTimelock) {
                 const info = await arkProvider.getInfo();
                 serverPubKeyHex = info.pubkey;
-                boardingTimelock = {
-                    value: info.unilateralExitDelay,
-                    type: info.unilateralExitDelay < 512 ? "blocks" : "seconds",
+                exitTimelock = {
+                    value: info.unilateralExitDelay * 2n,
+                    type:
+                        info.unilateralExitDelay * 2n < 512n
+                            ? "blocks"
+                            : "seconds",
                 };
             }
             // Generate tapscripts for offchain and boarding address
@@ -106,12 +109,12 @@ export class Wallet implements IWallet {
             const bareVtxoTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: boardingTimelock,
+                csvTimelock: exitTimelock,
             });
             const boardingTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: boardingTimelock,
+                csvTimelock: exitTimelock,
             });
 
             // Save tapscripts
