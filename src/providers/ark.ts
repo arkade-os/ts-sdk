@@ -127,6 +127,13 @@ export interface ArkProvider {
     ): Promise<void>;
     ping(paymentID: string): Promise<void>;
     getEventStream(): AsyncIterableIterator<SettlementEvent>;
+    subscribeForAddress(
+        address: string,
+        abortSignal: AbortSignal
+    ): AsyncIterableIterator<{
+        newVtxos: VirtualCoin[];
+        spentVtxos: VirtualCoin[];
+    }>;
 }
 
 export class RestArkProvider implements ArkProvider {
@@ -159,26 +166,9 @@ export class RestArkProvider implements ArkProvider {
         }
         const data = await response.json();
 
-        // Convert from server format to our internal VTXO format and only return spendable coins (settled or pending)
-        const convert = (vtxo: any): VirtualCoin => ({
-            txid: vtxo.outpoint.txid,
-            vout: vtxo.outpoint.vout,
-            value: Number(vtxo.amount),
-            status: {
-                confirmed: !!vtxo.roundTxid,
-            },
-            virtualStatus: {
-                state: vtxo.isPending ? "pending" : "settled",
-                batchTxID: vtxo.roundTxid,
-                batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
-            },
-            spentBy: vtxo.spentBy,
-            createdAt: new Date(vtxo.createdAt * 1000),
-        });
-
         return {
-            spendableVtxos: [...(data.spendableVtxos || [])].map(convert),
-            spentVtxos: [...(data.spentVtxos || [])].map(convert),
+            spendableVtxos: [...(data.spendableVtxos || [])].map(convertVtxo),
+            spentVtxos: [...(data.spentVtxos || [])].map(convertVtxo),
         };
     }
 
@@ -506,6 +496,80 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
+    async *subscribeForAddress(
+        address: string,
+        abortSignal: AbortSignal
+    ): AsyncIterableIterator<{
+        newVtxos: VirtualCoin[];
+        spentVtxos: VirtualCoin[];
+    }> {
+        const url = `${this.serverUrl}/v1/vtxos/${address}/subscribe`;
+
+        while (!abortSignal.aborted) {
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                    },
+                });
+
+                if (!response.ok) {
+                    throw new Error(
+                        `Unexpected status ${response.status} when subscribing to address updates`
+                    );
+                }
+
+                if (!response.body) {
+                    throw new Error("Response body is null");
+                }
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (!abortSignal.aborted) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n");
+
+                    for (let i = 0; i < lines.length - 1; i++) {
+                        const line = lines[i].trim();
+                        if (!line) continue;
+
+                        try {
+                            const data = JSON.parse(line);
+                            if ("result" in data) {
+                                yield {
+                                    newVtxos: (data.result.newVtxos || []).map(
+                                        convertVtxo
+                                    ),
+                                    spentVtxos: (
+                                        data.result.spentVtxos || []
+                                    ).map(convertVtxo),
+                                };
+                            }
+                        } catch (err) {
+                            console.error(
+                                "Failed to parse address update:",
+                                err
+                            );
+                            throw err;
+                        }
+                    }
+
+                    buffer = lines[lines.length - 1];
+                }
+            } catch (error) {
+                console.error("Address subscription error:", error);
+                throw error;
+            }
+        }
+    }
+
     private toConnectorsIndex(
         connectorsIndex: ProtoTypes.RoundFinalizationEvent["connectorsIndex"]
     ): Map<string, Outpoint> {
@@ -721,6 +785,24 @@ function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
             )
         )
     );
+}
+
+function convertVtxo(vtxo: any): VirtualCoin {
+    return {
+        txid: vtxo.outpoint.txid,
+        vout: vtxo.outpoint.vout,
+        value: Number(vtxo.amount),
+        status: {
+            confirmed: !!vtxo.roundTxid,
+        },
+        virtualStatus: {
+            state: vtxo.isPending ? "pending" : "settled",
+            batchTxID: vtxo.roundTxid,
+            batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
+        },
+        spentBy: vtxo.spentBy,
+        createdAt: new Date(vtxo.createdAt * 1000),
+    };
 }
 
 // ProtoTypes namespace defines unexported types representing the raw data received from the server

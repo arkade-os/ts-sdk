@@ -6,7 +6,7 @@ ARG TARGETARCH
 
 WORKDIR /app
 
-RUN git clone https://github.com/ark-network/ark.git -b v0.5.2
+RUN git clone https://github.com/ark-network/ark.git
 
 # ENV GOPROXY=https://goproxy.io,direct
 RUN cd ark/server && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-X 'main.Version=${VERSION}'" -o ../../bin/arkd ./cmd/arkd

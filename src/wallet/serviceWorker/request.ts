@@ -13,7 +13,8 @@ export namespace Request {
         | "GET_BOARDING_UTXOS"
         | "SEND_BITCOIN"
         | "GET_TRANSACTION_HISTORY"
-        | "GET_STATUS";
+        | "GET_STATUS"
+        | "CLEAR";
 
     export interface Base {
         type: Type;
@@ -145,5 +146,9 @@ export namespace Request {
 
     export function isGetStatus(message: Base): message is GetStatus {
         return message.type === "GET_STATUS";
+    }
+
+    export interface Clear extends Base {
+        type: "CLEAR";
     }
 }
