@@ -320,8 +320,6 @@ describe("Wallet SDK Integration Tests", () => {
         // Check final balances
         const aliceFinalBalance = await alice.wallet.getBalance();
         const bobFinalBalance = await bob.wallet.getBalance();
-        console.log("aliceFinalBalance", aliceFinalBalance);
-        console.log("bobFinalBalance", bobFinalBalance);
         expect(bobFinalBalance.offchain.total).toBe(sendAmount);
         expect(aliceFinalBalance.offchain.total).toBe(
             boardingAmount - sendAmount - fee
