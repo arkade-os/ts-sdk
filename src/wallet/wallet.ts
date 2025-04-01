@@ -334,7 +334,7 @@ export class Wallet implements IWallet {
         return txs;
     }
 
-    private async getBoardingTxs(): Promise<{
+    async getBoardingTxs(): Promise<{
         boardingTxs: ArkTransaction[];
         roundsToIgnore: Set<string>;
     }> {

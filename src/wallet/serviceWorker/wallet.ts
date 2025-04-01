@@ -5,7 +5,6 @@ import {
     SettleParams,
     AddressInfo,
     Coin,
-    VirtualCoin,
     ArkTransaction,
     WalletConfig,
     ExtendedCoin,
@@ -14,8 +13,6 @@ import {
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
-import { EncodedVtxoScript } from "../../script/base";
-import { TaprootLeaf } from "@scure/btc-signer/payment";
 
 // ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
 export class ServiceWorkerWallet implements IWallet {
@@ -65,6 +62,13 @@ export class ServiceWorkerWallet implements IWallet {
         await this.sendMessage(message);
     }
 
+    async clear() {
+        const message: Request.Clear = {
+            type: "CLEAR",
+        };
+        await this.sendMessage(message);
+    }
+
     // register the service worker
     private async setupServiceWorker(path: string): Promise<void> {
         // check if service workers are supported
@@ -82,9 +86,35 @@ export class ServiceWorkerWallet implements IWallet {
 
             if (existingRegistration) {
                 registration = existingRegistration;
-            } else {
-                registration = await navigator.serviceWorker.register(path);
+                // Force unregister and re-register to ensure we get the latest version
+                await existingRegistration.unregister();
             }
+
+            registration = await navigator.serviceWorker.register(path);
+
+            // Handle updates
+            registration.addEventListener("updatefound", () => {
+                console.info(
+                    "@arklabs/wallet-sdk: Service worker auto-update..."
+                );
+                const newWorker = registration.installing;
+                if (!newWorker) return;
+
+                newWorker.addEventListener("statechange", () => {
+                    if (
+                        newWorker.state === "installed" &&
+                        navigator.serviceWorker.controller
+                    ) {
+                        console.info(
+                            "@arklabs/wallet-sdk: Service worker updated, reloading..."
+                        );
+                        window.location.reload();
+                    }
+                });
+            });
+
+            // Check for updates
+            await registration.update();
 
             const sw =
                 registration.active ||

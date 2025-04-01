@@ -45,6 +45,8 @@ import {
     createVirtualTx,
 } from "./utils/psbt";
 import { ArkNote, ArkNoteData } from "./arknote";
+import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
+import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 
 export type {
     WalletConfig,
@@ -59,6 +61,7 @@ export type {
     ExtendedCoin,
     ExtendedVirtualCoin,
     ArkTapscript,
+    VtxoRepository,
 };
 export {
     Wallet,
@@ -87,4 +90,5 @@ export {
     createVirtualTx,
     ArkNote,
     ArkNoteData,
+    IndexedDBVtxoRepository,
 };

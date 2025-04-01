@@ -2,15 +2,26 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { InMemoryKey } from "../../identity/inMemoryKey";
-import { IWallet } from "..";
+import { VtxoTaprootAddress } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
+import { ArkProvider, RestArkProvider } from "../../providers/ark";
+import { DefaultVtxo } from "../../script/default";
+import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
+import { VtxoRepository } from "./db/vtxo";
+import { vtxosToTxs } from "../../utils/transactionHistory";
 
 // Worker is a class letting to interact with ServiceWorkerWallet from the client
 // it aims to be run in a service worker context
 export class Worker {
-    private wallet: IWallet | undefined;
+    private wallet: Wallet | undefined;
+    private arkProvider: ArkProvider | undefined;
+    private vtxoSubscription: AbortController | undefined;
+
+    constructor(
+        private readonly vtxoRepository: VtxoRepository = new IndexedDBVtxoRepository()
+    ) {}
 
     async start() {
         self.addEventListener(
@@ -21,7 +32,76 @@ export class Worker {
         );
     }
 
-    async handleInitWallet(event: ExtendableMessageEvent) {
+    clear() {
+        if (this.vtxoSubscription) {
+            this.vtxoSubscription.abort();
+        }
+
+        this.wallet = undefined;
+        this.arkProvider = undefined;
+        this.vtxoSubscription = undefined;
+    }
+
+    private async onWalletInitialized() {
+        if (!this.wallet || !this.arkProvider) {
+            return;
+        }
+
+        // set the initial vtxos state
+        const vtxos = await this.wallet.getVtxos();
+        await this.vtxoRepository.addOrUpdate(vtxos);
+
+        // subscribe to address updates
+        const address = await this.wallet.getAddress();
+        if (!address.offchain) {
+            return;
+        }
+
+        this.processVtxoSubscription(address.offchain);
+    }
+
+    private async processVtxoSubscription({
+        address,
+        scripts,
+    }: VtxoTaprootAddress) {
+        try {
+            const addressScripts = [...scripts.exit, ...scripts.forfeit];
+            const vtxoScript = DefaultVtxo.Script.decode(addressScripts);
+            const tapLeafScript = vtxoScript.findLeaf(scripts.forfeit[0]);
+
+            const abortController = new AbortController();
+            const subscription = this.arkProvider!.subscribeForAddress(
+                address,
+                abortController.signal
+            );
+
+            this.vtxoSubscription = abortController;
+
+            for await (const update of subscription) {
+                const vtxos = [...update.newVtxos, ...update.spentVtxos];
+                if (vtxos.length === 0) {
+                    continue;
+                }
+
+                const extendedVtxos = vtxos.map((vtxo) => ({
+                    ...vtxo,
+                    tapLeafScript,
+                    scripts: addressScripts,
+                }));
+
+                await this.vtxoRepository.addOrUpdate(extendedVtxos);
+            }
+        } catch (error) {
+            console.error("Error processing address updates:", error);
+        }
+    }
+
+    private async handleClear(event: ExtendableMessageEvent) {
+        this.clear();
+        event.source?.postMessage(Response.clearResponse(true));
+    }
+
+    private async handleInitWallet(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isInitWallet(message)) {
             console.error("Invalid INIT_WALLET message format", message);
@@ -32,6 +112,8 @@ export class Worker {
         }
 
         try {
+            this.arkProvider = new RestArkProvider(message.arkServerUrl);
+
             this.wallet = await Wallet.create({
                 network: message.network,
                 identity: InMemoryKey.fromHex(message.privateKey),
@@ -40,6 +122,7 @@ export class Worker {
             });
 
             event.source?.postMessage(Response.walletInitialized);
+            await this.onWalletInitialized();
         } catch (error: unknown) {
             console.error("Error initializing wallet:", error);
             const errorMessage =
@@ -50,7 +133,7 @@ export class Worker {
         }
     }
 
-    async handleSettle(event: ExtendableMessageEvent) {
+    private async handleSettle(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isSettle(message)) {
             console.error("Invalid SETTLE message format", message);
@@ -84,7 +167,7 @@ export class Worker {
         }
     }
 
-    async handleSendBitcoin(event: ExtendableMessageEvent) {
+    private async handleSendBitcoin(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isSendBitcoin(message)) {
             console.error("Invalid SEND_BITCOIN message format", message);
@@ -116,7 +199,7 @@ export class Worker {
         }
     }
 
-    async handleGetAddress(event: ExtendableMessageEvent) {
+    private async handleGetAddress(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isGetAddress(message)) {
             console.error("Invalid GET_ADDRESS message format", message);
@@ -145,7 +228,7 @@ export class Worker {
         }
     }
 
-    async handleGetBalance(event: ExtendableMessageEvent) {
+    private async handleGetBalance(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isGetBalance(message)) {
             console.error("Invalid GET_BALANCE message format", message);
@@ -162,8 +245,60 @@ export class Worker {
         }
 
         try {
-            const balance = await this.wallet.getBalance();
-            event.source?.postMessage(Response.balance(balance));
+            const coins = await this.wallet.getCoins();
+            const onchainConfirmed = coins
+                .filter((coin) => coin.status.confirmed)
+                .reduce((sum, coin) => sum + coin.value, 0);
+            const onchainUnconfirmed = coins
+                .filter((coin) => !coin.status.confirmed)
+                .reduce((sum, coin) => sum + coin.value, 0);
+            const onchainTotal = onchainConfirmed + onchainUnconfirmed;
+
+            const spendableVtxos =
+                await this.vtxoRepository.getSpendableVtxos();
+            const offchainSettledBalance = spendableVtxos.reduce(
+                (sum, vtxo) =>
+                    vtxo.virtualStatus.state === "settled"
+                        ? sum + vtxo.value
+                        : sum,
+                0
+            );
+            const offchainPendingBalance = spendableVtxos.reduce(
+                (sum, vtxo) =>
+                    vtxo.virtualStatus.state === "pending"
+                        ? sum + vtxo.value
+                        : sum,
+                0
+            );
+            const offchainSweptBalance = spendableVtxos.reduce(
+                (sum, vtxo) =>
+                    vtxo.virtualStatus.state === "swept"
+                        ? sum + vtxo.value
+                        : sum,
+                0
+            );
+
+            const offchainTotal =
+                offchainSettledBalance +
+                offchainPendingBalance +
+                offchainSweptBalance;
+
+            event.source?.postMessage(
+                Response.balance({
+                    onchain: {
+                        confirmed: onchainConfirmed,
+                        unconfirmed: onchainUnconfirmed,
+                        total: onchainTotal,
+                    },
+                    offchain: {
+                        swept: offchainSweptBalance,
+                        settled: offchainSettledBalance,
+                        pending: offchainPendingBalance,
+                        total: offchainTotal,
+                    },
+                    total: onchainTotal + offchainTotal,
+                })
+            );
         } catch (error: unknown) {
             console.error("Error getting balance:", error);
             const errorMessage =
@@ -174,7 +309,7 @@ export class Worker {
         }
     }
 
-    async handleGetCoins(event: ExtendableMessageEvent) {
+    private async handleGetCoins(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isGetCoins(message)) {
             console.error("Invalid GET_COINS message format", message);
@@ -203,7 +338,7 @@ export class Worker {
         }
     }
 
-    async handleGetVtxos(event: ExtendableMessageEvent) {
+    private async handleGetVtxos(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isGetVtxos(message)) {
             console.error("Invalid GET_VTXOS message format", message);
@@ -220,7 +355,7 @@ export class Worker {
         }
 
         try {
-            const vtxos = await this.wallet.getVtxos();
+            const vtxos = await this.vtxoRepository.getSpendableVtxos();
             event.source?.postMessage(Response.vtxos(vtxos));
         } catch (error: unknown) {
             console.error("Error getting vtxos:", error);
@@ -232,7 +367,7 @@ export class Worker {
         }
     }
 
-    async handleGetBoardingUtxos(event: ExtendableMessageEvent) {
+    private async handleGetBoardingUtxos(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isGetBoardingUtxos(message)) {
             console.error("Invalid GET_BOARDING_UTXOS message format", message);
@@ -261,7 +396,7 @@ export class Worker {
         }
     }
 
-    async handleGetTransactionHistory(event: ExtendableMessageEvent) {
+    private async handleGetTransactionHistory(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isGetTransactionHistory(message)) {
             console.error(
@@ -281,10 +416,28 @@ export class Worker {
         }
 
         try {
-            const transactions = await this.wallet.getTransactionHistory();
-            event.source?.postMessage(
-                Response.transactionHistory(transactions)
+            const { boardingTxs, roundsToIgnore } =
+                await this.wallet.getBoardingTxs();
+
+            const { spendable, spent } =
+                await this.vtxoRepository.getAllVtxos();
+
+            // convert VTXOs to offchain transactions
+            const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);
+
+            const txs = [...boardingTxs, ...offchainTxs];
+
+            // sort transactions by creation time in descending order (newest first)
+            txs.sort(
+                // place createdAt = 0 (unconfirmed txs) first, then descending
+                (a, b) => {
+                    if (a.createdAt === 0) return -1;
+                    if (b.createdAt === 0) return 1;
+                    return b.createdAt - a.createdAt;
+                }
             );
+
+            event.source?.postMessage(Response.transactionHistory(txs));
         } catch (error: unknown) {
             console.error("Error getting transaction history:", error);
             const errorMessage =
@@ -295,7 +448,7 @@ export class Worker {
         }
     }
 
-    async handleGetStatus(event: ExtendableMessageEvent) {
+    private async handleGetStatus(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isGetStatus(message)) {
             console.error("Invalid GET_STATUS message format", message);
@@ -310,14 +463,12 @@ export class Worker {
         );
     }
 
-    async handleMessage(event: ExtendableMessageEvent) {
+    private async handleMessage(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isBase(message)) {
             event.source?.postMessage(Response.error("Invalid message format"));
             return;
         }
-
-        console.log("Received message in service worker", message);
 
         switch (message.type) {
             case "INIT_WALLET": {
@@ -358,6 +509,10 @@ export class Worker {
             }
             case "GET_STATUS": {
                 await this.handleGetStatus(event);
+                break;
+            }
+            case "CLEAR": {
+                await this.handleClear(event);
                 break;
             }
             default:

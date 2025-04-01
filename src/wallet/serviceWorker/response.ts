@@ -22,7 +22,8 @@ export namespace Response {
         | "SEND_BITCOIN_SUCCESS"
         | "TRANSACTION_HISTORY"
         | "WALLET_STATUS"
-        | "ERROR";
+        | "ERROR"
+        | "CLEAR_RESPONSE";
 
     export interface Base {
         type: Type;
@@ -258,6 +259,21 @@ export namespace Response {
             status: {
                 walletInitialized,
             },
+        };
+    }
+
+    export interface ClearResponse extends Base {
+        type: "CLEAR_RESPONSE";
+    }
+
+    export function isClearResponse(response: Base): response is ClearResponse {
+        return response.type === "CLEAR_RESPONSE";
+    }
+
+    export function clearResponse(success: boolean): ClearResponse {
+        return {
+            type: "CLEAR_RESPONSE",
+            success,
         };
     }
 }
