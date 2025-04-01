@@ -1,0 +1,17 @@
+{
+  /* 
+   * ESM-specific TypeScript configuration
+   * Extends the base tsconfig.json but overrides settings specific to ESM output
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    /* Module settings for ESM output */
+    "module": "esnext",
+    "moduleResolution": "node",
+    "outDir": "./dist/esm",
+    
+    /* Disable declaration file generation since it's handled by the base config */
+    "declaration": false,
+    "declarationDir": null
+  }
+}

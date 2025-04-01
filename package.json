@@ -23,8 +23,8 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "rm -rf dist && pnpm run build:esm && pnpm run build:cjs && pnpm run build:types",
-    "build:esm": "tsc -p tsconfig.json --outDir dist/esm",
+    "build": "rm -rf dist && pnpm run build:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:types && node scripts/generate-package-files.js",
+    "build:esm": "tsc -p tsconfig.esm.json --outDir dist/esm",
     "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
     "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
     "build:browser": "node scripts/build-browser.js",
@@ -67,6 +67,7 @@
     "@vitest/coverage-v8": "2.1.8",
     "esbuild": "^0.20.1",
     "eslint": "^9.17.0",
+    "glob": "11.0.1",
     "husky": "9.1.7",
     "lint-staged": "15.3.0",
     "prettier": "3.4.2",
@@ -82,5 +83,8 @@
   ],
   "author": "Ark Labs",
   "license": "MIT",
-  "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321"
+  "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
+  "engines": {
+    "node": "^14.17.0 || ^16.13.0 || >=18.0.0"
+  }
 }

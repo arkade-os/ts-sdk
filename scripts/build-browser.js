@@ -1,4 +1,4 @@
-const esbuild = require('esbuild');
+import esbuild from 'esbuild';
 
 async function build(options = {}) {
     const { watch = false } = options;

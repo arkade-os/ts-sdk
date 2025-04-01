@@ -5,14 +5,26 @@ import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
 import { VtxoScript } from "./script/base";
 import {
+    TxType,
     IWallet,
     WalletConfig,
     ArkTransaction,
-    TxType,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
-} from "./wallet";
+    WalletBalance,
+    SendBitcoinParams,
+    Recipient,
+    SettleParams,
+    VtxoTaprootAddress,
+    AddressInfo,
+    TapscriptInfo,
+    Status,
+    VirtualStatus,
+    Outpoint,
+    VirtualCoin,
+    TxKey,
+} from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -45,50 +57,75 @@ import {
     createVirtualTx,
 } from "./utils/psbt";
 import { ArkNote, ArkNoteData } from "./arknote";
-import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 
-export type {
-    WalletConfig,
-    IWallet,
-    SettlementEvent,
-    SettlementEventType,
-    OnchainProvider,
-    ArkProvider,
-    Identity,
-    ArkTransaction,
-    Coin,
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-    ArkTapscript,
-    VtxoRepository,
-};
 export {
+    // Classes
     Wallet,
     ServiceWorkerWallet,
     InMemoryKey,
+
+    // Providers
     ESPLORA_URL,
     EsploraProvider,
     RestArkProvider,
+
+    // Script-related
     ArkAddress,
     DefaultVtxo,
     VtxoScript,
     VHTLC,
+
+    // Enums
     TxType,
+
+    // Service Worker
     Worker,
     Request,
     Response,
+
+    // Tapscript
     decodeTapscript,
     MultisigTapscript,
     CSVMultisigTapscript,
     ConditionCSVMultisigTapscript,
     ConditionMultisigTapscript,
     CLTVMultisigTapscript,
+
+    // Utils
     addConditionWitness,
     CONDITION_WITNESS_KEY_PREFIX,
-    TapscriptType,
     createVirtualTx,
+
+    // Arknote
     ArkNote,
     ArkNoteData,
+
+    // Database
     IndexedDBVtxoRepository,
+};
+
+// Type exports
+export type {
+    // Types and Interfaces
+    Identity,
+    IWallet,
+    WalletConfig,
+    ArkTransaction,
+    Coin,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+    WalletBalance,
+    SendBitcoinParams,
+    Recipient,
+    SettleParams,
+    VtxoTaprootAddress,
+    AddressInfo,
+    TapscriptInfo,
+    Status,
+    VirtualStatus,
+    Outpoint,
+    VirtualCoin,
+    TxKey,
+    TapscriptType,
 };

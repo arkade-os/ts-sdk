@@ -2,16 +2,16 @@
     "compilerOptions": {
         "target": "es2020",
         "module": "esnext",
-        "moduleResolution": "bundler",
-        "declaration": true,
-        "declarationDir": "./dist/types",
-        "outDir": "./dist/esm",
+        "moduleResolution": "node",
         "strict": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "resolveJsonModule": true,
-        "isolatedModules": true
+        "isolatedModules": true,
+        "declaration": true,
+        "declarationDir": "./dist/types",
+        "outDir": "./dist/esm"
     },
     "include": [
         "src"
