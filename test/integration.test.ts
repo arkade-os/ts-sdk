@@ -415,7 +415,7 @@ describe("Wallet SDK Integration Tests", () => {
         const alice = createTestIdentity();
         const bob = createTestIdentity();
 
-        const preimage = Uint8Array.from("preimage");
+        const preimage = new TextEncoder().encode("preimage");
         const preimageHash = hash160(preimage);
 
         const vhtlcScript = new VHTLC.Script({
