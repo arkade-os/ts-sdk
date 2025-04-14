@@ -561,11 +561,12 @@ export class Wallet implements IWallet {
             });
         }
 
+        const scripts = this.offchainTapscript.encode();
         let tx = createVirtualTx(
             selected.inputs.map((input) => ({
                 ...input,
                 tapLeafScript: selectedLeaf,
-                scripts: this.offchainTapscript!.encode(),
+                scripts,
             })),
             outputs
         );
