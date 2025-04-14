@@ -95,6 +95,8 @@ async function setupArkServer() {
             .trim();
         console.log("Funding arkd address:", arkdAddress);
         await execCommand(`nigiri faucet ${arkdAddress}`);
+        await execCommand(`nigiri faucet ${arkdAddress}`);
+        await execCommand(`nigiri faucet ${arkdAddress}`);
 
         // Wait for transaction to be confirmed
         await sleep(5000);
