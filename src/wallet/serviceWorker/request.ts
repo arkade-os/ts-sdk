@@ -18,6 +18,7 @@ export namespace Request {
 
     export interface Base {
         type: Type;
+        id: string;
     }
 
     export function isBase(message: unknown): message is Base {

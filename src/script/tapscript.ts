@@ -2,6 +2,7 @@ import * as bip68 from "bip68";
 import { Bytes } from "@scure/btc-signer/utils";
 import { Script, ScriptNum, ScriptType } from "@scure/btc-signer/script";
 import { p2tr_ms } from "@scure/btc-signer/payment";
+import { hex } from "@scure/base";
 
 export type RelativeTimelock = {
     value: bigint;
@@ -46,7 +47,9 @@ export function decodeTapscript(
         }
     }
 
-    throw new Error("Failed to decode: script is not a valid tapscript");
+    throw new Error(
+        `Failed to decode: script ${hex.encode(script)} is not a valid tapscript`
+    );
 }
 
 /**
@@ -186,7 +189,7 @@ export namespace MultisigTapscript {
             pubkeys,
             type: MultisigType.CHECKSIGADD,
         });
-        if (Buffer.compare(reconstructed.script, script) !== 0) {
+        if (hex.encode(reconstructed.script) !== hex.encode(script)) {
             throw new Error(
                 "Invalid script format: script reconstruction mismatch"
             );
@@ -246,7 +249,7 @@ export namespace MultisigTapscript {
 
         // Verify the script by re-encoding and comparing
         const reconstructed = encode({ pubkeys, type: MultisigType.CHECKSIG });
-        if (Buffer.compare(reconstructed.script, script) !== 0) {
+        if (hex.encode(reconstructed.script) !== hex.encode(script)) {
             throw new Error(
                 "Invalid script format: script reconstruction mismatch"
             );
@@ -358,7 +361,7 @@ export namespace CSVMultisigTapscript {
             ...multisig.params,
         });
 
-        if (Buffer.compare(reconstructed.script, script) !== 0) {
+        if (hex.encode(reconstructed.script) !== hex.encode(script)) {
             throw new Error(
                 "Invalid script format: script reconstruction mismatch"
             );
@@ -451,7 +454,7 @@ export namespace ConditionCSVMultisigTapscript {
             ...csvMultisig.params,
         });
 
-        if (Buffer.compare(reconstructed.script, script) !== 0) {
+        if (hex.encode(reconstructed.script) !== hex.encode(script)) {
             throw new Error(
                 "Invalid script format: script reconstruction mismatch"
             );
@@ -545,7 +548,7 @@ export namespace ConditionMultisigTapscript {
             ...multisig.params,
         });
 
-        if (Buffer.compare(reconstructed.script, script) !== 0) {
+        if (hex.encode(reconstructed.script) !== hex.encode(script)) {
             throw new Error(
                 "Invalid script format: script reconstruction mismatch"
             );
@@ -638,7 +641,7 @@ export namespace CLTVMultisigTapscript {
             ...multisig.params,
         });
 
-        if (Buffer.compare(reconstructed.script, script) !== 0) {
+        if (hex.encode(reconstructed.script) !== hex.encode(script)) {
             throw new Error(
                 "Invalid script format: script reconstruction mismatch"
             );

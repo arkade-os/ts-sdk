@@ -30,19 +30,9 @@ import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
+import { ESPLORA_URL, EsploraProvider } from "./providers/onchain";
+import { RestArkProvider } from "./providers/ark";
 import {
-    ESPLORA_URL,
-    EsploraProvider,
-    OnchainProvider,
-} from "./providers/onchain";
-import {
-    SettlementEvent,
-    SettlementEventType,
-    RestArkProvider,
-    ArkProvider,
-} from "./providers/ark";
-import {
-    ArkTapscript,
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
     ConditionMultisigTapscript,
@@ -58,6 +48,7 @@ import {
 } from "./utils/psbt";
 import { ArkNote, ArkNoteData } from "./arknote";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
+import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 
 export {
     // Classes
@@ -128,4 +119,5 @@ export type {
     VirtualCoin,
     TxKey,
     TapscriptType,
+    VtxoRepository,
 };

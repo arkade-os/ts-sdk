@@ -28,12 +28,14 @@ export namespace Response {
     export interface Base {
         type: Type;
         success: boolean;
+        id: string;
     }
 
-    export const walletInitialized: Base = {
+    export const walletInitialized = (id: string): Base => ({
         type: "WALLET_INITIALIZED",
         success: true,
-    };
+        id,
+    });
 
     export interface Error extends Base {
         type: "ERROR";
@@ -41,11 +43,12 @@ export namespace Response {
         message: string;
     }
 
-    export function error(message: string): Error {
+    export function error(id: string, message: string): Error {
         return {
             type: "ERROR",
             success: false,
             message,
+            id,
         };
     }
 
@@ -55,11 +58,15 @@ export namespace Response {
         event: SettlementEvent;
     }
 
-    export function settleEvent(event: SettlementEvent): SettleEvent {
+    export function settleEvent(
+        id: string,
+        event: SettlementEvent
+    ): SettleEvent {
         return {
             type: "SETTLE_EVENT",
             success: true,
             event,
+            id,
         };
     }
 
@@ -69,11 +76,12 @@ export namespace Response {
         txid: string;
     }
 
-    export function settleSuccess(txid: string): SettleSuccess {
+    export function settleSuccess(id: string, txid: string): SettleSuccess {
         return {
             type: "SETTLE_SUCCESS",
             success: true,
             txid,
+            id,
         };
     }
 
@@ -91,11 +99,12 @@ export namespace Response {
         return response.type === "ADDRESS" && response.success === true;
     }
 
-    export function address(address: AddressInfo): Address {
+    export function address(id: string, address: AddressInfo): Address {
         return {
             type: "ADDRESS",
             success: true,
             address,
+            id,
         };
     }
 
@@ -109,11 +118,12 @@ export namespace Response {
         return response.type === "BALANCE" && response.success === true;
     }
 
-    export function balance(balance: WalletBalance): Balance {
+    export function balance(id: string, balance: WalletBalance): Balance {
         return {
             type: "BALANCE",
             success: true,
             balance,
+            id,
         };
     }
 
@@ -127,11 +137,12 @@ export namespace Response {
         return response.type === "COINS" && response.success === true;
     }
 
-    export function coins(coins: Coin[]): Coins {
+    export function coins(id: string, coins: Coin[]): Coins {
         return {
             type: "COINS",
             success: true,
             coins,
+            id,
         };
     }
 
@@ -146,12 +157,14 @@ export namespace Response {
     }
 
     export function vtxos(
+        id: string,
         vtxos: Awaited<ReturnType<IWallet["getVtxos"]>>
     ): Vtxos {
         return {
             type: "VTXOS",
             success: true,
             vtxos,
+            id,
         };
     }
 
@@ -165,11 +178,15 @@ export namespace Response {
         return response.type === "VIRTUAL_COINS" && response.success === true;
     }
 
-    export function virtualCoins(virtualCoins: VirtualCoin[]): VirtualCoins {
+    export function virtualCoins(
+        id: string,
+        virtualCoins: VirtualCoin[]
+    ): VirtualCoins {
         return {
             type: "VIRTUAL_COINS",
             success: true,
             virtualCoins,
+            id,
         };
     }
 
@@ -184,12 +201,14 @@ export namespace Response {
     }
 
     export function boardingUtxos(
+        id: string,
         boardingUtxos: Awaited<ReturnType<IWallet["getBoardingUtxos"]>>
     ): BoardingUtxos {
         return {
             type: "BOARDING_UTXOS",
             success: true,
             boardingUtxos,
+            id,
         };
     }
 
@@ -208,11 +227,15 @@ export namespace Response {
         );
     }
 
-    export function sendBitcoinSuccess(txid: string): SendBitcoinSuccess {
+    export function sendBitcoinSuccess(
+        id: string,
+        txid: string
+    ): SendBitcoinSuccess {
         return {
             type: "SEND_BITCOIN_SUCCESS",
             success: true,
             txid,
+            id,
         };
     }
 
@@ -231,12 +254,14 @@ export namespace Response {
     }
 
     export function transactionHistory(
+        id: string,
         transactions: ArkTransaction[]
     ): TransactionHistory {
         return {
             type: "TRANSACTION_HISTORY",
             success: true,
             transactions,
+            id,
         };
     }
 
@@ -252,13 +277,17 @@ export namespace Response {
         return response.type === "WALLET_STATUS" && response.success === true;
     }
 
-    export function walletStatus(walletInitialized: boolean): WalletStatus {
+    export function walletStatus(
+        id: string,
+        walletInitialized: boolean
+    ): WalletStatus {
         return {
             type: "WALLET_STATUS",
             success: true,
             status: {
                 walletInitialized,
             },
+            id,
         };
     }
 
@@ -270,10 +299,11 @@ export namespace Response {
         return response.type === "CLEAR_RESPONSE";
     }
 
-    export function clearResponse(success: boolean): ClearResponse {
+    export function clearResponse(id: string, success: boolean): ClearResponse {
         return {
             type: "CLEAR_RESPONSE",
             success,
+            id,
         };
     }
 }

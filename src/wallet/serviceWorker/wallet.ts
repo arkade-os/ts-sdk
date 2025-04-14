@@ -13,6 +13,16 @@ import {
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
+import { hex } from "@scure/base";
+
+class UnexpectedResponseError extends Error {
+    constructor(response: Response.Base) {
+        super(
+            `Unexpected response type. Got: ${JSON.stringify(response, null, 2)}`
+        );
+        this.name = "UnexpectedResponseError";
+    }
+}
 
 // ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
 export class ServiceWorkerWallet implements IWallet {
@@ -30,6 +40,18 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
+    async getStatus(): Promise<Response.WalletStatus["status"]> {
+        const message: Request.GetStatus = {
+            type: "GET_STATUS",
+            id: getRandomId(),
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isWalletStatus(response)) {
+            return response.status;
+        }
+        throw new UnexpectedResponseError(response);
+    }
+
     async init(
         config: Omit<WalletConfig, "identity"> & { privateKey: string },
         failIfInitialized = false
@@ -37,6 +59,7 @@ export class ServiceWorkerWallet implements IWallet {
         // Check if wallet is already initialized
         const statusMessage: Request.GetStatus = {
             type: "GET_STATUS",
+            id: getRandomId(),
         };
         const response = await this.sendMessage(statusMessage);
 
@@ -53,6 +76,7 @@ export class ServiceWorkerWallet implements IWallet {
         // If not initialized, proceed with initialization
         const message: Request.InitWallet = {
             type: "INIT_WALLET",
+            id: getRandomId(),
             privateKey: config.privateKey,
             network: config.network,
             arkServerUrl: config.arkServerUrl || "",
@@ -65,6 +89,7 @@ export class ServiceWorkerWallet implements IWallet {
     async clear() {
         const message: Request.Clear = {
             type: "CLEAR",
+            id: getRandomId(),
         };
         await this.sendMessage(message);
     }
@@ -152,6 +177,13 @@ export class ServiceWorkerWallet implements IWallet {
         return new Promise((resolve, reject) => {
             const messageHandler = (event: MessageEvent) => {
                 const response = event.data as Response.Base;
+                if (response.id === "") {
+                    reject(new Error("Invalid response id"));
+                    return;
+                }
+                if (response.id !== message.id) {
+                    return;
+                }
                 navigator.serviceWorker.removeEventListener(
                     "message",
                     messageHandler
@@ -176,6 +208,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getAddress(): Promise<AddressInfo> {
         const message: Request.GetAddress = {
             type: "GET_ADDRESS",
+            id: getRandomId(),
         };
 
         try {
@@ -183,7 +216,7 @@ export class ServiceWorkerWallet implements IWallet {
             if (Response.isAddress(response)) {
                 return response.address;
             }
-            throw new Error("Unexpected response type");
+            throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get address: ${error}`);
         }
@@ -192,6 +225,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getBalance(): Promise<WalletBalance> {
         const message: Request.GetBalance = {
             type: "GET_BALANCE",
+            id: getRandomId(),
         };
 
         try {
@@ -199,7 +233,7 @@ export class ServiceWorkerWallet implements IWallet {
             if (Response.isBalance(response)) {
                 return response.balance;
             }
-            throw new Error("Unexpected response type");
+            throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
         }
@@ -208,6 +242,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getCoins(): Promise<Coin[]> {
         const message: Request.GetCoins = {
             type: "GET_COINS",
+            id: getRandomId(),
         };
 
         try {
@@ -215,7 +250,7 @@ export class ServiceWorkerWallet implements IWallet {
             if (Response.isCoins(response)) {
                 return response.coins;
             }
-            throw new Error("Unexpected response type");
+            throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get coins: ${error}`);
         }
@@ -224,6 +259,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getVtxos(): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
+            id: getRandomId(),
         };
 
         try {
@@ -231,7 +267,7 @@ export class ServiceWorkerWallet implements IWallet {
             if (Response.isVtxos(response)) {
                 return response.vtxos;
             }
-            throw new Error("Unexpected response type");
+            throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get vtxos: ${error}`);
         }
@@ -240,6 +276,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
         const message: Request.GetBoardingUtxos = {
             type: "GET_BOARDING_UTXOS",
+            id: getRandomId(),
         };
 
         try {
@@ -247,7 +284,7 @@ export class ServiceWorkerWallet implements IWallet {
             if (Response.isBoardingUtxos(response)) {
                 return response.boardingUtxos;
             }
-            throw new Error("Unexpected response type");
+            throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get boarding UTXOs: ${error}`);
         }
@@ -261,6 +298,7 @@ export class ServiceWorkerWallet implements IWallet {
             type: "SEND_BITCOIN",
             params,
             zeroFee,
+            id: getRandomId(),
         };
 
         try {
@@ -268,7 +306,7 @@ export class ServiceWorkerWallet implements IWallet {
             if (Response.isSendBitcoinSuccess(response)) {
                 return response.txid;
             }
-            throw new Error("Unexpected response type");
+            throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to send bitcoin: ${error}`);
         }
@@ -281,6 +319,7 @@ export class ServiceWorkerWallet implements IWallet {
         const message: Request.Settle = {
             type: "SETTLE",
             params,
+            id: getRandomId(),
         };
 
         try {
@@ -335,6 +374,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getTransactionHistory(): Promise<ArkTransaction[]> {
         const message: Request.GetTransactionHistory = {
             type: "GET_TRANSACTION_HISTORY",
+            id: getRandomId(),
         };
 
         try {
@@ -342,9 +382,14 @@ export class ServiceWorkerWallet implements IWallet {
             if (Response.isTransactionHistory(response)) {
                 return response.transactions;
             }
-            throw new Error("Unexpected response type");
+            throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
         }
     }
+}
+
+function getRandomId(): string {
+    const randomValue = crypto.getRandomValues(new Uint8Array(16));
+    return hex.encode(randomValue);
 }

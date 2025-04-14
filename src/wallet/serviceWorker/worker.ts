@@ -20,7 +20,10 @@ export class Worker {
     private vtxoSubscription: AbortController | undefined;
 
     constructor(
-        private readonly vtxoRepository: VtxoRepository = new IndexedDBVtxoRepository()
+        private readonly vtxoRepository: VtxoRepository = new IndexedDBVtxoRepository(),
+        private readonly messageCallback: (
+            message: ExtendableMessageEvent
+        ) => void = () => {}
     ) {}
 
     async start() {
@@ -32,11 +35,12 @@ export class Worker {
         );
     }
 
-    clear() {
+    async clear() {
         if (this.vtxoSubscription) {
             this.vtxoSubscription.abort();
         }
 
+        await this.vtxoRepository.close();
         this.wallet = undefined;
         this.arkProvider = undefined;
         this.vtxoSubscription = undefined;
@@ -46,6 +50,8 @@ export class Worker {
         if (!this.wallet || !this.arkProvider) {
             return;
         }
+
+        await this.vtxoRepository.open();
 
         // set the initial vtxos state
         const vtxos = await this.wallet.getVtxos();
@@ -98,7 +104,11 @@ export class Worker {
 
     private async handleClear(event: ExtendableMessageEvent) {
         this.clear();
-        event.source?.postMessage(Response.clearResponse(true));
+        if (Request.isBase(event.data)) {
+            event.source?.postMessage(
+                Response.clearResponse(event.data.id, true)
+            );
+        }
     }
 
     private async handleInitWallet(event: ExtendableMessageEvent) {
@@ -106,7 +116,7 @@ export class Worker {
         if (!Request.isInitWallet(message)) {
             console.error("Invalid INIT_WALLET message format", message);
             event.source?.postMessage(
-                Response.error("Invalid INIT_WALLET message format")
+                Response.error(message.id, "Invalid INIT_WALLET message format")
             );
             return;
         }
@@ -121,7 +131,7 @@ export class Worker {
                 arkServerPublicKey: message.arkServerPublicKey,
             });
 
-            event.source?.postMessage(Response.walletInitialized);
+            event.source?.postMessage(Response.walletInitialized(message.id));
             await this.onWalletInitialized();
         } catch (error: unknown) {
             console.error("Error initializing wallet:", error);
@@ -129,7 +139,7 @@ export class Worker {
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -138,7 +148,7 @@ export class Worker {
         if (!Request.isSettle(message)) {
             console.error("Invalid SETTLE message format", message);
             event.source?.postMessage(
-                Response.error("Invalid SETTLE message format")
+                Response.error(message.id, "Invalid SETTLE message format")
             );
             return;
         }
@@ -147,23 +157,23 @@ export class Worker {
             if (!this.wallet) {
                 console.error("Wallet not initialized");
                 event.source?.postMessage(
-                    Response.error("Wallet not initialized")
+                    Response.error(message.id, "Wallet not initialized")
                 );
                 return;
             }
 
             const txid = await this.wallet.settle(message.params, (e) => {
-                event.source?.postMessage(Response.settleEvent(e));
+                event.source?.postMessage(Response.settleEvent(message.id, e));
             });
 
-            event.source?.postMessage(Response.settleSuccess(txid));
+            event.source?.postMessage(Response.settleSuccess(message.id, txid));
         } catch (error: unknown) {
             console.error("Error settling:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -172,14 +182,19 @@ export class Worker {
         if (!Request.isSendBitcoin(message)) {
             console.error("Invalid SEND_BITCOIN message format", message);
             event.source?.postMessage(
-                Response.error("Invalid SEND_BITCOIN message format")
+                Response.error(
+                    message.id,
+                    "Invalid SEND_BITCOIN message format"
+                )
             );
             return;
         }
 
         if (!this.wallet) {
             console.error("Wallet not initialized");
-            event.source?.postMessage(Response.error("Wallet not initialized"));
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
             return;
         }
 
@@ -188,14 +203,16 @@ export class Worker {
                 message.params,
                 message.zeroFee
             );
-            event.source?.postMessage(Response.sendBitcoinSuccess(txid));
+            event.source?.postMessage(
+                Response.sendBitcoinSuccess(message.id, txid)
+            );
         } catch (error: unknown) {
             console.error("Error sending bitcoin:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -204,27 +221,29 @@ export class Worker {
         if (!Request.isGetAddress(message)) {
             console.error("Invalid GET_ADDRESS message format", message);
             event.source?.postMessage(
-                Response.error("Invalid GET_ADDRESS message format")
+                Response.error(message.id, "Invalid GET_ADDRESS message format")
             );
             return;
         }
 
         if (!this.wallet) {
             console.error("Wallet not initialized");
-            event.source?.postMessage(Response.error("Wallet not initialized"));
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
             return;
         }
 
         try {
             const address = await this.wallet.getAddress();
-            event.source?.postMessage(Response.address(address));
+            event.source?.postMessage(Response.address(message.id, address));
         } catch (error: unknown) {
             console.error("Error getting address:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -233,14 +252,16 @@ export class Worker {
         if (!Request.isGetBalance(message)) {
             console.error("Invalid GET_BALANCE message format", message);
             event.source?.postMessage(
-                Response.error("Invalid GET_BALANCE message format")
+                Response.error(message.id, "Invalid GET_BALANCE message format")
             );
             return;
         }
 
         if (!this.wallet) {
             console.error("Wallet not initialized");
-            event.source?.postMessage(Response.error("Wallet not initialized"));
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
             return;
         }
 
@@ -284,7 +305,7 @@ export class Worker {
                 offchainSweptBalance;
 
             event.source?.postMessage(
-                Response.balance({
+                Response.balance(message.id, {
                     onchain: {
                         confirmed: onchainConfirmed,
                         unconfirmed: onchainUnconfirmed,
@@ -305,7 +326,7 @@ export class Worker {
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -314,27 +335,29 @@ export class Worker {
         if (!Request.isGetCoins(message)) {
             console.error("Invalid GET_COINS message format", message);
             event.source?.postMessage(
-                Response.error("Invalid GET_COINS message format")
+                Response.error(message.id, "Invalid GET_COINS message format")
             );
             return;
         }
 
         if (!this.wallet) {
             console.error("Wallet not initialized");
-            event.source?.postMessage(Response.error("Wallet not initialized"));
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
             return;
         }
 
         try {
             const coins = await this.wallet.getCoins();
-            event.source?.postMessage(Response.coins(coins));
+            event.source?.postMessage(Response.coins(message.id, coins));
         } catch (error: unknown) {
             console.error("Error getting coins:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -343,27 +366,29 @@ export class Worker {
         if (!Request.isGetVtxos(message)) {
             console.error("Invalid GET_VTXOS message format", message);
             event.source?.postMessage(
-                Response.error("Invalid GET_VTXOS message format")
+                Response.error(message.id, "Invalid GET_VTXOS message format")
             );
             return;
         }
 
         if (!this.wallet) {
             console.error("Wallet not initialized");
-            event.source?.postMessage(Response.error("Wallet not initialized"));
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
             return;
         }
 
         try {
             const vtxos = await this.vtxoRepository.getSpendableVtxos();
-            event.source?.postMessage(Response.vtxos(vtxos));
+            event.source?.postMessage(Response.vtxos(message.id, vtxos));
         } catch (error: unknown) {
             console.error("Error getting vtxos:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -372,27 +397,34 @@ export class Worker {
         if (!Request.isGetBoardingUtxos(message)) {
             console.error("Invalid GET_BOARDING_UTXOS message format", message);
             event.source?.postMessage(
-                Response.error("Invalid GET_BOARDING_UTXOS message format")
+                Response.error(
+                    message.id,
+                    "Invalid GET_BOARDING_UTXOS message format"
+                )
             );
             return;
         }
 
         if (!this.wallet) {
             console.error("Wallet not initialized");
-            event.source?.postMessage(Response.error("Wallet not initialized"));
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
             return;
         }
 
         try {
             const boardingUtxos = await this.wallet.getBoardingUtxos();
-            event.source?.postMessage(Response.boardingUtxos(boardingUtxos));
+            event.source?.postMessage(
+                Response.boardingUtxos(message.id, boardingUtxos)
+            );
         } catch (error: unknown) {
             console.error("Error getting boarding utxos:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -404,14 +436,19 @@ export class Worker {
                 message
             );
             event.source?.postMessage(
-                Response.error("Invalid GET_TRANSACTION_HISTORY message format")
+                Response.error(
+                    message.id,
+                    "Invalid GET_TRANSACTION_HISTORY message format"
+                )
             );
             return;
         }
 
         if (!this.wallet) {
             console.error("Wallet not initialized");
-            event.source?.postMessage(Response.error("Wallet not initialized"));
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
             return;
         }
 
@@ -437,14 +474,16 @@ export class Worker {
                 }
             );
 
-            event.source?.postMessage(Response.transactionHistory(txs));
+            event.source?.postMessage(
+                Response.transactionHistory(message.id, txs)
+            );
         } catch (error: unknown) {
             console.error("Error getting transaction history:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
                     : "Unknown error occurred";
-            event.source?.postMessage(Response.error(errorMessage));
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 
@@ -453,20 +492,22 @@ export class Worker {
         if (!Request.isGetStatus(message)) {
             console.error("Invalid GET_STATUS message format", message);
             event.source?.postMessage(
-                Response.error("Invalid GET_STATUS message format")
+                Response.error(message.id, "Invalid GET_STATUS message format")
             );
             return;
         }
 
         event.source?.postMessage(
-            Response.walletStatus(this.wallet !== undefined)
+            Response.walletStatus(message.id, this.wallet !== undefined)
         );
     }
 
     private async handleMessage(event: ExtendableMessageEvent) {
+        this.messageCallback(event);
         const message = event.data;
         if (!Request.isBase(message)) {
-            event.source?.postMessage(Response.error("Invalid message format"));
+            console.warn("Invalid message format", JSON.stringify(message));
+            // ignore invalid messages
             return;
         }
 
@@ -517,7 +558,7 @@ export class Worker {
             }
             default:
                 event.source?.postMessage(
-                    Response.error("Unknown message type")
+                    Response.error(message.id, "Unknown message type")
                 );
         }
     }

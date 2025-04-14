@@ -1,20 +1,67 @@
 import { VtxoRepository } from ".";
 import { ExtendedVirtualCoin } from "../../..";
 
-const DB_NAME = "wallet-db";
-const STORE_NAME = "vtxos";
-const DB_VERSION = 1;
-
 export class IndexedDBVtxoRepository implements VtxoRepository {
-    private db: IDBDatabase | null = null;
+    static readonly DB_NAME = "wallet-db";
+    static readonly STORE_NAME = "vtxos";
+    static readonly DB_VERSION = 1;
 
-    constructor() {
-        this.initDB();
+    static delete(): Promise<void> {
+        return new Promise((resolve, reject) => {
+            try {
+                const request = indexedDB.deleteDatabase(
+                    IndexedDBVtxoRepository.DB_NAME
+                );
+
+                request.onblocked = () => {
+                    // If blocked, wait a bit and try again
+                    setTimeout(() => {
+                        const retryRequest = indexedDB.deleteDatabase(
+                            IndexedDBVtxoRepository.DB_NAME
+                        );
+                        retryRequest.onsuccess = () => resolve();
+                        retryRequest.onerror = () =>
+                            reject(
+                                retryRequest.error ||
+                                    new Error("Failed to delete database")
+                            );
+                    }, 100);
+                };
+
+                request.onsuccess = () => {
+                    resolve();
+                };
+
+                request.onerror = () => {
+                    reject(
+                        request.error || new Error("Failed to delete database")
+                    );
+                };
+            } catch (error) {
+                reject(
+                    error instanceof Error
+                        ? error
+                        : new Error("Failed to delete database")
+                );
+            }
+        });
     }
 
-    private initDB(): Promise<void> {
+    private db: IDBDatabase | null = null;
+
+    async close(): Promise<void> {
+        if (this.db) {
+            this.db.close();
+            this.db = null;
+        }
+    }
+
+    async open(): Promise<void> {
         return new Promise((resolve, reject) => {
-            const request = indexedDB.open(DB_NAME, DB_VERSION);
+            const request = indexedDB.open(
+                IndexedDBVtxoRepository.DB_NAME,
+                IndexedDBVtxoRepository.DB_VERSION
+            );
 
             request.onerror = () => {
                 reject(request.error);
@@ -27,11 +74,21 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
 
             request.onupgradeneeded = (event) => {
                 const db = (event.target as IDBOpenDBRequest).result;
-                if (!db.objectStoreNames.contains(STORE_NAME)) {
-                    const store = db.createObjectStore(STORE_NAME, {
-                        keyPath: ["txid", "vout"],
-                    });
+                if (
+                    !db.objectStoreNames.contains(
+                        IndexedDBVtxoRepository.STORE_NAME
+                    )
+                ) {
+                    const store = db.createObjectStore(
+                        IndexedDBVtxoRepository.STORE_NAME,
+                        {
+                            keyPath: ["txid", "vout"],
+                        }
+                    );
                     store.createIndex("state", "virtualStatus.state", {
+                        unique: false,
+                    });
+                    store.createIndex("spentBy", "spentBy", {
                         unique: false,
                     });
                 }
@@ -41,13 +98,17 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
 
     async addOrUpdate(vtxos: ExtendedVirtualCoin[]): Promise<void> {
         if (!this.db) {
-            await this.initDB();
-            if (!this.db) throw new Error("Failed to initialize database");
+            throw new Error("Database not opened");
         }
 
         return new Promise((resolve, reject) => {
-            const transaction = this.db!.transaction(STORE_NAME, "readwrite");
-            const store = transaction.objectStore(STORE_NAME);
+            const transaction = this.db!.transaction(
+                IndexedDBVtxoRepository.STORE_NAME,
+                "readwrite"
+            );
+            const store = transaction.objectStore(
+                IndexedDBVtxoRepository.STORE_NAME
+            );
 
             const requests = vtxos.map((vtxo) => {
                 return new Promise<void>((resolveRequest, rejectRequest) => {
@@ -65,13 +126,17 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
 
     async deleteAll(): Promise<void> {
         if (!this.db) {
-            await this.initDB();
-            if (!this.db) throw new Error("Failed to initialize database");
+            throw new Error("Database not opened");
         }
 
         return new Promise((resolve, reject) => {
-            const transaction = this.db!.transaction(STORE_NAME, "readwrite");
-            const store = transaction.objectStore(STORE_NAME);
+            const transaction = this.db!.transaction(
+                IndexedDBVtxoRepository.STORE_NAME,
+                "readwrite"
+            );
+            const store = transaction.objectStore(
+                IndexedDBVtxoRepository.STORE_NAME
+            );
             const request = store.clear();
 
             request.onsuccess = () => resolve();
@@ -81,47 +146,26 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
 
     async getSpendableVtxos(): Promise<ExtendedVirtualCoin[]> {
         if (!this.db) {
-            await this.initDB();
-            if (!this.db) throw new Error("Failed to initialize database");
+            throw new Error("Database not opened");
         }
 
         return new Promise((resolve, reject) => {
-            const transaction = this.db!.transaction(STORE_NAME, "readonly");
-            const store = transaction.objectStore(STORE_NAME);
-            const stateIndex = store.index("state");
+            const transaction = this.db!.transaction(
+                IndexedDBVtxoRepository.STORE_NAME,
+                "readonly"
+            );
+            const store = transaction.objectStore(
+                IndexedDBVtxoRepository.STORE_NAME
+            );
+            const spentByIndex = store.index("spentBy");
 
-            // Get both settled and pending vtxos
-            const settledRequest = stateIndex.getAll("settled");
-            const pendingRequest = stateIndex.getAll("pending");
+            // Get vtxos where spentBy is empty string
+            const request = spentByIndex.getAll(IDBKeyRange.only(""));
 
-            Promise.all([
-                new Promise<ExtendedVirtualCoin[]>(
-                    (resolveSettled, rejectSettled) => {
-                        settledRequest.onsuccess = () => {
-                            resolveSettled(
-                                settledRequest.result as ExtendedVirtualCoin[]
-                            );
-                        };
-                        settledRequest.onerror = () =>
-                            rejectSettled(settledRequest.error);
-                    }
-                ),
-                new Promise<ExtendedVirtualCoin[]>(
-                    (resolvePending, rejectPending) => {
-                        pendingRequest.onsuccess = () => {
-                            resolvePending(
-                                pendingRequest.result as ExtendedVirtualCoin[]
-                            );
-                        };
-                        pendingRequest.onerror = () =>
-                            rejectPending(pendingRequest.error);
-                    }
-                ),
-            ])
-                .then(([settledVtxos, pendingVtxos]) => {
-                    resolve([...settledVtxos, ...pendingVtxos]);
-                })
-                .catch(reject);
+            request.onsuccess = () => {
+                resolve(request.result as ExtendedVirtualCoin[]);
+            };
+            request.onerror = () => reject(request.error);
         });
     }
 
@@ -130,41 +174,37 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
         spent: ExtendedVirtualCoin[];
     }> {
         if (!this.db) {
-            await this.initDB();
-            if (!this.db) throw new Error("Failed to initialize database");
+            throw new Error("Database not opened");
         }
 
         return new Promise((resolve, reject) => {
-            const transaction = this.db!.transaction(STORE_NAME, "readonly");
-            const store = transaction.objectStore(STORE_NAME);
-            const stateIndex = store.index("state");
+            const transaction = this.db!.transaction(
+                IndexedDBVtxoRepository.STORE_NAME,
+                "readonly"
+            );
+            const store = transaction.objectStore(
+                IndexedDBVtxoRepository.STORE_NAME
+            );
+            const spentByIndex = store.index("spentBy");
 
-            // Get all vtxos by state
-            const settledRequest = stateIndex.getAll("settled");
-            const pendingRequest = stateIndex.getAll("pending");
-            const spentRequest = stateIndex.getAll("swept");
+            // Get vtxos where spentBy is empty string
+            const spendableRequest = spentByIndex.getAll(IDBKeyRange.only(""));
+
+            // Get all vtxos where spentBy is populated
+            const spentRequest = spentByIndex.getAll(
+                IDBKeyRange.lowerBound("", true)
+            );
 
             Promise.all([
                 new Promise<ExtendedVirtualCoin[]>(
-                    (resolveSettled, rejectSettled) => {
-                        settledRequest.onsuccess = () => {
-                            resolveSettled(
-                                settledRequest.result as ExtendedVirtualCoin[]
+                    (resolveSpendable, rejectSpendable) => {
+                        spendableRequest.onsuccess = () => {
+                            resolveSpendable(
+                                spendableRequest.result as ExtendedVirtualCoin[]
                             );
                         };
-                        settledRequest.onerror = () =>
-                            rejectSettled(settledRequest.error);
-                    }
-                ),
-                new Promise<ExtendedVirtualCoin[]>(
-                    (resolvePending, rejectPending) => {
-                        pendingRequest.onsuccess = () => {
-                            resolvePending(
-                                pendingRequest.result as ExtendedVirtualCoin[]
-                            );
-                        };
-                        pendingRequest.onerror = () =>
-                            rejectPending(pendingRequest.error);
+                        spendableRequest.onerror = () =>
+                            rejectSpendable(spendableRequest.error);
                     }
                 ),
                 new Promise<ExtendedVirtualCoin[]>(
@@ -179,9 +219,9 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
                     }
                 ),
             ])
-                .then(([settledVtxos, pendingVtxos, spentVtxos]) => {
+                .then(([spendableVtxos, spentVtxos]) => {
                     resolve({
-                        spendable: [...settledVtxos, ...pendingVtxos],
+                        spendable: spendableVtxos,
                         spent: spentVtxos,
                     });
                 })

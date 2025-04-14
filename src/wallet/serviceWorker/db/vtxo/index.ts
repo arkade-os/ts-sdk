@@ -8,4 +8,6 @@ export interface VtxoRepository {
         spendable: ExtendedVirtualCoin[];
         spent: ExtendedVirtualCoin[];
     }>;
+    close(): Promise<void>;
+    open(): Promise<void>;
 }
