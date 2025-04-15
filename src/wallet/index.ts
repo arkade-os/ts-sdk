@@ -11,6 +11,7 @@ export interface WalletConfig {
     arkServerUrl?: string;
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
+    exitTimelock?: RelativeTimelock;
 }
 
 export interface WalletBalance {
