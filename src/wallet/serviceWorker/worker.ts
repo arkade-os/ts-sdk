@@ -47,21 +47,36 @@ export class Worker {
     }
 
     private async onWalletInitialized() {
-        if (!this.wallet || !this.arkProvider) {
+        if (
+            !this.wallet ||
+            !this.arkProvider ||
+            !this.wallet.offchainTapscript ||
+            !this.wallet.boardingTapscript
+        ) {
+            return;
+        }
+        // subscribe to address updates
+        const address = await this.wallet.getAddress();
+        if (!address.offchain) {
             return;
         }
 
         await this.vtxoRepository.open();
 
         // set the initial vtxos state
-        const vtxos = await this.wallet.getVtxos();
-        await this.vtxoRepository.addOrUpdate(vtxos);
+        const { spendableVtxos, spentVtxos } =
+            await this.arkProvider.getVirtualCoins(address.offchain.address);
 
-        // subscribe to address updates
-        const address = await this.wallet.getAddress();
-        if (!address.offchain) {
-            return;
-        }
+        const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
+        const forfeit = this.wallet.offchainTapscript.forfeit();
+
+        const vtxos = [...spendableVtxos, ...spentVtxos].map((vtxo) => ({
+            ...vtxo,
+            tapLeafScript: forfeit,
+            scripts: encodedOffchainTapscript,
+        }));
+
+        await this.vtxoRepository.addOrUpdate(vtxos);
 
         this.processVtxoSubscription(address.offchain);
     }

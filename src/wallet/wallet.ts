@@ -66,8 +66,8 @@ export class Wallet implements IWallet {
         private onchainP2TR: ReturnType<typeof p2tr>,
         private arkProvider?: ArkProvider,
         private arkServerPublicKey?: Bytes,
-        private offchainTapscript?: DefaultVtxo.Script,
-        private boardingTapscript?: DefaultVtxo.Script
+        readonly offchainTapscript?: DefaultVtxo.Script,
+        readonly boardingTapscript?: DefaultVtxo.Script
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
