@@ -24,6 +24,7 @@ import {
     Outpoint,
     VirtualCoin,
     TxKey,
+    Addresses,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
@@ -112,6 +113,7 @@ export type {
     SettleParams,
     VtxoTaprootAddress,
     AddressInfo,
+    Addresses,
     TapscriptInfo,
     Status,
     VirtualStatus,

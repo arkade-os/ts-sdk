@@ -3,8 +3,9 @@ import {
     Coin,
     VirtualCoin,
     ArkTransaction,
-    AddressInfo,
+    AddressInfo as WalletAddressInfo,
     IWallet,
+    Addresses,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 
@@ -14,6 +15,7 @@ export namespace Response {
         | "SETTLE_EVENT"
         | "SETTLE_SUCCESS"
         | "ADDRESS"
+        | "ADDRESS_INFO"
         | "BALANCE"
         | "COINS"
         | "VTXOS"
@@ -92,18 +94,40 @@ export namespace Response {
     export interface Address extends Base {
         type: "ADDRESS";
         success: true;
-        address: AddressInfo;
+        addresses: Addresses;
     }
 
     export function isAddress(response: Base): response is Address {
         return response.type === "ADDRESS" && response.success === true;
     }
 
-    export function address(id: string, address: AddressInfo): Address {
+    export function addresses(id: string, addresses: Addresses): Address {
         return {
             type: "ADDRESS",
             success: true,
-            address,
+            addresses,
+            id,
+        };
+    }
+
+    export interface AddressInfo extends Base {
+        type: "ADDRESS_INFO";
+        success: true;
+        addressInfo: WalletAddressInfo;
+    }
+
+    export function isAddressInfo(response: Base): response is AddressInfo {
+        return response.type === "ADDRESS_INFO" && response.success === true;
+    }
+
+    export function addressInfo(
+        id: string,
+        addressInfo: WalletAddressInfo
+    ): AddressInfo {
+        return {
+            type: "ADDRESS_INFO",
+            success: true,
+            addressInfo,
             id,
         };
     }

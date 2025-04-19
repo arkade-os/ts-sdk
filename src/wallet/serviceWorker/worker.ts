@@ -56,8 +56,8 @@ export class Worker {
             return;
         }
         // subscribe to address updates
-        const address = await this.wallet.getAddress();
-        if (!address.offchain) {
+        const addressInfo = await this.wallet.getAddressInfo();
+        if (!addressInfo.offchain) {
             return;
         }
 
@@ -65,7 +65,9 @@ export class Worker {
 
         // set the initial vtxos state
         const { spendableVtxos, spentVtxos } =
-            await this.arkProvider.getVirtualCoins(address.offchain.address);
+            await this.arkProvider.getVirtualCoins(
+                addressInfo.offchain.address
+            );
 
         const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
         const forfeit = this.wallet.offchainTapscript.forfeit();
@@ -78,7 +80,7 @@ export class Worker {
 
         await this.vtxoRepository.addOrUpdate(vtxos);
 
-        this.processVtxoSubscription(address.offchain);
+        this.processVtxoSubscription(addressInfo.offchain);
     }
 
     private async processVtxoSubscription({
@@ -250,10 +252,48 @@ export class Worker {
         }
 
         try {
-            const address = await this.wallet.getAddress();
-            event.source?.postMessage(Response.address(message.id, address));
+            const addresses = await this.wallet.getAddress();
+            event.source?.postMessage(
+                Response.addresses(message.id, addresses)
+            );
         } catch (error: unknown) {
             console.error("Error getting address:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleGetAddressInfo(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isGetAddressInfo(message)) {
+            console.error("Invalid GET_ADDRESS_INFO message format", message);
+            event.source?.postMessage(
+                Response.error(
+                    message.id,
+                    "Invalid GET_ADDRESS_INFO message format"
+                )
+            );
+            return;
+        }
+
+        if (!this.wallet) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const addressInfo = await this.wallet.getAddressInfo();
+            event.source?.postMessage(
+                Response.addressInfo(message.id, addressInfo)
+            );
+        } catch (error: unknown) {
+            console.error("Error getting address info:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
@@ -541,6 +581,10 @@ export class Worker {
             }
             case "GET_ADDRESS": {
                 await this.handleGetAddress(event);
+                break;
+            }
+            case "GET_ADDRESS_INFO": {
+                await this.handleGetAddressInfo(event);
                 break;
             }
             case "GET_BALANCE": {

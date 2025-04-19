@@ -74,7 +74,7 @@ describe("Wallet SDK Integration Tests", () => {
         const offchainAddress = aliceAddresses.offchain;
 
         // faucet
-        execSync(`nigiri faucet ${boardingAddress?.address} 0.001`);
+        execSync(`nigiri faucet ${boardingAddress} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -85,7 +85,7 @@ describe("Wallet SDK Integration Tests", () => {
             inputs: boardingInputs,
             outputs: [
                 {
-                    address: offchainAddress!.address,
+                    address: offchainAddress!,
                     amount: BigInt(100000),
                 },
             ],
@@ -97,8 +97,7 @@ describe("Wallet SDK Integration Tests", () => {
     it("should settle a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain
-            ?.address;
+        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -190,9 +189,8 @@ describe("Wallet SDK Integration Tests", () => {
 
             // Get addresses
             const aliceOffchainAddress = (await alice.wallet.getAddress())
-                .offchain?.address;
-            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain
-                ?.address;
+                .offchain;
+            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
             expect(aliceOffchainAddress).toBeDefined();
             expect(bobOffchainAddress).toBeDefined();
 
@@ -258,17 +256,14 @@ describe("Wallet SDK Integration Tests", () => {
         const bob = await createTestWallet();
 
         // Get addresses
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain
-            ?.address;
-        const bobOffchainAddress = (await bob.wallet.getAddress()).offchain
-            ?.address;
+        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
         expect(aliceOffchainAddress).toBeDefined();
         expect(bobOffchainAddress).toBeDefined();
 
         // Alice onboarding
         const boardingAmount = 10000;
-        const boardingAddress = (await alice.wallet.getAddress()).boarding
-            ?.address;
+        const boardingAddress = (await alice.wallet.getAddress()).boarding;
         execSync(
             `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
         );

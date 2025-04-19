@@ -33,6 +33,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "../tree/validation";
 import { Identity } from "../identity";
 import {
+    Addresses,
     AddressInfo,
     ArkTransaction,
     Coin,
@@ -177,8 +178,8 @@ export class Wallet implements IWallet {
         );
     }
 
-    getAddress(): Promise<AddressInfo> {
-        const addressInfo: AddressInfo = {
+    getAddress(): Promise<Addresses> {
+        const addressInfo: Addresses = {
             onchain: this.onchainAddress,
             bip21: BIP21.create({
                 address: this.onchainAddress,
@@ -192,28 +193,47 @@ export class Wallet implements IWallet {
             this.boardingTapscript &&
             this.arkServerPublicKey
         ) {
-            const encodedOffchainAddress = this.offchainAddress.encode();
-            addressInfo.offchain = {
-                address: encodedOffchainAddress,
+            const offchainAddress = this.offchainAddress.encode();
+            addressInfo.offchain = offchainAddress;
+            addressInfo.bip21 = BIP21.create({
+                address: this.onchainP2TR.address,
+                ark: offchainAddress,
+            });
+            addressInfo.boarding = this.boardingOnchainAddress;
+        }
+
+        return Promise.resolve(addressInfo);
+    }
+
+    getAddressInfo(): Promise<AddressInfo> {
+        if (
+            !this.arkProvider ||
+            !this.offchainTapscript ||
+            !this.boardingTapscript ||
+            !this.arkServerPublicKey
+        ) {
+            throw new Error("Ark provider not configured");
+        }
+
+        const offchainAddress = this.offchainAddress.encode();
+        const boardingAddress = this.boardingOnchainAddress;
+
+        return Promise.resolve({
+            offchain: {
+                address: offchainAddress,
                 scripts: {
                     exit: [this.offchainTapscript.exitScript],
                     forfeit: [this.offchainTapscript.forfeitScript],
                 },
-            };
-            addressInfo.bip21 = BIP21.create({
-                address: this.onchainP2TR.address,
-                ark: encodedOffchainAddress,
-            });
-            addressInfo.boarding = {
-                address: this.boardingOnchainAddress,
+            },
+            boarding: {
+                address: boardingAddress,
                 scripts: {
                     exit: [this.boardingTapscript.exitScript],
                     forfeit: [this.boardingTapscript.forfeitScript],
                 },
-            };
-        }
-
-        return Promise.resolve(addressInfo);
+            },
+        });
     }
 
     async getBalance(): Promise<WalletBalance> {
@@ -272,14 +292,13 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        // TODO: add caching logic to lower the number of requests to provider
         const address = await this.getAddress();
         if (!address.offchain) {
             return [];
         }
 
         const { spendableVtxos } = await this.arkProvider.getVirtualCoins(
-            address.offchain.address
+            address.offchain
         );
 
         const encodedOffchainTapscript = this.offchainTapscript.encode();
@@ -303,7 +322,7 @@ export class Wallet implements IWallet {
         }
 
         return this.arkProvider
-            .getVirtualCoins(address.offchain.address)
+            .getVirtualCoins(address.offchain)
             .then(({ spendableVtxos }) => spendableVtxos);
     }
 

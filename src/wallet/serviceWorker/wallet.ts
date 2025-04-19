@@ -9,6 +9,7 @@ import {
     WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    Addresses,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -205,7 +206,7 @@ export class ServiceWorkerWallet implements IWallet {
         });
     }
 
-    async getAddress(): Promise<AddressInfo> {
+    async getAddress(): Promise<Addresses> {
         const message: Request.GetAddress = {
             type: "GET_ADDRESS",
             id: getRandomId(),
@@ -214,11 +215,28 @@ export class ServiceWorkerWallet implements IWallet {
         try {
             const response = await this.sendMessage(message);
             if (Response.isAddress(response)) {
-                return response.address;
+                return response.addresses;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get address: ${error}`);
+        }
+    }
+
+    async getAddressInfo(): Promise<AddressInfo> {
+        const message: Request.GetAddressInfo = {
+            type: "GET_ADDRESS_INFO",
+            id: getRandomId(),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isAddressInfo(response)) {
+                return response.addressInfo;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to get address info: ${error}`);
         }
     }
 
