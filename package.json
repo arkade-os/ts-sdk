@@ -23,7 +23,7 @@
     "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
-    "build": "rm -rf dist && pnpm run build:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:types && node scripts/generate-package-files.js",
+    "build": "rimraf dist && pnpm run build:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:types && node scripts/generate-package-files.js",
     "build:esm": "tsc -p tsconfig.esm.json --outDir dist/esm",
     "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
     "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
@@ -60,6 +60,7 @@
     "bip68": "1.0.4"
   },
   "devDependencies": {
+    "rimraf": "^5.0.0",
     "@eslint/js": "^9.17.0",
     "@types/node": "22.10.2",
     "@typescript-eslint/eslint-plugin": "8.18.2",
