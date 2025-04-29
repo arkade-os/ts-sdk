@@ -1,11 +1,5 @@
-import { Outpoint, VirtualCoin } from "../wallet";
-import { hex } from "@scure/base";
-
 export interface IndexerVtxo {
-    outpoint: {
-        txid: string;
-        vout: number;
-    };
+    outpoint: IndexerOutpoint;
     createdAt: bigint;
     expiresAt: bigint;
     amount: bigint;
@@ -36,12 +30,15 @@ export interface IndexerOutpoint {
     vout: number;
 }
 
+export enum IndexerChainedTxType {
+    UNSPECIFIED = "INDEXER_CHAINED_TX_TYPE_UNSPECIFIED",
+    VIRTUAL = "INDEXER_CHAINED_TX_TYPE_VIRTUAL",
+    COMMITMENT = "INDEXER_CHAINED_TX_TYPE_COMMITMENT",
+}
+
 export interface IndexerChainedTx {
     txid: string;
-    type:
-        | "INDEXER_CHAINED_TX_TYPE_UNSPECIFIED"
-        | "INDEXER_CHAINED_TX_TYPE_VIRTUAL"
-        | "INDEXER_CHAINED_TX_TYPE_COMMITMENT";
+    type: IndexerChainedTxType;
 }
 
 export interface IndexerChain {
@@ -50,13 +47,16 @@ export interface IndexerChain {
     expiresAt: bigint;
 }
 
+export enum IndexerTxType {
+    UNSPECIFIED = "INDEXER_TX_TYPE_UNSPECIFIED",
+    RECEIVED = "INDEXER_TX_TYPE_RECEIVED",
+    SENT = "INDEXER_TX_TYPE_SENT",
+}
+
 export interface IndexerTxHistoryRecord {
     commitmentTxid: string;
     virtualTxid: string;
-    type:
-        | "INDEXER_TX_TYPE_UNSPECIFIED"
-        | "INDEXER_TX_TYPE_RECEIVED"
-        | "INDEXER_TX_TYPE_SENT";
+    type: IndexerTxType;
     amount: bigint;
     createdAt: bigint;
     isSettled: boolean;
@@ -96,7 +96,7 @@ export interface IndexerProvider {
     }>;
 
     getVtxoChain(
-        outpoint: Outpoint,
+        outpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{
         chain: IndexerChain[];
@@ -136,7 +136,7 @@ export interface IndexerProvider {
     }>;
 
     getVtxoTree(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{
         vtxoTree: IndexerNode[];
@@ -144,7 +144,7 @@ export interface IndexerProvider {
     }>;
 
     getVtxoTreeLeaves(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{
         leaves: IndexerOutpoint[];
@@ -152,7 +152,7 @@ export interface IndexerProvider {
     }>;
 
     getConnectors(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{
         connectors: IndexerNode[];
@@ -160,7 +160,7 @@ export interface IndexerProvider {
     }>;
 
     getForfeitTxs(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{
         txids: string[];
@@ -255,7 +255,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getVtxoChain(
-        outpoint: Outpoint,
+        outpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{
         chain: IndexerChain[];
@@ -291,6 +291,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return {
             chain: (data.chain || []).map((chain: any) => ({
                 ...chain,
+                type: chain.type as IndexerChainedTxType,
                 expiresAt: BigInt(chain.expiresAt || 0),
             })),
             depth: data.depth || 0,
@@ -337,6 +338,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return {
             history: (data.history || []).map((record: any) => ({
                 ...record,
+                type: record.type as IndexerTxType,
                 amount: BigInt(record.amount || 0),
                 createdAt: BigInt(record.createdAt || 0),
             })),
@@ -444,7 +446,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getVtxoTree(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{ vtxoTree: IndexerNode[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
@@ -479,7 +481,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getVtxoTreeLeaves(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{ leaves: IndexerOutpoint[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
@@ -514,7 +516,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getConnectors(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{ connectors: IndexerNode[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/connectors`;
@@ -549,7 +551,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getForfeitTxs(
-        batchOutpoint: Outpoint,
+        batchOutpoint: IndexerOutpoint,
         page?: PageRequest
     ): Promise<{ txids: string[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/forfeitTxs`;
