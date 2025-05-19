@@ -49,7 +49,11 @@ import {
 } from ".";
 import { Bytes } from "@scure/btc-signer/utils";
 import { scriptFromTapLeafScript, VtxoScript } from "../script/base";
-import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
+import {
+    CSVMultisigTapscript,
+    decodeTapscript,
+    RelativeTimelock,
+} from "../script/tapscript";
 import { createVirtualTx } from "../utils/psbt";
 import { Transaction } from "@scure/btc-signer";
 import { ArkNote } from "../arknote";
@@ -92,36 +96,32 @@ export class Wallet implements IWallet {
         const onchainP2TR = p2tr(pubkey, undefined, network);
 
         if (arkProvider) {
-            let serverPubKeyHex = config.arkServerPublicKey;
-            let exitTimelock = config.exitTimelock;
-            let boardingTimelock = config.boardingTimelock;
-            if (!serverPubKeyHex || !exitTimelock) {
-                const info = await arkProvider.getInfo();
-                serverPubKeyHex = info.pubkey;
-                exitTimelock = {
-                    value: info.unilateralExitDelay,
-                    type:
-                        info.unilateralExitDelay < 512n ? "blocks" : "seconds",
-                };
-                boardingTimelock = {
-                    value: info.unilateralExitDelay * 2n,
-                    type:
-                        info.unilateralExitDelay * 2n < 512n
-                            ? "blocks"
-                            : "seconds",
-                };
+            const info = await arkProvider.getInfo();
+            if (info.network !== config.network) {
+                throw new Error(
+                    `The Ark Server URL expects ${info.network} but ${config.network} was configured`
+                );
             }
+            const exitTimelock = {
+                value: info.unilateralExitDelay,
+                type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+            };
+            const boardingTimelock = {
+                value: info.unilateralExitDelay * 2n,
+                type:
+                    info.unilateralExitDelay * 2n < 512n ? "blocks" : "seconds",
+            };
             // Generate tapscripts for offchain and boarding address
-            const serverPubKey = hex.decode(serverPubKeyHex).slice(1);
+            const serverPubKey = hex.decode(info.pubkey).slice(1);
             const bareVtxoTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: exitTimelock,
+                csvTimelock: exitTimelock as RelativeTimelock,
             });
             const boardingTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: boardingTimelock,
+                csvTimelock: boardingTimelock as RelativeTimelock,
             });
 
             // Save tapscripts
