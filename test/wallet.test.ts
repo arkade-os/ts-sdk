@@ -93,6 +93,7 @@ describe("Wallet", () => {
                             batchExpiry: BigInt(144),
                             unilateralExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
+                            network: "mutinynet",
                         }),
                 })
                 .mockResolvedValueOnce({

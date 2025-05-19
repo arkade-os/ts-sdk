@@ -1,6 +1,6 @@
-const { promisify } = require("util");
-const { setTimeout } = require("timers");
-const { execSync } = require("child_process");
+import { promisify } from "util";
+import { setTimeout } from "timers";
+import { execSync } from "child_process";
 
 let arkdExec = "nigiri ";
 
@@ -94,6 +94,8 @@ async function setupArkServer() {
             .toString()
             .trim();
         console.log("Funding arkd address:", arkdAddress);
+        await execCommand(`nigiri faucet ${arkdAddress}`);
+        await execCommand(`nigiri faucet ${arkdAddress}`);
         await execCommand(`nigiri faucet ${arkdAddress}`);
 
         // Wait for transaction to be confirmed

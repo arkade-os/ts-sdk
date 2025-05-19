@@ -3,15 +3,15 @@
         "target": "es2020",
         "module": "esnext",
         "moduleResolution": "node",
-        "declaration": true,
-        "declarationDir": "./dist/types",
-        "outDir": "./dist/esm",
         "strict": true,
         "esModuleInterop": true,
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "resolveJsonModule": true,
-        "isolatedModules": true
+        "isolatedModules": true,
+        "declaration": true,
+        "declarationDir": "./dist/types",
+        "outDir": "./dist/esm"
     },
     "include": [
         "src"

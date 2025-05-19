@@ -26,8 +26,8 @@ const wallet = await Wallet.create({
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
-  arkServerUrl: 'https://master.mutinynet.arklabs.to',
-  arkServerPublicKey: 'd45fc69d4ff1f45cbba36ab1037261863c3a49c4910bc183ae975247358920b6'
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkServerPublicKey: 'fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d'
 })
 
 // Get wallet addresses

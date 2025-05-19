@@ -33,6 +33,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "../tree/validation";
 import { Identity } from "../identity";
 import {
+    Addresses,
     AddressInfo,
     ArkTransaction,
     Coin,
@@ -48,7 +49,11 @@ import {
 } from ".";
 import { Bytes } from "@scure/btc-signer/utils";
 import { scriptFromTapLeafScript, VtxoScript } from "../script/base";
-import { CSVMultisigTapscript, decodeTapscript } from "../script/tapscript";
+import {
+    CSVMultisigTapscript,
+    decodeTapscript,
+    RelativeTimelock,
+} from "../script/tapscript";
 import { createVirtualTx } from "../utils/psbt";
 import { Transaction } from "@scure/btc-signer";
 import { ArkNote } from "../arknote";
@@ -66,8 +71,8 @@ export class Wallet implements IWallet {
         private onchainP2TR: ReturnType<typeof p2tr>,
         private arkProvider?: ArkProvider,
         private arkServerPublicKey?: Bytes,
-        private offchainTapscript?: DefaultVtxo.Script,
-        private boardingTapscript?: DefaultVtxo.Script
+        readonly offchainTapscript?: DefaultVtxo.Script,
+        readonly boardingTapscript?: DefaultVtxo.Script
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -91,27 +96,32 @@ export class Wallet implements IWallet {
         const onchainP2TR = p2tr(pubkey, undefined, network);
 
         if (arkProvider) {
-            let serverPubKeyHex = config.arkServerPublicKey;
-            let boardingTimelock = config.boardingTimelock;
-            if (!serverPubKeyHex || !boardingTimelock) {
-                const info = await arkProvider.getInfo();
-                serverPubKeyHex = info.pubkey;
-                boardingTimelock = {
-                    value: info.unilateralExitDelay,
-                    type: info.unilateralExitDelay < 512 ? "blocks" : "seconds",
-                };
+            const info = await arkProvider.getInfo();
+            if (info.network !== config.network) {
+                throw new Error(
+                    `The Ark Server URL expects ${info.network} but ${config.network} was configured`
+                );
             }
+            const exitTimelock = {
+                value: info.unilateralExitDelay,
+                type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+            };
+            const boardingTimelock = {
+                value: info.unilateralExitDelay * 2n,
+                type:
+                    info.unilateralExitDelay * 2n < 512n ? "blocks" : "seconds",
+            };
             // Generate tapscripts for offchain and boarding address
-            const serverPubKey = hex.decode(serverPubKeyHex).slice(1);
+            const serverPubKey = hex.decode(info.pubkey).slice(1);
             const bareVtxoTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: boardingTimelock,
+                csvTimelock: exitTimelock as RelativeTimelock,
             });
             const boardingTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: boardingTimelock,
+                csvTimelock: boardingTimelock as RelativeTimelock,
             });
 
             // Save tapscripts
@@ -168,8 +178,8 @@ export class Wallet implements IWallet {
         );
     }
 
-    getAddress(): Promise<AddressInfo> {
-        const addressInfo: AddressInfo = {
+    getAddress(): Promise<Addresses> {
+        const addressInfo: Addresses = {
             onchain: this.onchainAddress,
             bip21: BIP21.create({
                 address: this.onchainAddress,
@@ -183,28 +193,47 @@ export class Wallet implements IWallet {
             this.boardingTapscript &&
             this.arkServerPublicKey
         ) {
-            const encodedOffchainAddress = this.offchainAddress.encode();
-            addressInfo.offchain = {
-                address: encodedOffchainAddress,
+            const offchainAddress = this.offchainAddress.encode();
+            addressInfo.offchain = offchainAddress;
+            addressInfo.bip21 = BIP21.create({
+                address: this.onchainP2TR.address,
+                ark: offchainAddress,
+            });
+            addressInfo.boarding = this.boardingOnchainAddress;
+        }
+
+        return Promise.resolve(addressInfo);
+    }
+
+    getAddressInfo(): Promise<AddressInfo> {
+        if (
+            !this.arkProvider ||
+            !this.offchainTapscript ||
+            !this.boardingTapscript ||
+            !this.arkServerPublicKey
+        ) {
+            throw new Error("Ark provider not configured");
+        }
+
+        const offchainAddress = this.offchainAddress.encode();
+        const boardingAddress = this.boardingOnchainAddress;
+
+        return Promise.resolve({
+            offchain: {
+                address: offchainAddress,
                 scripts: {
                     exit: [this.offchainTapscript.exitScript],
                     forfeit: [this.offchainTapscript.forfeitScript],
                 },
-            };
-            addressInfo.bip21 = BIP21.create({
-                address: this.onchainP2TR.address,
-                ark: encodedOffchainAddress,
-            });
-            addressInfo.boarding = {
-                address: this.boardingOnchainAddress,
+            },
+            boarding: {
+                address: boardingAddress,
                 scripts: {
                     exit: [this.boardingTapscript.exitScript],
                     forfeit: [this.boardingTapscript.forfeitScript],
                 },
-            };
-        }
-
-        return Promise.resolve(addressInfo);
+            },
+        });
     }
 
     async getBalance(): Promise<WalletBalance> {
@@ -263,14 +292,13 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        // TODO: add caching logic to lower the number of requests to provider
         const address = await this.getAddress();
         if (!address.offchain) {
             return [];
         }
 
         const { spendableVtxos } = await this.arkProvider.getVirtualCoins(
-            address.offchain.address
+            address.offchain
         );
 
         const encodedOffchainTapscript = this.offchainTapscript.encode();
@@ -294,7 +322,7 @@ export class Wallet implements IWallet {
         }
 
         return this.arkProvider
-            .getVirtualCoins(address.offchain.address)
+            .getVirtualCoins(address.offchain)
             .then(({ spendableVtxos }) => spendableVtxos);
     }
 
@@ -331,7 +359,7 @@ export class Wallet implements IWallet {
         return txs;
     }
 
-    private async getBoardingTxs(): Promise<{
+    async getBoardingTxs(): Promise<{
         boardingTxs: ArkTransaction[];
         roundsToIgnore: Set<string>;
     }> {
@@ -558,11 +586,12 @@ export class Wallet implements IWallet {
             });
         }
 
+        const scripts = this.offchainTapscript.encode();
         let tx = createVirtualTx(
             selected.inputs.map((input) => ({
                 ...input,
                 tapLeafScript: selectedLeaf,
-                scripts: this.offchainTapscript!.encode(),
+                scripts,
             })),
             outputs
         );
@@ -672,96 +701,107 @@ export class Wallet implements IWallet {
             }
         };
 
+        const abortController = new AbortController();
         // listen to settlement events
-        const settlementStream = this.arkProvider.getEventStream();
-        let step: SettlementEventType | undefined;
-        if (!hasOffchainOutputs) {
-            // if there are no offchain outputs, we don't have to handle musig2 tree signatures
-            // we can directly advance to the finalization step
-            step = SettlementEventType.SigningNoncesGenerated;
-        }
-
-        const info = await this.arkProvider.getInfo();
-
-        const sweepTapscript = CSVMultisigTapscript.encode({
-            timelock: {
-                value: info.batchExpiry,
-                type: info.batchExpiry >= 512n ? "seconds" : "blocks",
-            },
-            pubkeys: [hex.decode(info.pubkey).slice(1)],
-        }).script;
-
-        const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
-
-        for await (const event of settlementStream) {
-            if (eventCallback) {
-                eventCallback(event);
-            }
-            switch (event.type) {
-                // the settlement failed
-                case SettlementEventType.Failed:
-                    if (step === undefined) {
-                        continue;
-                    }
-                    stopPing();
-                    throw new Error(event.reason);
-                // the server has started the signing process of the vtxo tree transactions
-                // the server expects the partial musig2 nonces for each tx
-                case SettlementEventType.SigningStart:
-                    if (step !== undefined) {
-                        continue;
-                    }
-                    stopPing();
-                    if (hasOffchainOutputs) {
-                        if (!session) {
-                            throw new Error("Signing session not found");
-                        }
-                        await this.handleSettlementSigningEvent(
-                            event,
-                            sweepTapTreeRoot,
-                            session
-                        );
-                    }
-                    break;
-                // the musig2 nonces of the vtxo tree transactions are generated
-                // the server expects now the partial musig2 signatures
-                case SettlementEventType.SigningNoncesGenerated:
-                    if (step !== SettlementEventType.SigningStart) {
-                        continue;
-                    }
-                    stopPing();
-                    if (hasOffchainOutputs) {
-                        if (!session) {
-                            throw new Error("Signing session not found");
-                        }
-                        await this.handleSettlementSigningNoncesGeneratedEvent(
-                            event,
-                            session
-                        );
-                    }
-                    break;
-                // the vtxo tree is signed, craft, sign and submit forfeit transactions
-                // if any boarding utxos are involved, the settlement tx is also signed
-                case SettlementEventType.Finalization:
-                    if (step !== SettlementEventType.SigningNoncesGenerated) {
-                        continue;
-                    }
-                    stopPing();
-                    await this.handleSettlementFinalizationEvent(
-                        event,
-                        params.inputs,
-                        info
-                    );
-                    break;
-                // the settlement is done, last event to be received
-                case SettlementEventType.Finalized:
-                    if (step !== SettlementEventType.Finalization) {
-                        continue;
-                    }
-                    return event.roundTxid;
+        try {
+            const settlementStream = this.arkProvider.getEventStream(
+                abortController.signal
+            );
+            let step: SettlementEventType | undefined;
+            if (!hasOffchainOutputs) {
+                // if there are no offchain outputs, we don't have to handle musig2 tree signatures
+                // we can directly advance to the finalization step
+                step = SettlementEventType.SigningNoncesGenerated;
             }
 
-            step = event.type;
+            const info = await this.arkProvider.getInfo();
+
+            const sweepTapscript = CSVMultisigTapscript.encode({
+                timelock: {
+                    value: info.batchExpiry,
+                    type: info.batchExpiry >= 512n ? "seconds" : "blocks",
+                },
+                pubkeys: [hex.decode(info.pubkey).slice(1)],
+            }).script;
+
+            const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
+
+            for await (const event of settlementStream) {
+                if (eventCallback) {
+                    eventCallback(event);
+                }
+                switch (event.type) {
+                    // the settlement failed
+                    case SettlementEventType.Failed:
+                        if (step === undefined) {
+                            continue;
+                        }
+                        stopPing();
+                        throw new Error(event.reason);
+                    // the server has started the signing process of the vtxo tree transactions
+                    // the server expects the partial musig2 nonces for each tx
+                    case SettlementEventType.SigningStart:
+                        if (step !== undefined) {
+                            continue;
+                        }
+                        stopPing();
+                        if (hasOffchainOutputs) {
+                            if (!session) {
+                                throw new Error("Signing session not found");
+                            }
+                            await this.handleSettlementSigningEvent(
+                                event,
+                                sweepTapTreeRoot,
+                                session
+                            );
+                        }
+                        break;
+                    // the musig2 nonces of the vtxo tree transactions are generated
+                    // the server expects now the partial musig2 signatures
+                    case SettlementEventType.SigningNoncesGenerated:
+                        if (step !== SettlementEventType.SigningStart) {
+                            continue;
+                        }
+                        stopPing();
+                        if (hasOffchainOutputs) {
+                            if (!session) {
+                                throw new Error("Signing session not found");
+                            }
+                            await this.handleSettlementSigningNoncesGeneratedEvent(
+                                event,
+                                session
+                            );
+                        }
+                        break;
+                    // the vtxo tree is signed, craft, sign and submit forfeit transactions
+                    // if any boarding utxos are involved, the settlement tx is also signed
+                    case SettlementEventType.Finalization:
+                        if (
+                            step !== SettlementEventType.SigningNoncesGenerated
+                        ) {
+                            continue;
+                        }
+                        stopPing();
+                        await this.handleSettlementFinalizationEvent(
+                            event,
+                            params.inputs,
+                            info
+                        );
+                        break;
+                    // the settlement is done, last event to be received
+                    case SettlementEventType.Finalized:
+                        if (step !== SettlementEventType.Finalization) {
+                            continue;
+                        }
+                        abortController.abort();
+                        return event.roundTxid;
+                }
+
+                step = event.type;
+            }
+        } catch (error) {
+            abortController.abort();
+            throw error;
         }
 
         throw new Error("Settlement failed");

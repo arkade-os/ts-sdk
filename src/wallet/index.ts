@@ -11,6 +11,7 @@ export interface WalletConfig {
     arkServerUrl?: string;
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
+    exitTimelock?: RelativeTimelock;
 }
 
 export interface WalletBalance {
@@ -59,9 +60,14 @@ export interface VtxoTaprootAddress {
 }
 
 export interface AddressInfo {
+    offchain: VtxoTaprootAddress;
+    boarding: VtxoTaprootAddress;
+}
+
+export interface Addresses {
     onchain: string;
-    offchain?: VtxoTaprootAddress;
-    boarding?: VtxoTaprootAddress;
+    offchain?: string;
+    boarding?: string;
     bip21: string;
 }
 
@@ -130,7 +136,8 @@ export type ExtendedVirtualCoin = {
 
 export interface IWallet {
     // Address and balance management
-    getAddress(): Promise<AddressInfo>;
+    getAddress(): Promise<Addresses>;
+    getAddressInfo(): Promise<AddressInfo>;
     getBalance(): Promise<WalletBalance>;
     getCoins(): Promise<Coin[]>;
     getVtxos(): Promise<ExtendedVirtualCoin[]>;
