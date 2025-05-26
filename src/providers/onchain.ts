@@ -27,6 +27,11 @@ export interface OnchainProvider {
     broadcastTransaction(txHex: string): Promise<string>;
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
     getTransactions(address: string): Promise<ExplorerTransaction[]>;
+    getTxStatus(txid: string): Promise<{
+        confirmed: boolean;
+        blockTime?: number;
+        blockHeight?: number;
+    }>;
 }
 
 export class EsploraProvider implements OnchainProvider {
@@ -86,5 +91,25 @@ export class EsploraProvider implements OnchainProvider {
         }
 
         return response.json();
+    }
+
+    async getTxStatus(txid: string): Promise<{
+        confirmed: boolean;
+        blockTime?: number;
+        blockHeight?: number;
+    }> {
+        const response = await fetch(`${this.baseUrl}/tx/${txid}/status`);
+        if (!response.ok) {
+            throw new Error(
+                `Failed to get transaction status: ${response.statusText}`
+            );
+        }
+
+        const data = await response.json();
+        return {
+            confirmed: data.confirmed,
+            blockTime: data.block_time,
+            blockHeight: data.block_height,
+        };
     }
 }

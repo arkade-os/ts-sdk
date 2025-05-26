@@ -25,7 +25,8 @@ export namespace Response {
         | "TRANSACTION_HISTORY"
         | "WALLET_STATUS"
         | "ERROR"
-        | "CLEAR_RESPONSE";
+        | "CLEAR_RESPONSE"
+        | "EXIT_SUCCESS";
 
     export interface Base {
         type: Type;
@@ -327,6 +328,19 @@ export namespace Response {
         return {
             type: "CLEAR_RESPONSE",
             success,
+            id,
+        };
+    }
+
+    export interface ExitSuccess extends Base {
+        type: "EXIT_SUCCESS";
+        success: true;
+    }
+
+    export function exitSuccess(id: string): ExitSuccess {
+        return {
+            type: "EXIT_SUCCESS",
+            success: true,
             id,
         };
     }

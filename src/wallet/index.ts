@@ -150,4 +150,5 @@ export interface IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
+    exit(outpoints?: Outpoint[]): Promise<void>;
 }

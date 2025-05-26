@@ -5,6 +5,7 @@ import {
     p2tr,
     tapLeafHash,
 } from "@scure/btc-signer/payment";
+import { Transaction } from "@scure/btc-signer";
 import { TaprootControlBlock, TransactionOutput } from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
@@ -40,6 +41,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     IWallet,
+    Outpoint,
     SendBitcoinParams,
     SettleParams,
     TxType,
@@ -55,8 +57,8 @@ import {
     RelativeTimelock,
 } from "../script/tapscript";
 import { createVirtualTx } from "../utils/psbt";
-import { Transaction } from "@scure/btc-signer";
 import { ArkNote } from "../arknote";
+import { TxTree } from "../tree/vtxoTree";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -805,6 +807,60 @@ export class Wallet implements IWallet {
         }
 
         throw new Error("Settlement failed");
+    }
+
+    async exit(outpoints?: Outpoint[]): Promise<void> {
+        // TODO store the exit branches in repository
+        // exit should not depend on the ark provider
+        if (!this.arkProvider) {
+            throw new Error("Ark provider not configured");
+        }
+        let vtxos = await this.getVtxos();
+        if (outpoints && outpoints.length > 0) {
+            vtxos = vtxos.filter((vtxo) =>
+                outpoints.some(
+                    (outpoint) =>
+                        vtxo.txid === outpoint.txid &&
+                        vtxo.vout === outpoint.vout
+                )
+            );
+        }
+
+        if (vtxos.length === 0) {
+            throw new Error("No vtxos to exit");
+        }
+
+        const trees = new Map<string, TxTree>();
+        const transactions: string[] = [];
+
+        for (const vtxo of vtxos) {
+            const batchTxid = vtxo.virtualStatus.batchTxID;
+            if (!batchTxid) continue;
+            if (!trees.has(batchTxid)) {
+                const round = await this.arkProvider.getRound(batchTxid);
+                trees.set(batchTxid, round.vtxoTree);
+            }
+
+            const tree = trees.get(batchTxid);
+            if (!tree) {
+                throw new Error("Tree not found");
+            }
+            const exitBranch = await tree.exitBranch(
+                vtxo.txid,
+                async (txid) => {
+                    const status = await this.onchainProvider.getTxStatus(txid);
+                    return status.confirmed;
+                }
+            );
+            transactions.push(...exitBranch);
+        }
+
+        const broadcastedTxs = new Map<string, boolean>();
+        for (const tx of transactions) {
+            if (broadcastedTxs.has(tx)) continue;
+            const txid = await this.onchainProvider.broadcastTransaction(tx);
+            broadcastedTxs.set(txid, true);
+        }
     }
 
     // validates the vtxo tree, creates a signing session and generates the musig2 nonces

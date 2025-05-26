@@ -90,6 +90,16 @@ console.log('History:', history)
 }
 ```
 
+### Unilateral Exit
+
+```typescript
+// Unilateral exit all vtxos
+await wallet.exit();
+
+// Unilateral exit a specific vtxo
+await wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
+```
+
 ### Running the wallet in a service worker
 
 1. Create a service worker file

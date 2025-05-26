@@ -557,6 +557,37 @@ export class Worker {
         );
     }
 
+    private async handleExit(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isExit(message)) {
+            console.error("Invalid EXIT message format", message);
+            event.source?.postMessage(
+                Response.error(message.id, "Invalid EXIT message format")
+            );
+            return;
+        }
+
+        if (!this.wallet) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            await this.wallet.exit(message.outpoints);
+            event.source?.postMessage(Response.exitSuccess(message.id));
+        } catch (error: unknown) {
+            console.error("Error exiting:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
     private async handleMessage(event: ExtendableMessageEvent) {
         this.messageCallback(event);
         const message = event.data;
@@ -609,6 +640,10 @@ export class Worker {
             }
             case "GET_STATUS": {
                 await this.handleGetStatus(event);
+                break;
+            }
+            case "EXIT": {
+                await this.handleExit(event);
                 break;
             }
             case "CLEAR": {

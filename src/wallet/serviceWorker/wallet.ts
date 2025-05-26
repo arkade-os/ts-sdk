@@ -10,6 +10,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     Addresses,
+    Outpoint,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -403,6 +404,23 @@ export class ServiceWorkerWallet implements IWallet {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
+        }
+    }
+
+    async exit(outpoints?: Outpoint[]): Promise<void> {
+        const message: Request.Exit = {
+            type: "EXIT",
+            outpoints,
+            id: getRandomId(),
+        };
+        try {
+            const response = await this.sendMessage(message);
+            if (response.type === "EXIT_SUCCESS") {
+                return;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to exit: ${error}`);
         }
     }
 }

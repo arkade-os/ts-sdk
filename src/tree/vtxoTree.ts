@@ -1,5 +1,5 @@
 import * as bip68 from "bip68";
-import { ScriptNum, Transaction } from "@scure/btc-signer";
+import { RawTx, ScriptNum, Transaction } from "@scure/btc-signer";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { base64, hex } from "@scure/base";
 import { RelativeTimelock } from "../script/tapscript";
@@ -99,6 +99,18 @@ export class TxTree {
         }
 
         return branch;
+    }
+
+    // Returns the remaining transactions to broadcast in order to exit the vtxo
+    async exitBranch(
+        vtxoTxid: string,
+        isTxConfirmed: (txid: string) => Promise<boolean>
+    ): Promise<string[]> {
+        const offchainPart = await getOffchainPart(
+            this.branch(vtxoTxid),
+            isTxConfirmed
+        );
+        return offchainPart.map(getExitTransaction);
     }
 
     // Helper method to find parent of a node
@@ -206,4 +218,40 @@ export function getCosignerKeys(tx: Transaction): Uint8Array[] {
     }
 
     return keys;
+}
+
+async function getOffchainPart(
+    branch: TreeNode[],
+    isTxConfirmed: (txid: string) => Promise<boolean>
+): Promise<TreeNode[]> {
+    let offchainPath = [...branch];
+
+    // Iterate from the end of the branch (leaf) to the beginning (root)
+    for (let i = branch.length - 1; i >= 0; i--) {
+        const node = branch[i];
+
+        // check if the transaction is confirmed on-chain
+        if (await isTxConfirmed(node.txid)) {
+            // if this is the leaf node, return empty array as everything is confirmed
+            if (i === branch.length - 1) {
+                return [];
+            }
+            // otherwise, return the unconfirmed part of the branch
+            return branch.slice(i + 1);
+        }
+    }
+
+    // no confirmation: everything is offchain
+    return offchainPath;
+}
+
+// getExitTransaction finalizes the psbt's input using the musig2 tapkey signature
+function getExitTransaction(treeNode: TreeNode): string {
+    const tx = Transaction.fromPSBT(base64.decode(treeNode.tx));
+    const input = tx.getInput(0);
+    if (!input.tapKeySig) throw new TxTreeError("missing tapkey signature");
+    const rawTx = RawTx.decode(tx.unsignedTx);
+    rawTx.witnesses = [[input.tapKeySig]];
+    rawTx.segwitFlag = true;
+    return hex.encode(RawTx.encode(rawTx));
 }

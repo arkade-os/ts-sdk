@@ -1,5 +1,5 @@
 import { NetworkName } from "../../networks";
-import { SettleParams, SendBitcoinParams } from "..";
+import { SettleParams, SendBitcoinParams, Outpoint } from "..";
 
 export namespace Request {
     export type Type =
@@ -15,7 +15,8 @@ export namespace Request {
         | "SEND_BITCOIN"
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
-        | "CLEAR";
+        | "CLEAR"
+        | "EXIT";
 
     export interface Base {
         type: Type;
@@ -160,5 +161,14 @@ export namespace Request {
 
     export interface Clear extends Base {
         type: "CLEAR";
+    }
+
+    export interface Exit extends Base {
+        type: "EXIT";
+        outpoints?: Outpoint[];
+    }
+
+    export function isExit(message: Base): message is Exit {
+        return message.type === "EXIT";
     }
 }

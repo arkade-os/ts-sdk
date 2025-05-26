@@ -96,8 +96,18 @@ export interface ArkInfo {
     };
 }
 
+export interface Round {
+    id: string;
+    start: Date;
+    end: Date;
+    vtxoTree: TxTree;
+    forfeitTxs: string[];
+    connectors: TxTree;
+}
+
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
+    getRound(txid: string): Promise<Round>;
     getVirtualCoins(address: string): Promise<{
         spendableVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
@@ -169,6 +179,26 @@ export class RestArkProvider implements ArkProvider {
         return {
             spendableVtxos: [...(data.spendableVtxos || [])].map(convertVtxo),
             spentVtxos: [...(data.spentVtxos || [])].map(convertVtxo),
+        };
+    }
+
+    async getRound(txid: string): Promise<Round> {
+        const url = `${this.serverUrl}/v1/round/${txid}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch round: ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as { round: ProtoTypes.Round };
+        const round = data.round;
+
+        return {
+            id: round.id,
+            start: new Date(Number(round.start) * 1000), // Convert from Unix timestamp to Date
+            end: new Date(Number(round.end) * 1000), // Convert from Unix timestamp to Date
+            vtxoTree: this.toTxTree(round.vtxoTree),
+            forfeitTxs: round.forfeitTxs || [],
+            connectors: this.toTxTree(round.connectors),
         };
     }
 
@@ -883,5 +913,16 @@ namespace ProtoTypes {
     export interface Output {
         address: string;
         amount: string;
+    }
+
+    export interface Round {
+        id: string;
+        start: string; // int64 as string
+        end: string; // int64 as string
+        roundTx: string;
+        vtxoTree: Tree;
+        forfeitTxs: string[];
+        connectors: Tree;
+        stage: string; // RoundStage as string
     }
 }
