@@ -134,9 +134,6 @@ export class ServiceWorkerWallet implements IWallet {
                 });
             });
 
-            // Check for updates
-            // await registration.update();
-
             const sw =
                 registration.active ||
                 registration.waiting ||
