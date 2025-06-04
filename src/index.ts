@@ -47,7 +47,7 @@ import {
     CONDITION_WITNESS_KEY_PREFIX,
     createVirtualTx,
 } from "./utils/psbt";
-import { ArkNote, ArkNoteData } from "./arknote";
+import { ArkNote } from "./arknote";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks } from "./networks";
@@ -92,7 +92,6 @@ export {
 
     // Arknote
     ArkNote,
-    ArkNoteData,
 
     // Network
     networks,

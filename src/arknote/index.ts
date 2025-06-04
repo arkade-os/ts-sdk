@@ -1,109 +1,57 @@
 import { base58 } from "@scure/base";
 
-// ArkNoteData is the unsigned data part of a note
-export class ArkNoteData {
-    constructor(
-        public id: bigint,
-        public value: number
-    ) {}
-
-    encode(): Uint8Array {
-        const array = new Uint8Array(12);
-        writeBigUInt64BE(array, this.id, 0);
-        writeUInt32BE(array, this.value, 8);
-        return array;
-    }
-
-    static decode(data: Uint8Array): ArkNoteData {
-        if (data.length !== 12) {
-            throw new Error(
-                `invalid data length: expected 12 bytes, got ${data.length}`
-            );
-        }
-
-        const id = readBigUInt64BE(data, 0);
-        const value = readUInt32BE(data, 8);
-        return new ArkNoteData(id, value);
-    }
-}
-
-// ArkNote is a note with the issuer's signature
 export class ArkNote {
-    static readonly HRP = "arknote";
+    static readonly DefaultHRP = "arknote";
+    static readonly PreimageLength = 32; // 32 bytes for the preimage
+    static readonly ValueLength = 4; // 4 bytes for the value
+    static readonly Length = ArkNote.PreimageLength + ArkNote.ValueLength;
 
     constructor(
-        public data: ArkNoteData,
-        public signature: Uint8Array
+        public preimage: Uint8Array,
+        public value: number,
+        public HRP = ArkNote.DefaultHRP
     ) {}
 
     encode(): Uint8Array {
-        const detailsBytes = this.data.encode();
-        const result = new Uint8Array(
-            detailsBytes.length + this.signature.length
-        );
-        result.set(detailsBytes);
-        result.set(this.signature, detailsBytes.length);
+        const result = new Uint8Array(ArkNote.Length);
+        result.set(this.preimage, 0);
+        writeUInt32BE(result, this.value, this.preimage.length);
         return result;
     }
 
-    static decode(data: Uint8Array): ArkNote {
-        if (data.length < 12) {
+    static decode(data: Uint8Array, hrp = ArkNote.DefaultHRP): ArkNote {
+        if (data.length !== ArkNote.Length) {
             throw new Error(
-                `invalid data length: expected at least 12 bytes, got ${data.length}`
+                `invalid data length: expected ${ArkNote.Length} bytes, got ${data.length}`
             );
         }
 
-        const noteData = ArkNoteData.decode(data.subarray(0, 12));
-        const signature = data.subarray(12);
+        const preimage = data.subarray(0, ArkNote.PreimageLength);
+        const value = readUInt32BE(data, ArkNote.PreimageLength);
 
-        if (signature.length !== 64) {
-            throw new Error(
-                `invalid signature length: expected 64 bytes, got ${signature.length}`
-            );
-        }
-
-        return new ArkNote(noteData, signature);
+        return new ArkNote(preimage, value, hrp);
     }
 
-    static fromString(noteStr: string): ArkNote {
-        if (!noteStr.startsWith(ArkNote.HRP)) {
+    static fromString(noteStr: string, hrp = ArkNote.DefaultHRP): ArkNote {
+        if (!noteStr.startsWith(hrp)) {
             throw new Error(
-                `invalid human-readable part: expected ${ArkNote.HRP} prefix (note '${noteStr}')`
+                `invalid human-readable part: expected ${hrp} prefix (note '${noteStr}')`
             );
         }
 
-        const encoded = noteStr.slice(ArkNote.HRP.length);
-        if (encoded.length < 103 || encoded.length > 104) {
-            throw new Error(
-                `invalid note length: expected 103 or 104 chars, got ${encoded.length}`
-            );
-        }
+        const encoded = noteStr.slice(hrp.length);
 
         const decoded = base58.decode(encoded);
         if (decoded.length === 0) {
             throw new Error("failed to decode base58 string");
         }
 
-        return ArkNote.decode(new Uint8Array(decoded));
+        return ArkNote.decode(new Uint8Array(decoded), hrp);
     }
 
     toString(): string {
-        return ArkNote.HRP + base58.encode(this.encode());
+        return this.HRP + base58.encode(this.encode());
     }
-}
-
-function writeBigUInt64BE(
-    array: Uint8Array,
-    value: bigint,
-    offset: number
-): void {
-    const view = new DataView(array.buffer, array.byteOffset + offset, 8);
-    view.setBigUint64(0, value, false);
-}
-
-function readBigUInt64BE(array: Uint8Array, offset: number): bigint {
-    const view = new DataView(array.buffer, array.byteOffset + offset, 8);
-    return view.getBigUint64(0, false);
 }
 
 function writeUInt32BE(array: Uint8Array, value: number, offset: number): void {

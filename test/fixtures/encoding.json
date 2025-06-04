@@ -12,5 +12,41 @@
                 "addr": "wrongprefix1qt9tfh7c09hlsstzq5y9tzuwyaesrwr8gpy8cn29cxv0flp64958s0n0yd0"
             }
         ]
+    },
+    "note": {
+        "valid": [
+            {
+                "hrp": "arknote",
+                "str": "arknote8rFzGqZsG9RCLripA6ez8d2hQEzFKsqCeiSnXhQj56Ysw7ZQT",
+                "expectedPreimage": "11d2a03264d0efd311d2a03264d0efd311d2a03264d0efd311d2a03264d0efd3",
+                "expectedValue": 900000
+            },
+            {
+                "hrp": "arknote",
+                "str": "arknoteSkB92YpWm4Q2ijQHH34cqbKkCZWszsiQgHVjtNeFF2Cwp59D",
+                "expectedPreimage": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+                "expectedValue": 1828932
+            },
+            {
+                "hrp": "noteark",
+                "str": "noteark8rFzGqZsG9RCLripA6ez8d2hQEzFKsqCeiSnXhQj56Ysw7ZQT",
+                "expectedPreimage": "11d2a03264d0efd311d2a03264d0efd311d2a03264d0efd311d2a03264d0efd3",
+                "expectedValue": 900000
+            },
+            {
+                "hrp": "noteark",
+                "str": "notearkSkB92YpWm4Q2ijQHH34cqbKkCZWszsiQgHVjtNeFF2Cwp59D",
+                "expectedPreimage": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+                "expectedValue": 1828932
+            }
+        ],
+        "invalid": [
+            {
+                "str": "wrongprefix1qt9tfh7c09hlsstzq5y9tzuwyaesrwr8gpy8cn29cxv0flp64958s0n0yd0"
+            },
+            {
+                "str": "arknoteshort"
+            }
+        ]
     }
 }
