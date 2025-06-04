@@ -1,14 +1,15 @@
 import { base58 } from "@scure/base";
 
 export class ArkNote {
-    static readonly HRP = "arknote";
+    static readonly DefaultHRP = "arknote";
     static readonly PreimageLength = 32; // 32 bytes for the preimage
     static readonly ValueLength = 4; // 4 bytes for the value
     static readonly Length = ArkNote.PreimageLength + ArkNote.ValueLength;
 
     constructor(
         public preimage: Uint8Array,
-        public value: number
+        public value: number,
+        public HRP = ArkNote.DefaultHRP
     ) {}
 
     encode(): Uint8Array {
@@ -18,7 +19,7 @@ export class ArkNote {
         return result;
     }
 
-    static decode(data: Uint8Array): ArkNote {
+    static decode(data: Uint8Array, hrp = ArkNote.DefaultHRP): ArkNote {
         if (data.length !== ArkNote.Length) {
             throw new Error(
                 `invalid data length: expected ${ArkNote.Length} bytes, got ${data.length}`
@@ -28,28 +29,28 @@ export class ArkNote {
         const preimage = data.subarray(0, ArkNote.PreimageLength);
         const value = readUInt32BE(data, ArkNote.PreimageLength);
 
-        return new ArkNote(preimage, value);
+        return new ArkNote(preimage, value, hrp);
     }
 
-    static fromString(noteStr: string): ArkNote {
-        if (!noteStr.startsWith(ArkNote.HRP)) {
+    static fromString(noteStr: string, hrp = ArkNote.DefaultHRP): ArkNote {
+        if (!noteStr.startsWith(hrp)) {
             throw new Error(
-                `invalid human-readable part: expected ${ArkNote.HRP} prefix (note '${noteStr}')`
+                `invalid human-readable part: expected ${hrp} prefix (note '${noteStr}')`
             );
         }
 
-        const encoded = noteStr.slice(ArkNote.HRP.length);
+        const encoded = noteStr.slice(hrp.length);
 
         const decoded = base58.decode(encoded);
         if (decoded.length === 0) {
             throw new Error("failed to decode base58 string");
         }
 
-        return ArkNote.decode(new Uint8Array(decoded));
+        return ArkNote.decode(new Uint8Array(decoded), hrp);
     }
 
     toString(): string {
-        return ArkNote.HRP + base58.encode(this.encode());
+        return this.HRP + base58.encode(this.encode());
     }
 }
 
