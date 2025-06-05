@@ -52,11 +52,11 @@
     "precommit": "lint-staged"
   },
   "dependencies": {
-    "@noble/curves": "1.7.0",
-    "@noble/hashes": "1.6.1",
+    "@noble/curves": "1.9.1",
+    "@noble/hashes": "1.8.0",
     "@noble/secp256k1": "2.2.3",
-    "@scure/base": "1.2.1",
-    "@scure/btc-signer": "1.7.0",
+    "@scure/base": "1.2.6",
+    "@scure/btc-signer": "1.8.1",
     "bip68": "1.0.4"
   },
   "devDependencies": {
@@ -65,7 +65,7 @@
     "@types/node": "22.10.2",
     "@typescript-eslint/eslint-plugin": "8.18.2",
     "@typescript-eslint/parser": "8.18.2",
-    "@vitest/coverage-v8": "2.1.8",
+    "@vitest/coverage-v8": "2.1.9",
     "esbuild": "^0.20.1",
     "eslint": "^9.17.0",
     "glob": "11.0.1",
