@@ -4,7 +4,6 @@ import {
     OutScript,
     P2TR,
     p2tr,
-    P2TRRet,
     tapLeafHash,
 } from "@scure/btc-signer/payment";
 import { Transaction } from "@scure/btc-signer";
