@@ -121,27 +121,19 @@ export class ServiceWorkerWallet implements IWallet {
 
             // Handle updates
             registration.addEventListener("updatefound", () => {
-                console.info(
-                    "@arklabs/wallet-sdk: Service worker auto-update..."
-                );
                 const newWorker = registration.installing;
                 if (!newWorker) return;
 
                 newWorker.addEventListener("statechange", () => {
                     if (
-                        newWorker.state === "installed" &&
+                        newWorker.state === "activated" &&
                         navigator.serviceWorker.controller
                     ) {
-                        console.info(
-                            "@arklabs/wallet-sdk: Service worker updated, reloading..."
-                        );
+                        console.info("Service worker activated, reloading...");
                         window.location.reload();
                     }
                 });
             });
-
-            // Check for updates
-            await registration.update();
 
             const sw =
                 registration.active ||

@@ -65,19 +65,31 @@ export function createVirtualTx(
         Pick<VirtualCoin, "txid" | "vout" | "value">)[],
     outputs: Output[]
 ) {
-    let lockTime: number | undefined;
+    let lockTime = 0n;
     for (const input of inputs) {
         const tapscript = decodeTapscript(
             scriptFromTapLeafScript(input.tapLeafScript)
         );
         if (CLTVMultisigTapscript.is(tapscript)) {
-            lockTime = Number(tapscript.params.absoluteTimelock);
+            if (lockTime !== 0n) {
+                // if a locktime is already set, check if the new locktime is in the same unit
+                if (
+                    isSeconds(lockTime) !==
+                    isSeconds(tapscript.params.absoluteTimelock)
+                ) {
+                    throw new Error("cannot mix seconds and blocks locktime");
+                }
+            }
+
+            if (tapscript.params.absoluteTimelock > lockTime) {
+                lockTime = tapscript.params.absoluteTimelock;
+            }
         }
     }
 
     const tx = new Transaction({
         allowUnknown: true,
-        lockTime,
+        lockTime: Number(lockTime),
     });
 
     for (const [i, input] of inputs.entries()) {
@@ -155,4 +167,10 @@ function encodeCompactSizeUint(value: number): Uint8Array {
         new DataView(buffer.buffer).setBigUint64(1, BigInt(value), true);
         return buffer;
     }
+}
+
+const nLocktimeMinSeconds = 500_000_000n;
+
+function isSeconds(locktime: bigint): boolean {
+    return locktime >= nLocktimeMinSeconds;
 }

@@ -26,13 +26,23 @@ export class Worker {
         ) => void = () => {}
     ) {}
 
-    async start() {
+    async start(withServiceWorkerUpdate = true) {
         self.addEventListener(
             "message",
             async (event: ExtendableMessageEvent) => {
                 await this.handleMessage(event);
             }
         );
+        if (withServiceWorkerUpdate) {
+            // activate service worker immediately
+            self.addEventListener("install", () => {
+                self.skipWaiting();
+            });
+            // take control of clients immediately
+            self.addEventListener("activate", () => {
+                self.clients.claim();
+            });
+        }
     }
 
     async clear() {

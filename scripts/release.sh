@@ -53,10 +53,17 @@ if [ "$DRY_RUN" = true ]; then
     pnpm publish --dry-run
 else
     # Real version bump and publish
-    pnpm version $VERSION_BUMP
+    pnpm version $VERSION_BUMP --no-git-tag-version
 
-    # Get the new version number
+    # Get the new version number directly from package.json
     NEW_VERSION=$(node -p "require('./package.json').version")
+
+    # Create git tag manually
+    git tag "v$NEW_VERSION"
+
+    # Commit the package.json changes
+    git add package.json
+    git commit -m "$NEW_VERSION"
 
     # Push the tag to trigger GitHub release
     git push origin "v$NEW_VERSION"

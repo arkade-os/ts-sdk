@@ -2,6 +2,7 @@ import { base64, hex } from "@scure/base";
 import {
     Address,
     OutScript,
+    P2TR,
     p2tr,
     tapLeafHash,
 } from "@scure/btc-signer/payment";
@@ -70,7 +71,7 @@ export class Wallet implements IWallet {
         private identity: Identity,
         private network: Network,
         private onchainProvider: OnchainProvider,
-        private onchainP2TR: ReturnType<typeof p2tr>,
+        private onchainP2TR: P2TR,
         private arkProvider?: ArkProvider,
         private arkServerPublicKey?: Bytes,
         readonly offchainTapscript?: DefaultVtxo.Script,
@@ -515,7 +516,6 @@ export class Wallet implements IWallet {
                     amount: BigInt(input.value),
                 },
                 tapInternalKey: this.onchainP2TR.tapInternalKey,
-                tapMerkleRoot: this.onchainP2TR.tapMerkleRoot,
             });
         }
 
