@@ -1091,7 +1091,7 @@ export class Wallet implements IWallet {
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[],
         notesWitnesses?: Map<number, Uint8Array[]> // index -> witness
-    ): Promise<BIP322.Signature> {
+    ): Promise<{ signature: BIP322.Signature; message: string }> {
         const nowSeconds = Math.floor(Date.now() / 1000);
         const inputTapTrees: string[] = [];
 
@@ -1125,32 +1125,47 @@ export class Wallet implements IWallet {
             },
         };
 
-        return this.makeBIP322Signature(
-            JSON.stringify(message),
+        const encodedMessage = JSON.stringify(message);
+
+        const signature = await this.makeBIP322Signature(
+            encodedMessage,
             inputs,
             tapLeafScripts,
             outputs,
             notesWitnesses
         );
+
+        return {
+            signature,
+            message: encodedMessage,
+        };
     }
 
     private async makeDeleteIntentSignature(
         inputs: TransactionInput[],
         tapLeafScripts: TapLeafScript[],
         notesWitnesses?: Map<number, Uint8Array[]> // index -> witness
-    ): Promise<BIP322.Signature> {
+    ): Promise<{ signature: BIP322.Signature; message: string }> {
         const nowSeconds = Math.floor(Date.now() / 1000);
         const message = {
             type: "delete",
             expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
         };
-        return this.makeBIP322Signature(
-            JSON.stringify(message),
+
+        const encodedMessage = JSON.stringify(message);
+
+        const signature = await this.makeBIP322Signature(
+            encodedMessage,
             inputs,
             tapLeafScripts,
             undefined,
             notesWitnesses
         );
+
+        return {
+            signature,
+            message: encodedMessage,
+        };
     }
 
     private async makeBIP322Signature(
