@@ -4,10 +4,16 @@ import {
     OutScript,
     P2TR,
     p2tr,
+    TAP_LEAF_VERSION,
     tapLeafHash,
 } from "@scure/btc-signer/payment";
 import { Transaction } from "@scure/btc-signer";
-import { TaprootControlBlock, TransactionOutput } from "@scure/btc-signer/psbt";
+import {
+    PSBTOutput,
+    TaprootControlBlock,
+    TransactionInput,
+    TransactionOutput,
+} from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../script/address";
@@ -51,7 +57,11 @@ import {
     WalletConfig,
 } from ".";
 import { Bytes } from "@scure/btc-signer/utils";
-import { scriptFromTapLeafScript, VtxoScript } from "../script/base";
+import {
+    scriptFromTapLeafScript,
+    TapLeafScript,
+    VtxoScript,
+} from "../script/base";
 import {
     CSVMultisigTapscript,
     decodeTapscript,
@@ -60,6 +70,9 @@ import {
 import { createVirtualTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { TxTree } from "../tree/vtxoTree";
+import { BIP322 } from "../bip322";
+
+const TapTreeCoder = PSBTOutput.tapTree[2];
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -1069,4 +1082,138 @@ export class Wallet implements IWallet {
                 : undefined
         );
     }
+
+    private async makeRegisterIntentSignature(
+        inputs: TransactionInput[],
+        tapLeafScripts: TapLeafScript[],
+        tapscripts: Map<number, string[]>, // input index -> revealed tapscripts
+        outputs: TransactionOutput[],
+        onchainOutputsIndexes: number[],
+        cosignerPubKeys: string[],
+        notesWitnesses?: Map<number, Uint8Array[]> // index -> witness
+    ): Promise<{ signature: BIP322.Signature; message: string }> {
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const inputTapTrees: string[] = [];
+
+        for (let i = 0; i < inputs.length; i++) {
+            const scripts = tapscripts.get(i);
+            if (!scripts) throw new Error("Tapscript not found for input");
+
+            const tapTree = TapTreeCoder.encode(
+                scripts.map((s) => {
+                    return {
+                        version: TAP_LEAF_VERSION,
+                        // TODO: allow multi-depth trees
+                        depth: 1,
+                        script: hex.decode(s),
+                    };
+                })
+            );
+
+            inputTapTrees.push(hex.encode(tapTree));
+        }
+
+        const message = {
+            type: "register",
+            valid_at: nowSeconds,
+            expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
+            onchain_output_indexes: onchainOutputsIndexes,
+            input_tap_trees: inputTapTrees,
+            musig2_data: {
+                cosigners_public_keys: cosignerPubKeys,
+                signing_type: 1, // sign branch
+            },
+        };
+
+        const encodedMessage = JSON.stringify(message);
+
+        const signature = await this.makeBIP322Signature(
+            encodedMessage,
+            inputs,
+            tapLeafScripts,
+            outputs,
+            notesWitnesses
+        );
+
+        return {
+            signature,
+            message: encodedMessage,
+        };
+    }
+
+    private async makeDeleteIntentSignature(
+        inputs: TransactionInput[],
+        tapLeafScripts: TapLeafScript[],
+        notesWitnesses?: Map<number, Uint8Array[]> // index -> witness
+    ): Promise<{ signature: BIP322.Signature; message: string }> {
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const message = {
+            type: "delete",
+            expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
+        };
+
+        const encodedMessage = JSON.stringify(message);
+
+        const signature = await this.makeBIP322Signature(
+            encodedMessage,
+            inputs,
+            tapLeafScripts,
+            undefined,
+            notesWitnesses
+        );
+
+        return {
+            signature,
+            message: encodedMessage,
+        };
+    }
+
+    private async makeBIP322Signature(
+        message: string,
+        inputs: TransactionInput[],
+        tapLeafScripts: TapLeafScript[],
+        outputs?: TransactionOutput[],
+        notesWitnesses?: Map<number, Uint8Array[]> // index -> witnesses
+    ): Promise<BIP322.Signature> {
+        const proof = BIP322.create(message, inputs, outputs);
+
+        // add the leaf proofs for the identity to sign
+        for (let i = 0; i < proof.inputsLength; i++) {
+            const tapLeafScript =
+                i === 0 ? tapLeafScripts[0] : tapLeafScripts[i - 1];
+            proof.updateInput(i, {
+                tapLeafScript: [tapLeafScript],
+            });
+        }
+
+        const signedProof = await this.identity.sign(proof);
+        if (notesWitnesses) {
+            return BIP322.signature(
+                signedProof,
+                finalizeWithNotes(notesWitnesses)
+            );
+        }
+
+        return BIP322.signature(signedProof);
+    }
+}
+
+// finalizer function for tx spending notes
+function finalizeWithNotes(
+    notesWitnesses: Map<number, Uint8Array[]>
+): (tx: BIP322.FullProof) => void {
+    return function (tx) {
+        for (let i = 0; i < tx.inputsLength; i++) {
+            const witness = notesWitnesses.get(i);
+            if (witness) {
+                tx.updateInput(i, {
+                    finalScriptWitness: witness,
+                });
+                continue;
+            }
+
+            // not a note input, use the default finalizer
+            tx.finalizeIdx(i);
+        }
+    };
 }
