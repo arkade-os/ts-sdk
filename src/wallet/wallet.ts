@@ -34,10 +34,10 @@ import {
     SigningStartEvent,
     ArkProvider,
     RestArkProvider,
+    BatchStartedEvent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
-import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { validateConnectorsTree, validateVtxoTree } from "../tree/validation";
 import { Identity } from "../identity";
 import {
@@ -56,17 +56,9 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes } from "@scure/btc-signer/utils";
-import {
-    scriptFromTapLeafScript,
-    TapLeafScript,
-    VtxoScript,
-} from "../script/base";
-import {
-    CSVMultisigTapscript,
-    decodeTapscript,
-    RelativeTimelock,
-} from "../script/tapscript";
+import { Bytes, sha256 } from "@scure/btc-signer/utils";
+import { TapLeafScript, VtxoScript } from "../script/base";
+import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { createVirtualTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { TxTree } from "../tree/vtxoTree";
@@ -123,9 +115,8 @@ export class Wallet implements IWallet {
                 type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
             };
             const boardingTimelock = {
-                value: info.unilateralExitDelay * 2n,
-                type:
-                    info.unilateralExitDelay * 2n < 512n ? "blocks" : "seconds",
+                value: info.boardingExitDelay,
+                type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
             };
             // Generate tapscripts for offchain and boarding address
             const serverPubKey = hex.decode(info.pubkey).slice(1);
@@ -621,7 +612,7 @@ export class Wallet implements IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        if (!this.arkProvider) {
+        if (!this.arkProvider || !this.arkServerPublicKey) {
             throw new Error("Ark provider not configured");
         }
 
@@ -673,17 +664,18 @@ export class Wallet implements IWallet {
         }
 
         // register inputs
-        const { requestId } = await this.arkProvider.registerInputsForNextRound(
-            params.inputs.map((input) => {
-                if (typeof input === "string") {
-                    return input;
-                }
-                return {
-                    outpoint: input,
-                    tapscripts: input.scripts,
-                };
-            })
-        );
+        const { requestId: intentId } =
+            await this.arkProvider.registerInputsForNextRound(
+                params.inputs
+                    .filter((input) => typeof input !== "string")
+                    .map((input) => ({
+                        outpoint: {
+                            txid: input.txid,
+                            vout: input.vout,
+                        },
+                        tapscripts: input.scripts,
+                    }))
+            );
 
         const hasOffchainOutputs = params.outputs.some((output) =>
             this.isOffchainSuitable(output.address)
@@ -699,47 +691,27 @@ export class Wallet implements IWallet {
 
         // register outputs
         await this.arkProvider.registerOutputsForNextRound(
-            requestId,
+            intentId,
             params.outputs,
             signingPublicKeys
         );
 
-        // start pinging every seconds
-        const interval = setInterval(() => {
-            this.arkProvider?.ping(requestId).catch(stopPing);
-        }, 1000);
-        let pingRunning = true;
-        const stopPing = () => {
-            if (pingRunning) {
-                pingRunning = false;
-                clearInterval(interval);
-            }
-        };
-
         const abortController = new AbortController();
         // listen to settlement events
         try {
+            let step: SettlementEventType | undefined;
+
             const settlementStream = this.arkProvider.getEventStream(
                 abortController.signal
             );
-            let step: SettlementEventType | undefined;
-            if (!hasOffchainOutputs) {
-                // if there are no offchain outputs, we don't have to handle musig2 tree signatures
-                // we can directly advance to the finalization step
-                step = SettlementEventType.SigningNoncesGenerated;
-            }
 
-            const info = await this.arkProvider.getInfo();
+            // roundId, sweepTapTreeRoot and forfeitOutputScript are set once the BatchStarted event is received
+            let roundId: string | undefined;
+            let sweepTapTreeRoot: Uint8Array | undefined;
+            let forfeitOutputScript: Bytes | undefined;
 
-            const sweepTapscript = CSVMultisigTapscript.encode({
-                timelock: {
-                    value: info.batchExpiry,
-                    type: info.batchExpiry >= 512n ? "seconds" : "blocks",
-                },
-                pubkeys: [hex.decode(info.pubkey).slice(1)],
-            }).script;
-
-            const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
+            const vtxoTree = TxTree.empty();
+            const connectorsTree = TxTree.empty();
 
             for await (const event of settlementStream) {
                 if (eventCallback) {
@@ -748,28 +720,100 @@ export class Wallet implements IWallet {
                 switch (event.type) {
                     // the settlement failed
                     case SettlementEventType.Failed:
-                        if (step === undefined) {
-                            continue;
+                        // fail if the roundId is the one joined
+                        if (event.id === roundId) {
+                            throw new Error(event.reason);
                         }
-                        stopPing();
-                        throw new Error(event.reason);
-                    // the server has started the signing process of the vtxo tree transactions
-                    // the server expects the partial musig2 nonces for each tx
-                    case SettlementEventType.SigningStart:
+                        break;
+                    case SettlementEventType.BatchStarted:
                         if (step !== undefined) {
                             continue;
                         }
-                        stopPing();
+                        const res = await this.handleBatchStartedEvent(
+                            event,
+                            intentId,
+                            this.arkServerPublicKey
+                        );
+                        if (!res.skip) {
+                            step = event.type;
+                            sweepTapTreeRoot = res.sweepTapTreeRoot;
+                            forfeitOutputScript = res.forfeitOutputScript;
+                            roundId = res.roundId;
+                            if (!hasOffchainOutputs) {
+                                // if there are no offchain outputs, we don't have to handle musig2 tree signatures
+                                // we can directly advance to the finalization step
+                                step =
+                                    SettlementEventType.SigningNoncesGenerated;
+                            }
+                        }
+                        break;
+                    case SettlementEventType.BatchTree:
+                        if (
+                            step !== SettlementEventType.BatchStarted &&
+                            step !== SettlementEventType.SigningNoncesGenerated
+                        ) {
+                            continue;
+                        }
+
+                        // index 0 = vtxo tree
+                        if (event.batchIndex === 0) {
+                            vtxoTree.addNode(event.treeTx);
+                            // index 1 = connectors tree
+                        } else if (event.batchIndex === 1) {
+                            connectorsTree.addNode(event.treeTx);
+                        } else {
+                            throw new Error(
+                                `Invalid batch index: ${event.batchIndex}`
+                            );
+                        }
+                        break;
+                    case SettlementEventType.BatchTreeSignature:
+                        if (
+                            step !== SettlementEventType.SigningNoncesGenerated
+                        ) {
+                            continue;
+                        }
+                        // index 0 = vtxo tree
+                        if (event.batchIndex === 0) {
+                            vtxoTree.addSignature(
+                                event.signature,
+                                event.level,
+                                event.levelIndex
+                            );
+                            // index 1 = connectors tree
+                        } else if (event.batchIndex === 1) {
+                            connectorsTree.addSignature(
+                                event.signature,
+                                event.level,
+                                event.levelIndex
+                            );
+                        } else {
+                            throw new Error(
+                                `Invalid batch index: ${event.batchIndex}`
+                            );
+                        }
+                        break;
+                    // the server has started the signing process of the vtxo tree transactions
+                    // the server expects the partial musig2 nonces for each tx
+                    case SettlementEventType.SigningStart:
+                        if (step !== SettlementEventType.BatchStarted) {
+                            continue;
+                        }
                         if (hasOffchainOutputs) {
                             if (!session) {
-                                throw new Error("Signing session not found");
+                                throw new Error("Signing session not set");
+                            }
+                            if (!sweepTapTreeRoot) {
+                                throw new Error("Sweep tap tree root not set");
                             }
                             await this.handleSettlementSigningEvent(
                                 event,
                                 sweepTapTreeRoot,
-                                session
+                                session,
+                                vtxoTree
                             );
                         }
+                        step = event.type;
                         break;
                     // the musig2 nonces of the vtxo tree transactions are generated
                     // the server expects now the partial musig2 signatures
@@ -777,16 +821,16 @@ export class Wallet implements IWallet {
                         if (step !== SettlementEventType.SigningStart) {
                             continue;
                         }
-                        stopPing();
                         if (hasOffchainOutputs) {
                             if (!session) {
-                                throw new Error("Signing session not found");
+                                throw new Error("Signing session not set");
                             }
                             await this.handleSettlementSigningNoncesGeneratedEvent(
                                 event,
                                 session
                             );
                         }
+                        step = event.type;
                         break;
                     // the vtxo tree is signed, craft, sign and submit forfeit transactions
                     // if any boarding utxos are involved, the settlement tx is also signed
@@ -796,12 +840,18 @@ export class Wallet implements IWallet {
                         ) {
                             continue;
                         }
-                        stopPing();
+
+                        if (!forfeitOutputScript) {
+                            throw new Error("Forfeit output script not set");
+                        }
+
                         await this.handleSettlementFinalizationEvent(
                             event,
                             params.inputs,
-                            info
+                            forfeitOutputScript,
+                            connectorsTree
                         );
+                        step = event.type;
                         break;
                     // the settlement is done, last event to be received
                     case SettlementEventType.Finalized:
@@ -811,8 +861,6 @@ export class Wallet implements IWallet {
                         abortController.abort();
                         return event.roundTxid;
                 }
-
-                step = event.type;
             }
         } catch (error) {
             abortController.abort();
@@ -876,13 +924,72 @@ export class Wallet implements IWallet {
         }
     }
 
+    private async handleBatchStartedEvent(
+        event: BatchStartedEvent,
+        intentId: string,
+        serverPubKey: Bytes
+    ): Promise<
+        | { skip: true }
+        | {
+              roundId: string;
+              sweepTapTreeRoot: Uint8Array;
+              forfeitOutputScript: Bytes;
+              skip: false;
+          }
+    > {
+        const utf8IntentId = new TextEncoder().encode(intentId);
+        const intentIdHash = sha256(utf8IntentId);
+        const intentIdHashStr = hex.encode(new Uint8Array(intentIdHash));
+
+        let skip = true;
+
+        // check if our intent ID hash matches any in the event
+        for (const idHash of event.intentIdHashes) {
+            if (idHash === intentIdHashStr) {
+                if (!this.arkProvider) {
+                    throw new Error("Ark provider not configured");
+                }
+                await this.arkProvider.confirmRegistration(intentId);
+                skip = false;
+            }
+        }
+
+        if (skip) {
+            return { skip };
+        }
+
+        const sweepTapscript = CSVMultisigTapscript.encode({
+            timelock: {
+                value: event.batchExpiry,
+                type: event.batchExpiry >= 512n ? "seconds" : "blocks",
+            },
+            pubkeys: [serverPubKey],
+        }).script;
+
+        const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
+
+        // parse the server forfeit address
+        // server is expecting funds to be sent to this address
+        const forfeitAddress = Address(this.network).decode(
+            event.forfeitAddress
+        );
+        const forfeitOutputScript = OutScript.encode(forfeitAddress);
+
+        return {
+            roundId: event.id,
+            sweepTapTreeRoot,
+            forfeitOutputScript,
+            skip: false,
+        };
+    }
+
     // validates the vtxo tree, creates a signing session and generates the musig2 nonces
     private async handleSettlementSigningEvent(
         event: SigningStartEvent,
         sweepTapTreeRoot: Uint8Array,
-        session: SignerSession
+        session: SignerSession,
+        unsignedVtxoTree: TxTree
     ) {
-        const vtxoTree = event.unsignedVtxoTree;
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
         }
@@ -890,7 +997,7 @@ export class Wallet implements IWallet {
         // validate the unsigned vtxo tree
         validateVtxoTree(
             event.unsignedSettlementTx,
-            vtxoTree,
+            unsignedVtxoTree,
             sweepTapTreeRoot
         );
 
@@ -903,7 +1010,7 @@ export class Wallet implements IWallet {
             throw new Error("Shared output not found");
         }
 
-        session.init(vtxoTree, sweepTapTreeRoot, sharedOutput.amount);
+        session.init(unsignedVtxoTree, sweepTapTreeRoot, sharedOutput.amount);
 
         await this.arkProvider.submitTreeNonces(
             event.id,
@@ -933,18 +1040,12 @@ export class Wallet implements IWallet {
     private async handleSettlementFinalizationEvent(
         event: FinalizationEvent,
         inputs: SettleParams["inputs"],
-        infos: ArkInfo
+        forfeitOutputScript: Bytes,
+        connectors: TxTree
     ) {
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
         }
-
-        // parse the server forfeit address
-        // server is expecting funds to be sent to this address
-        const forfeitAddress = Address(this.network).decode(
-            infos.forfeitAddress
-        );
-        const serverPkScript = OutScript.encode(forfeitAddress);
 
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
@@ -999,29 +1100,11 @@ export class Wallet implements IWallet {
 
             if (!connectorsTreeValid) {
                 // validate that the connectors tree is valid and contains our expected connectors
-                validateConnectorsTree(event.roundTx, event.connectors);
+                validateConnectorsTree(event.roundTx, connectors);
                 connectorsTreeValid = true;
             }
 
-            const forfeitControlBlock = TaprootControlBlock.encode(
-                input.tapLeafScript[0]
-            );
-            const tapscript = decodeTapscript(
-                scriptFromTapLeafScript(input.tapLeafScript)
-            );
-
-            const fees = TxWeightEstimator.create()
-                .addKeySpendInput() // connector
-                .addTapscriptInput(
-                    tapscript.witnessSize(100), // TODO: handle conditional script
-                    input.tapLeafScript[1].length - 1,
-                    forfeitControlBlock.length
-                )
-                .addP2WKHOutput()
-                .vsize()
-                .fee(event.minRelayFeeRate);
-
-            const connectorsLeaves = event.connectors.leaves();
+            const connectorsLeaves = connectors.leaves();
             const connectorOutpoint = event.connectorsIndex.get(
                 `${vtxo.txid}:${vtxo.vout}`
             );
@@ -1056,8 +1139,7 @@ export class Wallet implements IWallet {
             let forfeitTx = buildForfeitTx({
                 connectorInput: connectorOutpoint,
                 connectorAmount: connectorOutput.amount,
-                feeAmount: fees,
-                serverPkScript,
+                serverPkScript: forfeitOutputScript,
                 connectorPkScript: connectorOutput.script,
                 vtxoAmount: BigInt(vtxo.value),
                 vtxoInput: input,

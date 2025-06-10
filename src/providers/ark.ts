@@ -1,4 +1,4 @@
-import { TxTree } from "../tree/vtxoTree";
+import { TreeNode, TxTree } from "../tree/vtxoTree";
 import { Outpoint, VirtualCoin } from "../wallet";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
@@ -15,14 +15,10 @@ export interface ArkEvent {
     };
 }
 
-export type NoteInput = string;
-
 export type VtxoInput = {
     outpoint: Outpoint;
     tapscripts: string[];
 };
-
-export type Input = NoteInput | VtxoInput;
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -35,15 +31,15 @@ export enum SettlementEventType {
     Failed = "failed",
     SigningStart = "signing_start",
     SigningNoncesGenerated = "signing_nonces_generated",
+    BatchStarted = "batch_started",
+    BatchTree = "batch_tree",
+    BatchTreeSignature = "batch_tree_signature",
 }
 
 export type FinalizationEvent = {
     type: SettlementEventType.Finalization;
     id: string;
     roundTx: string;
-    vtxoTree: TxTree;
-    connectors: TxTree;
-    minRelayFeeRate: bigint; // Using bigint for int64
     connectorsIndex: Map<string, Outpoint>; // `vtxoTxid:vtxoIndex` -> connectorOutpoint
 };
 
@@ -63,7 +59,6 @@ export type SigningStartEvent = {
     type: SettlementEventType.SigningStart;
     id: string;
     cosignersPublicKeys: string[];
-    unsignedVtxoTree: TxTree;
     unsignedSettlementTx: string;
 };
 
@@ -73,17 +68,47 @@ export type SigningNoncesGeneratedEvent = {
     treeNonces: TreeNonces;
 };
 
+export type BatchStartedEvent = {
+    type: SettlementEventType.BatchStarted;
+    id: string;
+    intentIdHashes: string[];
+    batchExpiry: bigint;
+    forfeitAddress: string;
+};
+
+export type BatchTreeEvent = {
+    type: SettlementEventType.BatchTree;
+    id: string;
+    topic: string[];
+    batchIndex: number;
+    treeTx: TreeNode;
+};
+
+export type BatchTreeSignatureEvent = {
+    type: SettlementEventType.BatchTreeSignature;
+    id: string;
+    topic: string[];
+    batchIndex: number;
+    level: number;
+    levelIndex: number;
+    signature: string;
+};
+
 export type SettlementEvent =
     | FinalizationEvent
     | FinalizedEvent
     | FailedEvent
     | SigningStartEvent
-    | SigningNoncesGeneratedEvent;
+    | SigningNoncesGeneratedEvent
+    | BatchStartedEvent
+    | BatchTreeEvent
+    | BatchTreeSignatureEvent;
 
 export interface ArkInfo {
     pubkey: string;
     batchExpiry: bigint;
     unilateralExitDelay: bigint;
+    boardingExitDelay: bigint;
     roundInterval: bigint;
     network: string;
     dust: bigint;
@@ -114,7 +139,10 @@ export interface ArkProvider {
     }>;
     submitVirtualTx(psbtBase64: string): Promise<string>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
-    registerInputsForNextRound(inputs: Input[]): Promise<{ requestId: string }>;
+    registerInputsForNextRound(
+        inputs: VtxoInput[]
+    ): Promise<{ requestId: string }>;
+    confirmRegistration(intentId: string): Promise<void>;
     registerOutputsForNextRound(
         requestId: string,
         outputs: Output[],
@@ -135,7 +163,6 @@ export interface ArkProvider {
         signedForfeitTxs: string[],
         signedRoundTx?: string
     ): Promise<void>;
-    ping(paymentID: string): Promise<void>;
     getEventStream(signal: AbortSignal): AsyncIterableIterator<SettlementEvent>;
     subscribeForAddress(
         address: string,
@@ -162,6 +189,7 @@ export class RestArkProvider implements ArkProvider {
             ...fromServer,
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
             batchExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
+            boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
         };
     }
 
@@ -307,26 +335,21 @@ export class RestArkProvider implements ArkProvider {
     }
 
     async registerInputsForNextRound(
-        inputs: Input[]
+        inputs: VtxoInput[]
     ): Promise<{ requestId: string }> {
         const url = `${this.serverUrl}/v1/round/registerInputs`;
         const vtxoInputs: ProtoTypes.Input[] = [];
-        const noteInputs: string[] = [];
 
         for (const input of inputs) {
-            if (typeof input === "string") {
-                noteInputs.push(input);
-            } else {
-                vtxoInputs.push({
-                    outpoint: {
-                        txid: input.outpoint.txid,
-                        vout: input.outpoint.vout,
-                    },
-                    tapscripts: {
-                        scripts: input.tapscripts,
-                    },
-                });
-            }
+            vtxoInputs.push({
+                outpoint: {
+                    txid: input.outpoint.txid,
+                    vout: input.outpoint.vout,
+                },
+                taprootTree: {
+                    scripts: input.tapscripts,
+                },
+            });
         }
 
         const response = await fetch(url, {
@@ -336,7 +359,6 @@ export class RestArkProvider implements ArkProvider {
             },
             body: JSON.stringify({
                 inputs: vtxoInputs,
-                notes: noteInputs,
             }),
         });
 
@@ -379,6 +401,24 @@ export class RestArkProvider implements ArkProvider {
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Failed to register outputs: ${errorText}`);
+        }
+    }
+
+    async confirmRegistration(intentId: string): Promise<void> {
+        const url = `${this.serverUrl}/v1/batch/ack`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                intentId,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to confirm registration: ${errorText}`);
         }
     }
 
@@ -450,15 +490,6 @@ export class RestArkProvider implements ArkProvider {
             throw new Error(
                 `Failed to submit forfeit transactions: ${response.statusText}`
             );
-        }
-    }
-
-    async ping(requestId: string): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/ping/${requestId}`;
-        const response = await fetch(url);
-
-        if (!response.ok) {
-            throw new Error(`Ping failed: ${response.statusText}`);
         }
     }
 
@@ -628,12 +659,14 @@ export class RestArkProvider implements ArkProvider {
         );
 
         return new TxTree(
-            t.levels.map((level) =>
-                level.nodes.map((node) => ({
+            t.levels.map((row, level) =>
+                row.nodes.map((node, levelIndex) => ({
                     txid: node.txid,
                     tx: node.tx,
                     parentTxid: node.parentTxid,
                     leaf: !parentTxids.has(node.txid),
+                    level,
+                    levelIndex,
                 }))
             )
         );
@@ -642,21 +675,26 @@ export class RestArkProvider implements ArkProvider {
     private parseSettlementEvent(
         data: ProtoTypes.EventData
     ): SettlementEvent | null {
+        // Check for BatchStarted event
+        if (data.batchStarted) {
+            return {
+                type: SettlementEventType.BatchStarted,
+                id: data.batchStarted.id,
+                intentIdHashes: data.batchStarted.intentIdHashes,
+                batchExpiry: BigInt(data.batchStarted.batchExpiry),
+                forfeitAddress: data.batchStarted.forfeitAddress,
+            };
+        }
+
         // Check for Finalization event
         if (data.roundFinalization) {
             return {
                 type: SettlementEventType.Finalization,
                 id: data.roundFinalization.id,
                 roundTx: data.roundFinalization.roundTx,
-                vtxoTree: this.toTxTree(data.roundFinalization.vtxoTree),
-                connectors: this.toTxTree(data.roundFinalization.connectors),
                 connectorsIndex: this.toConnectorsIndex(
                     data.roundFinalization.connectorsIndex
                 ),
-                // divide by 1000 to convert to sat/vbyte
-                minRelayFeeRate:
-                    BigInt(data.roundFinalization.minRelayFeeRate) /
-                    BigInt(1000),
             };
         }
 
@@ -684,9 +722,6 @@ export class RestArkProvider implements ArkProvider {
                 type: SettlementEventType.SigningStart,
                 id: data.roundSigning.id,
                 cosignersPublicKeys: data.roundSigning.cosignersPubkeys,
-                unsignedVtxoTree: this.toTxTree(
-                    data.roundSigning.unsignedVtxoTree
-                ),
                 unsignedSettlementTx: data.roundSigning.unsignedRoundTx,
             };
         }
@@ -702,7 +737,30 @@ export class RestArkProvider implements ArkProvider {
             };
         }
 
-        console.warn("Unknown event structure:", data);
+        // Check for BatchTree event
+        if (data.batchTree) {
+            return {
+                type: SettlementEventType.BatchTree,
+                id: data.batchTree.id,
+                topic: data.batchTree.topic,
+                batchIndex: data.batchTree.batchIndex,
+                treeTx: data.batchTree.treeTx,
+            };
+        }
+
+        if (data.batchTreeSignature) {
+            return {
+                type: SettlementEventType.BatchTreeSignature,
+                id: data.batchTreeSignature.id,
+                topic: data.batchTreeSignature.topic,
+                batchIndex: data.batchTreeSignature.batchIndex,
+                level: data.batchTreeSignature.level,
+                levelIndex: data.batchTreeSignature.levelIndex,
+                signature: data.batchTreeSignature.signature,
+            };
+        }
+
+        console.warn("Unknown event type:", data);
         return null;
     }
 }
@@ -847,12 +905,22 @@ namespace ProtoTypes {
         txid: string;
         tx: string;
         parentTxid: string;
+        level: number;
+        levelIndex: number;
+        leaf: boolean;
     }
     interface TreeLevel {
         nodes: Node[];
     }
     export interface Tree {
         levels: TreeLevel[];
+    }
+
+    interface BatchStartedEvent {
+        id: string;
+        intentIdHashes: string[];
+        batchExpiry: string;
+        forfeitAddress: string;
     }
 
     interface RoundFailed {
@@ -863,15 +931,12 @@ namespace ProtoTypes {
     export interface RoundFinalizationEvent {
         id: string;
         roundTx: string;
-        vtxoTree: Tree;
-        connectors: Tree;
         connectorsIndex: {
             [key: string]: {
                 txid: string;
                 vout: number;
             };
         };
-        minRelayFeeRate: string;
     }
 
     interface RoundFinalizedEvent {
@@ -882,7 +947,6 @@ namespace ProtoTypes {
     interface RoundSigningEvent {
         id: string;
         cosignersPubkeys: string[];
-        unsignedVtxoTree: Tree;
         unsignedRoundTx: string;
     }
 
@@ -891,13 +955,32 @@ namespace ProtoTypes {
         treeNonces: string;
     }
 
+    interface BatchTreeEvent {
+        id: string;
+        topic: string[];
+        batchIndex: number;
+        treeTx: Node;
+    }
+
+    interface BatchTreeSignatureEvent {
+        id: string;
+        topic: string[];
+        batchIndex: number;
+        level: number;
+        levelIndex: number;
+        signature: string;
+    }
+
     // Update the EventData interface to match the Golang structure
     export interface EventData {
+        batchStarted?: BatchStartedEvent;
         roundFailed?: RoundFailed;
         roundFinalization?: RoundFinalizationEvent;
         roundFinalized?: RoundFinalizedEvent;
         roundSigning?: RoundSigningEvent;
         roundSigningNoncesGenerated?: RoundSigningNoncesGeneratedEvent;
+        batchTree?: BatchTreeEvent;
+        batchTreeSignature?: BatchTreeSignatureEvent;
     }
 
     export interface Input {
@@ -905,7 +988,7 @@ namespace ProtoTypes {
             txid: string;
             vout: number;
         };
-        tapscripts: {
+        taprootTree: {
             scripts: string[];
         };
     }

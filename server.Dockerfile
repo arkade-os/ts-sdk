@@ -4,9 +4,11 @@ FROM golang:1.23.1 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+ARG BRANCH=next-version
+
 WORKDIR /app
 
-RUN git clone https://github.com/arkade-os/arkd.git
+RUN git clone https://github.com/arkade-os/arkd.git && cd arkd && git checkout ${BRANCH}
 
 # ENV GOPROXY=https://goproxy.io,direct
 RUN cd arkd/server && CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-X 'main.Version=${VERSION}'" -o ../../bin/arkd ./cmd/arkd

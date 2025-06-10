@@ -1,12 +1,12 @@
 import { SigHash, Transaction } from "@scure/btc-signer";
 import { Outpoint } from "./wallet";
+import { P2A } from "./utils/anchor";
 
 interface ForfeitTxParams {
     connectorInput: Outpoint;
     vtxoInput: Outpoint;
     vtxoAmount: bigint;
     connectorAmount: bigint;
-    feeAmount: bigint;
     vtxoPkScript: Uint8Array;
     connectorPkScript: Uint8Array;
     serverPkScript: Uint8Array;
@@ -18,14 +18,13 @@ export function buildForfeitTx({
     vtxoInput,
     vtxoAmount,
     connectorAmount,
-    feeAmount,
     vtxoPkScript,
     connectorPkScript,
     serverPkScript,
     txLocktime,
 }: ForfeitTxParams): Transaction {
     const tx = new Transaction({
-        version: 2,
+        version: 3,
         lockTime: txLocktime,
     });
 
@@ -52,14 +51,16 @@ export function buildForfeitTx({
         sighashType: SigHash.DEFAULT,
     });
 
-    const amount =
-        BigInt(vtxoAmount) + BigInt(connectorAmount) - BigInt(feeAmount);
+    const amount = BigInt(vtxoAmount) + BigInt(connectorAmount);
 
     // Add main output to server
     tx.addOutput({
         script: serverPkScript,
         amount,
     });
+
+    // Add P2A output
+    tx.addOutput(P2A);
 
     return tx;
 }

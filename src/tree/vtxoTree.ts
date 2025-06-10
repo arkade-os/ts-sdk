@@ -10,6 +10,8 @@ export interface TreeNode {
     tx: string;
     parentTxid: string;
     leaf: boolean;
+    level: number;
+    levelIndex: number;
 }
 
 export class TxTreeError extends Error {
@@ -25,14 +27,60 @@ export const ErrParentNotFound = new TxTreeError("parent not found");
 // TxTree is represented as a matrix of Node objects
 // the first level of the matrix is the root of the tree
 export class TxTree {
-    private tree: TreeNode[][];
+    private tree: (TreeNode | null)[][];
+
+    static empty(): TxTree {
+        return new TxTree([]);
+    }
 
     constructor(tree: TreeNode[][]) {
         this.tree = tree;
     }
 
-    get levels(): TreeNode[][] {
+    get levels(): (TreeNode | null)[][] {
         return this.tree;
+    }
+
+    addNode(node: TreeNode): void {
+        if (this.tree.length <= node.level) {
+            // push empty levels until we reach the node's level
+            for (let i = this.tree.length; i <= node.level; i++) {
+                this.tree.push([]);
+            }
+        }
+
+        if (this.tree[node.level].length <= node.levelIndex) {
+            // push empty nodes until we reach the node's index
+            for (
+                let i = this.tree[node.level].length;
+                i <= node.levelIndex;
+                i++
+            ) {
+                this.tree[node.level].push(null);
+            }
+        }
+
+        this.tree[node.level][node.levelIndex] = node;
+    }
+
+    addSignature(signature: string, level: number, levelIndex: number): void {
+        if (this.tree.length <= level) {
+            throw new TxTreeError(`level ${level} not found`);
+        }
+
+        if (this.tree[level].length <= levelIndex) {
+            throw new TxTreeError(
+                `level ${level} index ${levelIndex} not found`
+            );
+        }
+
+        const tx = Transaction.fromPSBT(
+            base64.decode(this.tree[level][levelIndex]!.tx)
+        );
+        tx.updateInput(0, {
+            tapKeySig: hex.decode(signature),
+        });
+        this.tree[level][levelIndex]!.tx = base64.encode(tx.toPSBT());
     }
 
     // Returns the root node of the vtxo tree
@@ -40,7 +88,13 @@ export class TxTree {
         if (this.tree.length <= 0 || this.tree[0].length <= 0) {
             throw new TxTreeError("empty vtxo tree");
         }
-        return this.tree[0][0];
+
+        const root = this.tree[0][0];
+        if (!root) {
+            throw new TxTreeError("empty root node");
+        }
+
+        return root;
     }
 
     // Returns the leaves of the vtxo tree
@@ -50,13 +104,14 @@ export class TxTree {
         // Check other levels for leaf nodes
         for (let i = 0; i < this.tree.length - 1; i++) {
             for (const node of this.tree[i]) {
-                if (node.leaf) {
+                if (!node) continue;
+                if (node && node.leaf) {
                     leaves.push(node);
                 }
             }
         }
 
-        return leaves;
+        return leaves.filter((node) => node !== null);
     }
 
     // Returns all nodes that have the given node as parent
@@ -65,6 +120,7 @@ export class TxTree {
 
         for (const level of this.tree) {
             for (const node of level) {
+                if (!node) continue;
                 if (node.parentTxid === nodeTxid) {
                     children.push(node);
                 }
@@ -117,6 +173,7 @@ export class TxTree {
     private findParent(node: TreeNode): TreeNode {
         for (const level of this.tree) {
             for (const potentialParent of level) {
+                if (!potentialParent) continue;
                 if (potentialParent.txid === node.parentTxid) {
                     return potentialParent;
                 }
@@ -130,6 +187,7 @@ export class TxTree {
         // Skip the root level, validate from level 1 onwards
         for (let i = 1; i < this.tree.length; i++) {
             for (const node of this.tree[i]) {
+                if (!node) throw new TxTreeError("null node");
                 // Verify that the node's transaction matches its claimed txid
                 const tx = Transaction.fromPSBT(base64.decode(node.tx));
                 const txid = hex.encode(sha256x2(tx.toBytes(true)).reverse());

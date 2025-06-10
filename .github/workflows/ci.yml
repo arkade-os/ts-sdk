@@ -52,16 +52,16 @@ jobs:
         use_ln: false
 
     - name: Run arkd master
-      run: pnpm run test:up-master 
+      run: pnpm run test:up
 
     - name: Run setup script
-      run: pnpm test:setup-master
+      run: pnpm test:setup-docker
 
     - name: Run integration tests
-      run: pnpm test:integration-master
+      run: pnpm test:integration-docker
 
     - name: Capture arkd logs
-      if: always()
+      if: failure()
       run: |
         docker logs $(docker ps -q --filter name=arkd) > arkd.log || true
         if [ -f arkd.log ]; then
