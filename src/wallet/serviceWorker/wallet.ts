@@ -105,6 +105,28 @@ export class ServiceWorkerWallet implements IWallet {
             );
         }
 
+        // In Chrome extensions, we can't register or unregister service workers
+        // so we just get the existing registration
+        if (chrome?.runtime?.id) {
+            try {
+                const registration =
+                    await navigator.serviceWorker.getRegistration(path);
+                if (!registration) {
+                    throw new Error("Service worker registration not found");
+                }
+                const sw = registration.active;
+                if (!sw) {
+                    throw new Error("Failed to get service worker instance");
+                }
+                this.serviceWorker = sw;
+            } catch (error) {
+                throw new Error(
+                    `Failed to get service worker registration: ${error}`
+                );
+            }
+            return;
+        }
+
         try {
             // check for existing registration
             const existingRegistration =
