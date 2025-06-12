@@ -475,7 +475,7 @@ describe("Wallet SDK Integration Tests", () => {
                 {
                     ...vtxo,
                     tapLeafScript: vhtlcScript.claim(),
-                    scripts: vhtlcScript.encode(),
+                    tapTree: vhtlcScript.encode(),
                 },
             ],
             [
@@ -533,7 +533,7 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it.skip("should be able to redeem a note", { timeout: 60000 }, async () => {
+    it("should be able to redeem a note", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestWallet();
         const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;

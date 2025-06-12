@@ -130,6 +130,11 @@ export interface Round {
     connectors: TxTree;
 }
 
+export interface Intent {
+    signature: string;
+    message: string;
+}
+
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
     getRound(txid: string): Promise<Round>;
@@ -139,9 +144,8 @@ export interface ArkProvider {
     }>;
     submitVirtualTx(psbtBase64: string): Promise<string>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
-    registerInputsForNextRound(
-        inputs: VtxoInput[]
-    ): Promise<{ requestId: string }>;
+    registerIntent(intent: Intent): Promise<string>;
+    deleteIntent(intent: Intent): Promise<void>;
     confirmRegistration(intentId: string): Promise<void>;
     registerOutputsForNextRound(
         requestId: string,
@@ -334,41 +338,51 @@ export class RestArkProvider implements ArkProvider {
         };
     }
 
-    async registerInputsForNextRound(
-        inputs: VtxoInput[]
-    ): Promise<{ requestId: string }> {
-        const url = `${this.serverUrl}/v1/round/registerInputs`;
-        const vtxoInputs: ProtoTypes.Input[] = [];
-
-        for (const input of inputs) {
-            vtxoInputs.push({
-                outpoint: {
-                    txid: input.outpoint.txid,
-                    vout: input.outpoint.vout,
-                },
-                taprootTree: {
-                    scripts: input.tapscripts,
-                },
-            });
-        }
-
+    async registerIntent(intent: Intent): Promise<string> {
+        const url = `${this.serverUrl}/v1/round/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                inputs: vtxoInputs,
+                bip322Signature: {
+                    signature: intent.signature,
+                    message: intent.message,
+                },
             }),
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to register inputs: ${errorText}`);
+            throw new Error(`Failed to register intent: ${errorText}`);
         }
 
         const data = await response.json();
-        return { requestId: data.requestId };
+        return data.requestId;
+    }
+
+    async deleteIntent(intent: Intent): Promise<void> {
+        const url = `${this.serverUrl}/v1/round/deleteIntent`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                proof: {
+                    bip322Signature: {
+                        signature: intent.signature,
+                        message: intent.message,
+                    },
+                },
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to delete intent: ${errorText}`);
+        }
     }
 
     async registerOutputsForNextRound(
@@ -971,7 +985,6 @@ namespace ProtoTypes {
         signature: string;
     }
 
-    // Update the EventData interface to match the Golang structure
     export interface EventData {
         batchStarted?: BatchStartedEvent;
         roundFailed?: RoundFailed;

@@ -42,10 +42,7 @@ export interface Recipient {
 }
 
 export interface SettleParams {
-    inputs: (
-        | string
-        | ({ tapLeafScript: TapLeafScript } & Outpoint & EncodedVtxoScript)
-    )[];
+    inputs: (string | ExtendedCoin)[];
     outputs: Output[];
 }
 
@@ -125,14 +122,13 @@ export interface ArkTransaction {
 }
 
 // ExtendedCoin and ExtendedVirtualCoin contains the utxo/vtxo data along with the vtxo script locking it
-export type ExtendedCoin = {
-    tapLeafScript: TapLeafScript;
-} & EncodedVtxoScript &
-    Coin;
-export type ExtendedVirtualCoin = {
-    tapLeafScript: TapLeafScript;
-} & EncodedVtxoScript &
-    VirtualCoin;
+type tapLeaves = {
+    forfeitTapLeafScript: TapLeafScript;
+    intentTapLeafScript: TapLeafScript;
+};
+
+export type ExtendedCoin = tapLeaves & EncodedVtxoScript & Coin;
+export type ExtendedVirtualCoin = tapLeaves & EncodedVtxoScript & VirtualCoin;
 
 export interface IWallet {
     // Address and balance management

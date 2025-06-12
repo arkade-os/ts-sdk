@@ -1,19 +1,14 @@
 import { base64, hex } from "@scure/base";
+import * as bip68 from "bip68";
 import {
     Address,
     OutScript,
     P2TR,
     p2tr,
-    TAP_LEAF_VERSION,
     tapLeafHash,
 } from "@scure/btc-signer/payment";
 import { Transaction } from "@scure/btc-signer";
-import {
-    PSBTOutput,
-    TaprootControlBlock,
-    TransactionInput,
-    TransactionOutput,
-} from "@scure/btc-signer/psbt";
+import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../script/address";
@@ -26,7 +21,6 @@ import {
     OnchainProvider,
 } from "../providers/onchain";
 import {
-    ArkInfo,
     FinalizationEvent,
     SettlementEvent,
     SettlementEventType,
@@ -35,6 +29,7 @@ import {
     ArkProvider,
     RestArkProvider,
     BatchStartedEvent,
+    Intent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -57,14 +52,12 @@ import {
     WalletConfig,
 } from ".";
 import { Bytes, sha256 } from "@scure/btc-signer/utils";
-import { TapLeafScript, VtxoScript } from "../script/base";
+import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { createVirtualTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { TxTree } from "../tree/vtxoTree";
 import { BIP322 } from "../bip322";
-
-const TapTreeCoder = PSBTOutput.tapTree[2];
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -310,11 +303,13 @@ export class Wallet implements IWallet {
 
         const encodedOffchainTapscript = this.offchainTapscript.encode();
         const forfeit = this.offchainTapscript.forfeit();
+        const exit = this.offchainTapscript.exit();
 
         return spendableVtxos.map((vtxo) => ({
             ...vtxo,
-            tapLeafScript: forfeit,
-            scripts: encodedOffchainTapscript,
+            forfeitTapLeafScript: forfeit,
+            intentTapLeafScript: exit,
+            tapTree: encodedOffchainTapscript,
         }));
     }
 
@@ -455,11 +450,13 @@ export class Wallet implements IWallet {
 
         const encodedBoardingTapscript = this.boardingTapscript.encode();
         const forfeit = this.boardingTapscript.forfeit();
+        const exit = this.boardingTapscript.exit();
 
         return boardingUtxos.map((utxo) => ({
             ...utxo,
-            tapLeafScript: forfeit,
-            scripts: encodedBoardingTapscript,
+            forfeitTapLeafScript: forfeit,
+            intentTapLeafScript: exit,
+            tapTree: encodedBoardingTapscript,
         }));
     }
 
@@ -592,12 +589,12 @@ export class Wallet implements IWallet {
             });
         }
 
-        const scripts = this.offchainTapscript.encode();
+        const tapTree = this.offchainTapscript.encode();
         let tx = createVirtualTx(
             selected.inputs.map((input) => ({
                 ...input,
                 tapLeafScript: selectedLeaf,
-                scripts,
+                tapTree,
             })),
             outputs
         );
@@ -663,23 +660,29 @@ export class Wallet implements IWallet {
             };
         }
 
-        // register inputs
-        const { requestId: intentId } =
-            await this.arkProvider.registerInputsForNextRound(
-                params.inputs
-                    .filter((input) => typeof input !== "string")
-                    .map((input) => ({
-                        outpoint: {
-                            txid: input.txid,
-                            vout: input.vout,
-                        },
-                        tapscripts: input.scripts,
-                    }))
-            );
+        const onchainOutputIndexes: number[] = [];
+        const outputs: TransactionOutput[] = [];
+        let hasOffchainOutputs = false;
 
-        const hasOffchainOutputs = params.outputs.some((output) =>
-            this.isOffchainSuitable(output.address)
-        );
+        for (const [index, output] of params.outputs.entries()) {
+            let script: Bytes | undefined;
+            try {
+                // offchain
+                const addr = ArkAddress.decode(output.address);
+                script = addr.pkScript;
+                hasOffchainOutputs = true;
+            } catch {
+                // onchain
+                const addr = Address().decode(output.address);
+                script = OutScript.encode(addr);
+                onchainOutputIndexes.push(index);
+            }
+
+            outputs.push({
+                amount: output.amount,
+                script,
+            });
+        }
 
         // session holds the state of the musig2 signing process of the vtxo tree
         let session: SignerSession | undefined;
@@ -689,12 +692,17 @@ export class Wallet implements IWallet {
             signingPublicKeys.push(hex.encode(session.getPublicKey()));
         }
 
-        // register outputs
-        await this.arkProvider.registerOutputsForNextRound(
-            intentId,
-            params.outputs,
-            signingPublicKeys
-        );
+        const [intent, deleteIntent] = await Promise.all([
+            this.makeRegisterIntentSignature(
+                params.inputs,
+                outputs,
+                onchainOutputIndexes,
+                signingPublicKeys
+            ),
+            this.makeDeleteIntentSignature(params.inputs),
+        ]);
+
+        const intentId = await this.arkProvider.registerIntent(intent);
 
         const abortController = new AbortController();
         // listen to settlement events
@@ -863,7 +871,14 @@ export class Wallet implements IWallet {
                 }
             }
         } catch (error) {
+            // close the stream
             abortController.abort();
+            try {
+                // delete the intent to not be stuck in the queue
+                await this.arkProvider.deleteIntent(deleteIntent);
+            } catch (e) {
+                console.error("Failed to delete intent", e);
+            }
             throw error;
         }
 
@@ -1086,7 +1101,7 @@ export class Wallet implements IWallet {
 
                     // input found in the settlement tx, sign it
                     settlementPsbt.updateInput(i, {
-                        tapLeafScript: [input.tapLeafScript],
+                        tapLeafScript: [input.forfeitTapLeafScript],
                     });
                     inputIndexes.push(i);
                 }
@@ -1143,12 +1158,12 @@ export class Wallet implements IWallet {
                 connectorPkScript: connectorOutput.script,
                 vtxoAmount: BigInt(vtxo.value),
                 vtxoInput: input,
-                vtxoPkScript: VtxoScript.decode(input.scripts).pkScript,
+                vtxoPkScript: VtxoScript.decode(input.tapTree).pkScript,
             });
 
             // add the tapscript
             forfeitTx.updateInput(1, {
-                tapLeafScript: [input.tapLeafScript],
+                tapLeafScript: [input.forfeitTapLeafScript],
             });
 
             // do not sign the connector input
@@ -1166,53 +1181,60 @@ export class Wallet implements IWallet {
     }
 
     private async makeRegisterIntentSignature(
-        inputs: TransactionInput[],
-        tapLeafScripts: TapLeafScript[],
-        tapscripts: Map<number, string[]>, // input index -> revealed tapscripts
+        bip322Inputs: (string | ExtendedCoin)[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
-        cosignerPubKeys: string[],
-        notesWitnesses?: Map<number, Uint8Array[]> // index -> witness
-    ): Promise<{ signature: BIP322.Signature; message: string }> {
+        cosignerPubKeys: string[]
+    ): Promise<Intent> {
         const nowSeconds = Math.floor(Date.now() / 1000);
         const inputTapTrees: string[] = [];
+        const inputs: TransactionInput[] = [];
+        const notesWitnesses = new Map<string, Uint8Array[]>();
 
-        for (let i = 0; i < inputs.length; i++) {
-            const scripts = tapscripts.get(i);
-            if (!scripts) throw new Error("Tapscript not found for input");
+        for (const bip322Input of bip322Inputs) {
+            // note input
+            if (typeof bip322Input === "string") {
+                const note = ArkNote.fromString(bip322Input);
+                inputs.push(note.input);
+                inputTapTrees.push(hex.encode(note.vtxoScript.encode()));
+                notesWitnesses.set(hex.encode(note.input.txid!), note.witness);
+                continue;
+            }
 
-            const tapTree = TapTreeCoder.encode(
-                scripts.map((s) => {
-                    return {
-                        version: TAP_LEAF_VERSION,
-                        // TODO: allow multi-depth trees
-                        depth: 1,
-                        script: hex.decode(s),
-                    };
-                })
-            );
+            // vtxo input
+            const vtxoScript = VtxoScript.decode(bip322Input.tapTree);
 
-            inputTapTrees.push(hex.encode(tapTree));
+            const sequence = getSequence(bip322Input);
+
+            inputs.push({
+                txid: hex.decode(bip322Input.txid),
+                index: bip322Input.vout,
+                witnessUtxo: {
+                    amount: BigInt(bip322Input.value),
+                    script: vtxoScript.pkScript,
+                },
+                sequence,
+                tapLeafScript: [bip322Input.intentTapLeafScript],
+            });
+            inputTapTrees.push(hex.encode(bip322Input.tapTree));
         }
 
         const message = {
             type: "register",
+            input_tap_trees: inputTapTrees,
+            onchain_output_indexes: onchainOutputsIndexes,
             valid_at: nowSeconds,
             expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
-            onchain_output_indexes: onchainOutputsIndexes,
-            input_tap_trees: inputTapTrees,
             musig2_data: {
                 cosigners_public_keys: cosignerPubKeys,
                 signing_type: 1, // sign branch
             },
         };
 
-        const encodedMessage = JSON.stringify(message);
-
+        const encodedMessage = JSON.stringify(message, null, 0);
         const signature = await this.makeBIP322Signature(
             encodedMessage,
             inputs,
-            tapLeafScripts,
             outputs,
             notesWitnesses
         );
@@ -1224,9 +1246,7 @@ export class Wallet implements IWallet {
     }
 
     private async makeDeleteIntentSignature(
-        inputs: TransactionInput[],
-        tapLeafScripts: TapLeafScript[],
-        notesWitnesses?: Map<number, Uint8Array[]> // index -> witness
+        bip322Inputs: (string | ExtendedCoin)[]
     ): Promise<{ signature: BIP322.Signature; message: string }> {
         const nowSeconds = Math.floor(Date.now() / 1000);
         const message = {
@@ -1234,12 +1254,40 @@ export class Wallet implements IWallet {
             expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
         };
 
-        const encodedMessage = JSON.stringify(message);
+        const inputs: TransactionInput[] = [];
+        const notesWitnesses = new Map<string, Uint8Array[]>();
+
+        for (const bip322Input of bip322Inputs) {
+            // note input
+            if (typeof bip322Input === "string") {
+                const note = ArkNote.fromString(bip322Input);
+                inputs.push(note.input);
+                notesWitnesses.set(hex.encode(note.input.txid!), note.witness);
+                continue;
+            }
+
+            // vtxo input
+            const vtxoScript = VtxoScript.decode(bip322Input.tapTree);
+
+            const sequence = getSequence(bip322Input);
+
+            inputs.push({
+                txid: hex.decode(bip322Input.txid),
+                index: bip322Input.vout,
+                witnessUtxo: {
+                    amount: BigInt(bip322Input.value),
+                    script: vtxoScript.pkScript,
+                },
+                sequence,
+                tapLeafScript: [bip322Input.intentTapLeafScript],
+            });
+        }
+
+        const encodedMessage = JSON.stringify(message, null, 0);
 
         const signature = await this.makeBIP322Signature(
             encodedMessage,
             inputs,
-            tapLeafScripts,
             undefined,
             notesWitnesses
         );
@@ -1253,23 +1301,13 @@ export class Wallet implements IWallet {
     private async makeBIP322Signature(
         message: string,
         inputs: TransactionInput[],
-        tapLeafScripts: TapLeafScript[],
         outputs?: TransactionOutput[],
-        notesWitnesses?: Map<number, Uint8Array[]> // index -> witnesses
+        notesWitnesses?: Map<string, Uint8Array[]>
     ): Promise<BIP322.Signature> {
         const proof = BIP322.create(message, inputs, outputs);
 
-        // add the leaf proofs for the identity to sign
-        for (let i = 0; i < proof.inputsLength; i++) {
-            const tapLeafScript =
-                i === 0 ? tapLeafScripts[0] : tapLeafScripts[i - 1];
-            proof.updateInput(i, {
-                tapLeafScript: [tapLeafScript],
-            });
-        }
-
         const signedProof = await this.identity.sign(proof);
-        if (notesWitnesses) {
+        if (notesWitnesses && notesWitnesses.size) {
             return BIP322.signature(
                 signedProof,
                 finalizeWithNotes(notesWitnesses)
@@ -1282,11 +1320,13 @@ export class Wallet implements IWallet {
 
 // finalizer function for tx spending notes
 function finalizeWithNotes(
-    notesWitnesses: Map<number, Uint8Array[]>
+    notesWitnesses: Map<string, Uint8Array[]>
 ): (tx: BIP322.FullProof) => void {
     return function (tx) {
         for (let i = 0; i < tx.inputsLength; i++) {
-            const witness = notesWitnesses.get(i);
+            const inputTxid = tx.getInput(i === 0 ? 1 : i).txid;
+            if (!inputTxid) continue;
+            const witness = notesWitnesses.get(hex.encode(inputTxid));
             if (witness) {
                 tx.updateInput(i, {
                     finalScriptWitness: witness,
@@ -1298,4 +1338,24 @@ function finalizeWithNotes(
             tx.finalizeIdx(i);
         }
     };
+}
+
+function getSequence(bip322Input: ExtendedCoin): number | undefined {
+    let sequence: number | undefined = undefined;
+
+    try {
+        const scriptWithLeafVersion = bip322Input.intentTapLeafScript[1];
+        const script = scriptWithLeafVersion.subarray(
+            0,
+            scriptWithLeafVersion.length - 1
+        );
+        const params = CSVMultisigTapscript.decode(script).params;
+        sequence = bip68.encode(
+            params.timelock.type === "blocks"
+                ? { blocks: Number(params.timelock.value) }
+                : { seconds: Number(params.timelock.value) }
+        );
+    } catch {}
+
+    return sequence;
 }

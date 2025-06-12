@@ -1,16 +1,46 @@
 import { base58 } from "@scure/base";
+import { TaprootControlBlock, TransactionInput } from "@scure/btc-signer/psbt";
+import { VtxoScript } from "../script/base";
+import { Bytes, sha256 } from "@scure/btc-signer/utils";
+import { Script } from "@scure/btc-signer";
 
 export class ArkNote {
     static readonly DefaultHRP = "arknote";
     static readonly PreimageLength = 32; // 32 bytes for the preimage
     static readonly ValueLength = 4; // 4 bytes for the value
     static readonly Length = ArkNote.PreimageLength + ArkNote.ValueLength;
+    static readonly FakeOutpointIndex = 0;
+
+    readonly vtxoScript: VtxoScript;
+    readonly input: TransactionInput;
+    readonly witness: Uint8Array[];
 
     constructor(
         public preimage: Uint8Array,
         public value: number,
         public HRP = ArkNote.DefaultHRP
-    ) {}
+    ) {
+        const preimageHash = sha256(this.preimage);
+        this.vtxoScript = new VtxoScript([noteTapscript(preimageHash)]);
+
+        const leaf = this.vtxoScript.leaves[0];
+
+        this.input = {
+            txid: new Uint8Array(preimageHash).reverse(),
+            index: ArkNote.FakeOutpointIndex,
+            witnessUtxo: {
+                amount: BigInt(this.value),
+                script: this.vtxoScript.pkScript,
+            },
+            tapLeafScript: [leaf],
+        };
+
+        this.witness = [
+            this.preimage,
+            leaf[1].subarray(0, leaf[1].length - 1),
+            TaprootControlBlock.encode(leaf[0]),
+        ];
+    }
 
     encode(): Uint8Array {
         const result = new Uint8Array(ArkNote.Length);
@@ -63,4 +93,8 @@ function writeUInt32BE(array: Uint8Array, value: number, offset: number): void {
 function readUInt32BE(array: Uint8Array, offset: number): number {
     const view = new DataView(array.buffer, array.byteOffset + offset, 4);
     return view.getUint32(0, false);
+}
+
+function noteTapscript(preimageHash: Uint8Array): Bytes {
+    return Script.encode(["SHA256", preimageHash, "EQUAL"]);
 }

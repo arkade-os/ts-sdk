@@ -1,12 +1,13 @@
 import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer";
 import { Identity } from ".";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 
 const ZERO_32 = new Uint8Array(32).fill(0);
 
 export class InMemoryKey implements Identity {
+    static readonly ALLOWED_SIGHASH = [SigHash.ALL, SigHash.DEFAULT];
     private key: Uint8Array;
 
     private constructor(key: Uint8Array | undefined) {
@@ -25,14 +26,34 @@ export class InMemoryKey implements Identity {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
-            if (!txCpy.sign(this.key, undefined, ZERO_32)) {
-                throw new Error("Failed to sign transaction");
+            try {
+                if (
+                    !txCpy.sign(this.key, InMemoryKey.ALLOWED_SIGHASH, ZERO_32)
+                ) {
+                    throw new Error("Failed to sign transaction");
+                }
+            } catch (e) {
+                if (
+                    e instanceof Error &&
+                    e.message.includes("No inputs signed")
+                ) {
+                    // ignore
+                } else {
+                    throw e;
+                }
             }
             return txCpy;
         }
 
         for (const inputIndex of inputIndexes) {
-            if (!txCpy.signIdx(this.key, inputIndex, undefined, ZERO_32)) {
+            if (
+                !txCpy.signIdx(
+                    this.key,
+                    inputIndex,
+                    InMemoryKey.ALLOWED_SIGHASH,
+                    ZERO_32
+                )
+            ) {
                 throw new Error(`Failed to sign input #${inputIndex}`);
             }
         }
