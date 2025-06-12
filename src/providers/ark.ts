@@ -137,8 +137,8 @@ export interface ArkProvider {
     ): Promise<void>;
     ping(paymentID: string): Promise<void>;
     getEventStream(signal: AbortSignal): AsyncIterableIterator<SettlementEvent>;
-    subscribeForAddress(
-        address: string,
+    subscribeForScripts(
+        scripts: string[],
         abortSignal: AbortSignal
     ): AsyncIterableIterator<{
         newVtxos: VirtualCoin[];
@@ -169,7 +169,7 @@ export class RestArkProvider implements ArkProvider {
         spendableVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }> {
-        const url = `${this.serverUrl}/v1/vtxos/${address}`;
+        const url = `${this.serverUrl}/v1/getVtxos/${address}`;
         const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Failed to fetch VTXOs: ${response.statusText}`);
@@ -183,7 +183,7 @@ export class RestArkProvider implements ArkProvider {
     }
 
     async getRound(txid: string): Promise<Round> {
-        const url = `${this.serverUrl}/v1/round/${txid}`;
+        const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
         const response = await fetch(url);
         if (!response.ok) {
             throw new Error(`Failed to fetch round: ${response.statusText}`);
@@ -328,6 +328,11 @@ export class RestArkProvider implements ArkProvider {
                 });
             }
         }
+
+        console.log("hey", {
+            inputs: vtxoInputs,
+            notes: noteInputs,
+        });
 
         const response = await fetch(url, {
             method: "POST",
@@ -532,14 +537,30 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async *subscribeForAddress(
-        address: string,
+    async *subscribeForScripts(
+        scripts: string[],
         abortSignal: AbortSignal
     ): AsyncIterableIterator<{
         newVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }> {
-        const url = `${this.serverUrl}/v1/vtxos/${address}/subscribe`;
+        const response = await fetch(`${this.serverUrl}/v1/script/subscribe`, {
+            headers: {
+                Accept: "application/json",
+            },
+            method: "POST",
+            body: JSON.stringify({ scripts }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to subscribe to scripts: ${errorText}`);
+        }
+
+        const { subscriptionId } = await response.json();
+        if (!subscriptionId) throw new Error(`Subscription ID not found`);
+
+        const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
             try {

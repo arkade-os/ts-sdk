@@ -93,18 +93,15 @@ export class Worker {
         this.processVtxoSubscription(addressInfo.offchain);
     }
 
-    private async processVtxoSubscription({
-        address,
-        scripts,
-    }: VtxoTaprootAddress) {
+    private async processVtxoSubscription({ scripts }: VtxoTaprootAddress) {
         try {
             const addressScripts = [...scripts.exit, ...scripts.forfeit];
             const vtxoScript = DefaultVtxo.Script.decode(addressScripts);
             const tapLeafScript = vtxoScript.findLeaf(scripts.forfeit[0]);
 
             const abortController = new AbortController();
-            const subscription = this.arkProvider!.subscribeForAddress(
-                address,
+            const subscription = this.arkProvider!.subscribeForScripts(
+                addressScripts,
                 abortController.signal
             );
 
