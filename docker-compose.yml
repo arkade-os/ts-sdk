@@ -1,6 +1,23 @@
 services:
+  arkd-wallet:
+    build:
+      context: .
+      dockerfile: wallet.Dockerfile
+    container_name: arkd-wallet
+    ports:
+      - "6060:6060"
+    environment:
+      - ARK_WALLET_ESPLORA_URL=http://chopsticks:3000
+      - ARK_WALLET_NEUTRINO_PEER=bitcoin:18444
+      - ARK_WALLET_DATADIR=/app/data
+      - ARK_WALLET_NETWORK=regtest
+    volumes:
+      - type: tmpfs
+        target: /app/data
   arkd:
     container_name: arkd 
+    depends_on:
+      - arkd-wallet
     build: 
       context: .
       dockerfile: server.Dockerfile
@@ -17,6 +34,9 @@ services:
       - ARK_NO_TLS=true
       - ARK_NO_MACAROONS=true
       - ARK_DATADIR=/app/data
+      - ARK_EVENT_DB_TYPE=badger
+      - ARK_DB_TYPE=sqlite
+      - ARK_WALLET_ADDR=arkd-wallet:6060
       - ARK_ALLOW_ZERO_FEES=true
     ports:
       - "7070:7070"

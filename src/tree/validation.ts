@@ -104,7 +104,7 @@ export function validateVtxoTree(
     }
 
     // Check root input is connected to settlement tx
-    const rootNode = vtxoTree.levels[0][0];
+    const rootNode = vtxoTree.root();
     let rootTx: Transaction;
     try {
         rootTx = Transaction.fromPSBT(base64.decode(rootNode.tx));
@@ -138,7 +138,7 @@ export function validateVtxoTree(
         sumRootValue += output.amount;
     }
 
-    if (sumRootValue >= sharedOutputAmount) {
+    if (sumRootValue !== sharedOutputAmount) {
         throw ErrInvalidAmount;
     }
 
@@ -149,6 +149,7 @@ export function validateVtxoTree(
     // Validate each node in the tree
     for (const level of vtxoTree.levels) {
         for (const node of level) {
+            if (!node) throw ErrNodeTxEmpty;
             validateNode(vtxoTree, node, sweepTapTreeRoot);
         }
     }
@@ -226,7 +227,7 @@ function validateNode(
         }
 
         if (!parentOutput.amount) throw ErrInvalidAmount;
-        if (sumChildAmount >= parentOutput.amount) {
+        if (sumChildAmount !== parentOutput.amount) {
             throw ErrInvalidAmount;
         }
     }

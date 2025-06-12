@@ -131,7 +131,7 @@ async function setupArkServer() {
 // get argument
 const arg = process.argv[2];
 
-if (arg === "master") {
+if (arg === "docker") {
     arkdExec = "docker exec -t arkd";
 }
 

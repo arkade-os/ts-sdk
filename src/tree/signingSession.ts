@@ -97,6 +97,7 @@ export class TreeSignerSession implements SignerSession {
 
             for (let nodeIndex = 0; nodeIndex < level.length; nodeIndex++) {
                 const node = level[nodeIndex];
+                if (!node) throw new Error("empty node");
                 const tx = Transaction.fromPSBT(base64.decode(node.tx));
                 const sig = this.signPartial(tx, levelIndex, nodeIndex);
                 if (sig) {
@@ -199,6 +200,7 @@ export async function validateTreeSigs(
     // Iterate through each level of the tree
     for (const level of vtxoTree.levels) {
         for (const node of level) {
+            if (!node) throw new Error("empty node");
             // Parse the transaction
             const tx = Transaction.fromPSBT(base64.decode(node.tx));
             const input = tx.getInput(0);
@@ -272,6 +274,7 @@ function getPrevOutput(
     let parent = null;
     for (const level of vtxoTree.levels) {
         for (const node of level) {
+            if (!node) throw new Error("empty node");
             if (node.txid === parentTxID) {
                 parent = node;
                 break;
