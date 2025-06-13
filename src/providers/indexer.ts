@@ -84,26 +84,16 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async *subscribeForScripts(
         scripts: string[],
-        abortSignal: AbortSignal
+        abortSignal: AbortSignal,
+        subscriptionId?: string
     ): AsyncIterableIterator<{
         newVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }> {
-        const response = await fetch(`${this.serverUrl}/v1/script/subscribe`, {
-            headers: {
-                Accept: "application/json",
-            },
-            method: "POST",
-            body: JSON.stringify({ scripts }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to subscribe to scripts: ${errorText}`);
+        subscriptionId ||= await this.createSubscription(scripts);
+        if (!subscriptionId) {
+            throw new Error("Failed to create subscription");
         }
-
-        const { subscriptionId } = await response.json();
-        if (!subscriptionId) throw new Error(`Subscription ID not found`);
 
         const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
@@ -195,6 +185,26 @@ export class RestIndexerProvider implements IndexerProvider {
                 }))
             )
         );
+    }
+
+    private async createSubscription(scripts: string[]): Promise<string> {
+        const url = `${this.serverUrl}/v1/script/subscribe`;
+        const response = await fetch(url, {
+            headers: {
+                Accept: "application/json",
+            },
+            method: "POST",
+            body: JSON.stringify({ scripts }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to subscribe to scripts: ${errorText}`);
+        }
+
+        const { subscriptionId } = await response.json();
+        if (!subscriptionId) throw new Error(`Subscription ID not found`);
+        return subscriptionId;
     }
 }
 
