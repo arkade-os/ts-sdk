@@ -205,8 +205,12 @@ export class RestArkProvider implements ArkProvider {
         const data = await response.json();
 
         return {
-            spendableVtxos: [...(data.spendableVtxos || [])].map(convertVtxo),
-            spentVtxos: [...(data.spentVtxos || [])].map(convertVtxo),
+            spendableVtxos: [...(data.vtxos || [])]
+                .filter((v) => !v.isSpent)
+                .map(convertVtxo),
+            spentVtxos: [...(data.vtxos || [])]
+                .filter((v) => !v.isSpent)
+                .map(convertVtxo),
         };
     }
 
