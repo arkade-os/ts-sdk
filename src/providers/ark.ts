@@ -352,11 +352,6 @@ export class RestArkProvider implements ArkProvider {
             });
         }
 
-        console.log("hey", {
-            inputs: vtxoInputs,
-            notes: noteInputs,
-        });
-
         const response = await fetch(url, {
             method: "POST",
             headers: {
