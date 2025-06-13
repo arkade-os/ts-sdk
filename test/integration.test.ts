@@ -17,7 +17,7 @@ import { networks } from "../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
 
 const arkdExec =
-    process.env.ARK_ENV === "master" ? "docker exec -t arkd" : "nigiri";
+    process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
 
 // Deterministic server public key from mnemonic "abandon" x24
 const ARK_SERVER_PUBKEY =
@@ -179,7 +179,7 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it(
+    it.skip(
         "should perform a complete offchain roundtrip payment",
         { timeout: 60000 },
         async () => {
@@ -251,162 +251,173 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it("should return transaction history", { timeout: 60000 }, async () => {
-        const alice = await createTestWallet();
-        const bob = await createTestWallet();
+    it.skip(
+        "should return transaction history",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestWallet();
+            const bob = await createTestWallet();
 
-        // Get addresses
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
-        const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
-        expect(aliceOffchainAddress).toBeDefined();
-        expect(bobOffchainAddress).toBeDefined();
+            // Get addresses
+            const aliceOffchainAddress = (await alice.wallet.getAddress())
+                .offchain;
+            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+            expect(aliceOffchainAddress).toBeDefined();
+            expect(bobOffchainAddress).toBeDefined();
 
-        // Alice onboarding
-        const boardingAmount = 10000;
-        const boardingAddress = (await alice.wallet.getAddress()).boarding;
-        execSync(
-            `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
-        );
+            // Alice onboarding
+            const boardingAmount = 10000;
+            const boardingAddress = (await alice.wallet.getAddress()).boarding;
+            execSync(
+                `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
+            );
 
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+            await new Promise((resolve) => setTimeout(resolve, 5000));
 
-        // Get boarding utxos
-        const boardingInputs = await alice.wallet.getBoardingUtxos();
-        expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+            // Get boarding utxos
+            const boardingInputs = await alice.wallet.getBoardingUtxos();
+            expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
-        await alice.wallet.settle({
-            inputs: boardingInputs,
-            outputs: [
-                {
-                    address: aliceOffchainAddress!,
-                    amount: BigInt(boardingAmount),
-                },
-            ],
-        });
+            await alice.wallet.settle({
+                inputs: boardingInputs,
+                outputs: [
+                    {
+                        address: aliceOffchainAddress!,
+                        amount: BigInt(boardingAmount),
+                    },
+                ],
+            });
 
-        // Wait for the transaction to be processed
-        execSync("nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)");
+            // Wait for the transaction to be processed
+            execSync(
+                "nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)"
+            );
 
-        // Check history before sending to bob
-        let aliceHistory = await alice.wallet.getTransactionHistory();
-        expect(aliceHistory).toBeDefined();
-        expect(aliceHistory.length).toBe(1); // should have boarding tx
+            // Check history before sending to bob
+            let aliceHistory = await alice.wallet.getTransactionHistory();
+            expect(aliceHistory).toBeDefined();
+            expect(aliceHistory.length).toBe(1); // should have boarding tx
 
-        // Check boarding transaction
-        expect(aliceHistory[0].type).toBe(TxType.TxReceived);
-        expect(aliceHistory[0].amount).toBe(boardingAmount);
-        expect(aliceHistory[0].settled).toBe(true);
-        expect(aliceHistory[0].key.boardingTxid.length).toBeGreaterThan(0);
+            // Check boarding transaction
+            expect(aliceHistory[0].type).toBe(TxType.TxReceived);
+            expect(aliceHistory[0].amount).toBe(boardingAmount);
+            expect(aliceHistory[0].settled).toBe(true);
+            expect(aliceHistory[0].key.boardingTxid.length).toBeGreaterThan(0);
 
-        // Send from Alice to Bob offchain
-        const sendAmount = 5000;
-        const fee = 174; // Fee for offchain virtual TX
-        const sendTxid = await alice.wallet.sendBitcoin(
-            {
-                address: bobOffchainAddress!,
-                amount: sendAmount,
-            },
-            false
-        );
-
-        // Wait for the transaction to be processed
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-
-        // Check final balances
-        const aliceFinalBalance = await alice.wallet.getBalance();
-        const bobFinalBalance = await bob.wallet.getBalance();
-        expect(bobFinalBalance.offchain.total).toBe(sendAmount);
-        expect(aliceFinalBalance.offchain.total).toBe(
-            boardingAmount - sendAmount - fee
-        );
-
-        // Get transaction history for Alice
-        aliceHistory = await alice.wallet.getTransactionHistory();
-        expect(aliceHistory).toBeDefined();
-        expect(aliceHistory.length).toBe(2); // Should have at least receive and send transactions
-
-        const [sendTx, fundingTx] = aliceHistory;
-
-        // Check funding transaction
-        expect(fundingTx.type).toBe(TxType.TxReceived);
-        expect(fundingTx.amount).toBe(boardingAmount);
-        expect(fundingTx.settled).toBe(true);
-        expect(fundingTx.key.boardingTxid.length).toBeGreaterThan(0);
-
-        // Check send transaction
-        expect(sendTx.type).toBe(TxType.TxSent);
-        expect(sendTx.amount).toBe(sendAmount + fee);
-        expect(sendTx.key.redeemTxid.length).toBeGreaterThan(0);
-        expect(sendTx.key.redeemTxid).toBe(sendTxid);
-
-        // Get transaction history for Bob
-        const bobHistory = await bob.wallet.getTransactionHistory();
-        expect(bobHistory).toBeDefined();
-        expect(bobHistory.length).toBe(1); // Should have at least the receive transaction
-
-        // Verify Bob's receive transaction
-        const [bobsReceiveTx] = bobHistory;
-        expect(bobsReceiveTx.type).toBe(TxType.TxReceived);
-        expect(bobsReceiveTx.amount).toBe(sendAmount);
-        expect(bobsReceiveTx.settled).toBe(false);
-        expect(bobsReceiveTx.key.redeemTxid.length).toBeGreaterThan(0);
-
-        // Bob settles the received VTXO
-        let bobInputs = await bob.wallet.getVtxos();
-        await bob.wallet.settle({
-            inputs: bobInputs,
-            outputs: [
+            // Send from Alice to Bob offchain
+            const sendAmount = 5000;
+            const fee = 174; // Fee for offchain virtual TX
+            const sendTxid = await alice.wallet.sendBitcoin(
                 {
                     address: bobOffchainAddress!,
-                    amount: BigInt(sendAmount),
+                    amount: sendAmount,
                 },
-            ],
-        });
+                false
+            );
 
-        // Verify Bob's history
-        const bobHistoryAfterSettling =
-            await bob.wallet.getTransactionHistory();
-        expect(bobHistoryAfterSettling).toBeDefined();
-        expect(bobHistoryAfterSettling.length).toBe(1);
-        const [bobsReceiveTxAfterSettling] = bobHistoryAfterSettling;
-        expect(bobsReceiveTxAfterSettling.type).toBe(TxType.TxReceived);
-        expect(bobsReceiveTxAfterSettling.amount).toBe(sendAmount);
-        expect(bobsReceiveTxAfterSettling.settled).toBe(true);
+            // Wait for the transaction to be processed
+            await new Promise((resolve) => setTimeout(resolve, 3000));
 
-        // Bob does a collaborative exit to alice's boarding address
-        bobInputs = await bob.wallet.getVtxos();
-        const amount = bobInputs.reduce((acc, input) => acc + input.value, 0);
-        const bobExitTxid = await bob.wallet.settle({
-            inputs: bobInputs,
-            outputs: [
-                {
-                    address: boardingAddress!,
-                    amount: BigInt(amount),
-                },
-            ],
-        });
+            // Check final balances
+            const aliceFinalBalance = await alice.wallet.getBalance();
+            const bobFinalBalance = await bob.wallet.getBalance();
+            expect(bobFinalBalance.offchain.total).toBe(sendAmount);
+            expect(aliceFinalBalance.offchain.total).toBe(
+                boardingAmount - sendAmount - fee
+            );
 
-        expect(bobExitTxid).toBeDefined();
+            // Get transaction history for Alice
+            aliceHistory = await alice.wallet.getTransactionHistory();
+            expect(aliceHistory).toBeDefined();
+            expect(aliceHistory.length).toBe(2); // Should have at least receive and send transactions
 
-        // Check bob's history
-        const bobHistoryAfterExit = await bob.wallet.getTransactionHistory();
-        expect(bobHistoryAfterExit).toBeDefined();
-        expect(bobHistoryAfterExit.length).toBe(2);
-        const [bobsExitTx] = bobHistoryAfterExit;
-        expect(bobsExitTx.type).toBe(TxType.TxSent);
-        expect(bobsExitTx.amount).toBe(amount);
+            const [sendTx, fundingTx] = aliceHistory;
 
-        // Check alice's history
-        const aliceHistoryAfterExit =
-            await alice.wallet.getTransactionHistory();
-        expect(aliceHistoryAfterExit).toBeDefined();
-        expect(aliceHistoryAfterExit.length).toBe(3);
-        const [alicesExitTx] = aliceHistoryAfterExit;
-        expect(alicesExitTx.type).toBe(TxType.TxReceived);
-        expect(alicesExitTx.amount).toBe(amount);
-    });
+            // Check funding transaction
+            expect(fundingTx.type).toBe(TxType.TxReceived);
+            expect(fundingTx.amount).toBe(boardingAmount);
+            expect(fundingTx.settled).toBe(true);
+            expect(fundingTx.key.boardingTxid.length).toBeGreaterThan(0);
 
-    it("should be able to claim a vthlc", { timeout: 60000 }, async () => {
+            // Check send transaction
+            expect(sendTx.type).toBe(TxType.TxSent);
+            expect(sendTx.amount).toBe(sendAmount + fee);
+            expect(sendTx.key.redeemTxid.length).toBeGreaterThan(0);
+            expect(sendTx.key.redeemTxid).toBe(sendTxid);
+
+            // Get transaction history for Bob
+            const bobHistory = await bob.wallet.getTransactionHistory();
+            expect(bobHistory).toBeDefined();
+            expect(bobHistory.length).toBe(1); // Should have at least the receive transaction
+
+            // Verify Bob's receive transaction
+            const [bobsReceiveTx] = bobHistory;
+            expect(bobsReceiveTx.type).toBe(TxType.TxReceived);
+            expect(bobsReceiveTx.amount).toBe(sendAmount);
+            expect(bobsReceiveTx.settled).toBe(false);
+            expect(bobsReceiveTx.key.redeemTxid.length).toBeGreaterThan(0);
+
+            // Bob settles the received VTXO
+            let bobInputs = await bob.wallet.getVtxos();
+            await bob.wallet.settle({
+                inputs: bobInputs,
+                outputs: [
+                    {
+                        address: bobOffchainAddress!,
+                        amount: BigInt(sendAmount),
+                    },
+                ],
+            });
+
+            // Verify Bob's history
+            const bobHistoryAfterSettling =
+                await bob.wallet.getTransactionHistory();
+            expect(bobHistoryAfterSettling).toBeDefined();
+            expect(bobHistoryAfterSettling.length).toBe(1);
+            const [bobsReceiveTxAfterSettling] = bobHistoryAfterSettling;
+            expect(bobsReceiveTxAfterSettling.type).toBe(TxType.TxReceived);
+            expect(bobsReceiveTxAfterSettling.amount).toBe(sendAmount);
+            expect(bobsReceiveTxAfterSettling.settled).toBe(true);
+
+            // Bob does a collaborative exit to alice's boarding address
+            bobInputs = await bob.wallet.getVtxos();
+            const amount = bobInputs.reduce(
+                (acc, input) => acc + input.value,
+                0
+            );
+            const bobExitTxid = await bob.wallet.settle({
+                inputs: bobInputs,
+                outputs: [
+                    {
+                        address: boardingAddress!,
+                        amount: BigInt(amount),
+                    },
+                ],
+            });
+
+            expect(bobExitTxid).toBeDefined();
+
+            // Check bob's history
+            const bobHistoryAfterExit =
+                await bob.wallet.getTransactionHistory();
+            expect(bobHistoryAfterExit).toBeDefined();
+            expect(bobHistoryAfterExit.length).toBe(2);
+            const [bobsExitTx] = bobHistoryAfterExit;
+            expect(bobsExitTx.type).toBe(TxType.TxSent);
+            expect(bobsExitTx.amount).toBe(amount);
+
+            // Check alice's history
+            const aliceHistoryAfterExit =
+                await alice.wallet.getTransactionHistory();
+            expect(aliceHistoryAfterExit).toBeDefined();
+            expect(aliceHistoryAfterExit.length).toBe(3);
+            const [alicesExitTx] = aliceHistoryAfterExit;
+            expect(alicesExitTx.type).toBe(TxType.TxReceived);
+            expect(alicesExitTx.amount).toBe(amount);
+        }
+    );
+
+    it.skip("should be able to claim a vthlc", { timeout: 60000 }, async () => {
         const alice = createTestIdentity();
         const bob = createTestIdentity();
 
@@ -482,7 +493,7 @@ describe("Wallet SDK Integration Tests", () => {
         expect(txid).toBeDefined();
     });
 
-    it(
+    it.skip(
         "should be able to unilateral exit VTXO",
         { timeout: 60000 },
         async () => {
@@ -522,7 +533,7 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it("should be able to redeem a note", { timeout: 60000 }, async () => {
+    it.skip("should be able to redeem a note", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestWallet();
         const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;

@@ -33,6 +33,7 @@ export class ArkNote {
     }
 
     static fromString(noteStr: string, hrp = ArkNote.DefaultHRP): ArkNote {
+        noteStr = noteStr.trim();
         if (!noteStr.startsWith(hrp)) {
             throw new Error(
                 `invalid human-readable part: expected ${hrp} prefix (note '${noteStr}')`
@@ -46,7 +47,7 @@ export class ArkNote {
             throw new Error("failed to decode base58 string");
         }
 
-        return ArkNote.decode(new Uint8Array(decoded), hrp);
+        return ArkNote.decode(decoded, hrp);
     }
 
     toString(): string {
