@@ -52,7 +52,7 @@ jobs:
         use_ln: false
 
     - name: Run arkd master
-      run: pnpm run test:up
+      run: pnpm run test:up-docker
 
     - name: Run setup script
       run: pnpm test:setup-docker
