@@ -117,18 +117,26 @@ new Worker().start()
 ```typescript
 // specify the path to the service worker file
 // this will automatically register the service worker
-const wallet = await ServiceWorkerWallet.create('/service-worker.js')
+const serviceWorker = await setupServiceWorker('/service-worker.js')
+const wallet = new ServiceWorkerWallet(serviceWorker)
 
 // initialize the wallet
 await wallet.init({
   network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
-  identity: identity,
+  privateKey: 'your_private_key_hex',
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://mutinynet.arkade.sh',
   arkServerPublicKey: 'fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d'
 })
+
+// check service worker status
+const status = await wallet.getStatus()
+console.log('Service worker status:', status.walletInitialized)
+
+// clear wallet data stored in the service worker memory
+await wallet.clear()
 ```
 
 ## API Reference
@@ -149,6 +157,10 @@ interface WalletConfig {
   arkServerUrl?: string;
   /** Ark server public key (optional) */
   arkServerPublicKey?: string;
+  /** Optional boarding timelock configuration */
+  boardingTimelock?: RelativeTimelock;
+  /** Optional exit timelock configuration */
+  exitTimelock?: RelativeTimelock;
 }
 ```
 
@@ -175,7 +187,9 @@ interface IWallet {
       total: number;
       settled: number;
       pending: number;
+      swept: number;
     };
+    total: number;
   }>;
 
   /** Send bitcoin (on-chain or off-chain) */
@@ -183,7 +197,8 @@ interface IWallet {
     address: string;
     amount: number;
     feeRate?: number;
-  }, onchain?: boolean): Promise<string>;
+    memo?: string;
+  }, zeroFee?: boolean): Promise<string>;
 
   /** Get virtual UTXOs */
   getVtxos(): Promise<VirtualCoin[]>;
@@ -228,6 +243,8 @@ interface VirtualCoin {
   virtualStatus: {
     state: 'pending' | 'settled';
   };
+  spentBy?: string;
+  createdAt: Date;
 }
 
 /** Boarding UTXO */
