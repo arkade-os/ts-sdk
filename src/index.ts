@@ -42,11 +42,12 @@ import {
     MultisigTapscript,
     TapscriptType,
 } from "./script/tapscript";
+import { buildOffchainTx, VirtualTxInput, OffchainTx } from "./utils/psbt";
 import {
     addConditionWitness,
     CONDITION_WITNESS_KEY_PREFIX,
-    createVirtualTx,
-} from "./utils/psbt";
+} from "./utils/unknownFields";
+import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
@@ -88,7 +89,7 @@ export {
     // Utils
     addConditionWitness,
     CONDITION_WITNESS_KEY_PREFIX,
-    createVirtualTx,
+    buildOffchainTx,
 
     // Arknote
     ArkNote,
@@ -98,6 +99,9 @@ export {
 
     // Database
     IndexedDBVtxoRepository,
+
+    // BIP322
+    BIP322,
 };
 
 // Type exports
@@ -125,4 +129,6 @@ export type {
     TxKey,
     TapscriptType,
     VtxoRepository,
+    VirtualTxInput,
+    OffchainTx,
 };

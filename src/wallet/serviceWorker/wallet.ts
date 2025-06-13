@@ -301,14 +301,10 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async sendBitcoin(
-        params: SendBitcoinParams,
-        zeroFee?: boolean
-    ): Promise<string> {
+    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         const message: Request.SendBitcoin = {
             type: "SEND_BITCOIN",
             params,
-            zeroFee,
             id: getRandomId(),
         };
 

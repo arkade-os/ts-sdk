@@ -125,7 +125,6 @@ export namespace Request {
     export interface SendBitcoin extends Base {
         type: "SEND_BITCOIN";
         params: SendBitcoinParams;
-        zeroFee?: boolean;
     }
 
     export function isSendBitcoin(message: Base): message is SendBitcoin {

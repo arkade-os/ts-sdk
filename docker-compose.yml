@@ -37,7 +37,7 @@ services:
       - ARK_EVENT_DB_TYPE=badger
       - ARK_DB_TYPE=sqlite
       - ARK_WALLET_ADDR=arkd-wallet:6060
-      - ARK_ALLOW_ZERO_FEES=true
+      - ARK_UNILATERAL_EXIT_DELAY=512
     ports:
       - "7070:7070"
     volumes:
