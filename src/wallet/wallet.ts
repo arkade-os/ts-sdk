@@ -63,6 +63,7 @@ import { createVirtualTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { TxTree } from "../tree/vtxoTree";
 import { BIP322 } from "../bip322";
+import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 
 const TapTreeCoder = PSBTOutput.tapTree[2];
 
@@ -78,6 +79,7 @@ export class Wallet implements IWallet {
         private onchainProvider: OnchainProvider,
         private onchainP2TR: P2TR,
         private arkProvider?: ArkProvider,
+        private indexerProvider?: IndexerProvider,
         private arkServerPublicKey?: Bytes,
         readonly offchainTapscript?: DefaultVtxo.Script,
         readonly boardingTapscript?: DefaultVtxo.Script
@@ -98,6 +100,11 @@ export class Wallet implements IWallet {
         let arkProvider: ArkProvider | undefined;
         if (config.arkServerUrl) {
             arkProvider = new RestArkProvider(config.arkServerUrl);
+        }
+
+        let indexerProvider: IndexerProvider | undefined;
+        if (config.arkServerUrl) {
+            indexerProvider = new RestIndexerProvider(config.arkServerUrl);
         }
 
         // Save onchain Taproot address key-path only
@@ -140,6 +147,7 @@ export class Wallet implements IWallet {
                 onchainProvider,
                 onchainP2TR,
                 arkProvider,
+                indexerProvider,
                 serverPubKey,
                 offchainTapscript,
                 boardingTapscript
@@ -254,11 +262,11 @@ export class Wallet implements IWallet {
             .reduce((sum, coin) => sum + coin.value, 0);
         const onchainTotal = onchainConfirmed + onchainUnconfirmed;
 
-        // Get offchain coins if Ark provider is configured
+        // Get offchain coins if Indexer provider is configured
         let offchainSettled = 0;
         let offchainPending = 0;
         let offchainSwept = 0;
-        if (this.arkProvider) {
+        if (this.indexerProvider) {
             const vtxos = await this.getVirtualCoins();
             offchainSettled = vtxos
                 .filter((coin) => coin.virtualStatus.state === "settled")
@@ -295,7 +303,11 @@ export class Wallet implements IWallet {
     }
 
     async getVtxos(): Promise<ExtendedVirtualCoin[]> {
-        if (!this.arkProvider || !this.offchainTapscript) {
+        if (
+            !this.arkProvider ||
+            !this.indexerProvider ||
+            !this.offchainTapscript
+        ) {
             return [];
         }
 
@@ -304,7 +316,7 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const { spendableVtxos } = await this.arkProvider.getVirtualCoins(
+        const { spendableVtxos } = await this.indexerProvider.getVirtualCoins(
             address.offchain
         );
 
@@ -319,7 +331,7 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(): Promise<VirtualCoin[]> {
-        if (!this.arkProvider) {
+        if (!this.indexerProvider) {
             return [];
         }
 
@@ -328,18 +340,18 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        return this.arkProvider
+        return this.indexerProvider
             .getVirtualCoins(address.offchain)
             .then(({ spendableVtxos }) => spendableVtxos);
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        if (!this.arkProvider) {
+        if (!this.indexerProvider) {
             return [];
         }
 
         const { spendableVtxos, spentVtxos } =
-            await this.arkProvider.getVirtualCoins(
+            await this.indexerProvider.getVirtualCoins(
                 this.offchainAddress.encode()
             );
         const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
@@ -553,6 +565,7 @@ export class Wallet implements IWallet {
     ): Promise<string> {
         if (
             !this.arkProvider ||
+            !this.indexerProvider ||
             !this.offchainAddress ||
             !this.offchainTapscript
         ) {
@@ -873,7 +886,7 @@ export class Wallet implements IWallet {
     async exit(outpoints?: Outpoint[]): Promise<void> {
         // TODO store the exit branches in repository
         // exit should not depend on the ark provider
-        if (!this.arkProvider) {
+        if (!this.indexerProvider || !this.onchainProvider) {
             throw new Error("Ark provider not configured");
         }
         let vtxos = await this.getVtxos();
@@ -898,7 +911,8 @@ export class Wallet implements IWallet {
             const batchTxid = vtxo.virtualStatus.batchTxID;
             if (!batchTxid) continue;
             if (!trees.has(batchTxid)) {
-                const round = await this.arkProvider.getRound(batchTxid);
+                const round =
+                    await this.indexerProvider.GetCommitmentTx(batchTxid);
                 trees.set(batchTxid, round.vtxoTree);
             }
 
