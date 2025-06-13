@@ -209,7 +209,7 @@ export class RestArkProvider implements ArkProvider {
                 .filter((v) => !v.isSpent)
                 .map(convertVtxo),
             spentVtxos: [...(data.vtxos || [])]
-                .filter((v) => !v.isSpent)
+                .filter((v) => v.isSpent)
                 .map(convertVtxo),
         };
     }
