@@ -54,7 +54,7 @@ import {
 import { Bytes, sha256 } from "@scure/btc-signer/utils";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { createVirtualTx } from "../utils/psbt";
+import { buildOffchainTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { TxTree } from "../tree/vtxoTree";
 import { BIP322 } from "../bip322";
@@ -73,7 +73,8 @@ export class Wallet implements IWallet {
         private arkProvider?: ArkProvider,
         private arkServerPublicKey?: Bytes,
         readonly offchainTapscript?: DefaultVtxo.Script,
-        readonly boardingTapscript?: DefaultVtxo.Script
+        readonly boardingTapscript?: DefaultVtxo.Script,
+        readonly serverUnrollScript?: CSVMultisigTapscript.Type
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -103,11 +104,11 @@ export class Wallet implements IWallet {
                     `The Ark Server URL expects ${info.network} but ${config.network} was configured`
                 );
             }
-            const exitTimelock = {
+            const exitTimelock: RelativeTimelock = {
                 value: info.unilateralExitDelay,
                 type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
             };
-            const boardingTimelock = {
+            const boardingTimelock: RelativeTimelock = {
                 value: info.boardingExitDelay,
                 type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
             };
@@ -116,16 +117,22 @@ export class Wallet implements IWallet {
             const bareVtxoTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: exitTimelock as RelativeTimelock,
+                csvTimelock: exitTimelock,
             });
             const boardingTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
-                csvTimelock: boardingTimelock as RelativeTimelock,
+                csvTimelock: boardingTimelock,
             });
 
             // Save tapscripts
             const offchainTapscript = bareVtxoTapscript;
+
+            // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
+            const serverUnrollScript = CSVMultisigTapscript.encode({
+                timelock: exitTimelock,
+                pubkeys: [serverPubKey],
+            });
 
             return new Wallet(
                 config.identity,
@@ -135,7 +142,8 @@ export class Wallet implements IWallet {
                 arkProvider,
                 serverPubKey,
                 offchainTapscript,
-                boardingTapscript
+                boardingTapscript,
+                serverUnrollScript
             );
         }
 
@@ -460,10 +468,7 @@ export class Wallet implements IWallet {
         }));
     }
 
-    async sendBitcoin(
-        params: SendBitcoinParams,
-        zeroFee: boolean = true
-    ): Promise<string> {
+    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }
@@ -474,7 +479,7 @@ export class Wallet implements IWallet {
 
         // If Ark is configured and amount is suitable, send via offchain
         if (this.arkProvider && this.isOffchainSuitable(params.address)) {
-            return this.sendOffchain(params, zeroFee);
+            return this.sendOffchain(params);
         }
 
         // Otherwise, send via onchain
@@ -544,26 +549,19 @@ export class Wallet implements IWallet {
         return txid;
     }
 
-    private async sendOffchain(
-        params: SendBitcoinParams,
-        zeroFee: boolean = true
-    ): Promise<string> {
+    private async sendOffchain(params: SendBitcoinParams): Promise<string> {
         if (
             !this.arkProvider ||
             !this.offchainAddress ||
-            !this.offchainTapscript
+            !this.offchainTapscript ||
+            !this.serverUnrollScript
         ) {
             throw new Error("wallet not initialized");
         }
 
         const virtualCoins = await this.getVirtualCoins();
 
-        const estimatedFee = zeroFee
-            ? 0
-            : Math.ceil(174 * (params.feeRate || Wallet.FEE_RATE));
-        const totalNeeded = params.amount + estimatedFee;
-
-        const selected = selectVirtualCoins(virtualCoins, totalNeeded);
+        const selected = selectVirtualCoins(virtualCoins, params.amount);
 
         if (!selected || !selected.inputs) {
             throw new Error("Insufficient funds");
@@ -574,9 +572,9 @@ export class Wallet implements IWallet {
             throw new Error("Selected leaf not found");
         }
 
-        const outputs = [
+        const outputs: TransactionOutput[] = [
             {
-                address: params.address,
+                script: ArkAddress.decode(params.address).pkScript,
                 amount: BigInt(params.amount),
             },
         ];
@@ -584,25 +582,43 @@ export class Wallet implements IWallet {
         // add change output if needed
         if (selected.changeAmount > 0) {
             outputs.push({
-                address: this.offchainAddress.encode(),
+                script: this.offchainAddress.pkScript,
                 amount: BigInt(selected.changeAmount),
             });
         }
 
         const tapTree = this.offchainTapscript.encode();
-        let tx = createVirtualTx(
+        let offchainTx = buildOffchainTx(
             selected.inputs.map((input) => ({
                 ...input,
                 tapLeafScript: selectedLeaf,
                 tapTree,
             })),
-            outputs
+            outputs,
+            this.serverUnrollScript
         );
 
-        tx = await this.identity.sign(tx);
-        const psbt = base64.encode(tx.toPSBT());
+        const signedVirtualTx = await this.identity.sign(offchainTx.virtualTx);
 
-        return this.arkProvider.submitVirtualTx(psbt);
+        const { txid, signedCheckpoints } =
+            await this.arkProvider.submitOffchainTx(
+                base64.encode(signedVirtualTx.toPSBT()),
+                offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
+            );
+        // TODO persist final virtual tx and checkpoints to repository
+
+        // sign the checkpoints
+        const finalCheckpoints = await Promise.all(
+            signedCheckpoints.map(async (c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c));
+                const signedCheckpoint = await this.identity.sign(tx);
+                return base64.encode(signedCheckpoint.toPSBT());
+            })
+        );
+
+        await this.arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+
+        return txid;
     }
 
     async settle(
@@ -673,7 +689,7 @@ export class Wallet implements IWallet {
                 hasOffchainOutputs = true;
             } catch {
                 // onchain
-                const addr = Address().decode(output.address);
+                const addr = Address(this.network).decode(output.address);
                 script = OutScript.encode(addr);
                 onchainOutputIndexes.push(index);
             }

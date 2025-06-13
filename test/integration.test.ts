@@ -11,7 +11,8 @@ import {
     Identity,
     addConditionWitness,
     RestArkProvider,
-    createVirtualTx,
+    buildOffchainTx,
+    CSVMultisigTapscript,
 } from "../src";
 import { networks } from "../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -179,7 +180,7 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it.skip(
+    it(
         "should perform a complete offchain roundtrip payment",
         { timeout: 60000 },
         async () => {
@@ -228,14 +229,10 @@ describe("Wallet SDK Integration Tests", () => {
 
             // Send from Alice to Bob offchain
             const sendAmount = 5000; // 5k sats instead of 50k
-            const fee = 174; // Fee for offchain virtual TX
-            await alice.wallet.sendBitcoin(
-                {
-                    address: bobOffchainAddress!,
-                    amount: sendAmount,
-                },
-                false
-            );
+            await alice.wallet.sendBitcoin({
+                address: bobOffchainAddress!,
+                amount: sendAmount,
+            });
 
             // Wait for the transaction to be processed
             await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -246,7 +243,7 @@ describe("Wallet SDK Integration Tests", () => {
             // Verify the transaction was successful
             expect(bobFinalBalance.offchain.total).toBe(sendAmount);
             expect(aliceFinalBalance.offchain.total).toBe(
-                fundAmount - sendAmount - fee
+                fundAmount - sendAmount
             );
         }
     );
@@ -306,14 +303,10 @@ describe("Wallet SDK Integration Tests", () => {
 
             // Send from Alice to Bob offchain
             const sendAmount = 5000;
-            const fee = 174; // Fee for offchain virtual TX
-            const sendTxid = await alice.wallet.sendBitcoin(
-                {
-                    address: bobOffchainAddress!,
-                    amount: sendAmount,
-                },
-                false
-            );
+            const sendTxid = await alice.wallet.sendBitcoin({
+                address: bobOffchainAddress!,
+                amount: sendAmount,
+            });
 
             // Wait for the transaction to be processed
             await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -323,7 +316,7 @@ describe("Wallet SDK Integration Tests", () => {
             const bobFinalBalance = await bob.wallet.getBalance();
             expect(bobFinalBalance.offchain.total).toBe(sendAmount);
             expect(aliceFinalBalance.offchain.total).toBe(
-                boardingAmount - sendAmount - fee
+                boardingAmount - sendAmount
             );
 
             // Get transaction history for Alice
@@ -341,7 +334,7 @@ describe("Wallet SDK Integration Tests", () => {
 
             // Check send transaction
             expect(sendTx.type).toBe(TxType.TxSent);
-            expect(sendTx.amount).toBe(sendAmount + fee);
+            expect(sendTx.amount).toBe(sendAmount);
             expect(sendTx.key.redeemTxid.length).toBeGreaterThan(0);
             expect(sendTx.key.redeemTxid).toBe(sendTxid);
 
@@ -417,7 +410,7 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it.skip("should be able to claim a vthlc", { timeout: 60000 }, async () => {
+    it("should be able to claim a VHTLC", { timeout: 60000 }, async () => {
         const alice = createTestIdentity();
         const bob = createTestIdentity();
 
@@ -429,7 +422,7 @@ describe("Wallet SDK Integration Tests", () => {
             sender: alice.xOnlyPublicKey(),
             receiver: bob.xOnlyPublicKey(),
             server: X_ONLY_PUBLIC_KEY,
-            refundLocktime: BigInt(100),
+            refundLocktime: BigInt(1000),
             unilateralClaimDelay: {
                 type: "blocks",
                 value: 100n,
@@ -466,11 +459,21 @@ describe("Wallet SDK Integration Tests", () => {
         };
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
+
+        const infos = await arkProvider.getInfo();
+        const serverUnrollScript = CSVMultisigTapscript.encode({
+            timelock: {
+                type: infos.unilateralExitDelay < 512 ? "blocks" : "seconds",
+                value: infos.unilateralExitDelay,
+            },
+            pubkeys: [X_ONLY_PUBLIC_KEY],
+        });
+
         const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
         expect(spendableVtxos).toHaveLength(1);
         const vtxo = spendableVtxos[0];
 
-        const tx = createVirtualTx(
+        const { virtualTx, checkpoints } = buildOffchainTx(
             [
                 {
                     ...vtxo,
@@ -480,17 +483,36 @@ describe("Wallet SDK Integration Tests", () => {
             ],
             [
                 {
-                    address,
+                    script: vhtlcScript.pkScript,
                     amount: BigInt(fundAmount),
                 },
-            ]
+            ],
+            serverUnrollScript
         );
 
-        const signedTx = await bobVHTLCIdentity.sign(tx);
-        const txid = await arkProvider.submitVirtualTx(
-            base64.encode(signedTx.toPSBT())
-        );
+        const signedVirtualTx = await bobVHTLCIdentity.sign(virtualTx);
+        const { txid, finalVirtualTx, signedCheckpoints } =
+            await arkProvider.submitOffchainTx(
+                base64.encode(signedVirtualTx.toPSBT()),
+                checkpoints.map((c) => base64.encode(c.toPSBT()))
+            );
+
         expect(txid).toBeDefined();
+        expect(finalVirtualTx).toBeDefined();
+        expect(signedCheckpoints).toBeDefined();
+        expect(signedCheckpoints.length).toBe(checkpoints.length);
+
+        const finalCheckpoints = await Promise.all(
+            signedCheckpoints.map(async (c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c), {
+                    allowUnknown: true,
+                });
+                const signedCheckpoint = await bobVHTLCIdentity.sign(tx, [0]);
+                return base64.encode(signedCheckpoint.toPSBT());
+            })
+        );
+
+        await arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
     });
 
     it.skip(
