@@ -15,6 +15,7 @@ import {
 } from "../src";
 import { networks } from "../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
+import { RestIndexerProvider } from "../src/providers/indexer";
 
 const arkdExec =
     process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
@@ -466,7 +467,11 @@ describe("Wallet SDK Integration Tests", () => {
         };
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
-        const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
+        const indexerProvider = new RestIndexerProvider(
+            "http://localhost:7070"
+        );
+        const { spendableVtxos } =
+            await indexerProvider.getVirtualCoins(address);
         expect(spendableVtxos).toHaveLength(1);
         const vtxo = spendableVtxos[0];
 

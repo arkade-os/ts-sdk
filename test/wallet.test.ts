@@ -73,7 +73,7 @@ describe("Wallet", () => {
                         expiresAt: null,
                         createdAt: "2024-01-01T00:00:00Z",
                         script: "cf63d80fddd790bb2de2b639545b7298d3b5c33d483d84b0be399fe828720fcf",
-                        isLeaf: false,
+                        isLeaf: true,
                         isSwept: false,
                         isSpent: false,
                         commitmentTxid:

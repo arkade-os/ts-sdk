@@ -132,11 +132,6 @@ export interface Round {
 
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
-    getRound(txid: string): Promise<Round>;
-    getVirtualCoins(address: string): Promise<{
-        spendableVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }>;
     submitVirtualTx(psbtBase64: string): Promise<string>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
     registerInputsForNextRound(
@@ -164,13 +159,6 @@ export interface ArkProvider {
         signedRoundTx?: string
     ): Promise<void>;
     getEventStream(signal: AbortSignal): AsyncIterableIterator<SettlementEvent>;
-    subscribeForScripts(
-        scripts: string[],
-        abortSignal: AbortSignal
-    ): AsyncIterableIterator<{
-        newVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }>;
 }
 
 export class RestArkProvider implements ArkProvider {
@@ -190,47 +178,6 @@ export class RestArkProvider implements ArkProvider {
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
             batchExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
-        };
-    }
-
-    async getVirtualCoins(address: string): Promise<{
-        spendableVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }> {
-        const url = `${this.serverUrl}/v1/getVtxos/${address}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch VTXOs: ${response.statusText}`);
-        }
-        const data = await response.json();
-
-        return {
-            spendableVtxos: [...(data.vtxos || [])]
-                .filter((v) => !v.isSpent)
-                .map(convertVtxo),
-            spentVtxos: [...(data.vtxos || [])]
-                .filter((v) => v.isSpent)
-                .map(convertVtxo),
-        };
-    }
-
-    async getRound(txid: string): Promise<Round> {
-        const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch round: ${response.statusText}`);
-        }
-
-        const data = (await response.json()) as { round: ProtoTypes.Round };
-        const round = data.round;
-
-        return {
-            id: round.id,
-            start: new Date(Number(round.start) * 1000), // Convert from Unix timestamp to Date
-            end: new Date(Number(round.end) * 1000), // Convert from Unix timestamp to Date
-            vtxoTree: this.toTxTree(round.vtxoTree),
-            forfeitTxs: round.forfeitTxs || [],
-            connectors: this.toTxTree(round.connectors),
         };
     }
 
@@ -567,96 +514,6 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async *subscribeForScripts(
-        scripts: string[],
-        abortSignal: AbortSignal
-    ): AsyncIterableIterator<{
-        newVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }> {
-        const response = await fetch(`${this.serverUrl}/v1/script/subscribe`, {
-            headers: {
-                Accept: "application/json",
-            },
-            method: "POST",
-            body: JSON.stringify({ scripts }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to subscribe to scripts: ${errorText}`);
-        }
-
-        const { subscriptionId } = await response.json();
-        if (!subscriptionId) throw new Error(`Subscription ID not found`);
-
-        const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
-
-        while (!abortSignal.aborted) {
-            try {
-                const response = await fetch(url, {
-                    headers: {
-                        Accept: "application/json",
-                    },
-                });
-
-                if (!response.ok) {
-                    throw new Error(
-                        `Unexpected status ${response.status} when subscribing to address updates`
-                    );
-                }
-
-                if (!response.body) {
-                    throw new Error("Response body is null");
-                }
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-
-                while (!abortSignal.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
-
-                        try {
-                            const data = JSON.parse(line);
-                            if ("result" in data) {
-                                yield {
-                                    newVtxos: (data.result.newVtxos || []).map(
-                                        convertVtxo
-                                    ),
-                                    spentVtxos: (
-                                        data.result.spentVtxos || []
-                                    ).map(convertVtxo),
-                                };
-                            }
-                        } catch (err) {
-                            console.error(
-                                "Failed to parse address update:",
-                                err
-                            );
-                            throw err;
-                        }
-                    }
-
-                    buffer = lines[lines.length - 1];
-                }
-            } catch (error) {
-                console.error("Address subscription error:", error);
-                throw error;
-            }
-        }
-    }
-
     private toConnectorsIndex(
         connectorsIndex: ProtoTypes.RoundFinalizationEvent["connectorsIndex"]
     ): Map<string, Outpoint> {
@@ -665,30 +522,6 @@ export class RestArkProvider implements ArkProvider {
                 key,
                 { txid: value.txid, vout: value.vout },
             ])
-        );
-    }
-    private toTxTree(t: ProtoTypes.Tree): TxTree {
-        // collect the parent txids to determine later if a node is a leaf
-        const parentTxids = new Set<string>();
-        t.levels.forEach((level) =>
-            level.nodes.forEach((node) => {
-                if (node.parentTxid) {
-                    parentTxids.add(node.parentTxid);
-                }
-            })
-        );
-
-        return new TxTree(
-            t.levels.map((row, level) =>
-                row.nodes.map((node, levelIndex) => ({
-                    txid: node.txid,
-                    tx: node.tx,
-                    parentTxid: node.parentTxid,
-                    leaf: !parentTxids.has(node.txid),
-                    level,
-                    levelIndex,
-                }))
-            )
         );
     }
 
@@ -901,26 +734,8 @@ function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
     );
 }
 
-function convertVtxo(vtxo: any): VirtualCoin {
-    return {
-        txid: vtxo.outpoint.txid,
-        vout: vtxo.outpoint.vout,
-        value: Number(vtxo.amount),
-        status: {
-            confirmed: !!vtxo.roundTxid,
-        },
-        virtualStatus: {
-            state: vtxo.isPending ? "pending" : "settled",
-            batchTxID: vtxo.roundTxid,
-            batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
-        },
-        spentBy: vtxo.spentBy,
-        createdAt: new Date(vtxo.createdAt * 1000),
-    };
-}
-
 // ProtoTypes namespace defines unexported types representing the raw data received from the server
-namespace ProtoTypes {
+export namespace ProtoTypes {
     interface Node {
         txid: string;
         tx: string;

@@ -11,12 +11,16 @@ import { DefaultVtxo } from "../../script/default";
 import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
 import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
+import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
+import { ArkAddress } from "../../script/address";
+import { hex } from "@scure/base";
 
 // Worker is a class letting to interact with ServiceWorkerWallet from the client
 // it aims to be run in a service worker context
 export class Worker {
     private wallet: Wallet | undefined;
     private arkProvider: ArkProvider | undefined;
+    private indexerProvider: IndexerProvider | undefined;
     private vtxoSubscription: AbortController | undefined;
 
     constructor(
@@ -53,6 +57,7 @@ export class Worker {
         await this.vtxoRepository.close();
         this.wallet = undefined;
         this.arkProvider = undefined;
+        this.indexerProvider = undefined;
         this.vtxoSubscription = undefined;
     }
 
@@ -60,6 +65,7 @@ export class Worker {
         if (
             !this.wallet ||
             !this.arkProvider ||
+            !this.indexerProvider ||
             !this.wallet.offchainTapscript ||
             !this.wallet.boardingTapscript
         ) {
@@ -75,7 +81,7 @@ export class Worker {
 
         // set the initial vtxos state
         const { spendableVtxos, spentVtxos } =
-            await this.arkProvider.getVirtualCoins(
+            await this.indexerProvider.getVirtualCoins(
                 addressInfo.offchain.address
             );
 
@@ -93,15 +99,18 @@ export class Worker {
         this.processVtxoSubscription(addressInfo.offchain);
     }
 
-    private async processVtxoSubscription({ scripts }: VtxoTaprootAddress) {
+    private async processVtxoSubscription({
+        address,
+        scripts,
+    }: VtxoTaprootAddress) {
         try {
             const addressScripts = [...scripts.exit, ...scripts.forfeit];
             const vtxoScript = DefaultVtxo.Script.decode(addressScripts);
             const tapLeafScript = vtxoScript.findLeaf(scripts.forfeit[0]);
 
             const abortController = new AbortController();
-            const subscription = this.arkProvider!.subscribeForScripts(
-                addressScripts,
+            const subscription = this.indexerProvider!.subscribeForScripts(
+                [hex.encode(ArkAddress.decode(address).pkScript)],
                 abortController.signal
             );
 
@@ -147,6 +156,9 @@ export class Worker {
 
         try {
             this.arkProvider = new RestArkProvider(message.arkServerUrl);
+            this.indexerProvider = new RestIndexerProvider(
+                message.arkServerUrl
+            );
 
             this.wallet = await Wallet.create({
                 network: message.network,
