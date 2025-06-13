@@ -28,6 +28,7 @@ import {
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
@@ -53,9 +54,7 @@ import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks } from "./networks";
 
 export {
-    // Classes
     Wallet,
-    ServiceWorkerWallet,
     InMemoryKey,
 
     // Providers
@@ -73,7 +72,9 @@ export {
     TxType,
 
     // Service Worker
+    setupServiceWorker,
     Worker,
+    ServiceWorkerWallet,
     Request,
     Response,
 
