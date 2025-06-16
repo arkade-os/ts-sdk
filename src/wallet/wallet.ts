@@ -918,10 +918,9 @@ export class Wallet implements IWallet {
     async exit(outpoints?: Outpoint[]): Promise<void> {
         // TODO store the exit branches in repository
         // exit should not depend on the ark provider
+        // or on the indexer provider
         if (!this.onchainProvider)
             throw new Error("Onchain provider not configured");
-        if (!this.indexerProvider)
-            throw new Error("Indexer provider not configured");
 
         let vtxos = await this.getVtxos();
         if (outpoints && outpoints.length > 0) {
@@ -941,28 +940,28 @@ export class Wallet implements IWallet {
         const trees = new Map<string, TxTree>();
         const transactions: string[] = [];
 
-        for (const vtxo of vtxos) {
-            const batchTxid = vtxo.virtualStatus.batchTxID;
-            if (!batchTxid) continue;
-            if (!trees.has(batchTxid)) {
-                const round =
-                    await this.indexerProvider.GetCommitmentTx(batchTxid);
-                trees.set(batchTxid, round.batches);
-            }
-
-            const tree = trees.get(batchTxid);
-            if (!tree) {
-                throw new Error("Tree not found");
-            }
-            const exitBranch = await tree.exitBranch(
-                vtxo.txid,
-                async (txid) => {
-                    const status = await this.onchainProvider.getTxStatus(txid);
-                    return status.confirmed;
-                }
-            );
-            transactions.push(...exitBranch);
-        }
+        // for (const vtxo of vtxos) {
+        //     const batchTxid = vtxo.virtualStatus.batchTxID;
+        //     if (!batchTxid) continue;
+        //     if (!trees.has(batchTxid)) {
+        //         const round =
+        //             await this.arkProvider?.getRound(batchTxid);
+        //         trees.set(batchTxid, round?.vtxoTree);
+        //     }
+        //
+        //     const tree = trees.get(batchTxid);
+        //     if (!tree) {
+        //         throw new Error("Tree not found");
+        //     }
+        //     const exitBranch = await tree.exitBranch(
+        //         vtxo.txid,
+        //         async (txid) => {
+        //             const status = await this.onchainProvider.getTxStatus(txid);
+        //             return status.confirmed;
+        //         }
+        //     );
+        //     transactions.push(...exitBranch);
+        // }
 
         const broadcastedTxs = new Map<string, boolean>();
         for (const tx of transactions) {
