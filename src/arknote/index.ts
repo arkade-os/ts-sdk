@@ -1,16 +1,46 @@
-import { base58 } from "@scure/base";
+import { base58, hex } from "@scure/base";
+import { TapLeafScript, VtxoScript } from "../script/base";
+import { Bytes, sha256 } from "@scure/btc-signer/utils";
+import { Script } from "@scure/btc-signer";
+import { ExtendedCoin, Status } from "../wallet";
 
-export class ArkNote {
+// ArkNote is a fake VTXO coin that can be spent by revealing the preimage
+export class ArkNote implements ExtendedCoin {
     static readonly DefaultHRP = "arknote";
     static readonly PreimageLength = 32; // 32 bytes for the preimage
     static readonly ValueLength = 4; // 4 bytes for the value
     static readonly Length = ArkNote.PreimageLength + ArkNote.ValueLength;
+    static readonly FakeOutpointIndex = 0;
+
+    readonly vtxoScript: VtxoScript;
+
+    // ExtendedCoin properties
+    readonly txid: string;
+    readonly vout = 0;
+    readonly forfeitTapLeafScript: TapLeafScript;
+    readonly intentTapLeafScript: TapLeafScript;
+    readonly tapTree: Bytes;
+    readonly status: Status;
+    readonly extraWitness?: Bytes[] | undefined;
 
     constructor(
         public preimage: Uint8Array,
         public value: number,
         public HRP = ArkNote.DefaultHRP
-    ) {}
+    ) {
+        const preimageHash = sha256(this.preimage);
+        this.vtxoScript = new VtxoScript([noteTapscript(preimageHash)]);
+
+        const leaf = this.vtxoScript.leaves[0];
+
+        this.txid = hex.encode(new Uint8Array(preimageHash).reverse());
+        this.tapTree = this.vtxoScript.encode();
+        this.forfeitTapLeafScript = leaf;
+        this.intentTapLeafScript = leaf;
+        this.value = value;
+        this.status = { confirmed: true };
+        this.extraWitness = [this.preimage];
+    }
 
     encode(): Uint8Array {
         const result = new Uint8Array(ArkNote.Length);
@@ -63,4 +93,8 @@ function writeUInt32BE(array: Uint8Array, value: number, offset: number): void {
 function readUInt32BE(array: Uint8Array, offset: number): number {
     const view = new DataView(array.buffer, array.byteOffset + offset, 4);
     return view.getUint32(0, false);
+}
+
+function noteTapscript(preimageHash: Uint8Array): Bytes {
+    return Script.encode(["SHA256", preimageHash, "EQUAL"]);
 }

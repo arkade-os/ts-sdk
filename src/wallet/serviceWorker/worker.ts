@@ -7,12 +7,12 @@ import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
-import { DefaultVtxo } from "../../script/default";
 import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
 import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { ArkAddress } from "../../script/address";
+import { VtxoScript } from "../../script/base";
 import { hex } from "@scure/base";
 
 // Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -81,14 +81,16 @@ export class Worker {
 
         const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
         const forfeit = this.wallet.offchainTapscript.forfeit();
+        const exit = this.wallet.offchainTapscript.exit();
 
         // set the initial vtxos state
         const vtxos = (
             await this.indexerProvider.GetVtxos([addressInfo.offchain.address])
         ).map((vtxo) => ({
             ...vtxo,
-            tapLeafScript: forfeit,
-            scripts: encodedOffchainTapscript,
+            forfeitTapLeafScript: forfeit,
+            intentTapLeafScript: exit,
+            tapTree: encodedOffchainTapscript,
         }));
 
         await this.vtxoRepository.addOrUpdate(vtxos);
@@ -102,8 +104,12 @@ export class Worker {
     }: VtxoTaprootAddress) {
         try {
             const addressScripts = [...scripts.exit, ...scripts.forfeit];
-            const vtxoScript = DefaultVtxo.Script.decode(addressScripts);
-            const tapLeafScript = vtxoScript.findLeaf(scripts.forfeit[0]);
+
+            const vtxoScript = new VtxoScript(addressScripts.map(hex.decode));
+            const forfeitTapLeafScript = vtxoScript.findLeaf(
+                scripts.forfeit[0]
+            );
+            const intentTapLeafScript = vtxoScript.findLeaf(scripts.exit[0]);
 
             const abortController = new AbortController();
             const subscriptionId =
@@ -117,6 +123,8 @@ export class Worker {
 
             this.vtxoSubscription = abortController;
 
+            const tapTree = vtxoScript.encode();
+
             for await (const update of subscription) {
                 const vtxos = [...update.newVtxos, ...update.spentVtxos];
                 if (vtxos.length === 0) {
@@ -125,8 +133,9 @@ export class Worker {
 
                 const extendedVtxos = vtxos.map((vtxo) => ({
                     ...vtxo,
-                    tapLeafScript,
-                    scripts: addressScripts,
+                    forfeitTapLeafScript,
+                    intentTapLeafScript,
+                    tapTree,
                 }));
 
                 await this.vtxoRepository.addOrUpdate(extendedVtxos);
@@ -236,10 +245,7 @@ export class Worker {
         }
 
         try {
-            const txid = await this.wallet.sendBitcoin(
-                message.params,
-                message.zeroFee
-            );
+            const txid = await this.wallet.sendBitcoin(message.params);
             event.source?.postMessage(
                 Response.sendBitcoinSuccess(message.id, txid)
             );

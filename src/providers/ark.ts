@@ -130,20 +130,27 @@ export interface Round {
     connectors: TxTree;
 }
 
+export interface Intent {
+    signature: string;
+    message: string;
+}
+
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
-    submitVirtualTx(psbtBase64: string): Promise<string>;
+    getRound(txid: string): Promise<Round>; // TODO remove
+    submitOffchainTx(
+        signedVirtualTx: string,
+        checkpoints: string[]
+    ): Promise<{
+        finalVirtualTx: string;
+        signedCheckpoints: string[];
+        txid: string;
+    }>;
+    finalizeOffchainTx(txid: string, finalCheckpoints: string[]): Promise<void>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
-    registerInputsForNextRound(
-        inputs: VtxoInput[]
-    ): Promise<{ requestId: string }>;
+    registerIntent(intent: Intent): Promise<string>;
+    deleteIntent(intent: Intent): Promise<void>;
     confirmRegistration(intentId: string): Promise<void>;
-    registerOutputsForNextRound(
-        requestId: string,
-        outputs: Output[],
-        vtxoTreeSigningPublicKeys: string[],
-        signAll?: boolean
-    ): Promise<void>;
     submitTreeNonces(
         settlementID: string,
         pubkey: string,
@@ -181,15 +188,43 @@ export class RestArkProvider implements ArkProvider {
         };
     }
 
-    async submitVirtualTx(psbtBase64: string): Promise<string> {
-        const url = `${this.serverUrl}/v1/redeem-tx`;
+    async getRound(txid: string): Promise<Round> {
+        const url = `${this.serverUrl}/v1/round/${txid}`;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch round: ${response.statusText}`);
+        }
+
+        const data = (await response.json()) as { round: ProtoTypes.Round };
+        const round = data.round;
+
+        return {
+            id: round.id,
+            start: new Date(Number(round.start) * 1000), // Convert from Unix timestamp to Date
+            end: new Date(Number(round.end) * 1000), // Convert from Unix timestamp to Date
+            vtxoTree: this.toTxTree(round.vtxoTree),
+            forfeitTxs: round.forfeitTxs || [],
+            connectors: this.toTxTree(round.connectors),
+        };
+    }
+
+    async submitOffchainTx(
+        signedVirtualTx: string,
+        checkpoints: string[]
+    ): Promise<{
+        finalVirtualTx: string;
+        signedCheckpoints: string[];
+        txid: string;
+    }> {
+        const url = `${this.serverUrl}/v1/offchain-tx/submit`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                redeem_tx: psbtBase64,
+                virtualTx: signedVirtualTx,
+                checkpointTxs: checkpoints,
             }),
         });
 
@@ -211,8 +246,35 @@ export class RestArkProvider implements ArkProvider {
         }
 
         const data = await response.json();
-        // Handle both current and future response formats
-        return data.txid || data.signedRedeemTx;
+        return {
+            txid: data.txid,
+            finalVirtualTx: data.signedVirtualTx,
+            signedCheckpoints: data.signedCheckpointTxs,
+        };
+    }
+
+    async finalizeOffchainTx(
+        txid: string,
+        finalCheckpoints: string[]
+    ): Promise<void> {
+        const url = `${this.serverUrl}/v1/offchain-tx/finalize`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                txid,
+                checkpointTxs: finalCheckpoints,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+                `Failed to finalize offchain transaction: ${errorText}`
+            );
+        }
     }
 
     async subscribeToEvents(
@@ -285,73 +347,50 @@ export class RestArkProvider implements ArkProvider {
         };
     }
 
-    async registerInputsForNextRound(
-        inputs: VtxoInput[]
-    ): Promise<{ requestId: string }> {
-        const url = `${this.serverUrl}/v1/round/registerInputs`;
-        const vtxoInputs: ProtoTypes.Input[] = [];
-
-        for (const input of inputs) {
-            vtxoInputs.push({
-                outpoint: {
-                    txid: input.outpoint.txid,
-                    vout: input.outpoint.vout,
-                },
-                taprootTree: {
-                    scripts: input.tapscripts,
-                },
-            });
-        }
-
+    async registerIntent(intent: Intent): Promise<string> {
+        const url = `${this.serverUrl}/v1/round/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                inputs: vtxoInputs,
+                bip322Signature: {
+                    signature: intent.signature,
+                    message: intent.message,
+                },
             }),
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to register inputs: ${errorText}`);
+            throw new Error(`Failed to register intent: ${errorText}`);
         }
 
         const data = await response.json();
-        return { requestId: data.requestId };
+        return data.requestId;
     }
 
-    async registerOutputsForNextRound(
-        requestId: string,
-        outputs: Output[],
-        cosignersPublicKeys: string[],
-        signingAll = false
-    ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/registerOutputs`;
+    async deleteIntent(intent: Intent): Promise<void> {
+        const url = `${this.serverUrl}/v1/round/deleteIntent`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                requestId,
-                outputs: outputs.map(
-                    (output): ProtoTypes.Output => ({
-                        address: output.address,
-                        amount: output.amount.toString(10),
-                    })
-                ),
-                musig2: {
-                    cosignersPublicKeys,
-                    signingAll,
+                proof: {
+                    bip322Signature: {
+                        signature: intent.signature,
+                        message: intent.message,
+                    },
                 },
             }),
         });
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to register outputs: ${errorText}`);
+            throw new Error(`Failed to delete intent: ${errorText}`);
         }
     }
 
@@ -512,6 +551,31 @@ export class RestArkProvider implements ArkProvider {
                 throw error;
             }
         }
+    }
+
+    private toTxTree(t: ProtoTypes.Tree): TxTree {
+        // collect the parent txids to determine later if a node is a leaf
+        const parentTxids = new Set<string>();
+        t.levels.forEach((level) =>
+            level.nodes.forEach((node) => {
+                if (node.parentTxid) {
+                    parentTxids.add(node.parentTxid);
+                }
+            })
+        );
+
+        return new TxTree(
+            t.levels.map((row, level) =>
+                row.nodes.map((node, levelIndex) => ({
+                    txid: node.txid,
+                    tx: node.tx,
+                    parentTxid: node.parentTxid,
+                    leaf: !parentTxids.has(node.txid),
+                    level,
+                    levelIndex,
+                }))
+            )
+        );
     }
 
     private toConnectorsIndex(
@@ -806,7 +870,6 @@ export namespace ProtoTypes {
         signature: string;
     }
 
-    // Update the EventData interface to match the Golang structure
     export interface EventData {
         batchStarted?: BatchStartedEvent;
         roundFailed?: RoundFailed;
@@ -843,4 +906,22 @@ export namespace ProtoTypes {
         connectors: Tree;
         stage: string; // RoundStage as string
     }
+}
+
+function convertVtxo(vtxo: any): VirtualCoin {
+    return {
+        txid: vtxo.outpoint.txid,
+        vout: vtxo.outpoint.vout,
+        value: Number(vtxo.amount),
+        status: {
+            confirmed: !!vtxo.roundTxid,
+        },
+        virtualStatus: {
+            state: vtxo.isPending ? "pending" : "settled",
+            batchTxID: vtxo.roundTxid,
+            batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
+        },
+        spentBy: vtxo.spentBy,
+        createdAt: new Date(vtxo.createdAt * 1000),
+    };
 }

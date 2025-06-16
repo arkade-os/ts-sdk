@@ -92,22 +92,33 @@ function validateOutputs(
 }
 
 // craftToSpendTx creates the initial transaction that will be spent in the proof
-function craftToSpendTx(message: string, pkScript: Uint8Array): Transaction {
+export function craftToSpendTx(
+    message: string,
+    pkScript: Uint8Array
+): Transaction {
     const messageHash = hashMessage(message);
-    const tx = new Transaction();
+    const tx = new Transaction({
+        version: 0,
+        allowUnknownOutputs: true,
+        allowUnknown: true,
+        allowUnknownInputs: true,
+    });
 
     // add input with zero hash and max index
     tx.addInput({
         txid: ZERO_32, // zero hash
         index: MAX_INDEX,
         sequence: 0,
-        finalScriptSig: Script.encode([OP.OP_0, messageHash]),
     });
 
     // add output with zero value and provided pkScript
     tx.addOutput({
         amount: 0n,
         script: pkScript,
+    });
+
+    tx.updateInput(0, {
+        finalScriptSig: Script.encode(["OP_0", messageHash]),
     });
 
     return tx;
@@ -120,13 +131,20 @@ function craftToSignTx(
     outputs: ValidatedTxOutput[]
 ): Transaction {
     const firstInput = inputs[0];
-    const tx = new Transaction();
+
+    const tx = new Transaction({
+        version: 2,
+        allowUnknownOutputs: outputs.length === 0,
+        allowUnknown: true,
+        allowUnknownInputs: true,
+        lockTime: 0,
+    });
 
     // add the first "toSpend" input
     tx.addInput({
+        ...firstInput,
         txid: toSpend.id,
         index: 0,
-        sequence: firstInput.sequence,
         witnessUtxo: {
             script: firstInput.witnessUtxo.script,
             amount: 0n,
@@ -137,10 +155,7 @@ function craftToSignTx(
     // add other inputs
     for (const input of inputs) {
         tx.addInput({
-            txid: input.txid,
-            index: input.index,
-            sequence: input.sequence,
-            witnessUtxo: input.witnessUtxo,
+            ...input,
             sighashType: SigHash.ALL,
         });
     }

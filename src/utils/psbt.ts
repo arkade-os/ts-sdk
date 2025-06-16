@@ -1,6 +1,5 @@
-import { DEFAULT_SEQUENCE, RawWitness, Transaction } from "@scure/btc-signer";
+import { DEFAULT_SEQUENCE, Transaction } from "@scure/btc-signer";
 import { VirtualCoin } from "../wallet";
-import { Output } from "../providers/ark";
 import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 import {
     EncodedVtxoScript,
@@ -8,62 +7,48 @@ import {
     TapLeafScript,
     VtxoScript,
 } from "../script/base";
-import { ArkAddress } from "../script/address";
+import { addVtxoTaprootTree } from "./unknownFields";
+import { P2A } from "./anchor";
+import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
+import { TransactionOutput } from "@scure/btc-signer/psbt";
+import { sha256x2 } from "@scure/btc-signer/utils";
 
-const ARK_UNKNOWN_KEY_TYPE = 255;
+export type VirtualTxInput = {
+    tapLeafScript: TapLeafScript;
+} & EncodedVtxoScript &
+    Pick<VirtualCoin, "txid" | "vout" | "value">;
 
-// Constant for condition witness key prefix
-export const CONDITION_WITNESS_KEY_PREFIX = new TextEncoder().encode(
-    "condition"
-);
+export type OffchainTx = {
+    virtualTx: Transaction;
+    checkpoints: Transaction[];
+};
 
-export const VTXO_TAPROOT_TREE_KEY_PREFIX = new TextEncoder().encode("taptree");
+// buildOffchainTx creates 1 checkpoint transaction per input
+// and a virtual transaction that combines all the checkpoints, sending to the outputs
+export function buildOffchainTx(
+    inputs: VirtualTxInput[],
+    outputs: TransactionOutput[],
+    serverUnrollScript: CSVMultisigTapscript.Type
+): OffchainTx {
+    const checkpoints = inputs.map((input) =>
+        buildCheckpointTx(input, serverUnrollScript)
+    );
 
-export function addVtxoTaprootTree(
-    inIndex: number,
-    tx: Transaction,
-    scripts: Uint8Array[]
-): void {
-    tx.updateInput(inIndex, {
-        unknown: [
-            ...(tx.getInput(inIndex)?.unknown ?? []),
-            [
-                {
-                    type: ARK_UNKNOWN_KEY_TYPE,
-                    key: VTXO_TAPROOT_TREE_KEY_PREFIX,
-                },
-                encodeTaprootTree(scripts),
-            ],
-        ],
-    });
+    const virtualTx = buildVirtualTx(
+        checkpoints.map((c) => c.input),
+        outputs
+    );
+
+    return {
+        virtualTx,
+        checkpoints: checkpoints.map((c) => c.tx),
+    };
 }
 
-export function addConditionWitness(
-    inIndex: number,
-    tx: Transaction,
-    witness: Uint8Array[]
-): void {
-    const witnessBytes = RawWitness.encode(witness);
-
-    tx.updateInput(inIndex, {
-        unknown: [
-            ...(tx.getInput(inIndex)?.unknown ?? []),
-            [
-                {
-                    type: ARK_UNKNOWN_KEY_TYPE,
-                    key: CONDITION_WITNESS_KEY_PREFIX,
-                },
-                witnessBytes,
-            ],
-        ],
-    });
-}
-
-export function createVirtualTx(
-    inputs: ({ tapLeafScript: TapLeafScript } & EncodedVtxoScript &
-        Pick<VirtualCoin, "txid" | "vout" | "value">)[],
-    outputs: Output[]
+function buildVirtualTx(
+    inputs: VirtualTxInput[],
+    outputs: TransactionOutput[]
 ) {
     let lockTime = 0n;
     for (const input of inputs) {
@@ -88,6 +73,7 @@ export function createVirtualTx(
     }
 
     const tx = new Transaction({
+        version: 3,
         allowUnknown: true,
         lockTime: Number(lockTime),
     });
@@ -98,75 +84,70 @@ export function createVirtualTx(
             index: input.vout,
             sequence: lockTime ? DEFAULT_SEQUENCE - 1 : undefined,
             witnessUtxo: {
-                script: VtxoScript.decode(input.scripts).pkScript,
+                script: VtxoScript.decode(input.tapTree).pkScript,
                 amount: BigInt(input.value),
             },
             tapLeafScript: [input.tapLeafScript],
         });
 
         // add BIP371 encoded taproot tree to the unknown key field
-        addVtxoTaprootTree(i, tx, input.scripts.map(hex.decode));
+        addVtxoTaprootTree(i, tx, input.tapTree);
     }
 
     for (const output of outputs) {
-        tx.addOutput({
-            amount: output.amount,
-            script: ArkAddress.decode(output.address).pkScript,
-        });
+        tx.addOutput(output);
     }
+
+    // add the anchor output
+    tx.addOutput(P2A);
 
     return tx;
 }
 
-function encodeTaprootTree(leaves: Uint8Array[]): Uint8Array {
-    const chunks: Uint8Array[] = [];
+function buildCheckpointTx(
+    vtxo: VirtualTxInput,
+    serverUnrollScript: CSVMultisigTapscript.Type
+): { tx: Transaction; input: VirtualTxInput } {
+    // create the checkpoint vtxo script from collaborative closure
+    const collaborativeClosure = decodeTapscript(
+        scriptFromTapLeafScript(vtxo.tapLeafScript)
+    );
 
-    // Write number of leaves as compact size uint
-    chunks.push(encodeCompactSizeUint(leaves.length));
+    // create the checkpoint vtxo script combining collaborative closure and server unroll script
+    const checkpointVtxoScript = new VtxoScript([
+        serverUnrollScript.script,
+        collaborativeClosure.script,
+    ]);
 
-    for (const tapscript of leaves) {
-        // Write depth (always 1 for now)
-        chunks.push(new Uint8Array([1]));
+    // build the checkpoint virtual tx
+    const checkpointTx = buildVirtualTx(
+        [vtxo],
+        [
+            {
+                amount: BigInt(vtxo.value),
+                script: checkpointVtxoScript.pkScript,
+            },
+        ]
+    );
 
-        // Write leaf version (0xc0 for tapscript)
-        chunks.push(new Uint8Array([0xc0]));
+    // get the collaborative leaf proof
+    const collaborativeLeafProof = checkpointVtxoScript.findLeaf(
+        hex.encode(collaborativeClosure.script)
+    );
 
-        // Write script length and script
-        chunks.push(encodeCompactSizeUint(tapscript.length));
-        chunks.push(tapscript);
-    }
+    // create the checkpoint input that will be used as input of the virtual tx
+    const checkpointInput = {
+        txid: hex.encode(sha256x2(checkpointTx.toBytes(true)).reverse()),
+        vout: 0,
+        value: vtxo.value,
+        tapLeafScript: collaborativeLeafProof,
+        tapTree: checkpointVtxoScript.encode(),
+    };
 
-    // Concatenate all chunks
-    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-    const result = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-        result.set(chunk, offset);
-        offset += chunk.length;
-    }
-
-    return result;
-}
-
-function encodeCompactSizeUint(value: number): Uint8Array {
-    if (value < 0xfd) {
-        return new Uint8Array([value]);
-    } else if (value <= 0xffff) {
-        const buffer = new Uint8Array(3);
-        buffer[0] = 0xfd;
-        new DataView(buffer.buffer).setUint16(1, value, true);
-        return buffer;
-    } else if (value <= 0xffffffff) {
-        const buffer = new Uint8Array(5);
-        buffer[0] = 0xfe;
-        new DataView(buffer.buffer).setUint32(1, value, true);
-        return buffer;
-    } else {
-        const buffer = new Uint8Array(9);
-        buffer[0] = 0xff;
-        new DataView(buffer.buffer).setBigUint64(1, BigInt(value), true);
-        return buffer;
-    }
+    return {
+        tx: checkpointTx,
+        input: checkpointInput,
+    };
 }
 
 const nLocktimeMinSeconds = 500_000_000n;
