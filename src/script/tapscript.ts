@@ -17,20 +17,15 @@ export enum TapscriptType {
     CLTVMultisig = "cltv-multisig",
 }
 
-export interface ArkTapscript<
-    T extends TapscriptType,
-    Params,
-    SizeArgs = never,
-> {
+export interface ArkTapscript<T extends TapscriptType, Params> {
     type: T;
     params: Params;
     script: Uint8Array;
-    witnessSize(args: SizeArgs): number;
 }
 
 export function decodeTapscript(
     script: Uint8Array
-): ArkTapscript<TapscriptType, any, any | undefined> {
+): ArkTapscript<TapscriptType, any> {
     const types = [
         MultisigTapscript,
         CSVMultisigTapscript,
@@ -91,7 +86,6 @@ export namespace MultisigTapscript {
                 type: TapscriptType.Multisig,
                 params,
                 script: p2tr_ms(params.pubkeys.length, params.pubkeys).script,
-                witnessSize: () => params.pubkeys.length * 64,
             };
         }
 
@@ -111,7 +105,6 @@ export namespace MultisigTapscript {
             type: TapscriptType.Multisig,
             params,
             script: Script.encode(asm),
-            witnessSize: () => params.pubkeys.length * 64,
         };
     }
 
@@ -199,7 +192,6 @@ export namespace MultisigTapscript {
             type: TapscriptType.Multisig,
             params: { pubkeys, type: MultisigType.CHECKSIGADD },
             script,
-            witnessSize: () => pubkeys.length * 64,
         };
     }
 
@@ -259,7 +251,6 @@ export namespace MultisigTapscript {
             type: TapscriptType.Multisig,
             params: { pubkeys, type: MultisigType.CHECKSIG },
             script,
-            witnessSize: () => pubkeys.length * 64,
         };
     }
 
@@ -311,7 +302,6 @@ export namespace CSVMultisigTapscript {
             type: TapscriptType.CSVMultisig,
             params,
             script,
-            witnessSize: () => params.pubkeys.length * 64,
         };
     }
 
@@ -374,7 +364,6 @@ export namespace CSVMultisigTapscript {
                 ...multisig.params,
             },
             script,
-            witnessSize: () => multisig.params.pubkeys.length * 64,
         };
     }
 
@@ -406,8 +395,6 @@ export namespace ConditionCSVMultisigTapscript {
             type: TapscriptType.ConditionCSVMultisig,
             params,
             script,
-            witnessSize: (conditionSize: number) =>
-                conditionSize + params.pubkeys.length * 64,
         };
     }
 
@@ -467,8 +454,6 @@ export namespace ConditionCSVMultisigTapscript {
                 ...csvMultisig.params,
             },
             script,
-            witnessSize: (conditionSize: number) =>
-                conditionSize + csvMultisig.params.pubkeys.length * 64,
         };
     }
 
@@ -500,8 +485,6 @@ export namespace ConditionMultisigTapscript {
             type: TapscriptType.ConditionMultisig,
             params,
             script,
-            witnessSize: (conditionSize: number) =>
-                conditionSize + params.pubkeys.length * 64,
         };
     }
 
@@ -561,8 +544,6 @@ export namespace ConditionMultisigTapscript {
                 ...multisig.params,
             },
             script,
-            witnessSize: (conditionSize: number) =>
-                conditionSize + multisig.params.pubkeys.length * 64,
         };
     }
 
@@ -597,7 +578,6 @@ export namespace CLTVMultisigTapscript {
             type: TapscriptType.CLTVMultisig,
             params,
             script,
-            witnessSize: () => params.pubkeys.length * 64,
         };
     }
 
@@ -654,7 +634,6 @@ export namespace CLTVMultisigTapscript {
                 ...multisig.params,
             },
             script,
-            witnessSize: () => multisig.params.pubkeys.length * 64,
         };
     }
 

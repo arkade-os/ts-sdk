@@ -3,6 +3,7 @@ import { Identity } from "../identity";
 import { NetworkName } from "../networks";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
+import { Bytes } from "@scure/btc-signer/utils";
 
 export interface WalletConfig {
     network: NetworkName;
@@ -42,10 +43,7 @@ export interface Recipient {
 }
 
 export interface SettleParams {
-    inputs: (
-        | string
-        | ({ tapLeafScript: TapLeafScript } & Outpoint & EncodedVtxoScript)
-    )[];
+    inputs: ExtendedCoin[];
     outputs: Output[];
 }
 
@@ -125,14 +123,17 @@ export interface ArkTransaction {
 }
 
 // ExtendedCoin and ExtendedVirtualCoin contains the utxo/vtxo data along with the vtxo script locking it
-export type ExtendedCoin = {
-    tapLeafScript: TapLeafScript;
-} & EncodedVtxoScript &
-    Coin;
-export type ExtendedVirtualCoin = {
-    tapLeafScript: TapLeafScript;
-} & EncodedVtxoScript &
-    VirtualCoin;
+type tapLeaves = {
+    forfeitTapLeafScript: TapLeafScript;
+    intentTapLeafScript: TapLeafScript;
+};
+
+export type ExtendedCoin = tapLeaves &
+    EncodedVtxoScript &
+    Coin & { extraWitness?: Bytes[] };
+export type ExtendedVirtualCoin = tapLeaves &
+    EncodedVtxoScript &
+    VirtualCoin & { extraWitness?: Bytes[] };
 
 export interface IWallet {
     // Address and balance management
