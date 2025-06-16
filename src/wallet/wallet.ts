@@ -345,9 +345,9 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const vtxos = await this.indexerProvider.GetVtxos([address.offchain]);
-
-        return vtxos.filter((v) => !(v.spentBy && v.spentBy.length > 0));
+        return await this.indexerProvider.GetVtxos([address.offchain], {
+            spendableOnly: true,
+        });
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
@@ -355,15 +355,22 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const vtxos = await this.indexerProvider.GetVtxos([
-            this.offchainAddress.encode(),
-        ]);
+        const spendableVtxos = await this.indexerProvider.GetVtxos(
+            [this.offchainAddress.encode()],
+            { spendableOnly: true }
+        );
+
+        const spentVtxos = await this.indexerProvider.GetVtxos(
+            [this.offchainAddress.encode()],
+            { spentOnly: true }
+        );
+
         const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
 
         // convert VTXOs to offchain transactions
         const offchainTxs = vtxosToTxs(
-            vtxos.filter((vtxo) => vtxo.spentBy === undefined),
-            vtxos.filter((vtxo) => vtxo.spentBy !== undefined),
+            spendableVtxos,
+            spentVtxos,
             roundsToIgnore
         );
 

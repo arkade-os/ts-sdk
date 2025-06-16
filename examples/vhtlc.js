@@ -115,8 +115,9 @@ async function main() {
     // Get the virtual coins for the VHTLC address
     const arkProvider = new RestArkProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
-    const vtxos = await indexerProvider.GetVtxos([address]);
-    const spendableVtxos = vtxos.filter((v) => v.spentBy === undefined);
+    const spendableVtxos = await indexerProvider.GetVtxos([address], {
+        spendableOnly: true,
+    });
 
     if (spendableVtxos.length === 0) {
         throw new Error("No spendable virtual coins found");
