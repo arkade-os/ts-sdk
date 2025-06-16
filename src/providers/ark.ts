@@ -142,7 +142,15 @@ export interface ArkProvider {
         spendableVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }>;
-    submitVirtualTx(psbtBase64: string): Promise<string>;
+    submitOffchainTx(
+        signedVirtualTx: string,
+        checkpoints: string[]
+    ): Promise<{
+        finalVirtualTx: string;
+        signedCheckpoints: string[];
+        txid: string;
+    }>;
+    finalizeOffchainTx(txid: string, finalCheckpoints: string[]): Promise<void>;
     subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
     registerIntent(intent: Intent): Promise<string>;
     deleteIntent(intent: Intent): Promise<void>;
@@ -228,15 +236,23 @@ export class RestArkProvider implements ArkProvider {
         };
     }
 
-    async submitVirtualTx(psbtBase64: string): Promise<string> {
-        const url = `${this.serverUrl}/v1/redeem-tx`;
+    async submitOffchainTx(
+        signedVirtualTx: string,
+        checkpoints: string[]
+    ): Promise<{
+        finalVirtualTx: string;
+        signedCheckpoints: string[];
+        txid: string;
+    }> {
+        const url = `${this.serverUrl}/v1/offchain-tx/submit`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                redeem_tx: psbtBase64,
+                virtualTx: signedVirtualTx,
+                checkpointTxs: checkpoints,
             }),
         });
 
@@ -258,8 +274,35 @@ export class RestArkProvider implements ArkProvider {
         }
 
         const data = await response.json();
-        // Handle both current and future response formats
-        return data.txid || data.signedRedeemTx;
+        return {
+            txid: data.txid,
+            finalVirtualTx: data.signedVirtualTx,
+            signedCheckpoints: data.signedCheckpointTxs,
+        };
+    }
+
+    async finalizeOffchainTx(
+        txid: string,
+        finalCheckpoints: string[]
+    ): Promise<void> {
+        const url = `${this.serverUrl}/v1/offchain-tx/finalize`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                txid,
+                checkpointTxs: finalCheckpoints,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+                `Failed to finalize offchain transaction: ${errorText}`
+            );
+        }
     }
 
     async subscribeToEvents(

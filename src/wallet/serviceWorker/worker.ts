@@ -236,10 +236,7 @@ export class Worker {
         }
 
         try {
-            const txid = await this.wallet.sendBitcoin(
-                message.params,
-                message.zeroFee
-            );
+            const txid = await this.wallet.sendBitcoin(message.params);
             event.source?.postMessage(
                 Response.sendBitcoinSuccess(message.id, txid)
             );

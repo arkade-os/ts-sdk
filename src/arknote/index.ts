@@ -10,6 +10,7 @@ export class ArkNote implements ExtendedCoin {
     static readonly PreimageLength = 32; // 32 bytes for the preimage
     static readonly ValueLength = 4; // 4 bytes for the value
     static readonly Length = ArkNote.PreimageLength + ArkNote.ValueLength;
+    static readonly FakeOutpointIndex = 0;
 
     readonly vtxoScript: VtxoScript;
 

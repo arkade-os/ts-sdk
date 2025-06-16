@@ -146,7 +146,7 @@ export interface IWallet {
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
     // Transaction operations
-    sendBitcoin(params: SendBitcoinParams, zeroFee?: boolean): Promise<string>;
+    sendBitcoin(params: SendBitcoinParams): Promise<string>;
     settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
