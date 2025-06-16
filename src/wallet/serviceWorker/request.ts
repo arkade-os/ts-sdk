@@ -96,6 +96,7 @@ export namespace Request {
 
     export interface GetVtxos extends Base {
         type: "GET_VTXOS";
+        withRecoverable?: boolean;
     }
 
     export function isGetVtxos(message: Base): message is GetVtxos {

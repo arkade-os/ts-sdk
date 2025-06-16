@@ -141,7 +141,7 @@ export interface IWallet {
     getAddressInfo(): Promise<AddressInfo>;
     getBalance(): Promise<WalletBalance>;
     getCoins(): Promise<Coin[]>;
-    getVtxos(): Promise<ExtendedVirtualCoin[]>;
+    getVtxos(withRecoverable?: boolean): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
 

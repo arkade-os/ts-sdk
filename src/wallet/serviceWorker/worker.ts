@@ -453,6 +453,16 @@ export class Worker {
 
         try {
             const vtxos = await this.vtxoRepository.getSpendableVtxos();
+            if (message.withRecoverable) {
+                const spentVtxos = await this.vtxoRepository.getSpentVtxos();
+                vtxos.push(
+                    ...spentVtxos.filter(
+                        (vtxo) =>
+                            vtxo.virtualStatus.state === "swept" &&
+                            vtxo.spentBy === undefined
+                    )
+                );
+            }
             event.source?.postMessage(Response.vtxos(message.id, vtxos));
         } catch (error: unknown) {
             console.error("Error getting vtxos:", error);

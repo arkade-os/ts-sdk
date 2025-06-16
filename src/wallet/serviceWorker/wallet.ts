@@ -267,10 +267,11 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async getVtxos(): Promise<ExtendedVirtualCoin[]> {
+    async getVtxos(withRecoverable = false): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
             id: getRandomId(),
+            withRecoverable,
         };
 
         try {

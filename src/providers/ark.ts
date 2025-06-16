@@ -908,7 +908,11 @@ function convertVtxo(vtxo: any): VirtualCoin {
             confirmed: !!vtxo.roundTxid,
         },
         virtualStatus: {
-            state: vtxo.isPending ? "pending" : "settled",
+            state: vtxo.swept
+                ? "swept"
+                : vtxo.isPending
+                  ? "pending"
+                  : "settled",
             batchTxID: vtxo.roundTxid,
             batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
         },
