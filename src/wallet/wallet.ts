@@ -273,7 +273,6 @@ export class Wallet implements IWallet {
         let offchainSwept = 0;
         if (this.indexerProvider) {
             const vtxos = await this.getVirtualCoins();
-            console.log("vtxos", vtxos);
             offchainSettled = vtxos
                 .filter((coin) => coin.virtualStatus.state === "settled")
                 .reduce((sum, coin) => sum + coin.value, 0);
@@ -337,21 +336,16 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(): Promise<VirtualCoin[]> {
-        console.log("Fetching virtual coins...");
         if (!this.indexerProvider) {
             return [];
         }
-        console.log("Using indexer provider:", this.indexerProvider);
 
         const address = await this.getAddress();
         if (!address.offchain) {
             return [];
         }
-        console.log("Fetching VTXOs for address:", address.offchain);
 
         const vtxos = await this.indexerProvider.GetVtxos([address.offchain]);
-
-        console.log("Fetched VTXOs:", vtxos);
 
         return vtxos.filter((v) => !(v.spentBy && v.spentBy.length > 0));
     }
