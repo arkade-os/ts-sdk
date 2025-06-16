@@ -1216,10 +1216,7 @@ export class Wallet implements IWallet {
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: nowSeconds,
             expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
-            musig2_data: {
-                cosigners_public_keys: cosignerPubKeys,
-                signing_type: 1, // sign branch
-            },
+            cosigners_public_keys: cosignerPubKeys,
         };
 
         const encodedMessage = JSON.stringify(message, null, 0);
