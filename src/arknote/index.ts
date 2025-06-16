@@ -1,19 +1,26 @@
-import { base58 } from "@scure/base";
-import { TaprootControlBlock, TransactionInput } from "@scure/btc-signer/psbt";
-import { VtxoScript } from "../script/base";
+import { base58, hex } from "@scure/base";
+import { TapLeafScript, VtxoScript } from "../script/base";
 import { Bytes, sha256 } from "@scure/btc-signer/utils";
 import { Script } from "@scure/btc-signer";
+import { ExtendedCoin, Status } from "../wallet";
 
-export class ArkNote {
+// ArkNote is a fake VTXO coin that can be spent by revealing the preimage
+export class ArkNote implements ExtendedCoin {
     static readonly DefaultHRP = "arknote";
     static readonly PreimageLength = 32; // 32 bytes for the preimage
     static readonly ValueLength = 4; // 4 bytes for the value
     static readonly Length = ArkNote.PreimageLength + ArkNote.ValueLength;
-    static readonly FakeOutpointIndex = 0;
 
     readonly vtxoScript: VtxoScript;
-    readonly input: TransactionInput;
-    readonly witness: Uint8Array[];
+
+    // ExtendedCoin properties
+    readonly txid: string;
+    readonly vout = 0;
+    readonly forfeitTapLeafScript: TapLeafScript;
+    readonly intentTapLeafScript: TapLeafScript;
+    readonly tapTree: Bytes;
+    readonly status: Status;
+    readonly extraWitness?: Bytes[] | undefined;
 
     constructor(
         public preimage: Uint8Array,
@@ -25,21 +32,13 @@ export class ArkNote {
 
         const leaf = this.vtxoScript.leaves[0];
 
-        this.input = {
-            txid: new Uint8Array(preimageHash).reverse(),
-            index: ArkNote.FakeOutpointIndex,
-            witnessUtxo: {
-                amount: BigInt(this.value),
-                script: this.vtxoScript.pkScript,
-            },
-            tapLeafScript: [leaf],
-        };
-
-        this.witness = [
-            this.preimage,
-            leaf[1].subarray(0, leaf[1].length - 1),
-            TaprootControlBlock.encode(leaf[0]),
-        ];
+        this.txid = hex.encode(new Uint8Array(preimageHash).reverse());
+        this.tapTree = this.vtxoScript.encode();
+        this.forfeitTapLeafScript = leaf;
+        this.intentTapLeafScript = leaf;
+        this.value = value;
+        this.status = { confirmed: true };
+        this.extraWitness = [this.preimage];
     }
 
     encode(): Uint8Array {
