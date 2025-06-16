@@ -147,12 +147,6 @@ export interface ArkProvider {
     registerIntent(intent: Intent): Promise<string>;
     deleteIntent(intent: Intent): Promise<void>;
     confirmRegistration(intentId: string): Promise<void>;
-    registerOutputsForNextRound(
-        requestId: string,
-        outputs: Output[],
-        vtxoTreeSigningPublicKeys: string[],
-        signAll?: boolean
-    ): Promise<void>;
     submitTreeNonces(
         settlementID: string,
         pubkey: string,
@@ -382,39 +376,6 @@ export class RestArkProvider implements ArkProvider {
         if (!response.ok) {
             const errorText = await response.text();
             throw new Error(`Failed to delete intent: ${errorText}`);
-        }
-    }
-
-    async registerOutputsForNextRound(
-        requestId: string,
-        outputs: Output[],
-        cosignersPublicKeys: string[],
-        signingAll = false
-    ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/registerOutputs`;
-        const response = await fetch(url, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                requestId,
-                outputs: outputs.map(
-                    (output): ProtoTypes.Output => ({
-                        address: output.address,
-                        amount: output.amount.toString(10),
-                    })
-                ),
-                musig2: {
-                    cosignersPublicKeys,
-                    signingAll,
-                },
-            }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to register outputs: ${errorText}`);
         }
     }
 
