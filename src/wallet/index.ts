@@ -3,6 +3,7 @@ import { Identity } from "../identity";
 import { NetworkName } from "../networks";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
+import { Bytes } from "@scure/btc-signer/utils";
 
 export interface WalletConfig {
     network: NetworkName;
@@ -42,7 +43,7 @@ export interface Recipient {
 }
 
 export interface SettleParams {
-    inputs: (string | ExtendedCoin)[];
+    inputs: ExtendedCoin[];
     outputs: Output[];
 }
 
@@ -127,8 +128,12 @@ type tapLeaves = {
     intentTapLeafScript: TapLeafScript;
 };
 
-export type ExtendedCoin = tapLeaves & EncodedVtxoScript & Coin;
-export type ExtendedVirtualCoin = tapLeaves & EncodedVtxoScript & VirtualCoin;
+export type ExtendedCoin = tapLeaves &
+    EncodedVtxoScript &
+    Coin & { extraWitness?: Bytes[] };
+export type ExtendedVirtualCoin = tapLeaves &
+    EncodedVtxoScript &
+    VirtualCoin & { extraWitness?: Bytes[] };
 
 export interface IWallet {
     // Address and balance management

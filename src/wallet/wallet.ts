@@ -8,7 +8,11 @@ import {
     tapLeafHash,
 } from "@scure/btc-signer/payment";
 import { Transaction } from "@scure/btc-signer";
-import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt";
+import {
+    TaprootControlBlock,
+    TransactionInput,
+    TransactionOutput,
+} from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../script/address";
@@ -1197,43 +1201,14 @@ export class Wallet implements IWallet {
     }
 
     private async makeRegisterIntentSignature(
-        bip322Inputs: (string | ExtendedCoin)[],
+        bip322Inputs: ExtendedCoin[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[]
     ): Promise<Intent> {
         const nowSeconds = Math.floor(Date.now() / 1000);
-        const inputTapTrees: string[] = [];
-        const inputs: TransactionInput[] = [];
-        const notesWitnesses = new Map<string, Uint8Array[]>();
-
-        for (const bip322Input of bip322Inputs) {
-            // note input
-            if (typeof bip322Input === "string") {
-                const note = ArkNote.fromString(bip322Input);
-                inputs.push(note.input);
-                inputTapTrees.push(hex.encode(note.vtxoScript.encode()));
-                notesWitnesses.set(hex.encode(note.input.txid!), note.witness);
-                continue;
-            }
-
-            // vtxo input
-            const vtxoScript = VtxoScript.decode(bip322Input.tapTree);
-
-            const sequence = getSequence(bip322Input);
-
-            inputs.push({
-                txid: hex.decode(bip322Input.txid),
-                index: bip322Input.vout,
-                witnessUtxo: {
-                    amount: BigInt(bip322Input.value),
-                    script: vtxoScript.pkScript,
-                },
-                sequence,
-                tapLeafScript: [bip322Input.intentTapLeafScript],
-            });
-            inputTapTrees.push(hex.encode(bip322Input.tapTree));
-        }
+        const { inputs, inputTapTrees, finalizer } =
+            this.prepareBIP322Inputs(bip322Inputs);
 
         const message = {
             type: "register",
@@ -1251,8 +1226,8 @@ export class Wallet implements IWallet {
         const signature = await this.makeBIP322Signature(
             encodedMessage,
             inputs,
-            outputs,
-            notesWitnesses
+            finalizer,
+            outputs
         );
 
         return {
@@ -1262,29 +1237,41 @@ export class Wallet implements IWallet {
     }
 
     private async makeDeleteIntentSignature(
-        bip322Inputs: (string | ExtendedCoin)[]
+        bip322Inputs: ExtendedCoin[]
     ): Promise<{ signature: BIP322.Signature; message: string }> {
         const nowSeconds = Math.floor(Date.now() / 1000);
+        const { inputs, finalizer } = this.prepareBIP322Inputs(bip322Inputs);
+
         const message = {
             type: "delete",
             expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
         };
 
+        const encodedMessage = JSON.stringify(message, null, 0);
+
+        const signature = await this.makeBIP322Signature(
+            encodedMessage,
+            inputs,
+            finalizer
+        );
+
+        return {
+            signature,
+            message: encodedMessage,
+        };
+    }
+
+    private prepareBIP322Inputs(bip322Inputs: ExtendedCoin[]): {
+        inputs: TransactionInput[];
+        inputTapTrees: string[];
+        finalizer: (tx: BIP322.FullProof) => void;
+    } {
         const inputs: TransactionInput[] = [];
-        const notesWitnesses = new Map<string, Uint8Array[]>();
+        const inputTapTrees: string[] = [];
+        const inputExtraWitnesses: Bytes[][] = [];
 
         for (const bip322Input of bip322Inputs) {
-            // note input
-            if (typeof bip322Input === "string") {
-                const note = ArkNote.fromString(bip322Input);
-                inputs.push(note.input);
-                notesWitnesses.set(hex.encode(note.input.txid!), note.witness);
-                continue;
-            }
-
-            // vtxo input
             const vtxoScript = VtxoScript.decode(bip322Input.tapTree);
-
             const sequence = getSequence(bip322Input);
 
             inputs.push({
@@ -1297,61 +1284,65 @@ export class Wallet implements IWallet {
                 sequence,
                 tapLeafScript: [bip322Input.intentTapLeafScript],
             });
+            inputTapTrees.push(hex.encode(bip322Input.tapTree));
+            inputExtraWitnesses.push(bip322Input.extraWitness || []);
         }
 
-        const encodedMessage = JSON.stringify(message, null, 0);
-
-        const signature = await this.makeBIP322Signature(
-            encodedMessage,
-            inputs,
-            undefined,
-            notesWitnesses
-        );
-
         return {
-            signature,
-            message: encodedMessage,
+            inputs,
+            inputTapTrees,
+            finalizer: finalizeWithExtraWitnesses(inputExtraWitnesses),
         };
     }
 
     private async makeBIP322Signature(
         message: string,
         inputs: TransactionInput[],
-        outputs?: TransactionOutput[],
-        notesWitnesses?: Map<string, Uint8Array[]>
+        finalizer: (tx: BIP322.FullProof) => void,
+        outputs?: TransactionOutput[]
     ): Promise<BIP322.Signature> {
         const proof = BIP322.create(message, inputs, outputs);
-
         const signedProof = await this.identity.sign(proof);
-        if (notesWitnesses && notesWitnesses.size) {
-            return BIP322.signature(
-                signedProof,
-                finalizeWithNotes(notesWitnesses)
-            );
-        }
-
-        return BIP322.signature(signedProof);
+        return BIP322.signature(signedProof, finalizer);
     }
 }
 
-// finalizer function for tx spending notes
-function finalizeWithNotes(
-    notesWitnesses: Map<string, Uint8Array[]>
+function finalizeWithExtraWitnesses(
+    inputExtraWitnesses: Bytes[][]
 ): (tx: BIP322.FullProof) => void {
     return function (tx) {
         for (let i = 0; i < tx.inputsLength; i++) {
-            const inputTxid = tx.getInput(i === 0 ? 1 : i).txid;
-            if (!inputTxid) continue;
-            const witness = notesWitnesses.get(hex.encode(inputTxid));
-            if (witness) {
-                tx.updateInput(i, {
-                    finalScriptWitness: witness,
-                });
-                continue;
+            try {
+                tx.finalizeIdx(i);
+            } catch (e) {
+                // handle empty witness error
+                if (
+                    e instanceof Error &&
+                    e.message.includes("finalize/taproot: empty witness")
+                ) {
+                    const tapLeaves = tx.getInput(i).tapLeafScript;
+                    if (!tapLeaves || tapLeaves.length <= 0) throw e;
+                    const [cb, s] = tapLeaves[0];
+                    const script = s.slice(0, -1);
+                    tx.updateInput(i, {
+                        finalScriptWitness: [
+                            script,
+                            TaprootControlBlock.encode(cb),
+                        ],
+                    });
+                }
             }
 
-            // not a note input, use the default finalizer
-            tx.finalizeIdx(i);
+            const finalScriptWitness = tx.getInput(i).finalScriptWitness;
+            if (!finalScriptWitness) throw new Error("input not finalized");
+
+            // input 0 and 1 spend the same pkscript
+            const extra = inputExtraWitnesses[i === 0 ? 0 : i - 1];
+            if (extra && extra.length > 0) {
+                tx.updateInput(i, {
+                    finalScriptWitness: [...extra, ...finalScriptWitness],
+                });
+            }
         }
     };
 }

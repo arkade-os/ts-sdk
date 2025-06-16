@@ -5,9 +5,9 @@ import { Identity } from ".";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 
 const ZERO_32 = new Uint8Array(32).fill(0);
+const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
 export class InMemoryKey implements Identity {
-    static readonly ALLOWED_SIGHASH = [SigHash.ALL, SigHash.DEFAULT];
     private key: Uint8Array;
 
     private constructor(key: Uint8Array | undefined) {
@@ -27,9 +27,7 @@ export class InMemoryKey implements Identity {
 
         if (!inputIndexes) {
             try {
-                if (
-                    !txCpy.sign(this.key, InMemoryKey.ALLOWED_SIGHASH, ZERO_32)
-                ) {
+                if (!txCpy.sign(this.key, ALL_SIGHASH, ZERO_32)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -46,14 +44,7 @@ export class InMemoryKey implements Identity {
         }
 
         for (const inputIndex of inputIndexes) {
-            if (
-                !txCpy.signIdx(
-                    this.key,
-                    inputIndex,
-                    InMemoryKey.ALLOWED_SIGHASH,
-                    ZERO_32
-                )
-            ) {
+            if (!txCpy.signIdx(this.key, inputIndex, ALL_SIGHASH, ZERO_32)) {
                 throw new Error(`Failed to sign input #${inputIndex}`);
             }
         }

@@ -289,10 +289,18 @@ pnpm test
 # Run unit tests only
 pnpm test:unit
 
-# Run integration tests (requires nigiri)
+# Run integration tests with ark provided by nigiri
 nigiri start --ark
-pnpm test:setup      # Run setup script for integration tests
+pnpm test:setup # Run setup script for integration tests
 pnpm test:integration
+nigiri stop --delete
+
+# Run integration tests with ark provided by docker (requires nigiri)
+nigiri start
+pnpm test:up-docker
+pnpm test:setup-docker # Run setup script for integration tests
+pnpm test:integration-docker
+pnpm test:down-docker
 nigiri stop --delete
 
 # Watch mode for development
