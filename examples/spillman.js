@@ -11,6 +11,7 @@ const {
     InMemoryKey,
     Wallet,
     RestArkProvider,
+    RestIndexerProvider,
     createVirtualTx,
     VtxoScript,
     MultisigTapscript,
@@ -107,7 +108,9 @@ async function main() {
     // Get the virtual coins for the Spillman Channel address
     console.log("Fetching virtual coins...");
     const arkProvider = new RestArkProvider("http://localhost:7070");
-    const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
+    const indexerProvider = new RestIndexerProvider("http://localhost:7070");
+    const vtxos = await indexerProvider.GetVtxos([address]);
+    const spendableVtxos = vtxos.filter((v) => v.spentBy === undefined);
 
     if (spendableVtxos.length === 0) {
         throw new Error("No spendable virtual coins found");

@@ -470,9 +470,11 @@ describe("Wallet SDK Integration Tests", () => {
         const indexerProvider = new RestIndexerProvider(
             "http://localhost:7070"
         );
-        const { spendableVtxos } =
-            await indexerProvider.getVirtualCoins(address);
+
+        const vtxos = await indexerProvider.GetVtxos([address]);
+        const spendableVtxos = vtxos.filter((v) => v.spentBy === undefined);
         expect(spendableVtxos).toHaveLength(1);
+
         const vtxo = spendableVtxos[0];
 
         const tx = createVirtualTx(

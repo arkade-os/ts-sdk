@@ -79,16 +79,13 @@ export class Worker {
 
         await this.vtxoRepository.open();
 
-        // set the initial vtxos state
-        const { spendableVtxos, spentVtxos } =
-            await this.indexerProvider.getVirtualCoins(
-                addressInfo.offchain.address
-            );
-
         const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
         const forfeit = this.wallet.offchainTapscript.forfeit();
 
-        const vtxos = [...spendableVtxos, ...spentVtxos].map((vtxo) => ({
+        // set the initial vtxos state
+        const vtxos = (
+            await this.indexerProvider.GetVtxos([addressInfo.offchain.address])
+        ).map((vtxo) => ({
             ...vtxo,
             tapLeafScript: forfeit,
             scripts: encodedOffchainTapscript,
@@ -109,8 +106,12 @@ export class Worker {
             const tapLeafScript = vtxoScript.findLeaf(scripts.forfeit[0]);
 
             const abortController = new AbortController();
-            const subscription = this.indexerProvider!.subscribeForScripts(
-                [hex.encode(ArkAddress.decode(address).pkScript)],
+            const subscriptionId =
+                await this.indexerProvider!.SubscribeForScripts([
+                    hex.encode(ArkAddress.decode(address).pkScript),
+                ]);
+            const subscription = this.indexerProvider!.GetSubscription(
+                subscriptionId,
                 abortController.signal
             );
 

@@ -1,12 +1,68 @@
 import { TxTree } from "../tree/vtxoTree";
-import { VirtualCoin } from "../wallet";
+import { Outpoint, VirtualCoin } from "../wallet";
 import { ProtoTypes, Round } from "./ark";
 
-type IndexerGetVirtualCoinsVtxoResponse = {
-    outpoint: {
-        txid: string;
-        vout: number;
-    };
+enum IndexerTxType {
+    UNKNOWN = 0,
+    DEPOSIT = 1,
+    WITHDRAWAL = 2,
+}
+
+enum IndexerChainedTxType {
+    UNKNOWN = 0,
+    VIRTUAL = 1,
+    COMMITMENT = 2,
+}
+
+type IndexerBatch = {
+    totalOutputAmount: bigint;
+    totalOutputVtxos: number;
+    expiresAt: number;
+    swept: boolean;
+};
+
+type IndexerChain = {
+    txid: string;
+    spends: IndexerChainedTx[];
+    expiresAt: number;
+};
+
+type IndexerChainedTx = {
+    txid: string;
+    type: IndexerChainedTxType;
+};
+
+type IndexerCommitmentTx = {
+    startedAt: number;
+    endedAt: number;
+    batches: { [key: string]: IndexerBatch };
+    totalInputAmount: bigint;
+    totalInputVtxos: number;
+    totalOutputAmount: bigint;
+    totalOutputVtxos: number;
+};
+
+type IndexerNode = {
+    txid: string;
+    parentTxid: string;
+    level: number;
+    levelIndex: number;
+};
+
+type IndexerTxHistoryRecord = {
+    // Only one of these will be present at a time
+    commitmentTxid?: string;
+    virtualTxid?: string;
+
+    type: IndexerTxType;
+    amount: bigint;
+    createdAt: number;
+    isSettled: boolean;
+    settledBy: string;
+};
+
+type IndexerVtxo = {
+    outpoint: Outpoint;
     createdAt: string;
     expiresAt: string;
     amount: string;
@@ -18,104 +74,111 @@ type IndexerGetVirtualCoinsVtxoResponse = {
     commitmentTxid: string;
 };
 
-type IndexerGetVirtualCoinsResponse = {
-    vtxos: IndexerGetVirtualCoinsVtxoResponse[];
-    page: number;
-};
-
 export interface IndexerProvider {
-    GetCommitmentTx(txid: string): Promise<Round>;
-    getVirtualCoins(address: string): Promise<{
-        spendableVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }>;
-    subscribeForScripts(
-        scripts: string[],
+    GetCommitmentTx(txid: string): Promise<IndexerCommitmentTx>;
+    GetCommitmentTxLeaves(txid: string): Promise<Outpoint[]>;
+    GetConnectors(txid: string): Promise<IndexerNode[]>;
+    GetForfeitTxs(txid: string): Promise<string[]>;
+    GetTransactionHistory(
+        address: string,
+        start?: number,
+        end?: number
+    ): Promise<IndexerTxHistoryRecord[]>;
+    GetSubscription(
+        subscriptionId: string,
         abortSignal: AbortSignal
     ): AsyncIterableIterator<{
+        scripts: string[];
         newVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }>;
+    GetSweptCommitmentTx(txid: string): Promise<string[]>;
+    GetVirtualTxs(txids: string[]): Promise<string[]>;
+    GetVtxoChain(outpoint: Outpoint): Promise<{
+        rootCommitmentTxid: string;
+        chain: IndexerChain[];
+        depth: number;
+    }>;
+    GetVtxos(addresses: string[]): Promise<VirtualCoin[]>;
+    GetVtxosByOutpoints(oupoints: Outpoint[]): Promise<VirtualCoin[]>;
+    GetVtxoTree(batch: Outpoint): Promise<IndexerNode[]>;
+    GetVtxoTreeLeaves(batch: Outpoint): Promise<Outpoint[]>;
+    SubscribeForScripts(scripts: string[]): Promise<string>;
+    UnsubscribeForScripts(subscriptionId: string): Promise<void>;
 }
 
 export class RestIndexerProvider implements IndexerProvider {
     constructor(public serverUrl: string) {}
 
-    async getVirtualCoins(address: string): Promise<{
-        spendableVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }> {
-        const url = `${this.serverUrl}/v1/getVtxos/${address}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch VTXOs: ${response.statusText}`);
-        }
-        const data = (await response.json()) as IndexerGetVirtualCoinsResponse;
-
-        return {
-            spendableVtxos: [...(data.vtxos || [])]
-                .filter((v) => !v.isSpent)
-                .map(convertVtxo),
-            spentVtxos: [...(data.vtxos || [])]
-                .filter((v) => v.isSpent)
-                .map(convertVtxo),
-        };
-    }
-
-    async GetCommitmentTx(txid: string): Promise<Round> {
+    async GetCommitmentTx(txid: string): Promise<IndexerCommitmentTx> {
         const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch round: ${response.statusText}`);
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch commitment tx: ${res.statusText}`);
         }
 
-        const data = (await response.json()) as { round: ProtoTypes.Round };
-        const round = data.round;
-
-        return {
-            id: round.id,
-            start: new Date(Number(round.start) * 1000), // Convert from Unix timestamp to Date
-            end: new Date(Number(round.end) * 1000), // Convert from Unix timestamp to Date
-            vtxoTree: this.toTxTree(round.vtxoTree),
-            forfeitTxs: round.forfeitTxs || [],
-            connectors: this.toTxTree(round.connectors),
-        };
+        const data = (await res.json()) as IndexerCommitmentTx;
+        return data;
     }
 
-    async *subscribeForScripts(
-        scripts: string[],
-        abortSignal: AbortSignal,
-        subscriptionId?: string
-    ): AsyncIterableIterator<{
-        newVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }> {
-        subscriptionId ||= await this.createSubscription(scripts);
-        if (!subscriptionId) {
-            throw new Error("Failed to create subscription");
+    async GetCommitmentTxLeaves(txid: string): Promise<Outpoint[]> {
+        const url = `${this.serverUrl}/v1/commitmentTx/${txid}/leaves`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(
+                `Failed to fetch commitment tx leaves: ${res.statusText}`
+            );
         }
+        const data = (await res.json()) as { leaves: Outpoint[] };
+        return data.leaves;
+    }
 
+    async GetConnectors(txid: string): Promise<IndexerNode[]> {
+        const url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(
+                `Failed to fetch commitment tx connectors: ${res.statusText}`
+            );
+        }
+        const data = (await res.json()) as { connectors: IndexerNode[] };
+        return data.connectors;
+    }
+
+    async GetForfeitTxs(txid: string): Promise<string[]> {
+        const url = `${this.serverUrl}/v1/commitmentTx/${txid}/forfeitTxs`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(
+                `Failed to fetch commitment tx forfeitTxs: ${res.statusText}`
+            );
+        }
+        const data = (await res.json()) as { txids: string[] };
+        return data.txids;
+    }
+
+    async *GetSubscription(subscriptionId: string, abortSignal: AbortSignal) {
         const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
             try {
-                const response = await fetch(url, {
+                const res = await fetch(url, {
                     headers: {
                         Accept: "application/json",
                     },
                 });
 
-                if (!response.ok) {
+                if (!res.ok) {
                     throw new Error(
-                        `Unexpected status ${response.status} when subscribing to address updates`
+                        `Unexpected status ${res.status} when subscribing to address updates`
                     );
                 }
 
-                if (!response.body) {
+                if (!res.body) {
                     throw new Error("Response body is null");
                 }
 
-                const reader = response.body.getReader();
+                const reader = res.body.getReader();
                 const decoder = new TextDecoder();
                 let buffer = "";
 
@@ -136,6 +199,7 @@ export class RestIndexerProvider implements IndexerProvider {
                             const data = JSON.parse(line);
                             if ("result" in data) {
                                 yield {
+                                    scripts: data.result.scripts || [],
                                     newVtxos: (data.result.newVtxos || []).map(
                                         convertVtxo
                                     ),
@@ -159,6 +223,135 @@ export class RestIndexerProvider implements IndexerProvider {
                 console.error("Address subscription error:", error);
                 throw error;
             }
+        }
+    }
+
+    async GetTransactionHistory(
+        address: string
+    ): Promise<IndexerTxHistoryRecord[]> {
+        const url = `${this.serverUrl}/v1/history/${address}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch tx history: ${res.statusText}`);
+        }
+        const data = (await res.json()) as {
+            history: IndexerTxHistoryRecord[];
+        };
+        return data.history;
+    }
+
+    async GetSweptCommitmentTx(txid: string): Promise<string[]> {
+        const url = `${this.serverUrl}/v1/commitmentTx/${txid}/swept`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(
+                `Failed to fetch swept commitment tx: ${res.statusText}`
+            );
+        }
+        const data = (await res.json()) as { sweptBy: string[] };
+        return data.sweptBy;
+    }
+
+    async GetVirtualTxs(txids: string[]): Promise<string[]> {
+        const url = `${this.serverUrl}/v1/virtualTx/${txids.join(",")}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
+        }
+        const data = (await res.json()) as { txs: string[] };
+        return data.txs;
+    }
+
+    async GetVtxoChain(outpoint: Outpoint): Promise<{
+        chain: IndexerChain[];
+        depth: number;
+        rootCommitmentTxid: string;
+    }> {
+        const url = `${this.serverUrl}/v1/vtxo/${outpoint.txid}/${outpoint.vout}/chain`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch tx history: ${res.statusText}`);
+        }
+        const data = (await res.json()) as {
+            rootCommitmentTxid: string;
+            chain: IndexerChain[];
+            depth: number;
+        };
+        return data;
+    }
+
+    async GetVtxos(addresses: string[]): Promise<VirtualCoin[]> {
+        const url = `${this.serverUrl}/v1/getVtxos/${addresses.join(",")}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
+        }
+        const data = (await res.json()) as { vtxos: IndexerVtxo[] };
+        return data.vtxos.map(convertVtxo);
+    }
+
+    async GetVtxosByOutpoints(oupoints: Outpoint[]): Promise<VirtualCoin[]> {
+        const url = `${this.serverUrl}/v1/getVtxosByOutpoint/${oupoints.join(",")}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(
+                `Failed to fetch vtxos by outpoints: ${res.statusText}`
+            );
+        }
+        const data = (await res.json()) as { vtxos: IndexerVtxo[] };
+        return data.vtxos.map(convertVtxo);
+    }
+
+    async GetVtxoTree(outpoint: Outpoint): Promise<IndexerNode[]> {
+        const url = `${this.serverUrl}/v1/batch/${outpoint.txid}/${outpoint.vout}/tree`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
+        }
+        const data = (await res.json()) as { vtxoTree: IndexerNode[] };
+        return data.vtxoTree;
+    }
+
+    async GetVtxoTreeLeaves(outpoint: Outpoint): Promise<Outpoint[]> {
+        const url = `${this.serverUrl}/v1/batch/${outpoint.txid}/${outpoint.vout}/tree/leaves`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
+        }
+        const data = (await res.json()) as { leaves: Outpoint[] };
+        return data.leaves;
+    }
+
+    async SubscribeForScripts(scripts: string[]): Promise<string> {
+        const url = `${this.serverUrl}/v1/script/subscribe`;
+        const res = await fetch(url, {
+            headers: {
+                Accept: "application/json",
+            },
+            method: "POST",
+            body: JSON.stringify({ scripts }),
+        });
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`Failed to subscribe to scripts: ${errorText}`);
+        }
+        const { subscriptionId } = await res.json();
+        if (!subscriptionId) throw new Error(`Subscription ID not found`);
+        return subscriptionId;
+    }
+
+    async UnsubscribeForScripts(subscriptionId: string): Promise<void> {
+        const url = `${this.serverUrl}/v1/script/unsubscribe`;
+        const res = await fetch(url, {
+            headers: {
+                Accept: "application/json",
+            },
+            method: "POST",
+            body: JSON.stringify({ subscriptionId }),
+        });
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`Failed to unsubscribe to scripts: ${errorText}`);
         }
     }
 
@@ -186,29 +379,9 @@ export class RestIndexerProvider implements IndexerProvider {
             )
         );
     }
-
-    private async createSubscription(scripts: string[]): Promise<string> {
-        const url = `${this.serverUrl}/v1/script/subscribe`;
-        const response = await fetch(url, {
-            headers: {
-                Accept: "application/json",
-            },
-            method: "POST",
-            body: JSON.stringify({ scripts }),
-        });
-
-        if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to subscribe to scripts: ${errorText}`);
-        }
-
-        const { subscriptionId } = await response.json();
-        if (!subscriptionId) throw new Error(`Subscription ID not found`);
-        return subscriptionId;
-    }
 }
 
-function convertVtxo(vtxo: IndexerGetVirtualCoinsVtxoResponse): VirtualCoin {
+function convertVtxo(vtxo: IndexerVtxo): VirtualCoin {
     return {
         txid: vtxo.outpoint.txid,
         vout: vtxo.outpoint.vout,

@@ -736,7 +736,7 @@ function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
 
 // ProtoTypes namespace defines unexported types representing the raw data received from the server
 export namespace ProtoTypes {
-    interface Node {
+    export interface Node {
         txid: string;
         tx: string;
         parentTxid: string;
