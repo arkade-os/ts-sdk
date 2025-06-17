@@ -379,11 +379,9 @@ export class RestArkProvider implements ArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                proof: {
-                    bip322Signature: {
-                        signature: intent.signature,
-                        message: intent.message,
-                    },
+                bip322Signature: {
+                    signature: intent.signature,
+                    message: intent.message,
                 },
             }),
         });
