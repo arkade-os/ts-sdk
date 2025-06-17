@@ -52,6 +52,7 @@ import { ArkNote } from "./arknote";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks } from "./networks";
+import { RestIndexerProvider } from "./providers/indexer";
 
 export {
     // Classes
@@ -63,6 +64,7 @@ export {
     ESPLORA_URL,
     EsploraProvider,
     RestArkProvider,
+    RestIndexerProvider,
 
     // Script-related
     ArkAddress,

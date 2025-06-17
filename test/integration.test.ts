@@ -10,6 +10,7 @@ import {
     VHTLC,
     Identity,
     addConditionWitness,
+    RestIndexerProvider,
     RestArkProvider,
     ArkNote,
     CSVMultisigTapscript,
@@ -17,7 +18,6 @@ import {
 } from "../src";
 import { networks } from "../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
-import { RestIndexerProvider } from "../src/providers/indexer";
 
 const arkdExec =
     process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
