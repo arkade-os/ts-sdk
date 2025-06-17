@@ -617,7 +617,7 @@ describe("Wallet SDK Integration Tests", () => {
         // give some time for the server to be swept
         await new Promise((resolve) => setTimeout(resolve, 10000));
 
-        const vtxos = await alice.wallet.getVtxos(false);
+        const vtxos = await alice.wallet.getVtxos({ withRecoverable: false });
         expect(vtxos).toHaveLength(1);
         const vtxo = vtxos[0];
         expect(vtxo.txid).toBeDefined();
@@ -628,7 +628,9 @@ describe("Wallet SDK Integration Tests", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 20_000));
 
-        const vtxosAfterSweep = await alice.wallet.getVtxos(true);
+        const vtxosAfterSweep = await alice.wallet.getVtxos({
+            withRecoverable: true,
+        });
         expect(vtxosAfterSweep).toHaveLength(1);
         const vtxoAfterSweep = vtxosAfterSweep[0];
         expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
