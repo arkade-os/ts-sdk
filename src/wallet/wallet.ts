@@ -801,6 +801,9 @@ export class Wallet implements IWallet {
                         ) {
                             continue;
                         }
+                        if (!hasOffchainOutputs) {
+                            continue;
+                        }
                         // index 0 = vtxo tree
                         if (event.batchIndex === 0) {
                             vtxoTree.addSignature(
@@ -896,9 +899,7 @@ export class Wallet implements IWallet {
             try {
                 // delete the intent to not be stuck in the queue
                 await this.arkProvider.deleteIntent(deleteIntent);
-            } catch (e) {
-                console.error("Failed to delete intent", e);
-            }
+            } catch {}
             throw error;
         }
 
@@ -1091,8 +1092,6 @@ export class Wallet implements IWallet {
         let connectorsTreeValid = false;
 
         for (const input of inputs) {
-            if (typeof input === "string") continue; // skip notes
-
             // check if the input is an offchain "virtual" coin
             const vtxo = vtxos.find(
                 (vtxo) => vtxo.txid === input.txid && vtxo.vout === input.vout
@@ -1114,11 +1113,9 @@ export class Wallet implements IWallet {
                             "The server returned incomplete data. No settlement input found in the PSBT"
                         );
                     }
-
                     const inputTxId = hex.encode(settlementInput.txid);
                     if (inputTxId !== input.txid) continue;
                     if (settlementInput.index !== input.vout) continue;
-
                     // input found in the settlement tx, sign it
                     settlementPsbt.updateInput(i, {
                         tapLeafScript: [input.forfeitTapLeafScript],
