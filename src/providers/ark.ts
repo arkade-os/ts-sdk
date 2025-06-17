@@ -752,19 +752,13 @@ function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
 
 // ProtoTypes namespace defines unexported types representing the raw data received from the server
 namespace ProtoTypes {
-    export interface Node {
+    interface Node {
         txid: string;
         tx: string;
         parentTxid: string;
         level: number;
         levelIndex: number;
         leaf: boolean;
-    }
-    interface TreeLevel {
-        nodes: Node[];
-    }
-    export interface Tree {
-        levels: TreeLevel[];
     }
 
     interface BatchStartedEvent {
@@ -832,48 +826,4 @@ namespace ProtoTypes {
         batchTree?: BatchTreeEvent;
         batchTreeSignature?: BatchTreeSignatureEvent;
     }
-
-    export interface Input {
-        outpoint: {
-            txid: string;
-            vout: number;
-        };
-        taprootTree: {
-            scripts: string[];
-        };
-    }
-
-    export interface Output {
-        address: string;
-        amount: string;
-    }
-
-    export interface Round {
-        id: string;
-        start: string; // int64 as string
-        end: string; // int64 as string
-        roundTx: string;
-        vtxoTree: Tree;
-        forfeitTxs: string[];
-        connectors: Tree;
-        stage: string; // RoundStage as string
-    }
-}
-
-function convertVtxo(vtxo: any): VirtualCoin {
-    return {
-        txid: vtxo.outpoint.txid,
-        vout: vtxo.outpoint.vout,
-        value: Number(vtxo.amount),
-        status: {
-            confirmed: !!vtxo.roundTxid,
-        },
-        virtualStatus: {
-            state: vtxo.isPending ? "pending" : "settled",
-            batchTxID: vtxo.roundTxid,
-            batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
-        },
-        spentBy: vtxo.spentBy,
-        createdAt: new Date(vtxo.createdAt * 1000),
-    };
 }
