@@ -52,7 +52,7 @@ jobs:
         use_ln: false
 
     - name: Build arkd master
-      run: pnpm run build:build-docker
+      run: pnpm run test:build-docker
 
     - name: Run arkd master
       run: pnpm run test:up-docker

@@ -1,5 +1,5 @@
 import { NetworkName } from "../../networks";
-import { SettleParams, SendBitcoinParams, Outpoint } from "..";
+import { SettleParams, SendBitcoinParams, Outpoint, GetVtxosFilter } from "..";
 
 export namespace Request {
     export type Type =
@@ -96,7 +96,7 @@ export namespace Request {
 
     export interface GetVtxos extends Base {
         type: "GET_VTXOS";
-        withRecoverable?: boolean;
+        filter?: GetVtxosFilter;
     }
 
     export function isGetVtxos(message: Base): message is GetVtxos {

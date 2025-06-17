@@ -46,6 +46,8 @@ import {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    GetVtxosFilter,
+    isRecoverable,
     IWallet,
     Outpoint,
     SendBitcoinParams,
@@ -299,7 +301,7 @@ export class Wallet implements IWallet {
         return this.onchainProvider.getCoins(address.onchain);
     }
 
-    async getVtxos(withRecoverable = false): Promise<ExtendedVirtualCoin[]> {
+    async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         if (!this.arkProvider || !this.offchainTapscript) {
             return [];
         }
@@ -309,7 +311,7 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const spendableVtxos = await this.getVirtualCoins(withRecoverable);
+        const spendableVtxos = await this.getVirtualCoins(filter);
         const encodedOffchainTapscript = this.offchainTapscript.encode();
         const forfeit = this.offchainTapscript.forfeit();
         const exit = this.offchainTapscript.exit();
@@ -323,7 +325,7 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(
-        withRecoverable = true
+        filter: GetVtxosFilter = { withRecoverable: true }
     ): Promise<VirtualCoin[]> {
         if (!this.arkProvider) {
             return [];
@@ -337,18 +339,11 @@ export class Wallet implements IWallet {
         const { spendableVtxos, spentVtxos } =
             await this.arkProvider.getVirtualCoins(address.offchain);
 
-        if (!withRecoverable) {
+        if (!filter.withRecoverable) {
             return spendableVtxos;
         }
 
-        return [
-            ...spendableVtxos,
-            ...spentVtxos.filter(
-                (vtxo) =>
-                    vtxo.virtualStatus.state === "swept" &&
-                    (vtxo.spentBy === undefined || vtxo.spentBy === "")
-            ),
-        ];
+        return [...spendableVtxos, ...spentVtxos.filter(isRecoverable)];
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
@@ -443,7 +438,7 @@ export class Wallet implements IWallet {
                 },
                 amount: utxo.value,
                 type: TxType.TxReceived,
-                settled: utxo.virtualStatus.state === "swept",
+                settled: utxo.virtualStatus.state === "settled",
                 createdAt: utxo.status.block_time
                     ? new Date(utxo.status.block_time * 1000).getTime()
                     : 0,
@@ -575,8 +570,9 @@ export class Wallet implements IWallet {
         }
 
         // recoverable coins can't be spent in offchain tx
-        const withRecoverable = false;
-        const virtualCoins = await this.getVirtualCoins(withRecoverable);
+        const virtualCoins = await this.getVirtualCoins({
+            withRecoverable: false,
+        });
 
         const selected = selectVirtualCoins(virtualCoins, params.amount);
 
@@ -1146,10 +1142,7 @@ export class Wallet implements IWallet {
                 continue;
             }
 
-            if (
-                (vtxo.spentBy === undefined || vtxo.spentBy === "") &&
-                vtxo.virtualStatus.state === "swept"
-            ) {
+            if (isRecoverable(vtxo)) {
                 // recoverable coin, we don't need to create a forfeit tx
                 continue;
             }

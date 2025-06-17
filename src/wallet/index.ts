@@ -135,13 +135,24 @@ export type ExtendedVirtualCoin = tapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
+export function isRecoverable(vtxo: VirtualCoin): boolean {
+    return (
+        vtxo.virtualStatus.state === "swept" &&
+        (vtxo.spentBy === undefined || vtxo.spentBy === "")
+    );
+}
+
+export type GetVtxosFilter = {
+    withRecoverable?: boolean;
+};
+
 export interface IWallet {
     // Address and balance management
     getAddress(): Promise<Addresses>;
     getAddressInfo(): Promise<AddressInfo>;
     getBalance(): Promise<WalletBalance>;
     getCoins(): Promise<Coin[]>;
-    getVtxos(withRecoverable?: boolean): Promise<ExtendedVirtualCoin[]>;
+    getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
