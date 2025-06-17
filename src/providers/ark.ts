@@ -137,7 +137,6 @@ export interface Intent {
 
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
-    getRound(txid: string): Promise<Round>; // TODO remove
     submitOffchainTx(
         signedVirtualTx: string,
         checkpoints: string[]
@@ -185,26 +184,6 @@ export class RestArkProvider implements ArkProvider {
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
             batchExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
-        };
-    }
-
-    async getRound(txid: string): Promise<Round> {
-        const url = `${this.serverUrl}/v1/round/${txid}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch round: ${response.statusText}`);
-        }
-
-        const data = (await response.json()) as { round: ProtoTypes.Round };
-        const round = data.round;
-
-        return {
-            id: round.id,
-            start: new Date(Number(round.start) * 1000), // Convert from Unix timestamp to Date
-            end: new Date(Number(round.end) * 1000), // Convert from Unix timestamp to Date
-            vtxoTree: this.toTxTree(round.vtxoTree),
-            forfeitTxs: round.forfeitTxs || [],
-            connectors: this.toTxTree(round.connectors),
         };
     }
 
@@ -549,31 +528,6 @@ export class RestArkProvider implements ArkProvider {
                 throw error;
             }
         }
-    }
-
-    private toTxTree(t: ProtoTypes.Tree): TxTree {
-        // collect the parent txids to determine later if a node is a leaf
-        const parentTxids = new Set<string>();
-        t.levels.forEach((level) =>
-            level.nodes.forEach((node) => {
-                if (node.parentTxid) {
-                    parentTxids.add(node.parentTxid);
-                }
-            })
-        );
-
-        return new TxTree(
-            t.levels.map((row, level) =>
-                row.nodes.map((node, levelIndex) => ({
-                    txid: node.txid,
-                    tx: node.tx,
-                    parentTxid: node.parentTxid,
-                    leaf: !parentTxids.has(node.txid),
-                    level,
-                    levelIndex,
-                }))
-            )
-        );
     }
 
     private toConnectorsIndex(
