@@ -1,86 +1,14 @@
 import { Outpoint, VirtualCoin } from "../wallet";
 
-enum IndexerTxType {
-    UNKNOWN = 0,
-    DEPOSIT = 1,
-    WITHDRAWAL = 2,
-}
-
-enum IndexerChainedTxType {
-    UNKNOWN = 0,
-    VIRTUAL = 1,
-    COMMITMENT = 2,
-}
-
-type IndexerBatch = {
-    totalOutputAmount: bigint;
-    totalOutputVtxos: number;
-    expiresAt: number;
-    swept: boolean;
-};
-
-type IndexerChain = {
-    txid: string;
-    spends: IndexerChainedTx[];
-    expiresAt: number;
-};
-
-type IndexerChainedTx = {
-    txid: string;
-    type: IndexerChainedTxType;
-};
-
-type IndexerCommitmentTx = {
-    startedAt: number;
-    endedAt: number;
-    batches: { [key: string]: IndexerBatch };
-    totalInputAmount: bigint;
-    totalInputVtxos: number;
-    totalOutputAmount: bigint;
-    totalOutputVtxos: number;
-};
-
-type IndexerNode = {
-    txid: string;
-    parentTxid: string;
-    level: number;
-    levelIndex: number;
-};
-
-type IndexerTxHistoryRecord = {
-    // Only one of these will be present at a time
-    commitmentTxid?: string;
-    virtualTxid?: string;
-
-    type: IndexerTxType;
-    amount: bigint;
-    createdAt: number;
-    isSettled: boolean;
-    settledBy: string;
-};
-
-type IndexerVtxo = {
-    outpoint: Outpoint;
-    createdAt: string;
-    expiresAt: string;
-    amount: string;
-    script: string;
-    isLeaf: boolean;
-    isSwept: boolean;
-    isSpent: boolean;
-    spentBy: string;
-    commitmentTxid: string;
-};
-
 export interface IndexerProvider {
-    GetCommitmentTx(txid: string): Promise<IndexerCommitmentTx>;
+    GetCommitmentTx(txid: string): Promise<ProtoTypes.CommitmentTx>;
     GetCommitmentTxConnectors(
         txid: string,
         opts?: {
             pageIndex?: number;
             pageSize?: number;
         }
-    ): Promise<IndexerNode[]>;
+    ): Promise<ProtoTypes.Node[]>;
     GetCommitmentTxForfeitTxs(
         txid: string,
         opts?: {
@@ -104,7 +32,7 @@ export interface IndexerProvider {
             pageIndex?: number;
             pageSize?: number;
         }
-    ): Promise<IndexerTxHistoryRecord[]>;
+    ): Promise<ProtoTypes.TxHistoryRecord[]>;
     GetSubscription(
         subscriptionId: string,
         abortSignal: AbortSignal
@@ -116,7 +44,7 @@ export interface IndexerProvider {
     GetVirtualTxs(txids: string[]): Promise<string[]>;
     GetVtxoChain(outpoint: Outpoint): Promise<{
         rootCommitmentTxid: string;
-        chain: IndexerChain[];
+        chain: ProtoTypes.Chain[];
         depth: number;
     }>;
     GetVtxos(
@@ -129,7 +57,7 @@ export interface IndexerProvider {
         }
     ): Promise<VirtualCoin[]>;
     GetVtxosByOutpoints(oupoints: Outpoint[]): Promise<VirtualCoin[]>;
-    GetVtxoTree(batch: Outpoint): Promise<IndexerNode[]>;
+    GetVtxoTree(batch: Outpoint): Promise<ProtoTypes.Node[]>;
     GetVtxoTreeLeaves(batch: Outpoint): Promise<Outpoint[]>;
     SubscribeForScripts(
         scripts: string[],
@@ -144,14 +72,14 @@ export interface IndexerProvider {
 export class RestIndexerProvider implements IndexerProvider {
     constructor(public serverUrl: string) {}
 
-    async GetCommitmentTx(txid: string): Promise<IndexerCommitmentTx> {
+    async GetCommitmentTx(txid: string): Promise<ProtoTypes.CommitmentTx> {
         const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx: ${res.statusText}`);
         }
 
-        const data = (await res.json()) as IndexerCommitmentTx;
+        const data = (await res.json()) as ProtoTypes.CommitmentTx;
         return data;
     }
 
@@ -161,7 +89,7 @@ export class RestIndexerProvider implements IndexerProvider {
             pageIndex?: number;
             pageSize?: number;
         }
-    ): Promise<IndexerNode[]> {
+    ): Promise<ProtoTypes.Node[]> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
         if (opts) {
             url += "?";
@@ -176,7 +104,9 @@ export class RestIndexerProvider implements IndexerProvider {
                 `Failed to fetch commitment tx connectors: ${res.statusText}`
             );
         }
-        const data = (await res.json()) as { connectors: IndexerNode[] };
+        const data = (await res.json()) as {
+            connectors: ProtoTypes.Node[];
+        };
         return data.connectors;
     }
 
@@ -319,7 +249,7 @@ export class RestIndexerProvider implements IndexerProvider {
             pageIndex?: number;
             pageSize?: number;
         }
-    ): Promise<IndexerTxHistoryRecord[]> {
+    ): Promise<ProtoTypes.TxHistoryRecord[]> {
         let url = `${this.serverUrl}/v1/history/${address}`;
         if (opts) {
             url += "?";
@@ -336,7 +266,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch tx history: ${res.statusText}`);
         }
         const data = (await res.json()) as {
-            history: IndexerTxHistoryRecord[];
+            history: ProtoTypes.TxHistoryRecord[];
         };
         return data.history;
     }
@@ -352,7 +282,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async GetVtxoChain(outpoint: Outpoint): Promise<{
-        chain: IndexerChain[];
+        chain: ProtoTypes.Chain[];
         depth: number;
         rootCommitmentTxid: string;
     }> {
@@ -363,7 +293,7 @@ export class RestIndexerProvider implements IndexerProvider {
         }
         const data = (await res.json()) as {
             rootCommitmentTxid: string;
-            chain: IndexerChain[];
+            chain: ProtoTypes.Chain[];
             depth: number;
         };
         return data;
@@ -394,7 +324,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
         }
-        const data = (await res.json()) as { vtxos: IndexerVtxo[] };
+        const data = (await res.json()) as { vtxos: ProtoTypes.Vtxo[] };
         return data.vtxos.map(convertVtxo);
     }
 
@@ -406,17 +336,19 @@ export class RestIndexerProvider implements IndexerProvider {
                 `Failed to fetch vtxos by outpoints: ${res.statusText}`
             );
         }
-        const data = (await res.json()) as { vtxos: IndexerVtxo[] };
+        const data = (await res.json()) as { vtxos: ProtoTypes.Vtxo[] };
         return data.vtxos.map(convertVtxo);
     }
 
-    async GetVtxoTree(outpoint: Outpoint): Promise<IndexerNode[]> {
+    async GetVtxoTree(outpoint: Outpoint): Promise<ProtoTypes.Node[]> {
         const url = `${this.serverUrl}/v1/batch/${outpoint.txid}/${outpoint.vout}/tree`;
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
         }
-        const data = (await res.json()) as { vtxoTree: IndexerNode[] };
+        const data = (await res.json()) as {
+            vtxoTree: ProtoTypes.Node[];
+        };
         return data.vtxoTree;
     }
 
@@ -470,7 +402,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 }
 
-function convertVtxo(vtxo: IndexerVtxo): VirtualCoin {
+function convertVtxo(vtxo: ProtoTypes.Vtxo): VirtualCoin {
     return {
         txid: vtxo.outpoint.txid,
         vout: vtxo.outpoint.vout,
@@ -486,4 +418,79 @@ function convertVtxo(vtxo: IndexerVtxo): VirtualCoin {
         spentBy: vtxo.spentBy,
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
     };
+}
+
+// ProtoTypes namespace defines unexported types representing the raw data received from the server
+namespace ProtoTypes {
+    enum TxType {
+        UNKNOWN = 0,
+        DEPOSIT = 1,
+        WITHDRAWAL = 2,
+    }
+
+    enum ChainedTxType {
+        UNKNOWN = 0,
+        VIRTUAL = 1,
+        COMMITMENT = 2,
+    }
+
+    interface Batch {
+        totalOutputAmount: bigint;
+        totalOutputVtxos: number;
+        expiresAt: number;
+        swept: boolean;
+    }
+
+    export interface Chain {
+        txid: string;
+        spends: ChainedTx[];
+        expiresAt: number;
+    }
+
+    interface ChainedTx {
+        txid: string;
+        type: ChainedTxType;
+    }
+
+    export interface CommitmentTx {
+        startedAt: number;
+        endedAt: number;
+        batches: { [key: string]: Batch };
+        totalInputAmount: bigint;
+        totalInputVtxos: number;
+        totalOutputAmount: bigint;
+        totalOutputVtxos: number;
+    }
+
+    export interface Node {
+        txid: string;
+        parentTxid: string;
+        level: number;
+        levelIndex: number;
+    }
+
+    export interface TxHistoryRecord {
+        // Only one of these will be present at a time
+        commitmentTxid?: string;
+        virtualTxid?: string;
+
+        type: TxType;
+        amount: bigint;
+        createdAt: number;
+        isSettled: boolean;
+        settledBy: string;
+    }
+
+    export interface Vtxo {
+        outpoint: Outpoint;
+        createdAt: string;
+        expiresAt: string;
+        amount: string;
+        script: string;
+        isLeaf: boolean;
+        isSwept: boolean;
+        isSpent: boolean;
+        spentBy: string;
+        commitmentTxid: string;
+    }
 }
