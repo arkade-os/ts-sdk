@@ -46,6 +46,8 @@ import {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    GetVtxosFilter,
+    isRecoverable,
     IWallet,
     Outpoint,
     SendBitcoinParams,
@@ -299,7 +301,7 @@ export class Wallet implements IWallet {
         return this.onchainProvider.getCoins(address.onchain);
     }
 
-    async getVtxos(): Promise<ExtendedVirtualCoin[]> {
+    async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         if (!this.arkProvider || !this.offchainTapscript) {
             return [];
         }
@@ -309,10 +311,7 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const { spendableVtxos } = await this.arkProvider.getVirtualCoins(
-            address.offchain
-        );
-
+        const spendableVtxos = await this.getVirtualCoins(filter);
         const encodedOffchainTapscript = this.offchainTapscript.encode();
         const forfeit = this.offchainTapscript.forfeit();
         const exit = this.offchainTapscript.exit();
@@ -325,7 +324,9 @@ export class Wallet implements IWallet {
         }));
     }
 
-    private async getVirtualCoins(): Promise<VirtualCoin[]> {
+    private async getVirtualCoins(
+        filter: GetVtxosFilter = { withRecoverable: true }
+    ): Promise<VirtualCoin[]> {
         if (!this.arkProvider) {
             return [];
         }
@@ -335,9 +336,14 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        return this.arkProvider
-            .getVirtualCoins(address.offchain)
-            .then(({ spendableVtxos }) => spendableVtxos);
+        const { spendableVtxos, spentVtxos } =
+            await this.arkProvider.getVirtualCoins(address.offchain);
+
+        if (!filter.withRecoverable) {
+            return spendableVtxos;
+        }
+
+        return [...spendableVtxos, ...spentVtxos.filter(isRecoverable)];
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
@@ -407,7 +413,7 @@ export class Wallet implements IWallet {
                             block_time: tx.status.block_time,
                         },
                         virtualStatus: {
-                            state: spentStatus?.spent ? "swept" : "pending",
+                            state: spentStatus?.spent ? "spent" : "pending",
                             batchTxID: spentStatus?.spent
                                 ? spentStatus.txid
                                 : undefined,
@@ -432,7 +438,7 @@ export class Wallet implements IWallet {
                 },
                 amount: utxo.value,
                 type: TxType.TxReceived,
-                settled: utxo.virtualStatus.state === "swept",
+                settled: utxo.virtualStatus.state === "settled",
                 createdAt: utxo.status.block_time
                     ? new Date(utxo.status.block_time * 1000).getTime()
                     : 0,
@@ -563,7 +569,10 @@ export class Wallet implements IWallet {
             throw new Error("wallet not initialized");
         }
 
-        const virtualCoins = await this.getVirtualCoins();
+        // recoverable coins can't be spent in offchain tx
+        const virtualCoins = await this.getVirtualCoins({
+            withRecoverable: false,
+        });
 
         const selected = selectVirtualCoins(virtualCoins, params.amount);
 
@@ -1130,6 +1139,11 @@ export class Wallet implements IWallet {
                 continue;
             }
 
+            if (isRecoverable(vtxo)) {
+                // recoverable coin, we don't need to create a forfeit tx
+                continue;
+            }
+
             if (!connectorsTreeValid) {
                 // validate that the connectors tree is valid and contains our expected connectors
                 validateConnectorsTree(event.roundTx, connectors);
@@ -1189,12 +1203,14 @@ export class Wallet implements IWallet {
             signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
         }
 
-        await this.arkProvider.submitSignedForfeitTxs(
-            signedForfeits,
-            hasBoardingUtxos
-                ? base64.encode(settlementPsbt.toPSBT())
-                : undefined
-        );
+        if (signedForfeits.length > 0 || hasBoardingUtxos) {
+            await this.arkProvider.submitSignedForfeitTxs(
+                signedForfeits,
+                hasBoardingUtxos
+                    ? base64.encode(settlementPsbt.toPSBT())
+                    : undefined
+            );
+        }
     }
 
     private async makeRegisterIntentSignature(

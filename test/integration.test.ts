@@ -400,7 +400,7 @@ describe("Wallet SDK Integration Tests", () => {
         expect(alicesExitTx.amount).toBe(amount);
     });
 
-    it("should be able to claim a VHTLC", { timeout: 60000 }, async () => {
+    it("should claim a VHTLC", { timeout: 60000 }, async () => {
         const alice = createTestIdentity();
         const bob = createTestIdentity();
 
@@ -545,7 +545,7 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it("should be able to redeem a note", { timeout: 60000 }, async () => {
+    it("should redeem a note", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestWallet();
         const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
@@ -576,5 +576,66 @@ describe("Wallet SDK Integration Tests", () => {
         const virtualCoins = await alice.wallet.getVtxos();
         expect(virtualCoins).toHaveLength(1);
         expect(virtualCoins[0].value).toBe(fundAmount);
+    });
+
+    it("should settle a recoverable VTXO", { timeout: 60000 }, async () => {
+        const alice = await createTestWallet();
+        const aliceAddresses = await alice.wallet.getAddress();
+        const boardingAddress = aliceAddresses.boarding;
+        const aliceOffchainAddress = aliceAddresses.offchain;
+        expect(aliceOffchainAddress).toBeDefined();
+
+        // faucet
+        execSync(`nigiri faucet ${boardingAddress} 0.001`);
+
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        const boardingInputs = await alice.wallet.getBoardingUtxos();
+        expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+
+        await alice.wallet.settle({
+            inputs: boardingInputs,
+            outputs: [
+                {
+                    address: aliceOffchainAddress!,
+                    amount: BigInt(100_000),
+                },
+            ],
+        });
+
+        // give some time for the server to be swept
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+
+        const vtxos = await alice.wallet.getVtxos({ withRecoverable: false });
+        expect(vtxos).toHaveLength(1);
+        const vtxo = vtxos[0];
+        expect(vtxo.txid).toBeDefined();
+        expect(vtxo.virtualStatus.state).toBe("settled");
+
+        // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
+        execSync(`nigiri rpc generatetoaddress 25 $(nigiri rpc getnewaddress)`);
+
+        await new Promise((resolve) => setTimeout(resolve, 20_000));
+
+        const vtxosAfterSweep = await alice.wallet.getVtxos({
+            withRecoverable: true,
+        });
+        expect(vtxosAfterSweep).toHaveLength(1);
+        const vtxoAfterSweep = vtxosAfterSweep[0];
+        expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
+        expect(vtxoAfterSweep.virtualStatus.state).toBe("swept");
+        expect(vtxoAfterSweep.spentBy).toBe("");
+
+        const settleTxid = await alice.wallet.settle({
+            inputs: [vtxo],
+            outputs: [
+                {
+                    address: aliceOffchainAddress!,
+                    amount: BigInt(100_000),
+                },
+            ],
+        });
+
+        expect(settleTxid).toBeDefined();
     });
 });

@@ -169,6 +169,33 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
         });
     }
 
+    async getSpentVtxos(): Promise<ExtendedVirtualCoin[]> {
+        if (!this.db) {
+            throw new Error("Database not opened");
+        }
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db!.transaction(
+                IndexedDBVtxoRepository.STORE_NAME,
+                "readonly"
+            );
+            const store = transaction.objectStore(
+                IndexedDBVtxoRepository.STORE_NAME
+            );
+            const spentByIndex = store.index("spentBy");
+
+            // Get vtxos where spentBy is not empty string
+            const request = spentByIndex.getAll(
+                IDBKeyRange.lowerBound("", true)
+            );
+
+            request.onsuccess = () => {
+                resolve(request.result as ExtendedVirtualCoin[]);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     async getAllVtxos(): Promise<{
         spendable: ExtendedVirtualCoin[];
         spent: ExtendedVirtualCoin[];
