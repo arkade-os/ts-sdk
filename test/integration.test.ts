@@ -15,6 +15,7 @@ import {
     ArkNote,
     CSVMultisigTapscript,
     buildOffchainTx,
+    Outpoint,
 } from "../src";
 import { networks } from "../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -583,5 +584,54 @@ describe("Wallet SDK Integration Tests", () => {
         const virtualCoins = await alice.wallet.getVtxos();
         expect(virtualCoins).toHaveLength(1);
         expect(virtualCoins[0].value).toBe(fundAmount);
+    });
+
+    it("should inspect a VTXO", { timeout: 60000 }, async () => {
+        // Create fresh wallet instance for this test
+        const alice = await createTestWallet();
+        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        console.log("aliceOffchainAddress", aliceOffchainAddress);
+        expect(aliceOffchainAddress).toBeDefined();
+
+        const fundAmount = 1000;
+        execSync(
+            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const indexerProvider = new RestIndexerProvider(
+            "http://localhost:7070"
+        );
+
+        const spendableVtxos = await indexerProvider.GetVtxos(
+            [aliceOffchainAddress!],
+            {
+                spendableOnly: true,
+            }
+        );
+        expect(spendableVtxos).toHaveLength(1);
+
+        const vtxo = spendableVtxos[0];
+        expect(vtxo.txid).toBeDefined();
+        expect(vtxo.vout).toBeDefined();
+        expect(vtxo.value).toBe(fundAmount);
+
+        const outpoint: Outpoint = {
+            txid: vtxo.txid,
+            vout: vtxo.vout,
+        };
+
+        const tree = await indexerProvider.GetVtxoTree(outpoint);
+        expect(tree).toBeDefined();
+        expect(tree).toHaveLength(0);
+
+        const leaves = await indexerProvider.GetVtxoTreeLeaves(outpoint);
+        expect(leaves).toBeDefined();
+        expect(leaves).toHaveLength(0);
+
+        // const chain = await indexerProvider.GetVtxoChain(outpoint);
+        // expect(chain).toBeDefined();
+        // expect(chain.chain).toHaveLength(1);
     });
 });
