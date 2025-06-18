@@ -1,3 +1,4 @@
+import { ArkTransaction, TxType } from "@arklabs/wallet-sdk";
 import { Outpoint, VirtualCoin } from "../wallet";
 
 export interface IndexerProvider {
@@ -32,7 +33,7 @@ export interface IndexerProvider {
             pageIndex?: number;
             pageSize?: number;
         }
-    ): Promise<Response.TxHistoryRecord[]>;
+    ): Promise<ArkTransaction[]>;
     GetSubscription(
         subscriptionId: string,
         abortSignal: AbortSignal
@@ -42,7 +43,7 @@ export interface IndexerProvider {
         spentVtxos: VirtualCoin[];
     }>;
     GetVirtualTxs(txids: string[]): Promise<string[]>;
-    GetVtxoChain(outpoint: Outpoint): Promise<Response.VtxoChain>;
+    GetVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain>;
     GetVtxos(
         addresses: string[],
         opts?: {
@@ -52,9 +53,9 @@ export interface IndexerProvider {
             pageSize?: number;
         }
     ): Promise<VirtualCoin[]>;
-    GetVtxosByOutpoints(oupoints: Outpoint[]): Promise<VirtualCoin[]>;
-    GetVtxoTree(batch: Outpoint): Promise<Response.Node[]>;
-    GetVtxoTreeLeaves(batch: Outpoint): Promise<Outpoint[]>;
+    GetVtxosByOutpoints(vtxoOupoints: Outpoint[]): Promise<VirtualCoin[]>;
+    GetVtxoTree(batchOutpoint: Outpoint): Promise<Response.Node[]>;
+    GetVtxoTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]>;
     SubscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -170,12 +171,12 @@ export class RestIndexerProvider implements IndexerProvider {
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(
-                `Failed to fetch swept commitment tx: ${res.statusText}`
+                `Failed to fetch commitment tx swept: ${res.statusText}`
             );
         }
         const data = await res.json();
         if (!Response.isTxidArray(data.sweptBy)) {
-            throw new Error("Invalid swept commitment tx data received");
+            throw new Error("Invalid commitment tx swept data received");
         }
         return data.sweptBy;
     }
@@ -257,7 +258,7 @@ export class RestIndexerProvider implements IndexerProvider {
             pageIndex?: number;
             pageSize?: number;
         }
-    ): Promise<Response.TxHistoryRecord[]> {
+    ): Promise<ArkTransaction[]> {
         let url = `${this.serverUrl}/v1/history/${address}`;
         if (opts) {
             url += "?";
@@ -277,7 +278,7 @@ export class RestIndexerProvider implements IndexerProvider {
         if (!Response.isTxHistoryRecordArray(data.history)) {
             throw new Error("Invalid transaction history data received");
         }
-        return data.history;
+        return data.history.map(convertTransaction);
     }
 
     async GetVirtualTxs(txids: string[]): Promise<Response.Txid[]> {
@@ -293,11 +294,11 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.txs;
     }
 
-    async GetVtxoChain(outpoint: Outpoint): Promise<Response.VtxoChain> {
-        const url = `${this.serverUrl}/v1/vtxo/${outpoint.txid}/${outpoint.vout}/chain`;
+    async GetVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain> {
+        const url = `${this.serverUrl}/v1/vtxo/${vtxoOutpoint.txid}/${vtxoOutpoint.vout}/chain`;
         const res = await fetch(url);
         if (!res.ok) {
-            throw new Error(`Failed to fetch tx history: ${res.statusText}`);
+            throw new Error(`Failed to fetch vtxo chain: ${res.statusText}`);
         }
         const data = await res.json();
         if (!Response.isVtxoChain(data)) {
@@ -339,8 +340,10 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.vtxos.map(convertVtxo);
     }
 
-    async GetVtxosByOutpoints(oupoints: Outpoint[]): Promise<VirtualCoin[]> {
-        const url = `${this.serverUrl}/v1/getVtxosByOutpoint/${oupoints.join(",")}`;
+    async GetVtxosByOutpoints(
+        vtxoOutpoints: Outpoint[]
+    ): Promise<VirtualCoin[]> {
+        const url = `${this.serverUrl}/v1/getVtxosByOutpoint/${vtxoOutpoints.join(",")}`;
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(
@@ -349,33 +352,35 @@ export class RestIndexerProvider implements IndexerProvider {
         }
         const data = await res.json();
         if (!Response.isVtxoArray(data.vtxos)) {
-            throw new Error("Invalid vtxos data received");
+            throw new Error("Invalid vtxos by outpoints data received");
         }
         return data.vtxos.map(convertVtxo);
     }
 
-    async GetVtxoTree(outpoint: Outpoint): Promise<Response.Node[]> {
-        const url = `${this.serverUrl}/v1/batch/${outpoint.txid}/${outpoint.vout}/tree`;
+    async GetVtxoTree(batchOutpoint: Outpoint): Promise<Response.Node[]> {
+        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const res = await fetch(url);
         if (!res.ok) {
-            throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
+            throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
         }
         const data = await res.json();
         if (!Response.isNodeArray(data.vtxoTree)) {
-            throw new Error("Invalid vtxos data received");
+            throw new Error("Invalid vtxo tree data received");
         }
         return data.vtxoTree;
     }
 
-    async GetVtxoTreeLeaves(outpoint: Outpoint): Promise<Outpoint[]> {
-        const url = `${this.serverUrl}/v1/batch/${outpoint.txid}/${outpoint.vout}/tree/leaves`;
+    async GetVtxoTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]> {
+        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
         const res = await fetch(url);
         if (!res.ok) {
-            throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
+            throw new Error(
+                `Failed to fetch vtxo tree leaves: ${res.statusText}`
+            );
         }
         const data = await res.json();
         if (!Response.isOutpointArray(data.leaves)) {
-            throw new Error("Invalid vtxos leaves data received");
+            throw new Error("Invalid vtxos tree leaves data received");
         }
         return data.leaves;
     }
@@ -438,12 +443,37 @@ function convertVtxo(vtxo: Response.Vtxo): VirtualCoin {
     };
 }
 
+function convertType(type: Response.TxType): TxType {
+    switch (type) {
+        case Response.TxType.INDEXER_TX_TYPE_RECEIVED:
+            return TxType.TxReceived;
+        case Response.TxType.INDEXER_TX_TYPE_SENT:
+            return TxType.TxSent;
+        default:
+            throw new Error(`Unknown transaction type: ${type}`);
+    }
+}
+
+function convertTransaction(tx: Response.TxHistoryRecord): ArkTransaction {
+    return {
+        key: {
+            boardingTxid: "",
+            roundTxid: tx.commitmentTxid ?? "",
+            redeemTxid: tx.virtualTxid ?? "",
+        },
+        amount: Number(tx.amount),
+        type: convertType(tx.type),
+        settled: tx.isSettled,
+        createdAt: parseInt(tx.createdAt) * 1000,
+    };
+}
+
 // Response namespace defines unexported types representing the raw data received from the server
 namespace Response {
-    enum TxType {
-        UNKNOWN = 0,
-        DEPOSIT = 1,
-        WITHDRAWAL = 2,
+    export enum TxType {
+        INDEXER_TX_TYPE_UNSPECIFIED = "INDEXER_TX_TYPE_UNSPECIFIED",
+        INDEXER_TX_TYPE_RECEIVED = "INDEXER_TX_TYPE_RECEIVED",
+        INDEXER_TX_TYPE_SENT = "INDEXER_TX_TYPE_SENT",
     }
 
     enum ChainedTxType {
@@ -553,23 +583,21 @@ namespace Response {
         virtualTxid?: string;
 
         type: TxType;
-        amount: bigint;
-        createdAt: number;
+        amount: string;
+        createdAt: string;
         isSettled: boolean;
         settledBy: string;
     }
     function isTxHistoryRecord(data: any): data is TxHistoryRecord {
         return (
             typeof data === "object" &&
-            typeof data.amount === "bigint" &&
-            typeof data.createdAt === "number" &&
+            typeof data.amount === "string" &&
+            typeof data.createdAt === "string" &&
             typeof data.isSettled === "boolean" &&
             typeof data.settledBy === "string" &&
             Object.values(TxType).includes(data.type) &&
-            ((data.commitmentTxid === undefined &&
-                typeof data.virtualTxid === "string") ||
-                (data.commitmentTxid === "string" &&
-                    typeof data.virtualTxid === undefined))
+            ((!data.commitmentTxid && typeof data.virtualTxid === "string") ||
+                (typeof data.commitmentTxid === "string" && !data.virtualTxid))
         );
     }
     export function isTxHistoryRecordArray(
