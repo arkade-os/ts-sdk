@@ -7,6 +7,8 @@ type PaginationOptions = {
 };
 
 export interface IndexerProvider {
+    GetBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]>;
+    GetBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]>;
     GetCommitmentTx(txid: string): Promise<Response.CommitmentTx>;
     GetCommitmentTxConnectors(
         txid: string,
@@ -15,12 +17,12 @@ export interface IndexerProvider {
     GetCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<string[]>;
+    ): Promise<Response.Txid[]>;
     GetCommitmentTxLeaves(
         txid: string,
         opts?: PaginationOptions
     ): Promise<Outpoint[]>;
-    GetCommitmentTxSwept(txid: string): Promise<string[]>;
+    GetCommitmentTxSwept(txid: string): Promise<Response.Txid[]>;
     GetTransactionHistory(
         address: string,
         opts?: PaginationOptions & {
@@ -40,7 +42,7 @@ export interface IndexerProvider {
         spendableVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }>;
-    GetVirtualTxs(txids: string[]): Promise<string[]>;
+    GetVirtualTxs(txids: string[]): Promise<Response.Txid[]>;
     GetVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain>;
     GetVtxos(
         addresses: string[],
@@ -50,8 +52,6 @@ export interface IndexerProvider {
         }
     ): Promise<VirtualCoin[]>;
     GetVtxosByOutpoints(vtxoOupoints: Outpoint[]): Promise<VirtualCoin[]>;
-    GetVtxoTree(batchOutpoint: Outpoint): Promise<Response.Node[]>;
-    GetVtxoTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]>;
     SubscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -64,6 +64,34 @@ export interface IndexerProvider {
 
 export class RestIndexerProvider implements IndexerProvider {
     constructor(public serverUrl: string) {}
+
+    async GetBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]> {
+        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
+        }
+        const data = await res.json();
+        if (!Response.isNodeArray(data.vtxoTree)) {
+            throw new Error("Invalid vtxo tree data received");
+        }
+        return data.vtxoTree;
+    }
+
+    async GetBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]> {
+        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(
+                `Failed to fetch vtxo tree leaves: ${res.statusText}`
+            );
+        }
+        const data = await res.json();
+        if (!Response.isOutpointArray(data.leaves)) {
+            throw new Error("Invalid vtxos tree leaves data received");
+        }
+        return data.leaves;
+    }
 
     async GetCommitmentTx(txid: string): Promise<Response.CommitmentTx> {
         const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
@@ -351,34 +379,6 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.vtxos.map(convertVtxo);
     }
 
-    async GetVtxoTree(batchOutpoint: Outpoint): Promise<Response.Node[]> {
-        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
-        const res = await fetch(url);
-        if (!res.ok) {
-            throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
-        }
-        const data = await res.json();
-        if (!Response.isNodeArray(data.vtxoTree)) {
-            throw new Error("Invalid vtxo tree data received");
-        }
-        return data.vtxoTree;
-    }
-
-    async GetVtxoTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]> {
-        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
-        const res = await fetch(url);
-        if (!res.ok) {
-            throw new Error(
-                `Failed to fetch vtxo tree leaves: ${res.statusText}`
-            );
-        }
-        const data = await res.json();
-        if (!Response.isOutpointArray(data.leaves)) {
-            throw new Error("Invalid vtxos tree leaves data received");
-        }
-        return data.leaves;
-    }
-
     async SubscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -511,30 +511,30 @@ namespace Response {
     }
 
     export interface CommitmentTx {
-        startedAt: number;
-        endedAt: number;
+        startedAt: string;
+        endedAt: string;
         batches: { [key: string]: Batch };
-        totalInputAmount: bigint;
+        totalInputAmount: string;
         totalInputVtxos: number;
-        totalOutputAmount: bigint;
+        totalOutputAmount: string;
         totalOutputVtxos: number;
     }
     export function isCommitmentTx(data: any): data is CommitmentTx {
         return (
             typeof data === "object" &&
-            typeof data.startedAt === "number" &&
-            typeof data.endedAt === "number" &&
-            typeof data.totalInputAmount === "bigint" &&
+            typeof data.startedAt === "string" &&
+            typeof data.endedAt === "string" &&
+            typeof data.totalInputAmount === "string" &&
             typeof data.totalInputVtxos === "number" &&
-            typeof data.totalOutputAmount === "bigint" &&
+            typeof data.totalOutputAmount === "string" &&
             typeof data.totalOutputVtxos === "number" &&
             typeof data.batches === "object" &&
             Object.values(data.batches).every(
                 (batch: any) =>
                     typeof batch === "object" &&
-                    typeof batch.totalOutputAmount === "bigint" &&
+                    typeof batch.totalOutputAmount === "string" &&
                     typeof batch.totalOutputVtxos === "number" &&
-                    typeof batch.expiresAt === "number" &&
+                    typeof batch.expiresAt === "string" &&
                     typeof batch.swept === "boolean"
             )
         );

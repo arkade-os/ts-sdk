@@ -369,7 +369,6 @@ export class Wallet implements IWallet {
             );
 
         const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
-        console.log("boardingTxs", boardingTxs);
 
         // convert VTXOs to offchain transactions
         const offchainTxs = vtxosToTxs(
@@ -377,7 +376,6 @@ export class Wallet implements IWallet {
             spentVtxos,
             roundsToIgnore
         );
-        console.log("offchainTxs", offchainTxs);
 
         const txs = [...boardingTxs, ...offchainTxs];
 
