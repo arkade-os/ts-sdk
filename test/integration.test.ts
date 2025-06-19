@@ -290,7 +290,6 @@ describe("Wallet SDK Integration Tests", () => {
 
         // Check history before sending to bob
         let aliceHistory = await alice.wallet.getTransactionHistory();
-        console.log("Alice's history:", aliceHistory);
         expect(aliceHistory).toBeDefined();
         expect(aliceHistory.length).toBe(1); // should have boarding tx
 
@@ -592,7 +591,6 @@ describe("Wallet SDK Integration Tests", () => {
         // Create fresh wallet instance for this test
         const alice = await createTestWallet();
         const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
-        console.log("aliceOffchainAddress", aliceOffchainAddress);
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;

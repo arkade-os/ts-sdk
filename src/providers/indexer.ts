@@ -343,7 +343,6 @@ export class RestIndexerProvider implements IndexerProvider {
             if (opts.pageSize !== undefined)
                 url += `page.index=${opts.pageSize}&`;
         }
-        console.log("Fetching vtxos from:", url);
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
