@@ -1,37 +1,31 @@
 import { ArkTransaction, TxType } from "@arklabs/wallet-sdk";
 import { Outpoint, VirtualCoin } from "../wallet";
 
+type PaginationOptions = {
+    pageIndex?: number;
+    pageSize?: number;
+};
+
 export interface IndexerProvider {
     GetCommitmentTx(txid: string): Promise<Response.CommitmentTx>;
     GetCommitmentTxConnectors(
         txid: string,
-        opts?: {
-            pageIndex?: number;
-            pageSize?: number;
-        }
+        opts?: PaginationOptions
     ): Promise<Response.Node[]>;
     GetCommitmentTxForfeitTxs(
         txid: string,
-        opts?: {
-            pageIndex?: number;
-            pageSize?: number;
-        }
+        opts?: PaginationOptions
     ): Promise<string[]>;
     GetCommitmentTxLeaves(
         txid: string,
-        opts?: {
-            pageIndex?: number;
-            pageSize?: number;
-        }
+        opts?: PaginationOptions
     ): Promise<Outpoint[]>;
     GetCommitmentTxSwept(txid: string): Promise<string[]>;
     GetTransactionHistory(
         address: string,
-        opts?: {
+        opts?: PaginationOptions & {
             startTime?: number;
             endTime?: number;
-            pageIndex?: number;
-            pageSize?: number;
         }
     ): Promise<ArkTransaction[]>;
     GetSubscription(
@@ -50,11 +44,9 @@ export interface IndexerProvider {
     GetVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain>;
     GetVtxos(
         addresses: string[],
-        opts?: {
+        opts?: PaginationOptions & {
             spendableOnly?: boolean;
             spentOnly?: boolean;
-            pageIndex?: number;
-            pageSize?: number;
         }
     ): Promise<VirtualCoin[]>;
     GetVtxosByOutpoints(vtxoOupoints: Outpoint[]): Promise<VirtualCoin[]>;
@@ -88,10 +80,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async GetCommitmentTxConnectors(
         txid: string,
-        opts?: {
-            pageIndex?: number;
-            pageSize?: number;
-        }
+        opts?: PaginationOptions
     ): Promise<Response.Node[]> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
         if (opts) {
@@ -116,10 +105,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async GetCommitmentTxForfeitTxs(
         txid: string,
-        opts?: {
-            pageIndex?: number;
-            pageSize?: number;
-        }
+        opts?: PaginationOptions
     ): Promise<Response.Txid[]> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/forfeitTxs`;
         if (opts) {
@@ -144,10 +130,7 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async GetCommitmentTxLeaves(
         txid: string,
-        opts?: {
-            pageIndex?: number;
-            pageSize?: number;
-        }
+        opts?: PaginationOptions
     ): Promise<Response.Outp[]> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/leaves`;
         if (opts) {
@@ -256,11 +239,9 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async GetTransactionHistory(
         address: string,
-        opts?: {
+        opts?: PaginationOptions & {
             startTime?: number;
             endTime?: number;
-            pageIndex?: number;
-            pageSize?: number;
         }
     ): Promise<ArkTransaction[]> {
         let url = `${this.serverUrl}/v1/history/${address}`;
@@ -324,11 +305,9 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async GetVtxos(
         addresses: string[],
-        opts?: {
+        opts?: PaginationOptions & {
             spendableOnly?: boolean;
             spentOnly?: boolean;
-            pageIndex?: number;
-            pageSize?: number;
         }
     ): Promise<VirtualCoin[]> {
         let url = `${this.serverUrl}/v1/getVtxos/${addresses.join(",")}`;
