@@ -445,7 +445,7 @@ export class Wallet implements IWallet {
                 },
                 amount: utxo.value,
                 type: TxType.TxReceived,
-                settled: utxo.virtualStatus.state === "settled",
+                settled: utxo.virtualStatus.state === "spent",
                 createdAt: utxo.status.block_time
                     ? new Date(utxo.status.block_time * 1000).getTime()
                     : 0,
