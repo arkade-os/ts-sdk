@@ -38,6 +38,7 @@ services:
       - ARK_DB_TYPE=sqlite
       - ARK_WALLET_ADDR=arkd-wallet:6060
       - ARK_UNILATERAL_EXIT_DELAY=512
+      - ARK_LIVE_STORE_TYPE=inmemory
     ports:
       - "7070:7070"
     volumes:
