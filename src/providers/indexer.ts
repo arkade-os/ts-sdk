@@ -289,11 +289,10 @@ export class RestIndexerProvider implements IndexerProvider {
         spendableVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }> {
+        const vtxos = await this.GetVtxos([address]);
         return {
-            spendableVtxos: await this.GetVtxos([address], {
-                spendableOnly: true,
-            }),
-            spentVtxos: await this.GetVtxos([address], { spentOnly: true }),
+            spendableVtxos: vtxos.filter(({ spentBy }) => !Boolean(spentBy)),
+            spentVtxos: vtxos.filter(({ spentBy }) => Boolean(spentBy)),
         };
     }
 
@@ -344,6 +343,7 @@ export class RestIndexerProvider implements IndexerProvider {
             if (opts.pageSize !== undefined)
                 url += `page.index=${opts.pageSize}&`;
         }
+        console.log("Fetching vtxos from:", url);
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch vtxos: ${res.statusText}`);

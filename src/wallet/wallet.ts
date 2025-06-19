@@ -274,7 +274,7 @@ export class Wallet implements IWallet {
         let offchainPending = 0;
         let offchainSwept = 0;
         if (this.indexerProvider) {
-            const vtxos = await this.getVirtualCoins();
+            const vtxos = await this.getVtxos();
             offchainSettled = vtxos
                 .filter((coin) => coin.virtualStatus.state === "settled")
                 .reduce((sum, coin) => sum + coin.value, 0);
