@@ -73,7 +73,6 @@ export type BatchStartedEvent = {
     id: string;
     intentIdHashes: string[];
     batchExpiry: bigint;
-    forfeitAddress: string;
 };
 
 export type BatchTreeEvent = {
@@ -698,7 +697,6 @@ export class RestArkProvider implements ArkProvider {
                 id: data.batchStarted.id,
                 intentIdHashes: data.batchStarted.intentIdHashes,
                 batchExpiry: BigInt(data.batchStarted.batchExpiry),
-                forfeitAddress: data.batchStarted.forfeitAddress,
             };
         }
 
@@ -940,7 +938,6 @@ namespace ProtoTypes {
         id: string;
         intentIdHashes: string[];
         batchExpiry: string;
-        forfeitAddress: string;
     }
 
     interface RoundFailed {

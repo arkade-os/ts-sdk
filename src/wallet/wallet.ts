@@ -80,7 +80,8 @@ export class Wallet implements IWallet {
         private arkServerPublicKey?: Bytes,
         readonly offchainTapscript?: DefaultVtxo.Script,
         readonly boardingTapscript?: DefaultVtxo.Script,
-        readonly serverUnrollScript?: CSVMultisigTapscript.Type
+        readonly serverUnrollScript?: CSVMultisigTapscript.Type,
+        readonly forfeitOutputScript?: Bytes
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -140,6 +141,11 @@ export class Wallet implements IWallet {
                 pubkeys: [serverPubKey],
             });
 
+            // parse the server forfeit address
+            // server is expecting funds to be sent to this address
+            const forfeitAddress = Address(network).decode(info.forfeitAddress);
+            const forfeitOutputScript = OutScript.encode(forfeitAddress);
+
             return new Wallet(
                 config.identity,
                 network,
@@ -149,7 +155,8 @@ export class Wallet implements IWallet {
                 serverPubKey,
                 offchainTapscript,
                 boardingTapscript,
-                serverUnrollScript
+                serverUnrollScript,
+                forfeitOutputScript
             );
         }
 
@@ -638,7 +645,11 @@ export class Wallet implements IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        if (!this.arkProvider || !this.arkServerPublicKey) {
+        if (
+            !this.arkProvider ||
+            !this.arkServerPublicKey ||
+            !this.forfeitOutputScript
+        ) {
             throw new Error("Ark provider not configured");
         }
 
@@ -769,7 +780,8 @@ export class Wallet implements IWallet {
                         const res = await this.handleBatchStartedEvent(
                             event,
                             intentId,
-                            this.arkServerPublicKey
+                            this.arkServerPublicKey,
+                            this.forfeitOutputScript
                         );
                         if (!res.skip) {
                             step = event.type;
@@ -972,7 +984,8 @@ export class Wallet implements IWallet {
     private async handleBatchStartedEvent(
         event: BatchStartedEvent,
         intentId: string,
-        serverPubKey: Bytes
+        serverPubKey: Bytes,
+        forfeitOutputScript: Bytes
     ): Promise<
         | { skip: true }
         | {
@@ -1012,13 +1025,6 @@ export class Wallet implements IWallet {
         }).script;
 
         const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
-
-        // parse the server forfeit address
-        // server is expecting funds to be sent to this address
-        const forfeitAddress = Address(this.network).decode(
-            event.forfeitAddress
-        );
-        const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
         return {
             roundId: event.id,
