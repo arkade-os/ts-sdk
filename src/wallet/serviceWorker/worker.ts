@@ -2,7 +2,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { InMemoryKey } from "../../identity/inMemoryKey";
-import { VtxoTaprootAddress } from "..";
+import { isRecoverable, VtxoTaprootAddress } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -462,6 +462,10 @@ export class Worker {
 
         try {
             const vtxos = await this.vtxoRepository.getSpendableVtxos();
+            if (message.filter?.withRecoverable) {
+                const spentVtxos = await this.vtxoRepository.getSpentVtxos();
+                vtxos.push(...spentVtxos.filter(isRecoverable));
+            }
             event.source?.postMessage(Response.vtxos(message.id, vtxos));
         } catch (error: unknown) {
             console.error("Error getting vtxos:", error);

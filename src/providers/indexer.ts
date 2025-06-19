@@ -42,6 +42,10 @@ export interface IndexerProvider {
         newVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }>;
+    GetVirtualCoins(address: string): Promise<{
+        spendableVtxos: VirtualCoin[];
+        spentVtxos: VirtualCoin[];
+    }>;
     GetVirtualTxs(txids: string[]): Promise<string[]>;
     GetVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain>;
     GetVtxos(
@@ -281,6 +285,18 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.history.map(convertTransaction);
     }
 
+    async GetVirtualCoins(address: string): Promise<{
+        spendableVtxos: VirtualCoin[];
+        spentVtxos: VirtualCoin[];
+    }> {
+        return {
+            spendableVtxos: await this.GetVtxos([address], {
+                spendableOnly: true,
+            }),
+            spentVtxos: await this.GetVtxos([address], { spentOnly: true }),
+        };
+    }
+
     async GetVirtualTxs(txids: string[]): Promise<Response.Txid[]> {
         const url = `${this.serverUrl}/v1/virtualTx/${txids.join(",")}`;
         const res = await fetch(url);
@@ -434,7 +450,7 @@ function convertVtxo(vtxo: Response.Vtxo): VirtualCoin {
             confirmed: !!vtxo.commitmentTxid,
         },
         virtualStatus: {
-            state: vtxo.isLeaf ? "settled" : "pending",
+            state: vtxo.isSwept ? "swept" : vtxo.isLeaf ? "settled" : "pending",
             batchTxID: vtxo.commitmentTxid,
             batchExpiry: vtxo.expiresAt ? Number(vtxo.expiresAt) : undefined,
         },

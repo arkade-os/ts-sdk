@@ -750,6 +750,28 @@ function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
     );
 }
 
+function convertVtxo(vtxo: any): VirtualCoin {
+    return {
+        txid: vtxo.outpoint.txid,
+        vout: vtxo.outpoint.vout,
+        value: Number(vtxo.amount),
+        status: {
+            confirmed: !!vtxo.roundTxid,
+        },
+        virtualStatus: {
+            state: vtxo.swept
+                ? "swept"
+                : vtxo.isPending
+                  ? "pending"
+                  : "settled",
+            batchTxID: vtxo.roundTxid,
+            batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
+        },
+        spentBy: vtxo.spentBy,
+        createdAt: new Date(vtxo.createdAt * 1000),
+    };
+}
+
 // ProtoTypes namespace defines unexported types representing the raw data received from the server
 namespace ProtoTypes {
     interface Node {

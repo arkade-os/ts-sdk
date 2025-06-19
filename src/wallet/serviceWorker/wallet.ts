@@ -11,6 +11,7 @@ import {
     ExtendedVirtualCoin,
     Addresses,
     Outpoint,
+    GetVtxosFilter,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -267,10 +268,11 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async getVtxos(): Promise<ExtendedVirtualCoin[]> {
+    async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
             id: getRandomId(),
+            filter,
         };
 
         try {

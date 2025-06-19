@@ -51,6 +51,9 @@ jobs:
         use_liquid: false
         use_ln: false
 
+    - name: Build arkd master
+      run: pnpm run test:build-docker
+
     - name: Run arkd master
       run: pnpm run test:up-docker
 
