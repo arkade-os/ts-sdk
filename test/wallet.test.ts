@@ -92,6 +92,8 @@ describe("Wallet", () => {
                             unilateralExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
                             network: "mutinynet",
+                            forfeitAddress:
+                                "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                         }),
                 })
                 .mockResolvedValueOnce({
