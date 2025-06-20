@@ -6,30 +6,30 @@ type PaginationOptions = {
 };
 
 export interface IndexerProvider {
-    GetBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]>;
-    GetBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]>;
-    GetCommitmentTx(txid: string): Promise<Response.CommitmentTx>;
-    GetCommitmentTxConnectors(
+    getBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]>;
+    getBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]>;
+    getCommitmentTx(txid: string): Promise<Response.CommitmentTx>;
+    getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
     ): Promise<Response.Node[]>;
-    GetCommitmentTxForfeitTxs(
+    getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
     ): Promise<Response.Txid[]>;
-    GetCommitmentTxLeaves(
+    getCommitmentTxLeaves(
         txid: string,
         opts?: PaginationOptions
     ): Promise<Outpoint[]>;
-    GetCommitmentTxSwept(txid: string): Promise<Response.Txid[]>;
-    GetTransactionHistory(
+    getCommitmentTxSwept(txid: string): Promise<Response.Txid[]>;
+    getTransactionHistory(
         address: string,
         opts?: PaginationOptions & {
             startTime?: number;
             endTime?: number;
         }
     ): Promise<ArkTransaction[]>;
-    GetSubscription(
+    getSubscription(
         subscriptionId: string,
         abortSignal: AbortSignal
     ): AsyncIterableIterator<{
@@ -37,25 +37,25 @@ export interface IndexerProvider {
         newVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }>;
-    GetVirtualCoins(address: string): Promise<{
+    getVirtualCoins(address: string): Promise<{
         spendableVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }>;
-    GetVirtualTxs(txids: string[]): Promise<Response.Txid[]>;
-    GetVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain>;
-    GetVtxos(
+    getVirtualTxs(txids: string[]): Promise<Response.Txid[]>;
+    getVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain>;
+    getVtxos(
         addresses: string[],
         opts?: PaginationOptions & {
             spendableOnly?: boolean;
             spentOnly?: boolean;
         }
     ): Promise<VirtualCoin[]>;
-    GetVtxosByOutpoints(vtxoOupoints: Outpoint[]): Promise<VirtualCoin[]>;
-    SubscribeForScripts(
+    getVtxosByOutpoints(vtxoOupoints: Outpoint[]): Promise<VirtualCoin[]>;
+    subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
     ): Promise<string>;
-    UnsubscribeForScripts(
+    unsubscribeForScripts(
         subscriptionId: string,
         scripts?: string[]
     ): Promise<void>;
@@ -64,7 +64,7 @@ export interface IndexerProvider {
 export class RestIndexerProvider implements IndexerProvider {
     constructor(public serverUrl: string) {}
 
-    async GetBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]> {
+    async getBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]> {
         const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -77,7 +77,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.vtxoTree;
     }
 
-    async GetBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]> {
+    async getBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]> {
         const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -92,7 +92,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.leaves;
     }
 
-    async GetCommitmentTx(txid: string): Promise<Response.CommitmentTx> {
+    async getCommitmentTx(txid: string): Promise<Response.CommitmentTx> {
         const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -105,7 +105,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data;
     }
 
-    async GetCommitmentTxConnectors(
+    async getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
     ): Promise<Response.Node[]> {
@@ -130,7 +130,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.connectors;
     }
 
-    async GetCommitmentTxForfeitTxs(
+    async getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
     ): Promise<Response.Txid[]> {
@@ -155,7 +155,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.txids;
     }
 
-    async GetCommitmentTxLeaves(
+    async getCommitmentTxLeaves(
         txid: string,
         opts?: PaginationOptions
     ): Promise<Response.Outp[]> {
@@ -180,7 +180,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.leaves;
     }
 
-    async GetCommitmentTxSwept(txid: string): Promise<Response.Txid[]> {
+    async getCommitmentTxSwept(txid: string): Promise<Response.Txid[]> {
         const url = `${this.serverUrl}/v1/commitmentTx/${txid}/swept`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -195,7 +195,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.sweptBy;
     }
 
-    async *GetSubscription(subscriptionId: string, abortSignal: AbortSignal) {
+    async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
         const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
@@ -264,7 +264,7 @@ export class RestIndexerProvider implements IndexerProvider {
         }
     }
 
-    async GetTransactionHistory(
+    async getTransactionHistory(
         address: string,
         opts?: PaginationOptions & {
             startTime?: number;
@@ -293,18 +293,18 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.history.map(convertTransaction);
     }
 
-    async GetVirtualCoins(address: string): Promise<{
+    async getVirtualCoins(address: string): Promise<{
         spendableVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }> {
-        const vtxos = await this.GetVtxos([address]);
+        const vtxos = await this.getVtxos([address]);
         return {
             spendableVtxos: vtxos.filter(({ spentBy }) => !Boolean(spentBy)),
             spentVtxos: vtxos.filter(({ spentBy }) => Boolean(spentBy)),
         };
     }
 
-    async GetVirtualTxs(txids: string[]): Promise<Response.Txid[]> {
+    async getVirtualTxs(txids: string[]): Promise<Response.Txid[]> {
         const url = `${this.serverUrl}/v1/virtualTx/${txids.join(",")}`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -317,7 +317,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.txs;
     }
 
-    async GetVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain> {
+    async getVtxoChain(vtxoOutpoint: Outpoint): Promise<Response.VtxoChain> {
         const url = `${this.serverUrl}/v1/vtxo/${vtxoOutpoint.txid}/${vtxoOutpoint.vout}/chain`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -330,7 +330,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data;
     }
 
-    async GetVtxos(
+    async getVtxos(
         addresses: string[],
         opts?: PaginationOptions & {
             spendableOnly?: boolean;
@@ -361,7 +361,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.vtxos.map(convertVtxo);
     }
 
-    async GetVtxosByOutpoints(
+    async getVtxosByOutpoints(
         vtxoOutpoints: Outpoint[]
     ): Promise<VirtualCoin[]> {
         const url = `${this.serverUrl}/v1/getVtxosByOutpoint/${vtxoOutpoints.join(",")}`;
@@ -378,7 +378,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.vtxos.map(convertVtxo);
     }
 
-    async SubscribeForScripts(
+    async subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
     ): Promise<string> {
@@ -399,7 +399,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.subscriptionId;
     }
 
-    async UnsubscribeForScripts(
+    async unsubscribeForScripts(
         subscriptionId: string,
         scripts?: string[]
     ): Promise<void> {

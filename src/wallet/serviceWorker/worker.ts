@@ -85,7 +85,7 @@ export class Worker {
 
         // set the initial vtxos state
         const vtxos = (
-            await this.indexerProvider.GetVtxos([addressInfo.offchain.address])
+            await this.indexerProvider.getVtxos([addressInfo.offchain.address])
         ).map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: forfeit,
@@ -113,10 +113,10 @@ export class Worker {
 
             const abortController = new AbortController();
             const subscriptionId =
-                await this.indexerProvider!.SubscribeForScripts([
+                await this.indexerProvider!.subscribeForScripts([
                     hex.encode(ArkAddress.decode(address).pkScript),
                 ]);
-            const subscription = this.indexerProvider!.GetSubscription(
+            const subscription = this.indexerProvider!.getSubscription(
                 subscriptionId,
                 abortController.signal
             );

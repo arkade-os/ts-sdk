@@ -356,7 +356,7 @@ export class Wallet implements IWallet {
         }
 
         const { spendableVtxos, spentVtxos } =
-            await this.indexerProvider.GetVirtualCoins(address.offchain);
+            await this.indexerProvider.getVirtualCoins(address.offchain);
 
         if (!filter.withRecoverable) {
             return spendableVtxos;
@@ -371,7 +371,7 @@ export class Wallet implements IWallet {
         }
 
         const { spendableVtxos, spentVtxos } =
-            await this.indexerProvider.GetVirtualCoins(
+            await this.indexerProvider.getVirtualCoins(
                 this.offchainAddress.encode()
             );
 

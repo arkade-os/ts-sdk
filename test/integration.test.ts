@@ -456,7 +456,7 @@ describe("Wallet SDK Integration Tests", () => {
             "http://localhost:7070"
         );
 
-        const spendableVtxos = await indexerProvider.GetVtxos([address], {
+        const spendableVtxos = await indexerProvider.getVtxos([address], {
             spendableOnly: true,
         });
         expect(spendableVtxos).toHaveLength(1);
@@ -604,7 +604,7 @@ describe("Wallet SDK Integration Tests", () => {
             "http://localhost:7070"
         );
 
-        const spendableVtxos = await indexerProvider.GetVtxos(
+        const spendableVtxos = await indexerProvider.getVtxos(
             [aliceOffchainAddress!],
             {
                 spendableOnly: true,
@@ -622,16 +622,16 @@ describe("Wallet SDK Integration Tests", () => {
             vout: spendableVtxo.vout,
         };
 
-        const tree = await indexerProvider.GetBatchTree(outpoint);
+        const tree = await indexerProvider.getBatchTree(outpoint);
         expect(tree).toBeDefined();
         expect(tree).toHaveLength(0);
 
-        const leaves = await indexerProvider.GetBatchTreeLeaves(outpoint);
+        const leaves = await indexerProvider.getBatchTreeLeaves(outpoint);
         expect(leaves).toBeDefined();
         expect(leaves).toHaveLength(0);
 
         // TODO: Uncomment when the API is ready
-        // const chain = await indexerProvider.GetVtxoChain(outpoint);
+        // const chain = await indexerProvider.getVtxoChain(outpoint);
         // expect(chain).toBeDefined();
         // expect(chain.chain).toHaveLength(1);
     });
@@ -673,7 +673,7 @@ describe("Wallet SDK Integration Tests", () => {
         const fundAmountStr = fundAmount.toString();
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        const commitmentTx = await indexerProvider.GetCommitmentTx(txid);
+        const commitmentTx = await indexerProvider.getCommitmentTx(txid);
         expect(commitmentTx).toBeDefined();
         expect(commitmentTx.startedAt).toBeDefined();
         expect(commitmentTx.endedAt).toBeDefined();
@@ -682,30 +682,30 @@ describe("Wallet SDK Integration Tests", () => {
         expect(commitmentTx.batches["0"].totalOutputAmount).toBe(fundAmountStr);
         expect(commitmentTx.batches["0"].totalOutputVtxos).toBe(1);
 
-        const connects = await indexerProvider.GetCommitmentTxConnectors(txid);
+        const connects = await indexerProvider.getCommitmentTxConnectors(txid);
         expect(connects).toBeDefined();
         expect(connects.length).toBe(1);
         expect(connects[0].level).toBe(0);
         expect(connects[0].levelIndex).toBe(0);
         expect(connects[0].parentTxid).toBe(txid);
 
-        const forfeits = await indexerProvider.GetCommitmentTxForfeitTxs(txid);
+        const forfeits = await indexerProvider.getCommitmentTxForfeitTxs(txid);
         expect(forfeits).toBeDefined();
         expect(forfeits.length).toBe(1);
 
-        const leaves = await indexerProvider.GetCommitmentTxForfeitTxs(txid);
+        const leaves = await indexerProvider.getCommitmentTxForfeitTxs(txid);
         expect(leaves).toBeDefined();
         expect(leaves.length).toBe(1);
 
-        const swepts = await indexerProvider.GetCommitmentTxSwept(txid);
+        const swepts = await indexerProvider.getCommitmentTxSwept(txid);
         expect(swepts).toBeDefined();
         expect(swepts.length).toBe(0);
 
-        const batchTree = await indexerProvider.GetBatchTree({ txid, vout: 0 });
+        const batchTree = await indexerProvider.getBatchTree({ txid, vout: 0 });
         expect(batchTree.length).toBe(1);
         expect(batchTree[0].parentTxid).toBe(txid);
 
-        const btl = await indexerProvider.GetBatchTreeLeaves({ txid, vout: 0 });
+        const btl = await indexerProvider.getBatchTreeLeaves({ txid, vout: 0 });
         expect(btl.length).toBe(1);
         expect(btl[0].txid).toBe(batchTree[0].txid);
     });
