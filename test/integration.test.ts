@@ -491,7 +491,7 @@ describe("Wallet SDK Integration Tests", () => {
 
         const signedVirtualTx = await bobVHTLCIdentity.sign(virtualTx);
         const { txid, finalVirtualTx, signedCheckpoints } =
-            await arkProvider.submitOffchainTx(
+            await arkProvider.submitTx(
                 base64.encode(signedVirtualTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
@@ -511,7 +511,7 @@ describe("Wallet SDK Integration Tests", () => {
             })
         );
 
-        await arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+        await arkProvider.finalizeTx(txid, finalCheckpoints);
     });
 
     it.skip(
@@ -622,11 +622,11 @@ describe("Wallet SDK Integration Tests", () => {
             vout: spendableVtxo.vout,
         };
 
-        const tree = await indexerProvider.getBatchTree(outpoint);
+        const tree = await indexerProvider.getVtxoTree(outpoint);
         expect(tree).toBeDefined();
         expect(tree).toHaveLength(0);
 
-        const leaves = await indexerProvider.getBatchTreeLeaves(outpoint);
+        const leaves = await indexerProvider.getVtxoTreeLeaves(outpoint);
         expect(leaves).toBeDefined();
         expect(leaves).toHaveLength(0);
 
@@ -701,11 +701,11 @@ describe("Wallet SDK Integration Tests", () => {
         expect(swepts).toBeDefined();
         expect(swepts.length).toBe(0);
 
-        const batchTree = await indexerProvider.getBatchTree({ txid, vout: 0 });
+        const batchTree = await indexerProvider.getVtxoTree({ txid, vout: 0 });
         expect(batchTree.length).toBe(1);
         expect(batchTree[0].parentTxid).toBe(txid);
 
-        const btl = await indexerProvider.getBatchTreeLeaves({ txid, vout: 0 });
+        const btl = await indexerProvider.getVtxoTreeLeaves({ txid, vout: 0 });
         expect(btl.length).toBe(1);
         expect(btl[0].txid).toBe(batchTree[0].txid);
     });

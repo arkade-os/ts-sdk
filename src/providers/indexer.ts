@@ -6,8 +6,8 @@ type PaginationOptions = {
 };
 
 export interface IndexerProvider {
-    getBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]>;
-    getBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]>;
+    getVtxoTree(batchOutpoint: Outpoint): Promise<Response.Node[]>;
+    getVtxoTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]>;
     getCommitmentTx(txid: string): Promise<Response.CommitmentTx>;
     getCommitmentTxConnectors(
         txid: string,
@@ -64,7 +64,7 @@ export interface IndexerProvider {
 export class RestIndexerProvider implements IndexerProvider {
     constructor(public serverUrl: string) {}
 
-    async getBatchTree(batchOutpoint: Outpoint): Promise<Response.Node[]> {
+    async getVtxoTree(batchOutpoint: Outpoint): Promise<Response.Node[]> {
         const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -77,7 +77,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.vtxoTree;
     }
 
-    async getBatchTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]> {
+    async getVtxoTreeLeaves(batchOutpoint: Outpoint): Promise<Outpoint[]> {
         const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
         const res = await fetch(url);
         if (!res.ok) {
@@ -361,6 +361,7 @@ export class RestIndexerProvider implements IndexerProvider {
         return data.vtxos.map(convertVtxo);
     }
 
+    // TODO: move to getVtxos
     async getVtxosByOutpoints(
         vtxoOutpoints: Outpoint[]
     ): Promise<VirtualCoin[]> {

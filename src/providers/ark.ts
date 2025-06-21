@@ -136,7 +136,7 @@ export interface Intent {
 
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
-    submitOffchainTx(
+    submitTx(
         signedVirtualTx: string,
         checkpoints: string[]
     ): Promise<{
@@ -144,8 +144,7 @@ export interface ArkProvider {
         signedCheckpoints: string[];
         txid: string;
     }>;
-    finalizeOffchainTx(txid: string, finalCheckpoints: string[]): Promise<void>;
-    subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
+    finalizeTx(txid: string, finalCheckpoints: string[]): Promise<void>;
     registerIntent(intent: Intent): Promise<string>;
     deleteIntent(intent: Intent): Promise<void>;
     confirmRegistration(intentId: string): Promise<void>;
@@ -186,7 +185,7 @@ export class RestArkProvider implements ArkProvider {
         };
     }
 
-    async submitOffchainTx(
+    async submitTx(
         signedVirtualTx: string,
         checkpoints: string[]
     ): Promise<{
@@ -194,7 +193,7 @@ export class RestArkProvider implements ArkProvider {
         signedCheckpoints: string[];
         txid: string;
     }> {
-        const url = `${this.serverUrl}/v1/offchain-tx/submit`;
+        const url = `${this.serverUrl}/v1/tx/submit`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -231,11 +230,8 @@ export class RestArkProvider implements ArkProvider {
         };
     }
 
-    async finalizeOffchainTx(
-        txid: string,
-        finalCheckpoints: string[]
-    ): Promise<void> {
-        const url = `${this.serverUrl}/v1/offchain-tx/finalize`;
+    async finalizeTx(txid: string, finalCheckpoints: string[]): Promise<void> {
+        const url = `${this.serverUrl}/v1/tx/finalize`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -255,78 +251,8 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async subscribeToEvents(
-        callback: (event: ArkEvent) => void
-    ): Promise<() => void> {
-        const url = `${this.serverUrl}/v1/events`;
-        let abortController = new AbortController();
-
-        (async () => {
-            while (!abortController.signal.aborted) {
-                try {
-                    const response = await fetch(url, {
-                        headers: {
-                            Accept: "application/json",
-                        },
-                        signal: abortController.signal,
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(
-                            `Unexpected status ${response.status} when fetching event stream`
-                        );
-                    }
-
-                    if (!response.body) {
-                        throw new Error("Response body is null");
-                    }
-
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = "";
-
-                    while (!abortController.signal.aborted) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        // Append new data to buffer and split by newlines
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split("\n");
-
-                        // Process all complete lines
-                        for (let i = 0; i < lines.length - 1; i++) {
-                            const line = lines[i].trim();
-                            if (!line) continue;
-
-                            try {
-                                const data = JSON.parse(line);
-                                callback(data);
-                            } catch (err) {
-                                console.error("Failed to parse event:", err);
-                            }
-                        }
-
-                        // Keep the last partial line in the buffer
-                        buffer = lines[lines.length - 1];
-                    }
-                } catch (error) {
-                    if (!abortController.signal.aborted) {
-                        console.error("Event stream error:", error);
-                    }
-                }
-            }
-        })();
-
-        // Return unsubscribe function
-        return () => {
-            abortController.abort();
-            // Create a new controller for potential future subscriptions
-            abortController = new AbortController();
-        };
-    }
-
     async registerIntent(intent: Intent): Promise<string> {
-        const url = `${this.serverUrl}/v1/round/registerIntent`;
+        const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -350,7 +276,7 @@ export class RestArkProvider implements ArkProvider {
     }
 
     async deleteIntent(intent: Intent): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/deleteIntent`;
+        const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -393,7 +319,7 @@ export class RestArkProvider implements ArkProvider {
         pubkey: string,
         nonces: TreeNonces
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/tree/submitNonces`;
+        const url = `${this.serverUrl}/v1/batch/tree/submitNonces`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -417,7 +343,7 @@ export class RestArkProvider implements ArkProvider {
         pubkey: string,
         signatures: TreePartialSigs
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/tree/submitSignatures`;
+        const url = `${this.serverUrl}/v1/batch/tree/submitSignatures`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -440,7 +366,7 @@ export class RestArkProvider implements ArkProvider {
         signedForfeitTxs: string[],
         signedRoundTx?: string
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/submitForfeitTxs`;
+        const url = `${this.serverUrl}/v1/batch/submitForfeitTxs`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -462,7 +388,7 @@ export class RestArkProvider implements ArkProvider {
     async *getEventStream(
         signal: AbortSignal
     ): AsyncIterableIterator<SettlementEvent> {
-        const url = `${this.serverUrl}/v1/events`;
+        const url = `${this.serverUrl}/v1/batch/events`;
 
         while (!signal?.aborted) {
             try {

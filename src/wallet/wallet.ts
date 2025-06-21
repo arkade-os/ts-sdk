@@ -634,11 +634,10 @@ export class Wallet implements IWallet {
 
         const signedVirtualTx = await this.identity.sign(offchainTx.virtualTx);
 
-        const { txid, signedCheckpoints } =
-            await this.arkProvider.submitOffchainTx(
-                base64.encode(signedVirtualTx.toPSBT()),
-                offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
-            );
+        const { txid, signedCheckpoints } = await this.arkProvider.submitTx(
+            base64.encode(signedVirtualTx.toPSBT()),
+            offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
+        );
         // TODO persist final virtual tx and checkpoints to repository
 
         // sign the checkpoints
@@ -650,7 +649,7 @@ export class Wallet implements IWallet {
             })
         );
 
-        await this.arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+        await this.arkProvider.finalizeTx(txid, finalCheckpoints);
 
         return txid;
     }
