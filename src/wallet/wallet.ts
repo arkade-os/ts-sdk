@@ -64,6 +64,7 @@ import { buildOffchainTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { TxTree } from "../tree/vtxoTree";
 import { BIP322 } from "../bip322";
+import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -77,10 +78,12 @@ export class Wallet implements IWallet {
         private onchainProvider: OnchainProvider,
         private onchainP2TR: P2TR,
         private arkProvider?: ArkProvider,
+        private indexerProvider?: IndexerProvider,
         private arkServerPublicKey?: Bytes,
         readonly offchainTapscript?: DefaultVtxo.Script,
         readonly boardingTapscript?: DefaultVtxo.Script,
-        readonly serverUnrollScript?: CSVMultisigTapscript.Type
+        readonly serverUnrollScript?: CSVMultisigTapscript.Type,
+        readonly forfeitOutputScript?: Bytes
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -98,6 +101,11 @@ export class Wallet implements IWallet {
         let arkProvider: ArkProvider | undefined;
         if (config.arkServerUrl) {
             arkProvider = new RestArkProvider(config.arkServerUrl);
+        }
+
+        let indexerProvider: IndexerProvider | undefined;
+        if (config.arkServerUrl) {
+            indexerProvider = new RestIndexerProvider(config.arkServerUrl);
         }
 
         // Save onchain Taproot address key-path only
@@ -140,16 +148,23 @@ export class Wallet implements IWallet {
                 pubkeys: [serverPubKey],
             });
 
+            // parse the server forfeit address
+            // server is expecting funds to be sent to this address
+            const forfeitAddress = Address(network).decode(info.forfeitAddress);
+            const forfeitOutputScript = OutScript.encode(forfeitAddress);
+
             return new Wallet(
                 config.identity,
                 network,
                 onchainProvider,
                 onchainP2TR,
                 arkProvider,
+                indexerProvider,
                 serverPubKey,
                 offchainTapscript,
                 boardingTapscript,
-                serverUnrollScript
+                serverUnrollScript,
+                forfeitOutputScript
             );
         }
 
@@ -261,12 +276,12 @@ export class Wallet implements IWallet {
             .reduce((sum, coin) => sum + coin.value, 0);
         const onchainTotal = onchainConfirmed + onchainUnconfirmed;
 
-        // Get offchain coins if Ark provider is configured
+        // Get offchain coins if Indexer provider is configured
         let offchainSettled = 0;
         let offchainPending = 0;
         let offchainSwept = 0;
-        if (this.arkProvider) {
-            const vtxos = await this.getVirtualCoins();
+        if (this.indexerProvider) {
+            const vtxos = await this.getVtxos();
             offchainSettled = vtxos
                 .filter((coin) => coin.virtualStatus.state === "settled")
                 .reduce((sum, coin) => sum + coin.value, 0);
@@ -302,7 +317,11 @@ export class Wallet implements IWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        if (!this.arkProvider || !this.offchainTapscript) {
+        if (
+            !this.arkProvider ||
+            !this.indexerProvider ||
+            !this.offchainTapscript
+        ) {
             return [];
         }
 
@@ -327,7 +346,7 @@ export class Wallet implements IWallet {
     private async getVirtualCoins(
         filter: GetVtxosFilter = { withRecoverable: true }
     ): Promise<VirtualCoin[]> {
-        if (!this.arkProvider) {
+        if (!this.indexerProvider) {
             return [];
         }
 
@@ -337,7 +356,7 @@ export class Wallet implements IWallet {
         }
 
         const { spendableVtxos, spentVtxos } =
-            await this.arkProvider.getVirtualCoins(address.offchain);
+            await this.indexerProvider.getVirtualCoins(address.offchain);
 
         if (!filter.withRecoverable) {
             return spendableVtxos;
@@ -347,14 +366,15 @@ export class Wallet implements IWallet {
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        if (!this.arkProvider) {
+        if (!this.indexerProvider) {
             return [];
         }
 
         const { spendableVtxos, spentVtxos } =
-            await this.arkProvider.getVirtualCoins(
+            await this.indexerProvider.getVirtualCoins(
                 this.offchainAddress.encode()
             );
+
         const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
 
         // convert VTXOs to offchain transactions
@@ -438,7 +458,7 @@ export class Wallet implements IWallet {
                 },
                 amount: utxo.value,
                 type: TxType.TxReceived,
-                settled: utxo.virtualStatus.state === "settled",
+                settled: utxo.virtualStatus.state === "spent",
                 createdAt: utxo.status.block_time
                     ? new Date(utxo.status.block_time * 1000).getTime()
                     : 0,
@@ -562,6 +582,7 @@ export class Wallet implements IWallet {
     private async sendOffchain(params: SendBitcoinParams): Promise<string> {
         if (
             !this.arkProvider ||
+            !this.indexerProvider ||
             !this.offchainAddress ||
             !this.offchainTapscript ||
             !this.serverUnrollScript
@@ -613,11 +634,10 @@ export class Wallet implements IWallet {
 
         const signedVirtualTx = await this.identity.sign(offchainTx.virtualTx);
 
-        const { txid, signedCheckpoints } =
-            await this.arkProvider.submitOffchainTx(
-                base64.encode(signedVirtualTx.toPSBT()),
-                offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
-            );
+        const { txid, signedCheckpoints } = await this.arkProvider.submitTx(
+            base64.encode(signedVirtualTx.toPSBT()),
+            offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
+        );
         // TODO persist final virtual tx and checkpoints to repository
 
         // sign the checkpoints
@@ -629,7 +649,7 @@ export class Wallet implements IWallet {
             })
         );
 
-        await this.arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+        await this.arkProvider.finalizeTx(txid, finalCheckpoints);
 
         return txid;
     }
@@ -638,7 +658,11 @@ export class Wallet implements IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        if (!this.arkProvider || !this.arkServerPublicKey) {
+        if (
+            !this.arkProvider ||
+            !this.arkServerPublicKey ||
+            !this.forfeitOutputScript
+        ) {
             throw new Error("Ark provider not configured");
         }
 
@@ -769,7 +793,8 @@ export class Wallet implements IWallet {
                         const res = await this.handleBatchStartedEvent(
                             event,
                             intentId,
-                            this.arkServerPublicKey
+                            this.arkServerPublicKey,
+                            this.forfeitOutputScript
                         );
                         if (!res.skip) {
                             step = event.type;
@@ -918,9 +943,10 @@ export class Wallet implements IWallet {
     async exit(outpoints?: Outpoint[]): Promise<void> {
         // TODO store the exit branches in repository
         // exit should not depend on the ark provider
-        if (!this.arkProvider) {
-            throw new Error("Ark provider not configured");
-        }
+        // or on the indexer provider
+        if (!this.onchainProvider)
+            throw new Error("Onchain provider not configured");
+
         let vtxos = await this.getVtxos();
         if (outpoints && outpoints.length > 0) {
             vtxos = vtxos.filter((vtxo) =>
@@ -939,27 +965,28 @@ export class Wallet implements IWallet {
         const trees = new Map<string, TxTree>();
         const transactions: string[] = [];
 
-        for (const vtxo of vtxos) {
-            const batchTxid = vtxo.virtualStatus.batchTxID;
-            if (!batchTxid) continue;
-            if (!trees.has(batchTxid)) {
-                const round = await this.arkProvider.getRound(batchTxid);
-                trees.set(batchTxid, round.vtxoTree);
-            }
-
-            const tree = trees.get(batchTxid);
-            if (!tree) {
-                throw new Error("Tree not found");
-            }
-            const exitBranch = await tree.exitBranch(
-                vtxo.txid,
-                async (txid) => {
-                    const status = await this.onchainProvider.getTxStatus(txid);
-                    return status.confirmed;
-                }
-            );
-            transactions.push(...exitBranch);
-        }
+        // for (const vtxo of vtxos) {
+        //     const batchTxid = vtxo.virtualStatus.batchTxID;
+        //     if (!batchTxid) continue;
+        //     if (!trees.has(batchTxid)) {
+        //         const round =
+        //             await this.arkProvider?.getRound(batchTxid);
+        //         trees.set(batchTxid, round?.vtxoTree);
+        //     }
+        //
+        //     const tree = trees.get(batchTxid);
+        //     if (!tree) {
+        //         throw new Error("Tree not found");
+        //     }
+        //     const exitBranch = await tree.exitBranch(
+        //         vtxo.txid,
+        //         async (txid) => {
+        //             const status = await this.onchainProvider.getTxStatus(txid);
+        //             return status.confirmed;
+        //         }
+        //     );
+        //     transactions.push(...exitBranch);
+        // }
 
         const broadcastedTxs = new Map<string, boolean>();
         for (const tx of transactions) {
@@ -972,7 +999,8 @@ export class Wallet implements IWallet {
     private async handleBatchStartedEvent(
         event: BatchStartedEvent,
         intentId: string,
-        serverPubKey: Bytes
+        serverPubKey: Bytes,
+        forfeitOutputScript: Bytes
     ): Promise<
         | { skip: true }
         | {
@@ -1012,13 +1040,6 @@ export class Wallet implements IWallet {
         }).script;
 
         const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
-
-        // parse the server forfeit address
-        // server is expecting funds to be sent to this address
-        const forfeitAddress = Address(this.network).decode(
-            event.forfeitAddress
-        );
-        const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
         return {
             roundId: event.id,

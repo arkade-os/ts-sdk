@@ -10,6 +10,7 @@ import {
     VHTLC,
     Identity,
     addConditionWitness,
+    RestIndexerProvider,
     RestArkProvider,
     ArkNote,
     CSVMultisigTapscript,
@@ -38,7 +39,7 @@ function createTestIdentity(): InMemoryKey {
     return InMemoryKey.fromHex(privateKeyHex);
 }
 
-async function createTestWallet(): Promise<TestWallet> {
+export async function createTestWallet(): Promise<TestWallet> {
     const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
@@ -284,6 +285,7 @@ describe("Wallet SDK Integration Tests", () => {
 
         // Wait for the transaction to be processed
         execSync("nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // Check history before sending to bob
         let aliceHistory = await alice.wallet.getTransactionHistory();
@@ -449,6 +451,14 @@ describe("Wallet SDK Integration Tests", () => {
         };
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
+        const indexerProvider = new RestIndexerProvider(
+            "http://localhost:7070"
+        );
+
+        const spendableVtxos = await indexerProvider.getVtxos([address], {
+            spendableOnly: true,
+        });
+        expect(spendableVtxos).toHaveLength(1);
 
         const infos = await arkProvider.getInfo();
         const serverUnrollScript = CSVMultisigTapscript.encode({
@@ -459,8 +469,6 @@ describe("Wallet SDK Integration Tests", () => {
             pubkeys: [X_ONLY_PUBLIC_KEY],
         });
 
-        const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
-        expect(spendableVtxos).toHaveLength(1);
         const vtxo = spendableVtxos[0];
 
         const { virtualTx, checkpoints } = buildOffchainTx(
@@ -482,7 +490,7 @@ describe("Wallet SDK Integration Tests", () => {
 
         const signedVirtualTx = await bobVHTLCIdentity.sign(virtualTx);
         const { txid, finalVirtualTx, signedCheckpoints } =
-            await arkProvider.submitOffchainTx(
+            await arkProvider.submitTx(
                 base64.encode(signedVirtualTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
@@ -502,7 +510,7 @@ describe("Wallet SDK Integration Tests", () => {
             })
         );
 
-        await arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+        await arkProvider.finalizeTx(txid, finalCheckpoints);
     });
 
     it.skip(
@@ -606,7 +614,9 @@ describe("Wallet SDK Integration Tests", () => {
         // give some time for the server to be swept
         await new Promise((resolve) => setTimeout(resolve, 10000));
 
-        const vtxos = await alice.wallet.getVtxos({ withRecoverable: false });
+        const vtxos = await alice.wallet.getVtxos({
+            withRecoverable: false,
+        });
         expect(vtxos).toHaveLength(1);
         const vtxo = vtxos[0];
         expect(vtxo.txid).toBeDefined();
