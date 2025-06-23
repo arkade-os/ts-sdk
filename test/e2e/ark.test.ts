@@ -1,12 +1,9 @@
 import { expect, describe, it, beforeAll } from "vitest";
-import { Transaction, utils } from "@scure/btc-signer";
-import { base64, hex } from "@scure/base";
+import { Transaction } from "@scure/btc-signer";
+import { base64 } from "@scure/base";
 import { execSync } from "child_process";
 import {
-    IWallet,
     TxType,
-    Wallet,
-    InMemoryKey,
     VHTLC,
     Identity,
     addConditionWitness,
@@ -20,9 +17,7 @@ import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
 import {
     arkdExec,
-    ARK_SERVER_PUBKEY,
     X_ONLY_PUBLIC_KEY,
-    TestWallet,
     createTestIdentity,
     createTestWallet,
 } from "./utils";
