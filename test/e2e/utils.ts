@@ -1,6 +1,7 @@
 import { utils } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { IWallet, Wallet, InMemoryKey } from "../../src";
+import { execSync } from "child_process";
 
 export const arkdExec =
     process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
@@ -36,4 +37,40 @@ export async function createTestWallet(): Promise<TestWallet> {
         wallet,
         identity,
     };
+}
+
+export function createOnboardTx(address: string, amount: number): void {
+    execSync(
+        `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
+    );
+}
+
+export async function createVtxo(
+    alice: TestWallet,
+    amount: number
+): Promise<string> {
+    const address = (await alice.wallet.getAddress()).offchain;
+    if (!address) throw new Error("Offchain address not defined.");
+
+    createOnboardTx(address, amount);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    const virtualCoins = await alice.wallet.getVtxos();
+    if (!virtualCoins || virtualCoins.length === 0) {
+        throw new Error("No VTXOs found after onboarding transaction.");
+    }
+
+    const vtxo = virtualCoins[0];
+
+    const settleTxid = await alice.wallet.settle({
+        inputs: [vtxo],
+        outputs: [
+            {
+                address,
+                amount: BigInt(amount),
+            },
+        ],
+    });
+
+    return settleTxid;
 }
