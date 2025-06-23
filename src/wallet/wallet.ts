@@ -25,11 +25,11 @@ import {
     OnchainProvider,
 } from "../providers/onchain";
 import {
-    FinalizationEvent,
+    BatchFinalizationEvent,
     SettlementEvent,
     SettlementEventType,
-    SigningNoncesGeneratedEvent,
-    SigningStartEvent,
+    TreeNoncesAggregatedEvent,
+    TreeSigningStartedEvent,
     ArkProvider,
     RestArkProvider,
     BatchStartedEvent,
@@ -48,6 +48,7 @@ import {
     ExtendedVirtualCoin,
     GetVtxosFilter,
     isRecoverable,
+    isSpendable,
     IWallet,
     Outpoint,
     SendBitcoinParams,
@@ -355,14 +356,18 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const { spendableVtxos, spentVtxos } =
-            await this.indexerProvider.getVirtualCoins(address.offchain);
+        const getVtxosArgs = {
+            addresses: [address.offchain],
+            spendableOnly: !filter.withRecoverable,
+        };
+
+        const vtxos = await this.indexerProvider.getVtxos(getVtxosArgs);
 
         if (!filter.withRecoverable) {
-            return spendableVtxos;
+            return vtxos;
         }
 
-        return [...spendableVtxos, ...spentVtxos.filter(isRecoverable)];
+        return vtxos.filter((v) => isSpendable(v));
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
@@ -370,12 +375,22 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const { spendableVtxos, spentVtxos } =
-            await this.indexerProvider.getVirtualCoins(
-                this.offchainAddress.encode()
-            );
+        const vtxos = await this.indexerProvider.getVtxos({
+            addresses: [this.offchainAddress.encode()],
+        });
 
         const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
+
+        const spendableVtxos = [];
+        const spentVtxos = [];
+
+        for (const vtxo of vtxos) {
+            if (isSpendable(vtxo)) {
+                spendableVtxos.push(vtxo);
+            } else {
+                spentVtxos.push(vtxo);
+            }
+        }
 
         // convert VTXOs to offchain transactions
         const offchainTxs = vtxosToTxs(
@@ -634,24 +649,25 @@ export class Wallet implements IWallet {
 
         const signedVirtualTx = await this.identity.sign(offchainTx.virtualTx);
 
-        const { txid, signedCheckpoints } = await this.arkProvider.submitTx(
-            base64.encode(signedVirtualTx.toPSBT()),
-            offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
-        );
+        const { arkTxid, signedCheckpointTxs } =
+            await this.arkProvider.submitTx(
+                base64.encode(signedVirtualTx.toPSBT()),
+                offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
+            );
         // TODO persist final virtual tx and checkpoints to repository
 
         // sign the checkpoints
         const finalCheckpoints = await Promise.all(
-            signedCheckpoints.map(async (c) => {
+            signedCheckpointTxs.map(async (c) => {
                 const tx = Transaction.fromPSBT(base64.decode(c));
                 const signedCheckpoint = await this.identity.sign(tx);
                 return base64.encode(signedCheckpoint.toPSBT());
             })
         );
 
-        await this.arkProvider.finalizeTx(txid, finalCheckpoints);
+        await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
-        return txid;
+        return arkTxid;
     }
 
     async settle(
@@ -780,7 +796,7 @@ export class Wallet implements IWallet {
                 }
                 switch (event.type) {
                     // the settlement failed
-                    case SettlementEventType.Failed:
+                    case SettlementEventType.BatchFailed:
                         // fail if the roundId is the one joined
                         if (event.id === roundId) {
                             throw new Error(event.reason);
@@ -804,19 +820,17 @@ export class Wallet implements IWallet {
                             if (!hasOffchainOutputs) {
                                 // if there are no offchain outputs, we don't have to handle musig2 tree signatures
                                 // we can directly advance to the finalization step
-                                step =
-                                    SettlementEventType.SigningNoncesGenerated;
+                                step = SettlementEventType.TreeNoncesAggregated;
                             }
                         }
                         break;
-                    case SettlementEventType.BatchTree:
+                    case SettlementEventType.TreeTx:
                         if (
                             step !== SettlementEventType.BatchStarted &&
-                            step !== SettlementEventType.SigningNoncesGenerated
+                            step !== SettlementEventType.TreeNoncesAggregated
                         ) {
                             continue;
                         }
-
                         // index 0 = vtxo tree
                         if (event.batchIndex === 0) {
                             vtxoTree.addNode(event.treeTx);
@@ -829,10 +843,8 @@ export class Wallet implements IWallet {
                             );
                         }
                         break;
-                    case SettlementEventType.BatchTreeSignature:
-                        if (
-                            step !== SettlementEventType.SigningNoncesGenerated
-                        ) {
+                    case SettlementEventType.TreeSignature:
+                        if (step !== SettlementEventType.TreeNoncesAggregated) {
                             continue;
                         }
                         if (!hasOffchainOutputs) {
@@ -860,7 +872,7 @@ export class Wallet implements IWallet {
                         break;
                     // the server has started the signing process of the vtxo tree transactions
                     // the server expects the partial musig2 nonces for each tx
-                    case SettlementEventType.SigningStart:
+                    case SettlementEventType.TreeSigningStarted:
                         if (step !== SettlementEventType.BatchStarted) {
                             continue;
                         }
@@ -882,8 +894,8 @@ export class Wallet implements IWallet {
                         break;
                     // the musig2 nonces of the vtxo tree transactions are generated
                     // the server expects now the partial musig2 signatures
-                    case SettlementEventType.SigningNoncesGenerated:
-                        if (step !== SettlementEventType.SigningStart) {
+                    case SettlementEventType.TreeNoncesAggregated:
+                        if (step !== SettlementEventType.TreeSigningStarted) {
                             continue;
                         }
                         if (hasOffchainOutputs) {
@@ -899,10 +911,8 @@ export class Wallet implements IWallet {
                         break;
                     // the vtxo tree is signed, craft, sign and submit forfeit transactions
                     // if any boarding utxos are involved, the settlement tx is also signed
-                    case SettlementEventType.Finalization:
-                        if (
-                            step !== SettlementEventType.SigningNoncesGenerated
-                        ) {
+                    case SettlementEventType.BatchFinalization:
+                        if (step !== SettlementEventType.TreeNoncesAggregated) {
                             continue;
                         }
 
@@ -919,12 +929,12 @@ export class Wallet implements IWallet {
                         step = event.type;
                         break;
                     // the settlement is done, last event to be received
-                    case SettlementEventType.Finalized:
-                        if (step !== SettlementEventType.Finalization) {
+                    case SettlementEventType.BatchFinalized:
+                        if (step !== SettlementEventType.BatchFinalization) {
                             continue;
                         }
                         abortController.abort();
-                        return event.roundTxid;
+                        return event.commitmentTxid;
                 }
             }
         } catch (error) {
@@ -1051,7 +1061,7 @@ export class Wallet implements IWallet {
 
     // validates the vtxo tree, creates a signing session and generates the musig2 nonces
     private async handleSettlementSigningEvent(
-        event: SigningStartEvent,
+        event: TreeSigningStartedEvent,
         sweepTapTreeRoot: Uint8Array,
         session: SignerSession,
         unsignedVtxoTree: TxTree
@@ -1062,14 +1072,14 @@ export class Wallet implements IWallet {
 
         // validate the unsigned vtxo tree
         validateVtxoTree(
-            event.unsignedSettlementTx,
+            event.unsignedCommitmentTx,
             unsignedVtxoTree,
             sweepTapTreeRoot
         );
 
         // TODO check if our registered outputs are in the vtxo tree
 
-        const settlementPsbt = base64.decode(event.unsignedSettlementTx);
+        const settlementPsbt = base64.decode(event.unsignedCommitmentTx);
         const settlementTx = Transaction.fromPSBT(settlementPsbt);
         const sharedOutput = settlementTx.getOutput(0);
         if (!sharedOutput?.amount) {
@@ -1086,7 +1096,7 @@ export class Wallet implements IWallet {
     }
 
     private async handleSettlementSigningNoncesGeneratedEvent(
-        event: SigningNoncesGeneratedEvent,
+        event: TreeNoncesAggregatedEvent,
         session: SignerSession
     ) {
         if (!this.arkProvider) {
@@ -1104,7 +1114,7 @@ export class Wallet implements IWallet {
     }
 
     private async handleSettlementFinalizationEvent(
-        event: FinalizationEvent,
+        event: BatchFinalizationEvent,
         inputs: SettleParams["inputs"],
         forfeitOutputScript: Bytes,
         connectors: TxTree
@@ -1117,7 +1127,9 @@ export class Wallet implements IWallet {
         const signedForfeits: string[] = [];
 
         const vtxos = await this.getVirtualCoins();
-        let settlementPsbt = Transaction.fromPSBT(base64.decode(event.roundTx));
+        let settlementPsbt = Transaction.fromPSBT(
+            base64.decode(event.commitmentTx)
+        );
         let hasBoardingUtxos = false;
         let connectorsTreeValid = false;
 
@@ -1167,7 +1179,7 @@ export class Wallet implements IWallet {
 
             if (!connectorsTreeValid) {
                 // validate that the connectors tree is valid and contains our expected connectors
-                validateConnectorsTree(event.roundTx, connectors);
+                validateConnectorsTree(event.commitmentTx, connectors);
                 connectorsTreeValid = true;
             }
 

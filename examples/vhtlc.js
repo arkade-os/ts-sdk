@@ -115,7 +115,8 @@ async function main() {
     // Get the virtual coins for the VHTLC address
     const arkProvider = new RestArkProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
-    const spendableVtxos = await indexerProvider.getVtxos([address], {
+    const spendableVtxos = await indexerProvider.getVtxos({
+        addresses: [address],
         spendableOnly: true,
     });
 

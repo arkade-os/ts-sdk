@@ -85,7 +85,9 @@ export class Worker {
 
         // set the initial vtxos state
         const vtxos = (
-            await this.indexerProvider.getVtxos([addressInfo.offchain.address])
+            await this.indexerProvider.getVtxos({
+                addresses: [addressInfo.offchain.address],
+            })
         ).map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: forfeit,

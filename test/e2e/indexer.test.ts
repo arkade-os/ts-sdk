@@ -1,10 +1,8 @@
 import { expect, describe, it } from "vitest";
-import { createTestWallet } from "./integration.test";
-import { Outpoint, RestIndexerProvider } from "../src";
+import { createTestWallet } from "./utils";
+import { Outpoint, RestIndexerProvider } from "../../src";
 import { execSync } from "child_process";
-
-const arkdExec =
-    process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
+import { arkdExec } from "./utils";
 
 describe("Indexer provider", () => {
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
@@ -24,12 +22,10 @@ describe("Indexer provider", () => {
             "http://localhost:7070"
         );
 
-        const spendableVtxos = await indexerProvider.getVtxos(
-            [aliceOffchainAddress!],
-            {
-                spendableOnly: true,
-            }
-        );
+        const spendableVtxos = await indexerProvider.getVtxos({
+            addresses: [aliceOffchainAddress!],
+            spendableOnly: true,
+        });
         expect(spendableVtxos).toHaveLength(1);
 
         const spendableVtxo = spendableVtxos[0];

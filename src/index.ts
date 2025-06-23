@@ -52,7 +52,21 @@ import { ArkNote } from "./arknote";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks } from "./networks";
-import { RestIndexerProvider } from "./providers/indexer";
+import {
+    RestIndexerProvider,
+    IndexerProvider,
+    IndexerTxType,
+    ChainedTxType,
+    PageResponse,
+    Batch,
+    Chain,
+    ChainedTx,
+    CommitmentTx,
+    Node,
+    TxHistoryRecord,
+    Vtxo,
+    VtxoChain,
+} from "./providers/indexer";
 
 export {
     // Classes
@@ -74,6 +88,8 @@ export {
 
     // Enums
     TxType,
+    IndexerTxType,
+    ChainedTxType,
 
     // Service Worker
     Worker,
@@ -133,4 +149,16 @@ export type {
     VtxoRepository,
     VirtualTxInput,
     OffchainTx,
+
+    // Indexer types
+    IndexerProvider,
+    PageResponse,
+    Batch,
+    Chain,
+    ChainedTx,
+    CommitmentTx,
+    Node,
+    TxHistoryRecord,
+    Vtxo,
+    VtxoChain,
 };
