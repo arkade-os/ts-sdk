@@ -1,8 +1,7 @@
 import { expect, describe, it } from "vitest";
-import { createTestWallet } from "./utils";
-import { Outpoint, RestIndexerProvider } from "../../src";
-import { execSync } from "child_process";
-import { arkdExec } from "./utils";
+import { createOnboardTx, createTestWallet, createVtxo } from "./utils";
+import { ArkAddress, Outpoint, RestIndexerProvider } from "../../src";
+import { hex } from "@scure/base";
 
 describe("Indexer provider", () => {
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
@@ -12,9 +11,7 @@ describe("Indexer provider", () => {
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
-        execSync(
-            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
-        );
+        createOnboardTx(aliceOffchainAddress!, fundAmount);
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -58,34 +55,13 @@ describe("Indexer provider", () => {
         const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
         expect(aliceOffchainAddress).toBeDefined();
 
-        const fundAmount = 1000;
-        execSync(
-            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
-        );
-
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
         const indexerProvider = new RestIndexerProvider(
             "http://localhost:7070"
         );
 
-        const virtualCoins = await alice.wallet.getVtxos();
-        expect(virtualCoins).toHaveLength(1);
-        const vtxo = virtualCoins[0];
-        expect(vtxo.txid).toBeDefined();
-
-        const settleTxid = await alice.wallet.settle({
-            inputs: [vtxo],
-            outputs: [
-                {
-                    address: aliceOffchainAddress!,
-                    amount: BigInt(fundAmount),
-                },
-            ],
-        });
-        const txid = settleTxid;
-
-        expect(settleTxid).toBeDefined();
+        const fundAmount = 1000;
+        const txid = await createVtxo(alice, fundAmount);
+        expect(txid).toBeDefined();
         const fundAmountStr = fundAmount.toString();
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -124,5 +100,91 @@ describe("Indexer provider", () => {
         const btl = await indexerProvider.getVtxoTreeLeaves({ txid, vout: 0 });
         expect(btl.length).toBe(1);
         expect(btl[0].txid).toBe(batchTree[0].txid);
+    });
+
+    it("should subscribe to scripts", { timeout: 60000 }, async () => {
+        const start = Date.now();
+        const fundAmount = 1000;
+        const delayMilliseconds = 2100;
+        const abortController = new AbortController();
+
+        // Create fresh wallet instance for this test
+        const alice = await createTestWallet();
+        const aliceAddress = (await alice.wallet.getAddress()).offchain;
+        const aliceScript = ArkAddress.decode(aliceAddress!).pkScript.slice(2);
+
+        // Create fresh wallet instance for this test
+        const bob = await createTestWallet();
+        const bobAddress = (await bob.wallet.getAddress()).offchain;
+        const bobScript = ArkAddress.decode(bobAddress!).pkScript.slice(2);
+
+        const indexerUrl = "http://localhost:7070";
+        const indexerProvider = new RestIndexerProvider(indexerUrl);
+
+        // First we subscribe to Alice's script
+        // Then we generate a VTXO for Bob, which should not trigger an update
+        // Then we generate a VTXO for Alice, which should trigger an update
+        // After Alice's update we update the subscription to Bob's script
+        // Finally we generate another VTXO for Bob, which should trigger an update
+        const fixtures = [
+            {
+                user: bob,
+                amount: fundAmount,
+                delayMilliseconds: delayMilliseconds,
+                note: "should be ignored on subcription",
+            },
+            {
+                user: alice,
+                amount: 2 * fundAmount,
+                delayMilliseconds: 2 * delayMilliseconds,
+                note: "should generate an update on subscription",
+            },
+            {
+                user: bob,
+                amount: 3 * fundAmount,
+                delayMilliseconds: 3 * delayMilliseconds,
+                note: "should generate an update on subscription",
+            },
+        ];
+
+        fixtures.forEach(({ user, amount, delayMilliseconds }) => {
+            setTimeout(() => createVtxo(user, amount), delayMilliseconds);
+        });
+
+        const subscriptionId = await indexerProvider.subscribeForScripts([
+            hex.encode(aliceScript),
+        ]);
+
+        const subscription = indexerProvider.getSubscription(
+            subscriptionId,
+            abortController.signal
+        );
+
+        for await (const update of subscription) {
+            const now = Date.now();
+            expect(update).toBeDefined();
+            expect(update.newVtxos).toBeDefined();
+            expect(update.spentVtxos).toBeDefined();
+            expect(update.newVtxos).toHaveLength(1);
+            expect(update.spentVtxos).toHaveLength(0);
+            const vtxo = update.newVtxos[0];
+            expect(vtxo.txid).toBeDefined();
+            expect(vtxo.vout).toBeDefined();
+            if (now - start < 3 * delayMilliseconds) {
+                // event generated by alice's VTXO
+                expect(vtxo.value).toBe(fixtures[1].amount);
+                // update subscription with bob's scripts
+                await indexerProvider.subscribeForScripts(
+                    [hex.encode(bobScript)],
+                    subscriptionId
+                );
+            } else {
+                // event generated by bob's VTXO
+                expect(vtxo.value).toBe(fixtures[2].amount);
+                // stop subscription
+                abortController.abort();
+                break;
+            }
+        }
     });
 });
