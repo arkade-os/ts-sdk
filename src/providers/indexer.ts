@@ -524,7 +524,7 @@ export class RestIndexerProvider implements IndexerProvider {
         const url = `${this.serverUrl}/v1/script/subscribe`;
         const res = await fetch(url, {
             headers: {
-                Accept: "application/json",
+                "Content-Type": "application/json",
             },
             method: "POST",
             body: JSON.stringify({ scripts, subscriptionId }),
@@ -545,7 +545,7 @@ export class RestIndexerProvider implements IndexerProvider {
         const url = `${this.serverUrl}/v1/script/unsubscribe`;
         const res = await fetch(url, {
             headers: {
-                Accept: "application/json",
+                "Content-Type": "application/json",
             },
             method: "POST",
             body: JSON.stringify({ subscriptionId, scripts }),
