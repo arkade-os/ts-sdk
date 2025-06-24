@@ -146,7 +146,7 @@ describe("EsploraProvider", () => {
         });
     });
 
-    describe("notifyIncomingFunds", () => {
+    describe("watchAddresses", () => {
         let mockWs: any;
         let callback: Mock;
         const address = "bcrt1q24qjaswxsa24tvrd7n2huxdakd4x2k4t846qfh";
@@ -185,19 +185,23 @@ describe("EsploraProvider", () => {
             });
 
             // act
-            provider.notifyIncomingFunds(address, callback);
+            provider.watchAddresses([address], callback);
             openHandler!(); // simulate WebSocket open event
 
             // assert
             expect(mockWs.send).toHaveBeenCalledWith(
-                JSON.stringify({ "track-address": address })
+                JSON.stringify({ "track-addresses": [address] })
             );
         });
 
-        it("should invoke callback with transaction when address-transactions message is received", () => {
+        it("should invoke callback with transaction when multi-address-transactions message is received", () => {
             // arrange
             const mockMessage = {
-                "address-transactions": [mockTx1],
+                "multi-address-transactions": {
+                    [address]: {
+                        mempool: [mockTx1],
+                    },
+                },
             };
             let messageHandler: Function;
             mockWs.on.mockImplementation((event: string, handler: Function) => {
@@ -205,7 +209,7 @@ describe("EsploraProvider", () => {
             });
 
             // act
-            provider.notifyIncomingFunds(address, callback);
+            provider.watchAddresses([address], callback);
             messageHandler!(JSON.stringify(mockMessage));
 
             // assert
@@ -216,8 +220,12 @@ describe("EsploraProvider", () => {
         it("should handle multiple transactions in a single message", () => {
             // arrange
             const mockMessage = {
-                "address-transactions": [mockTx1],
-                "block-transactions": [mockTx2],
+                "multi-address-transactions": {
+                    [address]: {
+                        mempool: [mockTx1],
+                        confirmed: [mockTx2],
+                    },
+                },
             };
             let messageHandler: Function;
             mockWs.on.mockImplementation((event: string, handler: Function) => {
@@ -225,7 +233,7 @@ describe("EsploraProvider", () => {
             });
 
             // act
-            provider.notifyIncomingFunds(address, callback);
+            provider.watchAddresses([address], callback);
             messageHandler!(JSON.stringify(mockMessage));
 
             // assert
@@ -241,7 +249,7 @@ describe("EsploraProvider", () => {
             });
 
             // act
-            provider.notifyIncomingFunds(address, callback);
+            provider.watchAddresses([address], callback);
             messageHandler!("invalid JSON"); // simulate invalid message
 
             // assert
@@ -257,7 +265,7 @@ describe("EsploraProvider", () => {
             });
 
             // act
-            provider.notifyIncomingFunds(address, callback);
+            provider.watchAddresses([address], callback);
             messageHandler!(JSON.stringify(mockMessage));
 
             // assert
@@ -291,7 +299,7 @@ describe("EsploraProvider", () => {
                     });
 
                 // act
-                provider.notifyIncomingFunds(address, callback);
+                provider.watchAddresses([address], callback);
                 const error = new Error("WebSocket error");
                 errorHandler!(error);
 

@@ -38,12 +38,18 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
 };
 
 interface SubscribeMessage {
-    "track-address": string;
+    "track-addresses": string[];
 }
 
 interface WebSocketMessage {
-    "address-transactions"?: ExplorerTransaction[];
-    "block-transactions"?: ExplorerTransaction[];
+    "multi-address-transactions"?: Record<
+        string,
+        {
+            mempool: ExplorerTransaction[];
+            confirmed: ExplorerTransaction[];
+            removed: ExplorerTransaction[];
+        }
+    >;
 }
 
 export interface OnchainProvider {
@@ -57,8 +63,8 @@ export interface OnchainProvider {
         blockTime?: number;
         blockHeight?: number;
     }>;
-    notifyIncomingFunds(
-        address: string,
+    watchAddresses(
+        addresses: string[],
         eventCallback: (txs: ExplorerTransaction[]) => void
     ): Promise<void>;
 }
@@ -142,8 +148,8 @@ export class EsploraProvider implements OnchainProvider {
         };
     }
 
-    async notifyIncomingFunds(
-        address: string,
+    async watchAddresses(
+        addresses: string[],
         callback: (txs: ExplorerTransaction[]) => void
     ): Promise<void> {
         const wsUrl = this.baseUrl.replace("http", "ws") + "/v1/ws/";
@@ -152,7 +158,7 @@ export class EsploraProvider implements OnchainProvider {
         ws.on("open", () => {
             // subscribe to address updates
             const subscribeMsg: SubscribeMessage = {
-                "track-address": address,
+                "track-addresses": addresses,
             };
             ws.send(JSON.stringify(subscribeMsg));
         });
@@ -160,26 +166,23 @@ export class EsploraProvider implements OnchainProvider {
         ws.on("message", (data: WebSocket.Data) => {
             try {
                 const newTxs: ExplorerTransaction[] = [];
+
                 const message: WebSocketMessage = JSON.parse(data.toString());
+                if (!message["multi-address-transactions"]) return;
+                const aux = message["multi-address-transactions"];
 
-                // handle address (aka mempool) transactions
-                if (
-                    message["address-transactions"]?.every((tx: any) =>
-                        isExplorerTransaction(tx)
-                    )
-                ) {
-                    newTxs.push(...message["address-transactions"]);
+                for (const address in aux) {
+                    for (const type of [
+                        "mempool",
+                        "confirmed",
+                        "removed",
+                    ] as const) {
+                        if (!aux[address][type]) continue;
+                        newTxs.push(
+                            ...aux[address][type].filter(isExplorerTransaction)
+                        );
+                    }
                 }
-
-                // handle block (aka confirmed) transactions
-                if (
-                    message["block-transactions"]?.every((tx: any) =>
-                        isExplorerTransaction(tx)
-                    )
-                ) {
-                    newTxs.push(...message["block-transactions"]);
-                }
-
                 // callback with new transactions
                 if (newTxs.length > 0) callback(newTxs);
             } catch (error) {
@@ -191,8 +194,14 @@ export class EsploraProvider implements OnchainProvider {
             // websocket is not reliable, so we will fallback to polling
             const pollingInterval = 5_000; // 5 seconds
 
+            const getAllTxs = () => {
+                return Promise.all(
+                    addresses.map((address) => this.getTransactions(address))
+                ).then((txArrays) => txArrays.flat());
+            };
+
             // initial fetch to get existing transactions
-            const initialTxs = await this.getTransactions(address);
+            const initialTxs = await getAllTxs();
 
             // we use block_time in key to also notify when a transaction is confirmed
             const txKey = (tx: ExplorerTransaction) =>
@@ -202,7 +211,7 @@ export class EsploraProvider implements OnchainProvider {
             setInterval(async () => {
                 // get current transactions
                 // we will compare with initialTxs to find new ones
-                const currentTxs = await this.getTransactions(address);
+                const currentTxs = await getAllTxs();
 
                 // if current transactions differ from initial, we have new transactions
                 if (JSON.stringify(currentTxs) !== JSON.stringify(initialTxs)) {
