@@ -59,7 +59,7 @@
     "@scure/base": "1.2.6",
     "@scure/btc-signer": "1.8.1",
     "bip68": "1.0.4",
-    "ws": "8.18.2"
+    "isomorphic-ws": "5.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

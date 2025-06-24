@@ -1,6 +1,6 @@
 import type { NetworkName } from "../networks";
 import { Coin } from "../wallet";
-import WebSocket from "ws";
+import WebSocket from "isomorphic-ws";
 
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.space/api",

@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach, Mock } from "vitest";
 import { EsploraProvider, Coin } from "../src";
-import WebSocket from "ws";
+import WebSocket from "isomorphic-ws";
 import { ExplorerTransaction } from "../src/providers/onchain";
-import { mock } from "node:test";
 
 // Create a mock WebSocket class with vi.fn() methods
 const mockWs = {
@@ -12,7 +11,7 @@ const mockWs = {
 };
 
 // Mock the ws module
-vi.mock("ws", () => {
+vi.mock("isomorphic-ws", () => {
     return {
         default: vi.fn(() => mockWs),
     };
@@ -175,7 +174,7 @@ describe("EsploraProvider", () => {
             callback = vi.fn();
             mockFetch.mockReset();
             // get the mocked WebSocket instance
-            mockWs = new (WebSocket as any)();
+            mockWs = new WebSocket("ws://test");
         });
 
         it("should subscribe to the correct address on web socket open", () => {
