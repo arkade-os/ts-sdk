@@ -39,7 +39,7 @@ export async function createTestWallet(): Promise<TestWallet> {
     };
 }
 
-export function createOnboardTx(address: string, amount: number): void {
+export function faucetOffchain(address: string, amount: number): void {
     execSync(
         `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
     );
@@ -52,7 +52,7 @@ export async function createVtxo(
     const address = (await alice.wallet.getAddress()).offchain;
     if (!address) throw new Error("Offchain address not defined.");
 
-    createOnboardTx(address, amount);
+    faucetOffchain(address, amount);
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const virtualCoins = await alice.wallet.getVtxos();
@@ -63,11 +63,13 @@ export async function createVtxo(
     const vtxo = virtualCoins[0];
 
     const settleTxid = await alice.wallet.settle({
-        inputs: [vtxo],
+        inputs: virtualCoins,
         outputs: [
             {
                 address,
-                amount: BigInt(amount),
+                amount: BigInt(
+                    virtualCoins.reduce((sum, vtxo) => sum + vtxo.value, 0)
+                ),
             },
         ],
     });

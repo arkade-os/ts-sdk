@@ -1,5 +1,5 @@
 import { expect, describe, it } from "vitest";
-import { createOnboardTx, createTestWallet, createVtxo } from "./utils";
+import { faucetOffchain, createTestWallet, createVtxo } from "./utils";
 import { ArkAddress, Outpoint, RestIndexerProvider } from "../../src";
 import { hex } from "@scure/base";
 
@@ -11,7 +11,7 @@ describe("Indexer provider", () => {
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
-        createOnboardTx(aliceOffchainAddress!, fundAmount);
+        faucetOffchain(aliceOffchainAddress!, fundAmount);
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -118,6 +118,10 @@ describe("Indexer provider", () => {
         const bobAddress = (await bob.wallet.getAddress()).offchain;
         const bobScript = ArkAddress.decode(bobAddress!).pkScript.slice(2);
 
+        if (!bobAddress || !aliceAddress) {
+            throw new Error("Offchain address not defined.");
+        }
+
         const indexerUrl = "http://localhost:7070";
         const indexerProvider = new RestIndexerProvider(indexerUrl);
 
@@ -129,26 +133,32 @@ describe("Indexer provider", () => {
         const fixtures = [
             {
                 user: bob,
+                address: bobAddress,
                 amount: fundAmount,
                 delayMilliseconds: delayMilliseconds,
                 note: "should be ignored on subcription",
             },
             {
                 user: alice,
+                address: aliceAddress,
                 amount: 2 * fundAmount,
                 delayMilliseconds: 2 * delayMilliseconds,
                 note: "should generate an update on subscription",
             },
             {
                 user: bob,
+                address: bobAddress,
                 amount: 3 * fundAmount,
                 delayMilliseconds: 3 * delayMilliseconds,
                 note: "should generate an update on subscription",
             },
         ];
 
-        fixtures.forEach(({ user, amount, delayMilliseconds }) => {
-            setTimeout(() => createVtxo(user, amount), delayMilliseconds);
+        fixtures.forEach(({ address, amount, delayMilliseconds }) => {
+            setTimeout(
+                () => faucetOffchain(address, amount),
+                delayMilliseconds
+            );
         });
 
         const subscriptionId = await indexerProvider.subscribeForScripts([
