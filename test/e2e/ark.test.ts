@@ -1,58 +1,26 @@
 import { expect, describe, it, beforeAll } from "vitest";
-import { Transaction, utils } from "@scure/btc-signer";
-import { base64, hex } from "@scure/base";
+import { Transaction } from "@scure/btc-signer";
+import { base64 } from "@scure/base";
 import { execSync } from "child_process";
 import {
-    IWallet,
     TxType,
-    Wallet,
-    InMemoryKey,
     VHTLC,
     Identity,
     addConditionWitness,
+    RestIndexerProvider,
     RestArkProvider,
     ArkNote,
     CSVMultisigTapscript,
     buildOffchainTx,
-} from "../src";
-import { networks } from "../src/networks";
+} from "../../src";
+import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
-
-const arkdExec =
-    process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
-
-// Deterministic server public key from mnemonic "abandon" x24
-const ARK_SERVER_PUBKEY =
-    "038a9bbb1fb2aa92b9557dd0b39a85f31d204f58b41c62ea112d6ad148a9881285";
-
-const X_ONLY_PUBLIC_KEY = hex.decode(ARK_SERVER_PUBKEY).slice(1);
-
-interface TestWallet {
-    wallet: IWallet;
-    identity: InMemoryKey;
-}
-
-function createTestIdentity(): InMemoryKey {
-    const privateKeyBytes = utils.randomPrivateKeyBytes();
-    const privateKeyHex = hex.encode(privateKeyBytes);
-    return InMemoryKey.fromHex(privateKeyHex);
-}
-
-async function createTestWallet(): Promise<TestWallet> {
-    const identity = createTestIdentity();
-
-    const wallet = await Wallet.create({
-        network: "regtest",
-        identity,
-        arkServerUrl: "http://localhost:7070",
-        arkServerPublicKey: ARK_SERVER_PUBKEY,
-    });
-
-    return {
-        wallet,
-        identity,
-    };
-}
+import {
+    arkdExec,
+    X_ONLY_PUBLIC_KEY,
+    createTestIdentity,
+    createTestWallet,
+} from "./utils";
 
 describe("Wallet SDK Integration Tests", () => {
     beforeAll(async () => {
@@ -284,6 +252,7 @@ describe("Wallet SDK Integration Tests", () => {
 
         // Wait for the transaction to be processed
         execSync("nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // Check history before sending to bob
         let aliceHistory = await alice.wallet.getTransactionHistory();
@@ -449,6 +418,15 @@ describe("Wallet SDK Integration Tests", () => {
         };
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
+        const indexerProvider = new RestIndexerProvider(
+            "http://localhost:7070"
+        );
+
+        const spendableVtxos = await indexerProvider.getVtxos({
+            addresses: [address],
+            spendableOnly: true,
+        });
+        expect(spendableVtxos).toHaveLength(1);
 
         const infos = await arkProvider.getInfo();
         const serverUnrollScript = CSVMultisigTapscript.encode({
@@ -459,8 +437,6 @@ describe("Wallet SDK Integration Tests", () => {
             pubkeys: [X_ONLY_PUBLIC_KEY],
         });
 
-        const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
-        expect(spendableVtxos).toHaveLength(1);
         const vtxo = spendableVtxos[0];
 
         const { virtualTx, checkpoints } = buildOffchainTx(
@@ -481,19 +457,19 @@ describe("Wallet SDK Integration Tests", () => {
         );
 
         const signedVirtualTx = await bobVHTLCIdentity.sign(virtualTx);
-        const { txid, finalVirtualTx, signedCheckpoints } =
-            await arkProvider.submitOffchainTx(
+        const { arkTxid, finalArkTx, signedCheckpointTxs } =
+            await arkProvider.submitTx(
                 base64.encode(signedVirtualTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
 
-        expect(txid).toBeDefined();
-        expect(finalVirtualTx).toBeDefined();
-        expect(signedCheckpoints).toBeDefined();
-        expect(signedCheckpoints.length).toBe(checkpoints.length);
+        expect(arkTxid).toBeDefined();
+        expect(finalArkTx).toBeDefined();
+        expect(signedCheckpointTxs).toBeDefined();
+        expect(signedCheckpointTxs.length).toBe(checkpoints.length);
 
         const finalCheckpoints = await Promise.all(
-            signedCheckpoints.map(async (c) => {
+            signedCheckpointTxs.map(async (c) => {
                 const tx = Transaction.fromPSBT(base64.decode(c), {
                     allowUnknown: true,
                 });
@@ -502,7 +478,7 @@ describe("Wallet SDK Integration Tests", () => {
             })
         );
 
-        await arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+        await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
     });
 
     it.skip(
@@ -606,7 +582,9 @@ describe("Wallet SDK Integration Tests", () => {
         // give some time for the server to be swept
         await new Promise((resolve) => setTimeout(resolve, 10000));
 
-        const vtxos = await alice.wallet.getVtxos({ withRecoverable: false });
+        const vtxos = await alice.wallet.getVtxos({
+            withRecoverable: false,
+        });
         expect(vtxos).toHaveLength(1);
         const vtxo = vtxos[0];
         expect(vtxo.txid).toBeDefined();

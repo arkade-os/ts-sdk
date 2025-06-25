@@ -15,6 +15,7 @@ import {
     VHTLC,
     addConditionWitness,
     RestArkProvider,
+    RestIndexerProvider,
     buildOffchainTx,
     networks,
     CSVMultisigTapscript,
@@ -113,7 +114,11 @@ async function main() {
 
     // Get the virtual coins for the VHTLC address
     const arkProvider = new RestArkProvider("http://localhost:7070");
-    const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
+    const indexerProvider = new RestIndexerProvider("http://localhost:7070");
+    const spendableVtxos = await indexerProvider.getVtxos({
+        addresses: [address],
+        spendableOnly: true,
+    });
 
     if (spendableVtxos.length === 0) {
         throw new Error("No spendable virtual coins found");

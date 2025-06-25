@@ -11,6 +11,7 @@ import {
     InMemoryKey,
     Wallet,
     RestArkProvider,
+    RestIndexerProvider,
     buildOffchainTx,
     VtxoScript,
     MultisigTapscript,
@@ -111,7 +112,11 @@ async function main() {
     // Get the virtual coins for the Spillman Channel address
     console.log("Fetching virtual coins...");
     const arkProvider = new RestArkProvider("http://localhost:7070");
-    const { spendableVtxos } = await arkProvider.getVirtualCoins(address);
+    const indexerProvider = new RestIndexerProvider("http://localhost:7070");
+    const spendableVtxos = await indexerProvider.getVtxos({
+        addresses: [address],
+        spendableOnly: true,
+    });
 
     if (spendableVtxos.length === 0) {
         throw new Error("No spendable virtual coins found");

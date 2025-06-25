@@ -26,44 +26,44 @@ export type Output = {
 };
 
 export enum SettlementEventType {
-    Finalization = "finalization",
-    Finalized = "finalized",
-    Failed = "failed",
-    SigningStart = "signing_start",
-    SigningNoncesGenerated = "signing_nonces_generated",
     BatchStarted = "batch_started",
-    BatchTree = "batch_tree",
-    BatchTreeSignature = "batch_tree_signature",
+    BatchFinalization = "batch_finalization",
+    BatchFinalized = "batch_finalized",
+    BatchFailed = "batch_failed",
+    TreeSigningStarted = "tree_signing_started",
+    TreeNoncesAggregated = "tree_nonces_aggregated",
+    TreeTx = "tree_tx",
+    TreeSignature = "tree_signature",
 }
 
-export type FinalizationEvent = {
-    type: SettlementEventType.Finalization;
+export type BatchFinalizationEvent = {
+    type: SettlementEventType.BatchFinalization;
     id: string;
-    roundTx: string;
+    commitmentTx: string;
     connectorsIndex: Map<string, Outpoint>; // `vtxoTxid:vtxoIndex` -> connectorOutpoint
 };
 
-export type FinalizedEvent = {
-    type: SettlementEventType.Finalized;
+export type BatchFinalizedEvent = {
+    type: SettlementEventType.BatchFinalized;
     id: string;
-    roundTxid: string;
+    commitmentTxid: string;
 };
 
-export type FailedEvent = {
-    type: SettlementEventType.Failed;
+export type BatchFailedEvent = {
+    type: SettlementEventType.BatchFailed;
     id: string;
     reason: string;
 };
 
-export type SigningStartEvent = {
-    type: SettlementEventType.SigningStart;
+export type TreeSigningStartedEvent = {
+    type: SettlementEventType.TreeSigningStarted;
     id: string;
     cosignersPublicKeys: string[];
-    unsignedSettlementTx: string;
+    unsignedCommitmentTx: string;
 };
 
-export type SigningNoncesGeneratedEvent = {
-    type: SettlementEventType.SigningNoncesGenerated;
+export type TreeNoncesAggregatedEvent = {
+    type: SettlementEventType.TreeNoncesAggregated;
     id: string;
     treeNonces: TreeNonces;
 };
@@ -73,19 +73,18 @@ export type BatchStartedEvent = {
     id: string;
     intentIdHashes: string[];
     batchExpiry: bigint;
-    forfeitAddress: string;
 };
 
-export type BatchTreeEvent = {
-    type: SettlementEventType.BatchTree;
+export type TreeTxEvent = {
+    type: SettlementEventType.TreeTx;
     id: string;
     topic: string[];
     batchIndex: number;
     treeTx: TreeNode;
 };
 
-export type BatchTreeSignatureEvent = {
-    type: SettlementEventType.BatchTreeSignature;
+export type TreeSignatureEvent = {
+    type: SettlementEventType.TreeSignature;
     id: string;
     topic: string[];
     batchIndex: number;
@@ -95,30 +94,33 @@ export type BatchTreeSignatureEvent = {
 };
 
 export type SettlementEvent =
-    | FinalizationEvent
-    | FinalizedEvent
-    | FailedEvent
-    | SigningStartEvent
-    | SigningNoncesGeneratedEvent
+    | BatchFinalizationEvent
+    | BatchFinalizedEvent
+    | BatchFailedEvent
+    | TreeSigningStartedEvent
+    | TreeNoncesAggregatedEvent
     | BatchStartedEvent
-    | BatchTreeEvent
-    | BatchTreeSignatureEvent;
+    | TreeTxEvent
+    | TreeSignatureEvent;
 
 export interface ArkInfo {
     pubkey: string;
-    batchExpiry: bigint;
+    vtxoTreeExpiry: bigint;
     unilateralExitDelay: bigint;
-    boardingExitDelay: bigint;
     roundInterval: bigint;
     network: string;
     dust: bigint;
-    boardingDescriptorTemplate: string;
-    vtxoDescriptorTemplates: string[];
     forfeitAddress: string;
     marketHour?: {
         start: number;
         end: number;
     };
+    version: string;
+    utxoMinAmount: bigint;
+    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
+    vtxoMinAmount: bigint;
+    vtxoMaxAmount: bigint; // -1 means no limit (default)
+    boardingExitDelay: bigint;
 }
 
 export interface Round {
@@ -135,47 +137,59 @@ export interface Intent {
     message: string;
 }
 
+export interface TxNotification {
+    txid: string;
+    spentVtxos: Vtxo[];
+    spendableVtxos: Vtxo[];
+    hex: string;
+}
+
+export interface Vtxo {
+    outpoint: Outpoint;
+    amount: bigint;
+    script: string;
+    createdAt: bigint;
+    expiresAt: bigint;
+    commitmentTxid: string;
+    preconfirmed: boolean;
+    swept: boolean;
+    redeemed: boolean;
+    spent: boolean;
+    spentBy: string;
+}
+
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
-    getRound(txid: string): Promise<Round>;
-    getVirtualCoins(address: string): Promise<{
-        spendableVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }>;
-    submitOffchainTx(
-        signedVirtualTx: string,
-        checkpoints: string[]
+    submitTx(
+        signedArkTx: string,
+        checkpointTxs: string[]
     ): Promise<{
-        finalVirtualTx: string;
-        signedCheckpoints: string[];
-        txid: string;
+        arkTxid: string;
+        finalArkTx: string;
+        signedCheckpointTxs: string[];
     }>;
-    finalizeOffchainTx(txid: string, finalCheckpoints: string[]): Promise<void>;
-    subscribeToEvents(callback: (event: ArkEvent) => void): Promise<() => void>;
+    finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
     registerIntent(intent: Intent): Promise<string>;
     deleteIntent(intent: Intent): Promise<void>;
-    confirmRegistration(intentId: string): Promise<void>;
+    confirmRegistration(intentId: string): Promise<{ blindedCreds: string }>;
     submitTreeNonces(
-        settlementID: string,
+        batchId: string,
         pubkey: string,
         nonces: TreeNonces
     ): Promise<void>;
     submitTreeSignatures(
-        settlementID: string,
+        batchId: string,
         pubkey: string,
         signatures: TreePartialSigs
     ): Promise<void>;
     submitSignedForfeitTxs(
         signedForfeitTxs: string[],
-        signedRoundTx?: string
+        signedCommitmentTx?: string
     ): Promise<void>;
     getEventStream(signal: AbortSignal): AsyncIterableIterator<SettlementEvent>;
-    subscribeForAddress(
-        address: string,
-        abortSignal: AbortSignal
-    ): AsyncIterableIterator<{
-        newVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
+        commitmentTx?: TxNotification;
+        arkTx?: TxNotification;
     }>;
 }
 
@@ -193,66 +207,35 @@ export class RestArkProvider implements ArkProvider {
         const fromServer = await response.json();
         return {
             ...fromServer,
+            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
-            batchExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
+            roundInterval: BigInt(fromServer.roundInterval ?? 0),
+            dust: BigInt(fromServer.dust ?? 0),
+            utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
+            utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
+            vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
+            vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
         };
     }
 
-    async getVirtualCoins(address: string): Promise<{
-        spendableVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }> {
-        const url = `${this.serverUrl}/v1/vtxos/${address}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch VTXOs: ${response.statusText}`);
-        }
-        const data = await response.json();
-
-        return {
-            spendableVtxos: [...(data.spendableVtxos || [])].map(convertVtxo),
-            spentVtxos: [...(data.spentVtxos || [])].map(convertVtxo),
-        };
-    }
-
-    async getRound(txid: string): Promise<Round> {
-        const url = `${this.serverUrl}/v1/round/${txid}`;
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw new Error(`Failed to fetch round: ${response.statusText}`);
-        }
-
-        const data = (await response.json()) as { round: ProtoTypes.Round };
-        const round = data.round;
-
-        return {
-            id: round.id,
-            start: new Date(Number(round.start) * 1000), // Convert from Unix timestamp to Date
-            end: new Date(Number(round.end) * 1000), // Convert from Unix timestamp to Date
-            vtxoTree: this.toTxTree(round.vtxoTree),
-            forfeitTxs: round.forfeitTxs || [],
-            connectors: this.toTxTree(round.connectors),
-        };
-    }
-
-    async submitOffchainTx(
-        signedVirtualTx: string,
-        checkpoints: string[]
+    async submitTx(
+        signedArkTx: string,
+        checkpointTxs: string[]
     ): Promise<{
-        finalVirtualTx: string;
-        signedCheckpoints: string[];
-        txid: string;
+        arkTxid: string;
+        finalArkTx: string;
+        signedCheckpointTxs: string[];
     }> {
-        const url = `${this.serverUrl}/v1/offchain-tx/submit`;
+        const url = `${this.serverUrl}/v1/tx/submit`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                virtualTx: signedVirtualTx,
-                checkpointTxs: checkpoints,
+                signedArkTx: signedArkTx,
+                checkpointTxs: checkpointTxs,
             }),
         });
 
@@ -275,25 +258,25 @@ export class RestArkProvider implements ArkProvider {
 
         const data = await response.json();
         return {
-            txid: data.txid,
-            finalVirtualTx: data.signedVirtualTx,
-            signedCheckpoints: data.signedCheckpointTxs,
+            arkTxid: data.arkTxid,
+            finalArkTx: data.finalArkTx,
+            signedCheckpointTxs: data.signedCheckpointTxs,
         };
     }
 
-    async finalizeOffchainTx(
-        txid: string,
-        finalCheckpoints: string[]
+    async finalizeTx(
+        arkTxid: string,
+        finalCheckpointTxs: string[]
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/offchain-tx/finalize`;
+        const url = `${this.serverUrl}/v1/tx/finalize`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                txid,
-                checkpointTxs: finalCheckpoints,
+                arkTxid,
+                finalCheckpointTxs,
             }),
         });
 
@@ -305,85 +288,15 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async subscribeToEvents(
-        callback: (event: ArkEvent) => void
-    ): Promise<() => void> {
-        const url = `${this.serverUrl}/v1/events`;
-        let abortController = new AbortController();
-
-        (async () => {
-            while (!abortController.signal.aborted) {
-                try {
-                    const response = await fetch(url, {
-                        headers: {
-                            Accept: "application/json",
-                        },
-                        signal: abortController.signal,
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(
-                            `Unexpected status ${response.status} when fetching event stream`
-                        );
-                    }
-
-                    if (!response.body) {
-                        throw new Error("Response body is null");
-                    }
-
-                    const reader = response.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = "";
-
-                    while (!abortController.signal.aborted) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-
-                        // Append new data to buffer and split by newlines
-                        buffer += decoder.decode(value, { stream: true });
-                        const lines = buffer.split("\n");
-
-                        // Process all complete lines
-                        for (let i = 0; i < lines.length - 1; i++) {
-                            const line = lines[i].trim();
-                            if (!line) continue;
-
-                            try {
-                                const data = JSON.parse(line);
-                                callback(data);
-                            } catch (err) {
-                                console.error("Failed to parse event:", err);
-                            }
-                        }
-
-                        // Keep the last partial line in the buffer
-                        buffer = lines[lines.length - 1];
-                    }
-                } catch (error) {
-                    if (!abortController.signal.aborted) {
-                        console.error("Event stream error:", error);
-                    }
-                }
-            }
-        })();
-
-        // Return unsubscribe function
-        return () => {
-            abortController.abort();
-            // Create a new controller for potential future subscriptions
-            abortController = new AbortController();
-        };
-    }
-
     async registerIntent(intent: Intent): Promise<string> {
-        const url = `${this.serverUrl}/v1/round/registerIntent`;
+        const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                bip322Signature: {
+                intent: {
                     signature: intent.signature,
                     message: intent.message,
                 },
@@ -396,18 +309,18 @@ export class RestArkProvider implements ArkProvider {
         }
 
         const data = await response.json();
-        return data.requestId;
+        return data.intentId;
     }
 
     async deleteIntent(intent: Intent): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/deleteIntent`;
+        const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                bip322Signature: {
+                proof: {
                     signature: intent.signature,
                     message: intent.message,
                 },
@@ -420,7 +333,9 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async confirmRegistration(intentId: string): Promise<void> {
+    async confirmRegistration(
+        intentId: string
+    ): Promise<{ blindedCreds: string }> {
         const url = `${this.serverUrl}/v1/batch/ack`;
         const response = await fetch(url, {
             method: "POST",
@@ -436,21 +351,24 @@ export class RestArkProvider implements ArkProvider {
             const errorText = await response.text();
             throw new Error(`Failed to confirm registration: ${errorText}`);
         }
+
+        const data = await response.json();
+        return { blindedCreds: data.blindedCreds };
     }
 
     async submitTreeNonces(
-        settlementID: string,
+        batchId: string,
         pubkey: string,
         nonces: TreeNonces
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/tree/submitNonces`;
+        const url = `${this.serverUrl}/v1/batch/tree/submitNonces`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                roundId: settlementID,
+                batchId,
                 pubkey,
                 treeNonces: encodeNoncesMatrix(nonces),
             }),
@@ -463,18 +381,18 @@ export class RestArkProvider implements ArkProvider {
     }
 
     async submitTreeSignatures(
-        settlementID: string,
+        batchId: string,
         pubkey: string,
         signatures: TreePartialSigs
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/tree/submitSignatures`;
+        const url = `${this.serverUrl}/v1/batch/tree/submitSignatures`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                roundId: settlementID,
+                batchId,
                 pubkey,
                 treeSignatures: encodeSignaturesMatrix(signatures),
             }),
@@ -488,9 +406,9 @@ export class RestArkProvider implements ArkProvider {
 
     async submitSignedForfeitTxs(
         signedForfeitTxs: string[],
-        signedRoundTx?: string
+        signedCommitmentTx?: string
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/round/submitForfeitTxs`;
+        const url = `${this.serverUrl}/v1/batch/submitForfeitTxs`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -498,7 +416,7 @@ export class RestArkProvider implements ArkProvider {
             },
             body: JSON.stringify({
                 signedForfeitTxs: signedForfeitTxs,
-                signedRoundTx: signedRoundTx,
+                signedCommitmentTx: signedCommitmentTx,
             }),
         });
 
@@ -512,7 +430,7 @@ export class RestArkProvider implements ArkProvider {
     async *getEventStream(
         signal: AbortSignal
     ): AsyncIterableIterator<SettlementEvent> {
-        const url = `${this.serverUrl}/v1/events`;
+        const url = `${this.serverUrl}/v1/batch/events`;
 
         while (!signal?.aborted) {
             try {
@@ -579,26 +497,24 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async *subscribeForAddress(
-        address: string,
-        abortSignal: AbortSignal
-    ): AsyncIterableIterator<{
-        newVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
+    async *getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
+        commitmentTx?: TxNotification;
+        arkTx?: TxNotification;
     }> {
-        const url = `${this.serverUrl}/v1/vtxos/${address}/subscribe`;
+        const url = `${this.serverUrl}/v1/txs`;
 
-        while (!abortSignal.aborted) {
+        while (!signal?.aborted) {
             try {
                 const response = await fetch(url, {
                     headers: {
                         Accept: "application/json",
                     },
+                    signal,
                 });
 
                 if (!response.ok) {
                     throw new Error(
-                        `Unexpected status ${response.status} when subscribing to address updates`
+                        `Unexpected status ${response.status} when fetching transaction stream`
                     );
                 }
 
@@ -610,44 +526,45 @@ export class RestArkProvider implements ArkProvider {
                 const decoder = new TextDecoder();
                 let buffer = "";
 
-                while (!abortSignal.aborted) {
+                while (!signal?.aborted) {
                     const { done, value } = await reader.read();
                     if (done) {
                         break;
                     }
 
+                    // Append new data to buffer and split by newlines
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split("\n");
 
+                    // Process all complete lines
                     for (let i = 0; i < lines.length - 1; i++) {
                         const line = lines[i].trim();
                         if (!line) continue;
 
                         try {
                             const data = JSON.parse(line);
-                            if ("result" in data) {
-                                yield {
-                                    newVtxos: (data.result.newVtxos || []).map(
-                                        convertVtxo
-                                    ),
-                                    spentVtxos: (
-                                        data.result.spentVtxos || []
-                                    ).map(convertVtxo),
-                                };
+                            const txNotification =
+                                this.parseTransactionNotification(data.result);
+                            if (txNotification) {
+                                yield txNotification;
                             }
                         } catch (err) {
                             console.error(
-                                "Failed to parse address update:",
+                                "Failed to parse transaction notification:",
                                 err
                             );
                             throw err;
                         }
                     }
 
+                    // Keep the last partial line in the buffer
                     buffer = lines[lines.length - 1];
                 }
             } catch (error) {
-                console.error("Address subscription error:", error);
+                if (error instanceof Error && error.name === "AbortError") {
+                    break;
+                }
+                console.error("Transaction stream error:", error);
                 throw error;
             }
         }
@@ -663,30 +580,6 @@ export class RestArkProvider implements ArkProvider {
             ])
         );
     }
-    private toTxTree(t: ProtoTypes.Tree): TxTree {
-        // collect the parent txids to determine later if a node is a leaf
-        const parentTxids = new Set<string>();
-        t.levels.forEach((level) =>
-            level.nodes.forEach((node) => {
-                if (node.parentTxid) {
-                    parentTxids.add(node.parentTxid);
-                }
-            })
-        );
-
-        return new TxTree(
-            t.levels.map((row, level) =>
-                row.nodes.map((node, levelIndex) => ({
-                    txid: node.txid,
-                    tx: node.tx,
-                    parentTxid: node.parentTxid,
-                    leaf: !parentTxids.has(node.txid),
-                    level,
-                    levelIndex,
-                }))
-            )
-        );
-    }
 
     private parseSettlementEvent(
         data: ProtoTypes.EventData
@@ -698,85 +591,176 @@ export class RestArkProvider implements ArkProvider {
                 id: data.batchStarted.id,
                 intentIdHashes: data.batchStarted.intentIdHashes,
                 batchExpiry: BigInt(data.batchStarted.batchExpiry),
-                forfeitAddress: data.batchStarted.forfeitAddress,
             };
         }
 
-        // Check for Finalization event
-        if (data.roundFinalization) {
+        // Check for BatchFinalization event
+        if (data.batchFinalization) {
             return {
-                type: SettlementEventType.Finalization,
-                id: data.roundFinalization.id,
-                roundTx: data.roundFinalization.roundTx,
+                type: SettlementEventType.BatchFinalization,
+                id: data.batchFinalization.id,
+                commitmentTx: data.batchFinalization.commitmentTx,
                 connectorsIndex: this.toConnectorsIndex(
-                    data.roundFinalization.connectorsIndex
+                    data.batchFinalization.connectorsIndex
                 ),
             };
         }
 
-        // Check for Finalized event
-        if (data.roundFinalized) {
+        // Check for BatchFinalized event
+        if (data.batchFinalized) {
             return {
-                type: SettlementEventType.Finalized,
-                id: data.roundFinalized.id,
-                roundTxid: data.roundFinalized.roundTxid,
+                type: SettlementEventType.BatchFinalized,
+                id: data.batchFinalized.id,
+                commitmentTxid: data.batchFinalized.commitmentTxid,
             };
         }
 
-        // Check for Failed event
-        if (data.roundFailed) {
+        // Check for BatchFailed event
+        if (data.batchFailed) {
             return {
-                type: SettlementEventType.Failed,
-                id: data.roundFailed.id,
-                reason: data.roundFailed.reason,
+                type: SettlementEventType.BatchFailed,
+                id: data.batchFailed.id,
+                reason: data.batchFailed.reason,
             };
         }
 
-        // Check for Signing event
-        if (data.roundSigning) {
+        // Check for TreeSigningStarted event
+        if (data.treeSigningStarted) {
             return {
-                type: SettlementEventType.SigningStart,
-                id: data.roundSigning.id,
-                cosignersPublicKeys: data.roundSigning.cosignersPubkeys,
-                unsignedSettlementTx: data.roundSigning.unsignedRoundTx,
+                type: SettlementEventType.TreeSigningStarted,
+                id: data.treeSigningStarted.id,
+                cosignersPublicKeys: data.treeSigningStarted.cosignersPubkeys,
+                unsignedCommitmentTx:
+                    data.treeSigningStarted.unsignedCommitmentTx,
             };
         }
 
-        // Check for SigningNoncesGenerated event
-        if (data.roundSigningNoncesGenerated) {
+        // Check for TreeNoncesAggregated event
+        if (data.treeNoncesAggregated) {
             return {
-                type: SettlementEventType.SigningNoncesGenerated,
-                id: data.roundSigningNoncesGenerated.id,
+                type: SettlementEventType.TreeNoncesAggregated,
+                id: data.treeNoncesAggregated.id,
                 treeNonces: decodeNoncesMatrix(
-                    hex.decode(data.roundSigningNoncesGenerated.treeNonces)
+                    hex.decode(data.treeNoncesAggregated.treeNonces)
                 ),
             };
         }
 
-        // Check for BatchTree event
-        if (data.batchTree) {
+        // Check for TreeTx event
+        if (data.treeTx) {
             return {
-                type: SettlementEventType.BatchTree,
-                id: data.batchTree.id,
-                topic: data.batchTree.topic,
-                batchIndex: data.batchTree.batchIndex,
-                treeTx: data.batchTree.treeTx,
+                type: SettlementEventType.TreeTx,
+                id: data.treeTx.id,
+                topic: data.treeTx.topic,
+                batchIndex: data.treeTx.batchIndex,
+                treeTx: data.treeTx.treeTx,
             };
         }
 
-        if (data.batchTreeSignature) {
+        if (data.treeSignature) {
             return {
-                type: SettlementEventType.BatchTreeSignature,
-                id: data.batchTreeSignature.id,
-                topic: data.batchTreeSignature.topic,
-                batchIndex: data.batchTreeSignature.batchIndex,
-                level: data.batchTreeSignature.level,
-                levelIndex: data.batchTreeSignature.levelIndex,
-                signature: data.batchTreeSignature.signature,
+                type: SettlementEventType.TreeSignature,
+                id: data.treeSignature.id,
+                topic: data.treeSignature.topic,
+                batchIndex: data.treeSignature.batchIndex,
+                level: data.treeSignature.level,
+                levelIndex: data.treeSignature.levelIndex,
+                signature: data.treeSignature.signature,
             };
         }
 
         console.warn("Unknown event type:", data);
+        return null;
+    }
+
+    private parseTransactionNotification(
+        data: ProtoTypes.TransactionData
+    ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
+        if (data.commitmentTx) {
+            return {
+                commitmentTx: {
+                    txid: data.commitmentTx.txid,
+                    spentVtxos: data.commitmentTx.spentVtxos.map((vtxo) => ({
+                        outpoint: {
+                            txid: vtxo.outpoint.txid,
+                            vout: vtxo.outpoint.vout,
+                        },
+                        amount: BigInt(vtxo.amount),
+                        script: vtxo.script,
+                        createdAt: BigInt(vtxo.createdAt),
+                        expiresAt: BigInt(vtxo.expiresAt),
+                        commitmentTxid: vtxo.commitmentTxid,
+                        preconfirmed: vtxo.preconfirmed,
+                        swept: vtxo.swept,
+                        redeemed: vtxo.redeemed,
+                        spent: vtxo.spent,
+                        spentBy: vtxo.spentBy,
+                    })),
+                    spendableVtxos: data.commitmentTx.spendableVtxos.map(
+                        (vtxo) => ({
+                            outpoint: {
+                                txid: vtxo.outpoint.txid,
+                                vout: vtxo.outpoint.vout,
+                            },
+                            amount: BigInt(vtxo.amount),
+                            script: vtxo.script,
+                            createdAt: BigInt(vtxo.createdAt),
+                            expiresAt: BigInt(vtxo.expiresAt),
+                            commitmentTxid: vtxo.commitmentTxid,
+                            preconfirmed: vtxo.preconfirmed,
+                            swept: vtxo.swept,
+                            redeemed: vtxo.redeemed,
+                            spent: vtxo.spent,
+                            spentBy: vtxo.spentBy,
+                        })
+                    ),
+                    hex: data.commitmentTx.hex,
+                },
+            };
+        }
+
+        if (data.arkTx) {
+            return {
+                arkTx: {
+                    txid: data.arkTx.txid,
+                    spentVtxos: data.arkTx.spentVtxos.map((vtxo) => ({
+                        outpoint: {
+                            txid: vtxo.outpoint.txid,
+                            vout: vtxo.outpoint.vout,
+                        },
+                        amount: BigInt(vtxo.amount),
+                        script: vtxo.script,
+                        createdAt: BigInt(vtxo.createdAt),
+                        expiresAt: BigInt(vtxo.expiresAt),
+                        commitmentTxid: vtxo.commitmentTxid,
+                        preconfirmed: vtxo.preconfirmed,
+                        swept: vtxo.swept,
+                        redeemed: vtxo.redeemed,
+                        spent: vtxo.spent,
+                        spentBy: vtxo.spentBy,
+                    })),
+                    spendableVtxos: data.arkTx.spendableVtxos.map((vtxo) => ({
+                        outpoint: {
+                            txid: vtxo.outpoint.txid,
+                            vout: vtxo.outpoint.vout,
+                        },
+                        amount: BigInt(vtxo.amount),
+                        script: vtxo.script,
+                        createdAt: BigInt(vtxo.createdAt),
+                        expiresAt: BigInt(vtxo.expiresAt),
+                        commitmentTxid: vtxo.commitmentTxid,
+                        preconfirmed: vtxo.preconfirmed,
+                        swept: vtxo.swept,
+                        redeemed: vtxo.redeemed,
+                        spent: vtxo.spent,
+                        spentBy: vtxo.spentBy,
+                    })),
+                    hex: data.arkTx.hex,
+                },
+            };
+        }
+
+        console.warn("Unknown transaction notification type:", data);
         return null;
     }
 }
@@ -897,28 +881,6 @@ function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
     );
 }
 
-function convertVtxo(vtxo: any): VirtualCoin {
-    return {
-        txid: vtxo.outpoint.txid,
-        vout: vtxo.outpoint.vout,
-        value: Number(vtxo.amount),
-        status: {
-            confirmed: !!vtxo.roundTxid,
-        },
-        virtualStatus: {
-            state: vtxo.swept
-                ? "swept"
-                : vtxo.isPending
-                  ? "pending"
-                  : "settled",
-            batchTxID: vtxo.roundTxid,
-            batchExpiry: vtxo.expireAt ? Number(vtxo.expireAt) : undefined,
-        },
-        spentBy: vtxo.spentBy,
-        createdAt: new Date(vtxo.createdAt * 1000),
-    };
-}
-
 // ProtoTypes namespace defines unexported types representing the raw data received from the server
 namespace ProtoTypes {
     interface Node {
@@ -928,12 +890,6 @@ namespace ProtoTypes {
         level: number;
         levelIndex: number;
         leaf: boolean;
-    }
-    interface TreeLevel {
-        nodes: Node[];
-    }
-    export interface Tree {
-        levels: TreeLevel[];
     }
 
     interface BatchStartedEvent {
@@ -950,7 +906,7 @@ namespace ProtoTypes {
 
     export interface RoundFinalizationEvent {
         id: string;
-        roundTx: string;
+        commitmentTx: string;
         connectorsIndex: {
             [key: string]: {
                 txid: string;
@@ -961,13 +917,13 @@ namespace ProtoTypes {
 
     interface RoundFinalizedEvent {
         id: string;
-        roundTxid: string;
+        commitmentTxid: string;
     }
 
     interface RoundSigningEvent {
         id: string;
         cosignersPubkeys: string[];
-        unsignedRoundTx: string;
+        unsignedCommitmentTx: string;
     }
 
     interface RoundSigningNoncesGeneratedEvent {
@@ -991,40 +947,46 @@ namespace ProtoTypes {
         signature: string;
     }
 
-    export interface EventData {
-        batchStarted?: BatchStartedEvent;
-        roundFailed?: RoundFailed;
-        roundFinalization?: RoundFinalizationEvent;
-        roundFinalized?: RoundFinalizedEvent;
-        roundSigning?: RoundSigningEvent;
-        roundSigningNoncesGenerated?: RoundSigningNoncesGeneratedEvent;
-        batchTree?: BatchTreeEvent;
-        batchTreeSignature?: BatchTreeSignatureEvent;
-    }
-
-    export interface Input {
+    interface VtxoData {
         outpoint: {
             txid: string;
             vout: number;
         };
-        taprootTree: {
-            scripts: string[];
-        };
-    }
-
-    export interface Output {
-        address: string;
         amount: string;
+        script: string;
+        createdAt: string;
+        expiresAt: string;
+        commitmentTxid: string;
+        preconfirmed: boolean;
+        swept: boolean;
+        redeemed: boolean;
+        spent: boolean;
+        spentBy: string;
     }
 
-    export interface Round {
-        id: string;
-        start: string; // int64 as string
-        end: string; // int64 as string
-        roundTx: string;
-        vtxoTree: Tree;
-        forfeitTxs: string[];
-        connectors: Tree;
-        stage: string; // RoundStage as string
+    export interface EventData {
+        batchStarted?: BatchStartedEvent;
+        batchFailed?: RoundFailed;
+        batchFinalization?: RoundFinalizationEvent;
+        batchFinalized?: RoundFinalizedEvent;
+        treeSigningStarted?: RoundSigningEvent;
+        treeNoncesAggregated?: RoundSigningNoncesGeneratedEvent;
+        treeTx?: BatchTreeEvent;
+        treeSignature?: BatchTreeSignatureEvent;
+    }
+
+    export interface TransactionData {
+        commitmentTx?: {
+            txid: string;
+            spentVtxos: VtxoData[];
+            spendableVtxos: VtxoData[];
+            hex: string;
+        };
+        arkTx?: {
+            txid: string;
+            spentVtxos: VtxoData[];
+            spendableVtxos: VtxoData[];
+            hex: string;
+        };
     }
 }

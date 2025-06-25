@@ -5,9 +5,8 @@ import { sha256x2 } from "@scure/btc-signer/utils";
 import { aggregateKeys } from "../musig2";
 import { getCosignerKeys, TreeNode, TxTree, TxTreeError } from "./vtxoTree";
 
-export const ErrInvalidSettlementTx = new TxTreeError(
-    "invalid settlement transaction"
-);
+export const ErrInvalidSettlementTx = (tx: string) =>
+    new TxTreeError(`invalid settlement transaction: ${tx}`);
 export const ErrInvalidSettlementTxOutputs = new TxTreeError(
     "invalid settlement transaction outputs"
 );
@@ -83,7 +82,7 @@ export function validateVtxoTree(
             base64.decode(settlementTx)
         );
     } catch {
-        throw ErrInvalidSettlementTx;
+        throw ErrInvalidSettlementTx(settlementTx);
     }
 
     if (settlementTransaction.outputsLength <= SHARED_OUTPUT_INDEX) {

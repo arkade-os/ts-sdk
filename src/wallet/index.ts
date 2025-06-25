@@ -135,11 +135,12 @@ export type ExtendedVirtualCoin = tapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
+export function isSpendable(vtxo: VirtualCoin): boolean {
+    return vtxo.spentBy === undefined || vtxo.spentBy === "";
+}
+
 export function isRecoverable(vtxo: VirtualCoin): boolean {
-    return (
-        vtxo.virtualStatus.state === "swept" &&
-        (vtxo.spentBy === undefined || vtxo.spentBy === "")
-    );
+    return vtxo.virtualStatus.state === "swept" && isSpendable(vtxo);
 }
 
 export type GetVtxosFilter = {
