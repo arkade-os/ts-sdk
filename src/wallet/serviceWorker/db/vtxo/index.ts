@@ -4,6 +4,7 @@ export interface VtxoRepository {
     addOrUpdate(vtxos: ExtendedVirtualCoin[]): Promise<void>;
     deleteAll(): Promise<void>;
     getSpendableVtxos(): Promise<ExtendedVirtualCoin[]>;
+    getSweptVtxos(): Promise<ExtendedVirtualCoin[]>;
     getSpentVtxos(): Promise<ExtendedVirtualCoin[]>;
     getAllVtxos(): Promise<{
         spendable: ExtendedVirtualCoin[];
