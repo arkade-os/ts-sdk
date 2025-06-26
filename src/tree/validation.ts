@@ -3,53 +3,42 @@ import { Transaction } from "@scure/btc-signer";
 import { base64 } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { aggregateKeys } from "../musig2";
-import { getCosignerKeys, TreeNode, TxTree, TxTreeError } from "./vtxoTree";
+import { TxGraph } from "./txGraph";
+import { CSVMultisigTapscript } from "../script/tapscript";
+import { RelativeTimelock } from "../script/tapscript";
+import { tapLeafHash } from "@scure/btc-signer/payment";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
-    new TxTreeError(`invalid settlement transaction: ${tx}`);
-export const ErrInvalidSettlementTxOutputs = new TxTreeError(
+    new Error(`invalid settlement transaction: ${tx}`);
+export const ErrInvalidSettlementTxOutputs = new Error(
     "invalid settlement transaction outputs"
 );
-export const ErrEmptyTree = new TxTreeError("empty tree");
-export const ErrInvalidRootLevel = new TxTreeError("invalid root level");
-export const ErrNumberOfInputs = new TxTreeError("invalid number of inputs");
-export const ErrWrongSettlementTxid = new TxTreeError("wrong settlement txid");
-export const ErrInvalidAmount = new TxTreeError("invalid amount");
-export const ErrNoLeaves = new TxTreeError("no leaves");
-export const ErrNodeTxEmpty = new TxTreeError("node transaction empty");
-export const ErrNodeTxidEmpty = new TxTreeError("node txid empty");
-export const ErrNodeParentTxidEmpty = new TxTreeError("node parent txid empty");
-export const ErrNodeTxidDifferent = new TxTreeError("node txid different");
-export const ErrParentTxidInput = new TxTreeError("parent txid input mismatch");
-export const ErrLeafChildren = new TxTreeError("leaf node has children");
-export const ErrInvalidTaprootScript = new TxTreeError(
-    "invalid taproot script"
+export const ErrEmptyTree = new Error("empty tree");
+export const ErrNumberOfInputs = new Error("invalid number of inputs");
+export const ErrWrongSettlementTxid = new Error("wrong settlement txid");
+export const ErrInvalidAmount = new Error("invalid amount");
+export const ErrNoLeaves = new Error("no leaves");
+export const ErrInvalidTaprootScript = new Error("invalid taproot script");
+export const ErrInvalidRoundTxOutputs = new Error(
+    "invalid round transaction outputs"
 );
-export const ErrInternalKey = new TxTreeError("invalid internal key");
-export const ErrInvalidControlBlock = new TxTreeError("invalid control block");
-export const ErrInvalidRootTransaction = new TxTreeError(
-    "invalid root transaction"
-);
-export const ErrInvalidNodeTransaction = new TxTreeError(
-    "invalid node transaction"
+export const ErrWrongRoundTxid = new Error("wrong round txid");
+export const ErrMissingCosignersPublicKeys = new Error(
+    "missing cosigners public keys"
 );
 
 const SHARED_OUTPUT_INDEX = 0;
 const CONNECTORS_OUTPUT_INDEX = 1;
 
-export function validateConnectorsTree(
+export function validateConnectorsTxGraph(
     settlementTxB64: string,
-    connectorsTree: TxTree
+    connectorsGraph: TxGraph
 ): void {
-    connectorsTree.validate();
+    connectorsGraph.validate();
 
-    const rootNode = connectorsTree.root();
-    if (!rootNode) throw ErrEmptyTree;
+    if (connectorsGraph.root.inputsLength !== 1) throw ErrNumberOfInputs;
 
-    const rootTx = Transaction.fromPSBT(base64.decode(rootNode.tx));
-    if (rootTx.inputsLength !== 1) throw ErrNumberOfInputs;
-
-    const rootInput = rootTx.getInput(0);
+    const rootInput = connectorsGraph.root.getInput(0);
 
     const settlementTx = Transaction.fromPSBT(base64.decode(settlementTxB64));
     if (settlementTx.outputsLength <= CONNECTORS_OUTPUT_INDEX)
@@ -68,166 +57,131 @@ export function validateConnectorsTree(
         throw ErrWrongSettlementTxid;
 }
 
-export function validateVtxoTree(
-    settlementTx: string,
-    vtxoTree: TxTree,
+// ValidateVtxoTxGraph checks if the given vtxo graph is valid
+// roundTxid & roundTxIndex & roundTxAmount are used to validate the root input outpoint
+// serverPubkey & vtxoTreeExpiry are used to validate the sweep tapscript leaves
+// besides that, the function validates:
+// - the number of nodes
+// - the number of leaves
+// - children coherence with parent
+// - every control block and taproot output scripts
+// - input and output amounts
+export function validateVtxoTxGraph(
+    graph: TxGraph,
+    roundTransaction: Transaction,
     sweepTapTreeRoot: Uint8Array
 ): void {
-    vtxoTree.validate();
-
-    // Parse settlement transaction
-    let settlementTransaction: Transaction;
-    try {
-        settlementTransaction = Transaction.fromPSBT(
-            base64.decode(settlementTx)
-        );
-    } catch {
-        throw ErrInvalidSettlementTx(settlementTx);
+    if (roundTransaction.outputsLength < SHARED_OUTPUT_INDEX + 1) {
+        throw ErrInvalidRoundTxOutputs;
     }
 
-    if (settlementTransaction.outputsLength <= SHARED_OUTPUT_INDEX) {
-        throw ErrInvalidSettlementTxOutputs;
+    const roundTxAmount =
+        roundTransaction.getOutput(SHARED_OUTPUT_INDEX)?.amount;
+    if (!roundTxAmount) {
+        throw ErrInvalidRoundTxOutputs;
     }
 
-    const sharedOutput = settlementTransaction.getOutput(SHARED_OUTPUT_INDEX);
-    if (!sharedOutput?.amount) throw ErrInvalidSettlementTxOutputs;
-    const sharedOutputAmount = sharedOutput.amount;
-
-    const nbNodes = vtxoTree.numberOfNodes();
-    if (nbNodes === 0) {
+    if (!graph.root) {
         throw ErrEmptyTree;
     }
 
-    if (vtxoTree.levels[0].length !== 1) {
-        throw ErrInvalidRootLevel;
-    }
-
-    // Check root input is connected to settlement tx
-    const rootNode = vtxoTree.root();
-    let rootTx: Transaction;
-    try {
-        rootTx = Transaction.fromPSBT(base64.decode(rootNode.tx));
-    } catch {
-        throw ErrInvalidRootTransaction;
-    }
-
-    if (rootTx.inputsLength !== 1) {
-        throw ErrNumberOfInputs;
-    }
-
-    const rootInput = rootTx.getInput(0);
-    if (!rootInput.txid || rootInput.index === undefined)
-        throw ErrWrongSettlementTxid;
-
-    const settlementTxid = hex.encode(
-        sha256x2(settlementTransaction.toBytes(true)).reverse()
+    const rootInput = graph.root.getInput(0);
+    const roundTxid = hex.encode(
+        sha256x2(roundTransaction.toBytes(true)).reverse()
     );
+
     if (
-        hex.encode(rootInput.txid) !== settlementTxid ||
+        !rootInput.txid ||
+        hex.encode(rootInput.txid) !== roundTxid ||
         rootInput.index !== SHARED_OUTPUT_INDEX
     ) {
-        throw ErrWrongSettlementTxid;
+        throw ErrWrongRoundTxid;
     }
 
-    // Check root output amounts
     let sumRootValue = 0n;
-    for (let i = 0; i < rootTx.outputsLength; i++) {
-        const output = rootTx.getOutput(i);
-        if (!output?.amount) continue;
-        sumRootValue += output.amount;
+    for (let i = 0; i < graph.root.outputsLength; i++) {
+        const output = graph.root.getOutput(i);
+        if (output?.amount) {
+            sumRootValue += output.amount;
+        }
     }
 
-    if (sumRootValue !== sharedOutputAmount) {
+    if (sumRootValue !== roundTxAmount) {
         throw ErrInvalidAmount;
     }
 
-    if (vtxoTree.leaves().length === 0) {
+    const leaves = graph.leaves();
+    if (leaves.length === 0) {
         throw ErrNoLeaves;
     }
 
-    // Validate each node in the tree
-    for (const level of vtxoTree.levels) {
-        for (const node of level) {
-            if (!node) throw ErrNodeTxEmpty;
-            validateNode(vtxoTree, node, sweepTapTreeRoot);
+    // validate the graph structure
+    graph.validate();
+
+    // iterates over all the nodes of the graph to verify that cosigners public keys are corresponding to the parent output
+    for (const g of graph) {
+        for (const [childIndex, child] of g.children) {
+            const parentOutput = g.root.getOutput(childIndex);
+            if (!parentOutput?.script) {
+                throw ErrInvalidTaprootScript;
+            }
+
+            const previousScriptKey = parentOutput.script.slice(2);
+            if (previousScriptKey.length !== 32) {
+                throw ErrInvalidTaprootScript;
+            }
+
+            const cosigners = getCosignerKeys(child.root);
+
+            if (cosigners.length === 0) {
+                throw ErrMissingCosignersPublicKeys;
+            }
+
+            const { finalKey } = aggregateKeys(cosigners, true, {
+                taprootTweak: sweepTapTreeRoot,
+            });
+
+            if (
+                !finalKey ||
+                hex.encode(finalKey) !== hex.encode(previousScriptKey)
+            ) {
+                throw ErrInvalidTaprootScript;
+            }
         }
     }
 }
 
-function validateNode(
-    vtxoTree: TxTree,
-    node: TreeNode,
-    tapTreeRoot: Uint8Array
-): void {
-    if (!node.tx) throw ErrNodeTxEmpty;
-    if (!node.txid) throw ErrNodeTxidEmpty;
-    if (!node.parentTxid) throw ErrNodeParentTxidEmpty;
-
-    // Parse node transaction
-    let tx: Transaction;
-    try {
-        tx = Transaction.fromPSBT(base64.decode(node.tx));
-    } catch {
-        throw ErrInvalidNodeTransaction;
-    }
-
-    const txid = hex.encode(sha256x2(tx.toBytes(true)).reverse());
-    if (txid !== node.txid) {
-        throw ErrNodeTxidDifferent;
-    }
-
-    if (tx.inputsLength !== 1) {
-        throw ErrNumberOfInputs;
-    }
+// Helper function to get cosigner keys from a transaction
+function getCosignerKeys(tx: Transaction): Uint8Array[] {
+    const keys: Uint8Array[] = [];
 
     const input = tx.getInput(0);
 
-    if (!input.txid) throw ErrParentTxidInput;
-    if (hex.encode(input.txid) !== node.parentTxid) {
-        throw ErrParentTxidInput;
+    if (!input.unknown) return keys;
+
+    for (const unknown of input.unknown) {
+        const ok = parsePrefixedCosignerKey(
+            new Uint8Array([unknown[0].type, ...unknown[0].key])
+        );
+
+        if (!ok) continue;
+
+        // Assuming the value is already a valid public key in compressed format
+        keys.push(unknown[1]);
     }
 
-    const children = vtxoTree.children(node.txid);
-    if (node.leaf && children.length >= 1) {
-        throw ErrLeafChildren;
+    return keys;
+}
+
+function parsePrefixedCosignerKey(key: Uint8Array): boolean {
+    const COSIGNER_KEY_PREFIX = new Uint8Array(
+        "cosigner".split("").map((c) => c.charCodeAt(0))
+    );
+
+    if (key.length < COSIGNER_KEY_PREFIX.length) return false;
+
+    for (let i = 0; i < COSIGNER_KEY_PREFIX.length; i++) {
+        if (key[i] !== COSIGNER_KEY_PREFIX[i]) return false;
     }
-
-    // Validate each child
-    for (let childIndex = 0; childIndex < children.length; childIndex++) {
-        const child = children[childIndex];
-        const childTx = Transaction.fromPSBT(base64.decode(child.tx));
-
-        const parentOutput = tx.getOutput(childIndex);
-        if (!parentOutput?.script) throw ErrInvalidTaprootScript;
-
-        const previousScriptKey = parentOutput.script.slice(2);
-        if (previousScriptKey.length !== 32) {
-            throw ErrInvalidTaprootScript;
-        }
-
-        // Get cosigner keys from input
-        const cosignerKeys = getCosignerKeys(childTx);
-
-        // Aggregate keys
-        const { finalKey } = aggregateKeys(cosignerKeys, true, {
-            taprootTweak: tapTreeRoot,
-        });
-
-        if (hex.encode(finalKey) !== hex.encode(previousScriptKey.slice(2))) {
-            throw ErrInternalKey;
-        }
-
-        // Check amounts
-        let sumChildAmount = 0n;
-        for (let i = 0; i < childTx.outputsLength; i++) {
-            const output = childTx.getOutput(i);
-            if (!output?.amount) continue;
-            sumChildAmount += output.amount;
-        }
-
-        if (!parentOutput.amount) throw ErrInvalidAmount;
-        if (sumChildAmount !== parentOutput.amount) {
-            throw ErrInvalidAmount;
-        }
-    }
+    return true;
 }
