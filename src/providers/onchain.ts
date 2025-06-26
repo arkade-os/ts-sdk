@@ -185,9 +185,7 @@ export class EsploraProvider implements OnchainProvider {
                 }
                 // callback with new transactions
                 if (newTxs.length > 0) callback(newTxs);
-            } catch (error) {
-                console.error("Error parsing message:", error);
-            }
+            } catch (_) {}
         });
 
         ws.on("error", async (error: Error) => {
