@@ -628,10 +628,12 @@ describe("Wallet SDK Integration Tests", () => {
             const aliceAddress = (await alice.wallet.getAddress()).offchain;
             expect(aliceAddress).toBeDefined();
 
+            let notified = false;
             const fundAmount = 10000;
 
             // set up the notification
             alice.wallet.notifyIncomingFunds((coins) => {
+                notified = true;
                 const now = new Date();
                 const vtxos = coins as VirtualCoin[];
                 expect(vtxos).toHaveLength(1);
@@ -651,6 +653,7 @@ describe("Wallet SDK Integration Tests", () => {
 
             // wait for the transaction to be processed
             await new Promise((resolve) => setTimeout(resolve, 4000));
+            expect(notified).toBeTruthy();
         }
     );
 
@@ -663,10 +666,12 @@ describe("Wallet SDK Integration Tests", () => {
             const aliceOnchainAddress = aliceAddresses.onchain;
             expect(aliceOnchainAddress).toBeDefined();
 
+            let notified = false;
             const fundAmount = 10000;
 
             // set up the notification
             alice.wallet.notifyIncomingFunds((coins) => {
+                notified = true;
                 const now = new Date();
                 const utxos = coins as Coin[];
                 expect(utxos).toHaveLength(1);
@@ -685,6 +690,8 @@ describe("Wallet SDK Integration Tests", () => {
 
             // wait for the transaction to be processed
             await new Promise((resolve) => setTimeout(resolve, 10000));
+
+            expect(notified).toBeTruthy();
         }
     );
     it("should send subdust amount", { timeout: 60000 }, async () => {
