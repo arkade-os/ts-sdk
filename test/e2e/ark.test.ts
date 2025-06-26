@@ -1,4 +1,4 @@
-import { expect, describe, it, beforeAll } from "vitest";
+import { expect, describe, it, beforeAll, vi } from "vitest";
 import { Transaction } from "@scure/btc-signer";
 import { base64 } from "@scure/base";
 import { execSync } from "child_process";
@@ -20,7 +20,10 @@ import {
     X_ONLY_PUBLIC_KEY,
     createTestIdentity,
     createTestWallet,
+    faucetOffchain,
+    faucetOnchain,
 } from "./utils";
+import { Coin, VirtualCoin } from "@arklabs/wallet-sdk";
 
 describe("Wallet SDK Integration Tests", () => {
     beforeAll(async () => {
@@ -616,4 +619,72 @@ describe("Wallet SDK Integration Tests", () => {
 
         expect(settleTxid).toBeDefined();
     });
+
+    it(
+        "should be notified of offchain incoming funds",
+        { timeout: 6000 },
+        async () => {
+            const alice = await createTestWallet();
+            const aliceAddress = (await alice.wallet.getAddress()).offchain;
+            expect(aliceAddress).toBeDefined();
+
+            const fundAmount = 10000;
+
+            // set up the notification
+            alice.wallet.notifyIncomingFunds((coins) => {
+                const now = new Date();
+                const vtxos = coins as VirtualCoin[];
+                expect(vtxos).toHaveLength(1);
+                expect(vtxos[0].spentBy).toBeFalsy();
+                expect(vtxos[0].value).toBe(fundAmount);
+                expect(vtxos[0].status.confirmed).toBeTruthy();
+                expect(vtxos[0].virtualStatus.state).toBe("pending");
+                const age = now.getTime() - vtxos[0].createdAt.getTime();
+                expect(age).toBeLessThanOrEqual(4000);
+            });
+
+            // wait for the notification to be set up
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // fund the offchain address using faucet
+            faucetOffchain(aliceAddress!, fundAmount);
+
+            // wait for the transaction to be processed
+            await new Promise((resolve) => setTimeout(resolve, 4000));
+        }
+    );
+
+    it(
+        "should be notified of onchain incoming funds",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestWallet();
+            const aliceAddresses = await alice.wallet.getAddress();
+            const aliceOnchainAddress = aliceAddresses.onchain;
+            expect(aliceOnchainAddress).toBeDefined();
+
+            const fundAmount = 10000;
+
+            // set up the notification
+            alice.wallet.notifyIncomingFunds((coins) => {
+                const now = new Date();
+                const utxos = coins as Coin[];
+                expect(utxos).toHaveLength(1);
+                expect(utxos[0].value).toBe(fundAmount);
+                expect(utxos[0].status.confirmed).toBeTruthy();
+                expect(utxos[0].status.block_time).toBeDefined();
+                const age = now.getTime() - utxos[0].status.block_time! * 1000;
+                expect(age).toBeLessThanOrEqual(10000);
+            });
+
+            // wait for the notification to be set up
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // fund the onchain address using faucet
+            faucetOnchain(aliceOnchainAddress!, fundAmount);
+
+            // wait for the transaction to be processed
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+        }
+    );
 });

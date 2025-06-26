@@ -27,13 +27,23 @@ const wallet = await Wallet.create({
   arkServerUrl: 'https://mutinynet.arkade.sh',
   arkServerPublicKey: 'fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d'
 })
+```
 
+### Receiving Bitcoin
+
+```typescript
 // Get wallet addresses
 const addresses = await wallet.getAddress()
 console.log('Bitcoin Address:', addresses.onchain)
 console.log('Ark Address:', addresses.offchain)
 console.log('Boarding Address:', addresses.boarding)
 console.log('BIP21 URI:', addresses.bip21)
+
+// be notified when incoming funds
+wallet.notifyIncomingFunds((coins) => {
+  const amount = coins.reduce((sum, a) => sum + a.value)
+  console.log('received ${coins.length} coins totalling ${amount} sats')
+})
 ```
 
 ### Sending Bitcoin
@@ -189,11 +199,11 @@ interface IWallet {
   getVtxos(): Promise<VirtualCoin[]>;
 
   /** Get boarding UTXOs */
-  getBoardingUtxos(): Promise<BoardingUtxo[]>;
+  getBoardingUtxos(): Promise<ExtendedCoin[]>;
 
   /** Settle transactions */
   settle(params: {
-    inputs: (VirtualCoin | BoardingUtxo)[];
+    inputs: (VirtualCoin | ExtendedCoin)[];
     outputs: {
       address: string;
       amount: bigint;
@@ -202,12 +212,25 @@ interface IWallet {
 
   /** Get transaction history */
   getTransactionHistory(): Promise<Transaction[]>;
+
+  /** Be notified via callback */
+  notifyIncomingFunds(
+    eventCallback: (coins: Coin[] | VirtualCoin[]) => void
+  ): Promise<void>;
 }
 
 /** Transaction types */
 enum TxType {
   TxSent = 'sent',
   TxReceived = 'received'
+}
+
+/** UTXO status */
+interface Status {
+  confirmed: boolean;
+  block_height?: number;
+  block_hash?: string;
+  block_time?: number;
 }
 
 /** Transaction history entry */
@@ -221,20 +244,37 @@ interface Transaction {
   };
 }
 
+/** Coin (UTXO) */
+interface Coin {
+  txid: string;
+  vout: number;
+  value: number;
+  status: Status;
+}
+
 /** Virtual coin (off-chain UTXO) */
 interface VirtualCoin {
   txid: string;
   value: number;
+  status: Status
   virtualStatus: {
-    state: 'pending' | 'settled';
-  };
+    state: "pending" | "settled" | "swept" | "spent";
+    batchTxID?: string;
+    batchExpiry?: number;
+  }
+  spentBy?: string;
+  createdAt: Date;
 }
 
 /** Boarding UTXO */
-interface BoardingUtxo {
+interface ExtendedCoin {
   txid: string;
   vout: number;
   value: number;
+  status: Status;
+  tapTree: Bytes;
+  intentTapLeafScript: TapLeafScript;
+  forfeitTapLeafScript: TapLeafScript;
 }
 ```
 
