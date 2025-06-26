@@ -62,26 +62,25 @@ describe("Wallet", () => {
 
         it("should include virtual coins when ARK is configured", async () => {
             const mockServerResponse = {
-                spendableVtxos: [
+                vtxos: [
                     {
                         outpoint: {
                             txid: hex.encode(new Uint8Array(32).fill(3)),
                             vout: 0,
                         },
                         amount: "50000",
-                        address: "tark1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                        roundTxid: hex.encode(new Uint8Array(32).fill(4)),
                         spentBy: null,
-                        expireAt: null,
-                        swept: false,
-                        isPending: false,
-                        redeemTx: null,
-                        pubkey: mockServerKeyHex,
-                        createdAt: "2024-01-01T00:00:00Z",
-                        spent: false,
+                        expiresAt: "1704067200",
+                        createdAt: "1704067200",
+                        script: "cf63d80fddd790bb2de2b639545b7298d3b5c33d483d84b0be399fe828720fcf",
+                        isPreconfirmed: false,
+                        isSwept: false,
+                        isRedeemed: false,
+                        isSpent: false,
+                        commitmentTxid:
+                            "f3e437911673f477f314f8fc31eb08def6ccff9edcd0524c10bcf5fc05009d69",
                     },
                 ],
-                spentVtxos: [],
             };
 
             mockFetch
@@ -94,6 +93,8 @@ describe("Wallet", () => {
                             unilateralExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
                             network: "mutinynet",
+                            forfeitAddress:
+                                "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                         }),
                 })
                 .mockResolvedValueOnce({

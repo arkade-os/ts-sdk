@@ -10,6 +10,8 @@ import { ArkProvider, RestArkProvider } from "../../providers/ark";
 import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
 import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
+import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
+import { ArkAddress } from "../../script/address";
 import { VtxoScript } from "../../script/base";
 import { hex } from "@scure/base";
 
@@ -18,6 +20,7 @@ import { hex } from "@scure/base";
 export class Worker {
     private wallet: Wallet | undefined;
     private arkProvider: ArkProvider | undefined;
+    private indexerProvider: IndexerProvider | undefined;
     private vtxoSubscription: AbortController | undefined;
 
     constructor(
@@ -54,6 +57,7 @@ export class Worker {
         await this.vtxoRepository.close();
         this.wallet = undefined;
         this.arkProvider = undefined;
+        this.indexerProvider = undefined;
         this.vtxoSubscription = undefined;
     }
 
@@ -61,6 +65,7 @@ export class Worker {
         if (
             !this.wallet ||
             !this.arkProvider ||
+            !this.indexerProvider ||
             !this.wallet.offchainTapscript ||
             !this.wallet.boardingTapscript
         ) {
@@ -74,17 +79,16 @@ export class Worker {
 
         await this.vtxoRepository.open();
 
-        // set the initial vtxos state
-        const { spendableVtxos, spentVtxos } =
-            await this.arkProvider.getVirtualCoins(
-                addressInfo.offchain.address
-            );
-
         const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
         const forfeit = this.wallet.offchainTapscript.forfeit();
         const exit = this.wallet.offchainTapscript.exit();
 
-        const vtxos = [...spendableVtxos, ...spentVtxos].map((vtxo) => ({
+        // set the initial vtxos state
+        const vtxos = (
+            await this.indexerProvider.getVtxos({
+                addresses: [addressInfo.offchain.address],
+            })
+        ).map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: forfeit,
             intentTapLeafScript: exit,
@@ -110,8 +114,12 @@ export class Worker {
             const intentTapLeafScript = vtxoScript.findLeaf(scripts.exit[0]);
 
             const abortController = new AbortController();
-            const subscription = this.arkProvider!.subscribeForAddress(
-                address,
+            const subscriptionId =
+                await this.indexerProvider!.subscribeForScripts([
+                    hex.encode(ArkAddress.decode(address).pkScript),
+                ]);
+            const subscription = this.indexerProvider!.getSubscription(
+                subscriptionId,
                 abortController.signal
             );
 
@@ -160,6 +168,9 @@ export class Worker {
 
         try {
             this.arkProvider = new RestArkProvider(message.arkServerUrl);
+            this.indexerProvider = new RestIndexerProvider(
+                message.arkServerUrl
+            );
 
             this.wallet = await Wallet.create({
                 network: message.network,

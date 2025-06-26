@@ -1,50 +1,51 @@
 services:
-  arkd-wallet:
-    build:
-      context: .
-      dockerfile: wallet.Dockerfile
-    container_name: arkd-wallet
-    ports:
-      - "6060:6060"
-    environment:
-      - ARK_WALLET_ESPLORA_URL=http://chopsticks:3000
-      - ARK_WALLET_NEUTRINO_PEER=bitcoin:18444
-      - ARK_WALLET_DATADIR=/app/data
-      - ARK_WALLET_NETWORK=regtest
-    volumes:
-      - type: tmpfs
-        target: /app/data
-  arkd:
-    container_name: arkd 
-    depends_on:
-      - arkd-wallet
-    build: 
-      context: .
-      dockerfile: server.Dockerfile
-    restart: unless-stopped
-    environment:
-      - ARK_ROUND_INTERVAL=10
-      - ARK_NETWORK=regtest
-      - ARK_LOG_LEVEL=5
-      - ARK_VTXO_TREE_EXPIRY=20
-      - ARK_TX_BUILDER_TYPE=covenantless
-      - ARK_ESPLORA_URL=http://chopsticks:3000
-      - ARK_NEUTRINO_PEER=bitcoin:18444
-      - ARK_SCHEDULER_TYPE=block
-      - ARK_NO_TLS=true
-      - ARK_NO_MACAROONS=true
-      - ARK_DATADIR=/app/data
-      - ARK_EVENT_DB_TYPE=badger
-      - ARK_DB_TYPE=sqlite
-      - ARK_WALLET_ADDR=arkd-wallet:6060
-      - ARK_UNILATERAL_EXIT_DELAY=512
-    ports:
-      - "7070:7070"
-    volumes:
-      - type: tmpfs
-        target: /app/data
+    arkd-wallet:
+        build:
+            context: .
+            dockerfile: wallet.Dockerfile
+        container_name: arkd-wallet
+        ports:
+            - "6060:6060"
+        environment:
+            - ARK_WALLET_ESPLORA_URL=http://chopsticks:3000
+            - ARK_WALLET_NEUTRINO_PEER=bitcoin:18444
+            - ARK_WALLET_DATADIR=/app/data
+            - ARK_WALLET_NETWORK=regtest
+        volumes:
+            - type: tmpfs
+              target: /app/data
+    arkd:
+        container_name: arkd
+        depends_on:
+            - arkd-wallet
+        build:
+            context: .
+            dockerfile: server.Dockerfile
+        restart: unless-stopped
+        environment:
+            - ARK_ROUND_INTERVAL=10
+            - ARK_NETWORK=regtest
+            - ARK_LOG_LEVEL=5
+            - ARK_VTXO_TREE_EXPIRY=20
+            - ARK_TX_BUILDER_TYPE=covenantless
+            - ARK_ESPLORA_URL=http://chopsticks:3000
+            - ARK_NEUTRINO_PEER=bitcoin:18444
+            - ARK_SCHEDULER_TYPE=block
+            - ARK_NO_TLS=true
+            - ARK_NO_MACAROONS=true
+            - ARK_DATADIR=/app/data
+            - ARK_EVENT_DB_TYPE=badger
+            - ARK_DB_TYPE=sqlite
+            - ARK_WALLET_ADDR=arkd-wallet:6060
+            - ARK_UNILATERAL_EXIT_DELAY=512
+            - ARK_LIVE_STORE_TYPE=inmemory
+        ports:
+            - "7070:7070"
+        volumes:
+            - type: tmpfs
+              target: /app/data
 
 networks:
-  default:
-    name: nigiri
-    external: true
+    default:
+        name: nigiri
+        external: true
