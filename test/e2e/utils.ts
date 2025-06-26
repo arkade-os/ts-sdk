@@ -45,6 +45,11 @@ export function faucetOffchain(address: string, amount: number): void {
     );
 }
 
+export function faucetOnchain(address: string, amount: number): void {
+    const btc = amount > 999 ? amount / 100_000_000 : amount;
+    execSync(`nigiri faucet ${address} ${btc}`);
+}
+
 export async function createVtxo(
     alice: TestWallet,
     amount: number
