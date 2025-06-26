@@ -169,6 +169,31 @@ export class IndexedDBVtxoRepository implements VtxoRepository {
         });
     }
 
+    async getSweptVtxos(): Promise<ExtendedVirtualCoin[]> {
+        if (!this.db) {
+            throw new Error("Database not opened");
+        }
+
+        return new Promise((resolve, reject) => {
+            const transaction = this.db!.transaction(
+                IndexedDBVtxoRepository.STORE_NAME,
+                "readonly"
+            );
+            const store = transaction.objectStore(
+                IndexedDBVtxoRepository.STORE_NAME
+            );
+            const stateIndex = store.index("state");
+
+            // Get vtxos where state is "swept"
+            const request = stateIndex.getAll(IDBKeyRange.only("swept"));
+
+            request.onsuccess = () => {
+                resolve(request.result as ExtendedVirtualCoin[]);
+            };
+            request.onerror = () => reject(request.error);
+        });
+    }
+
     async getSpentVtxos(): Promise<ExtendedVirtualCoin[]> {
         if (!this.db) {
             throw new Error("Database not opened");

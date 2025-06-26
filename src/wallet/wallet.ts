@@ -52,6 +52,7 @@ import {
     GetVtxosFilter,
     isRecoverable,
     isSpendable,
+    isSubdust,
     IWallet,
     Outpoint,
     SendBitcoinParams,
@@ -293,10 +294,14 @@ export class Wallet implements IWallet {
                 .filter((coin) => coin.virtualStatus.state === "pending")
                 .reduce((sum, coin) => sum + coin.value, 0);
             offchainSwept = vtxos
-                .filter((coin) => coin.virtualStatus.state === "swept")
+                .filter(
+                    (coin) =>
+                        isSpendable(coin) &&
+                        coin.virtualStatus.state === "swept"
+                )
                 .reduce((sum, coin) => sum + coin.value, 0);
         }
-        const offchainTotal = offchainSettled + offchainPending;
+        const offchainTotal = offchainSettled + offchainPending + offchainSwept;
 
         return {
             onchain: {
@@ -348,7 +353,7 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(
-        filter: GetVtxosFilter = { withRecoverable: true }
+        filter: GetVtxosFilter = { withSpendableInSettlement: true }
     ): Promise<VirtualCoin[]> {
         if (!this.indexerProvider) {
             return [];
@@ -361,16 +366,16 @@ export class Wallet implements IWallet {
 
         const getVtxosArgs = {
             addresses: [address.offchain],
-            spendableOnly: !filter.withRecoverable,
+            spendableOnly: !filter.withSpendableInSettlement,
         };
 
-        const vtxos = await this.indexerProvider.getVtxos(getVtxosArgs);
+        let vtxos = await this.indexerProvider.getVtxos(getVtxosArgs);
 
-        if (!filter.withRecoverable) {
-            return vtxos;
+        if (filter.withSpendableInSettlement) {
+            vtxos = vtxos.filter((v) => isSpendable(v));
         }
 
-        return vtxos.filter((v) => isSpendable(v));
+        return vtxos;
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
@@ -521,13 +526,13 @@ export class Wallet implements IWallet {
             throw new Error("Amount must be positive");
         }
 
-        if (params.amount < Wallet.DUST_AMOUNT) {
-            throw new Error("Amount is below dust limit");
-        }
-
         // If Ark is configured and amount is suitable, send via offchain
         if (this.arkProvider && this.isOffchainSuitable(params.address)) {
             return this.sendOffchain(params);
+        }
+
+        if (params.amount < Wallet.DUST_AMOUNT) {
+            throw new Error("Amount is below dust limit");
         }
 
         // Otherwise, send via onchain
@@ -608,9 +613,9 @@ export class Wallet implements IWallet {
             throw new Error("wallet not initialized");
         }
 
-        // recoverable coins can't be spent in offchain tx
+        // recoverable and subdust coins can't be spent in offchain tx
         const virtualCoins = await this.getVirtualCoins({
-            withRecoverable: false,
+            withSpendableInSettlement: false,
         });
 
         const selected = selectVirtualCoins(virtualCoins, params.amount);
@@ -624,17 +629,28 @@ export class Wallet implements IWallet {
             throw new Error("Selected leaf not found");
         }
 
+        const outputAddress = ArkAddress.decode(params.address);
+        const outputScript =
+            BigInt(params.amount) < Wallet.DUST_AMOUNT
+                ? outputAddress.subdustPkScript
+                : outputAddress.pkScript;
+
         const outputs: TransactionOutput[] = [
             {
-                script: ArkAddress.decode(params.address).pkScript,
+                script: outputScript,
                 amount: BigInt(params.amount),
             },
         ];
 
         // add change output if needed
         if (selected.changeAmount > 0) {
+            const changeOutputScript =
+                BigInt(selected.changeAmount) < Wallet.DUST_AMOUNT
+                    ? this.offchainAddress.subdustPkScript
+                    : this.offchainAddress.pkScript;
+
             outputs.push({
-                script: this.offchainAddress.pkScript,
+                script: changeOutputScript,
                 amount: BigInt(selected.changeAmount),
             });
         }
@@ -1186,8 +1202,8 @@ export class Wallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(vtxo)) {
-                // recoverable coin, we don't need to create a forfeit tx
+            if (isRecoverable(vtxo) || isSubdust(vtxo, Wallet.DUST_AMOUNT)) {
+                // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
 

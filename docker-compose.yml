@@ -39,6 +39,7 @@ services:
             - ARK_WALLET_ADDR=arkd-wallet:6060
             - ARK_UNILATERAL_EXIT_DELAY=512
             - ARK_LIVE_STORE_TYPE=inmemory
+            - ARK_VTXO_MIN_AMOUNT=1
         ports:
             - "7070:7070"
         volumes:
