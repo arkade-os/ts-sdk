@@ -143,8 +143,12 @@ export function isRecoverable(vtxo: VirtualCoin): boolean {
     return vtxo.virtualStatus.state === "swept" && isSpendable(vtxo);
 }
 
+export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
+    return vtxo.value < dust;
+}
+
 export type GetVtxosFilter = {
-    withRecoverable?: boolean;
+    withSpendableInSettlement?: boolean; // include the swept but unspent
 };
 
 export interface IWallet {

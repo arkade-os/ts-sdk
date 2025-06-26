@@ -75,6 +75,7 @@ function buildVirtualTx(
     const tx = new Transaction({
         version: 3,
         allowUnknown: true,
+        allowUnknownOutputs: true,
         lockTime: Number(lockTime),
     });
 

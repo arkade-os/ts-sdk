@@ -207,7 +207,7 @@ describe("Wallet SDK Integration Tests", () => {
             });
 
             // Wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 3000));
+            await new Promise((resolve) => setTimeout(resolve, 5000));
 
             // Final balance check
             const aliceFinalBalance = await alice.wallet.getBalance();
@@ -276,7 +276,7 @@ describe("Wallet SDK Integration Tests", () => {
         });
 
         // Wait for the transaction to be processed
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Check final balances
         const aliceFinalBalance = await alice.wallet.getBalance();
@@ -586,7 +586,7 @@ describe("Wallet SDK Integration Tests", () => {
         await new Promise((resolve) => setTimeout(resolve, 10000));
 
         const vtxos = await alice.wallet.getVtxos({
-            withRecoverable: false,
+            withSpendableInSettlement: false,
         });
         expect(vtxos).toHaveLength(1);
         const vtxo = vtxos[0];
@@ -599,7 +599,7 @@ describe("Wallet SDK Integration Tests", () => {
         await new Promise((resolve) => setTimeout(resolve, 20_000));
 
         const vtxosAfterSweep = await alice.wallet.getVtxos({
-            withRecoverable: true,
+            withSpendableInSettlement: true,
         });
         expect(vtxosAfterSweep).toHaveLength(1);
         const vtxoAfterSweep = vtxosAfterSweep[0];
@@ -687,4 +687,49 @@ describe("Wallet SDK Integration Tests", () => {
             await new Promise((resolve) => setTimeout(resolve, 10000));
         }
     );
+    it("should send subdust amount", { timeout: 60000 }, async () => {
+        const alice = await createTestWallet();
+        const bob = await createTestWallet();
+
+        const aliceAddresses = await alice.wallet.getAddress();
+        const bobAddresses = await bob.wallet.getAddress();
+
+        const fundAmount = 10_000;
+        execSync(
+            `${arkdExec} ark send --to ${aliceAddresses.offchain} --amount ${fundAmount} --password secret`
+        );
+
+        // alice should send offchain tx with subdust output
+        await alice.wallet.sendBitcoin({
+            address: bobAddresses.offchain!,
+            amount: 1,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        // bob should have 1 sat in offchain balance
+        const bobBalance = await bob.wallet.getBalance();
+        expect(bobBalance.offchain.total).toBe(1);
+
+        // bob shouldn't be able to send offchain tx with subdust output
+        await expect(
+            bob.wallet.sendBitcoin({
+                address: bobAddresses.offchain!,
+                amount: 1,
+            })
+        ).rejects.toThrow("Insufficient funds");
+
+        // bob shouldn't be able to settle cause the total amount is less than the dust amount
+        await expect(bob.wallet.settle()).rejects.toThrow();
+
+        await alice.wallet.sendBitcoin({
+            address: bobAddresses.offchain!,
+            amount: fundAmount - 1,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+
+        // now bob should be able to settle
+        await bob.wallet.settle();
+    });
 });

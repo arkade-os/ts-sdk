@@ -48,4 +48,8 @@ export class ArkAddress {
     get pkScript(): Bytes {
         return Script.encode(["OP_1", this.tweakedPubKey]);
     }
+
+    get subdustPkScript(): Bytes {
+        return Script.encode(["RETURN", this.tweakedPubKey]);
+    }
 }
