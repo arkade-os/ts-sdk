@@ -4,9 +4,6 @@ import { base64 } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { aggregateKeys } from "../musig2";
 import { TxGraph } from "./txGraph";
-import { CSVMultisigTapscript } from "../script/tapscript";
-import { RelativeTimelock } from "../script/tapscript";
-import { tapLeafHash } from "@scure/btc-signer/payment";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
     new Error(`invalid settlement transaction: ${tx}`);
@@ -123,12 +120,14 @@ export function validateVtxoTxGraph(
         for (const [childIndex, child] of g.children) {
             const parentOutput = g.root.getOutput(childIndex);
             if (!parentOutput?.script) {
-                throw ErrInvalidTaprootScript;
+                throw new Error(`parent output ${childIndex} not found`);
             }
 
             const previousScriptKey = parentOutput.script.slice(2);
             if (previousScriptKey.length !== 32) {
-                throw ErrInvalidTaprootScript;
+                throw new Error(
+                    `parent output ${childIndex} has invalid script`
+                );
             }
 
             const cosigners = getCosignerKeys(child.root);
@@ -143,7 +142,7 @@ export function validateVtxoTxGraph(
 
             if (
                 !finalKey ||
-                hex.encode(finalKey) !== hex.encode(previousScriptKey)
+                hex.encode(finalKey.slice(1)) !== hex.encode(previousScriptKey)
             ) {
                 throw ErrInvalidTaprootScript;
             }

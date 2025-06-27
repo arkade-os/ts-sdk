@@ -11,6 +11,11 @@ export type TxGraphChunk = {
     children: Record<number, string>;
 };
 
+type DecodedChunk = {
+    tx: Transaction;
+    children: Record<number, string>;
+};
+
 export class TxGraph implements Iterable<TxGraph> {
     constructor(
         readonly root: Transaction,
@@ -23,10 +28,14 @@ export class TxGraph implements Iterable<TxGraph> {
         }
 
         // Create a map to store all chunks by their txid for easy lookup
-        const chunksByTxid = new Map<string, TxGraphChunk>();
+        const chunksByTxid = new Map<string, DecodedChunk>();
 
         for (const chunk of chunks) {
-            chunksByTxid.set(chunk.txid, chunk);
+            const decodedChunk = decodeChunk(chunk);
+            const txid = hex.encode(
+                sha256x2(decodedChunk.tx.toBytes(true)).reverse()
+            );
+            chunksByTxid.set(txid, decodedChunk);
         }
 
         // Find the root chunks (the ones that aren't referenced as a child)
@@ -216,21 +225,21 @@ export class TxGraph implements Iterable<TxGraph> {
 }
 
 // Helper function to check if a chunk has a specific child
-function hasChild(chunk: TxGraphChunk, childTxid: string): boolean {
+function hasChild(chunk: DecodedChunk, childTxid: string): boolean {
     return Object.values(chunk.children).includes(childTxid);
 }
 
 // buildGraph recursively builds the TxGraph starting from the given txid
 function buildGraph(
     rootTxid: string,
-    chunksByTxid: Map<string, TxGraphChunk>
+    chunksByTxid: Map<string, DecodedChunk>
 ): TxGraph | null {
     const chunk = chunksByTxid.get(rootTxid);
     if (!chunk) {
         return null;
     }
 
-    const rootTx = Transaction.fromPSBT(base64.decode(chunk.tx));
+    const rootTx = chunk.tx;
     const children = new Map<number, TxGraph>();
 
     // Recursively build children graphs
@@ -243,4 +252,9 @@ function buildGraph(
     }
 
     return new TxGraph(rootTx, children);
+}
+
+function decodeChunk(chunk: TxGraphChunk): DecodedChunk {
+    const tx = Transaction.fromPSBT(base64.decode(chunk.tx));
+    return { tx, children: chunk.children };
 }

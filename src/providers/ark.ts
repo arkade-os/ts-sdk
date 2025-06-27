@@ -639,6 +639,14 @@ export class RestArkProvider implements ArkProvider {
 
         // Check for TreeTx event
         if (data.treeTx) {
+            const children = Object.fromEntries(
+                Object.entries(data.treeTx.children).map(
+                    ([outputIndex, txid]) => {
+                        return [parseInt(outputIndex), txid];
+                    }
+                )
+            );
+
             return {
                 type: SettlementEventType.TreeTx,
                 id: data.treeTx.id,
@@ -647,7 +655,7 @@ export class RestArkProvider implements ArkProvider {
                 chunk: {
                     txid: data.treeTx.txid,
                     tx: data.treeTx.tx,
-                    children: data.treeTx.children,
+                    children,
                 },
             };
         }
@@ -834,7 +842,7 @@ namespace ProtoTypes {
         batchIndex: number;
         txid: string;
         tx: string;
-        children: Record<number, string>;
+        children: Record<string, string>;
     }
 
     interface TreeSignatureEvent {

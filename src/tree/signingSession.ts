@@ -1,9 +1,9 @@
 import * as musig2 from "../musig2";
 import { getCosignerKeys } from "./unknownFields";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
-import { base64, hex } from "@scure/base";
+import { hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
-import { randomPrivateKeyBytes } from "@scure/btc-signer/utils";
+import { randomPrivateKeyBytes, sha256x2 } from "@scure/btc-signer/utils";
 import { TxGraph } from "./txGraph";
 
 export const ErrMissingVtxoGraph = new Error("missing vtxo graph");
@@ -216,36 +216,28 @@ function getPrevOutput(
     sharedOutputAmount: bigint,
     tx: Transaction
 ): PrevOutput {
-    // Generate P2TR script
+    // generate P2TR script from musig2 final key
     const pkScript = Script.encode(["OP_1", finalKey.slice(1)]);
-    // Get root node
-    const rootNode = graph.root;
-    const input = tx.getInput(0);
-    if (!input.txid) throw new Error("missing input txid");
 
-    // Check if parent is root
-    if (rootNode.getInput(0).txid === input.txid) {
+    const txid = hex.encode(sha256x2(tx.toBytes(true)).reverse());
+
+    // if the input is the root input, return the shared output amount
+    if (txid === graph.txid) {
         return {
             amount: sharedOutputAmount,
             script: pkScript,
         };
     }
 
-    // Search for parent in tree
-    let parent = null;
-    for (const g of graph) {
-        if (g.root.getInput(0).txid === input.txid) {
-            parent = g;
-            break;
-        }
-    }
+    // find the parent transaction
+    const parentInput = tx.getInput(0);
+    if (!parentInput.txid) throw new Error("missing parent input txid");
+    const parentTxid = hex.encode(new Uint8Array(parentInput.txid));
+    const parent = graph.find(parentTxid);
+    if (!parent) throw new Error("parent  tx not found");
 
-    if (!parent) {
-        throw new Error("parent tx not found");
-    }
-
-    if (!input.index) throw new Error("missing input index");
-    const parentOutput = parent.root.getOutput(input.index);
+    if (parentInput.index === undefined) throw new Error("missing input index");
+    const parentOutput = parent.root.getOutput(parentInput.index);
     if (!parentOutput) throw new Error("parent output not found");
     if (!parentOutput.amount) throw new Error("parent output amount not found");
 

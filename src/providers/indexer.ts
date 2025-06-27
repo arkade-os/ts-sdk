@@ -51,11 +51,9 @@ export interface CommitmentTx {
     totalOutputVtxos: number;
 }
 
-export interface Node {
+export interface Connector {
     txid: string;
-    parentTxid: string;
-    level: number;
-    levelIndex: number;
+    children: Record<string, string>;
 }
 
 export interface TxHistoryRecord {
@@ -102,7 +100,7 @@ export interface IndexerProvider {
     getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Node[]>;
+    ): Promise<Connector[]>;
     getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
@@ -173,7 +171,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
         }
         const data = await res.json();
-        if (!Response.isNodeArray(data.vtxoTree)) {
+        if (!Response.isConnectorsArray(data.vtxoTree)) {
             throw new Error("Invalid vtxo tree data received");
         }
         return data.vtxoTree;
@@ -223,7 +221,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Node[]> {
+    ): Promise<Connector[]> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
         const params = new URLSearchParams();
         if (opts) {
@@ -242,7 +240,7 @@ export class RestIndexerProvider implements IndexerProvider {
             );
         }
         const data = await res.json();
-        if (!Response.isNodeArray(data.connectors)) {
+        if (!Response.isConnectorsArray(data.connectors)) {
             throw new Error("Invalid commitment tx connectors data received");
         }
         return data.connectors;
@@ -662,18 +660,18 @@ namespace Response {
         return Array.isArray(data) && data.every(isOutpoint);
     }
 
-    function isNode(data: any): data is Node {
+    function isConnector(data: any): data is Connector {
         return (
             typeof data === "object" &&
             typeof data.txid === "string" &&
-            typeof data.parentTxid === "string" &&
-            typeof data.level === "number" &&
-            typeof data.levelIndex === "number"
+            typeof data.children === "object" &&
+            Object.values(data.children).every(isTxid) &&
+            Object.keys(data.children).every((k) => Number.isInteger(Number(k)))
         );
     }
 
-    export function isNodeArray(data: any): data is Node[] {
-        return Array.isArray(data) && data.every(isNode);
+    export function isConnectorsArray(data: any): data is Connector[] {
+        return Array.isArray(data) && data.every(isConnector);
     }
 
     function isTxHistoryRecord(data: any): data is TxHistoryRecord {
