@@ -80,13 +80,15 @@ console.log('History:', history)
 
 // Example history entry:
 {
+  key: {
+    boardingTxid: '...', // for boarding transactions
+    commitmentTxid: '...', // for commitment transactions
+    redeemTxid: '...'    // for regular transactions
+  },
   type: TxType.TxReceived, // or TxType.TxSent
   amount: 50000,
   settled: true,
-  key: {
-    boardingTxid: '...', // for boarding transactions
-    redeemTxid: '...'    // for regular transactions
-  }
+  createdAt: 1234567890
 }
 ```
 
@@ -122,7 +124,7 @@ const wallet = await ServiceWorkerWallet.create('/service-worker.js')
 // initialize the wallet
 await wallet.init({
   network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
-  identity: identity,
+  privateKey: 'your_private_key_hex', // Use private key string, not identity object
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
@@ -158,10 +160,10 @@ interface WalletConfig {
 interface IWallet {
   /** Get wallet addresses */
   getAddress(): Promise<{
-    onchain?: Address;
-    offchain?: Address;
-    boarding?: Address;
-    bip21?: string;
+    onchain?: string;
+    offchain?: string;
+    boarding?: string;
+    bip21: string;
   }>;
 
   /** Get wallet balance */
@@ -173,9 +175,11 @@ interface IWallet {
     };
     offchain: {
       total: number;
+      swept: number;
       settled: number;
       pending: number;
     };
+    total: number;
   }>;
 
   /** Send bitcoin (on-chain or off-chain) */
@@ -183,51 +187,60 @@ interface IWallet {
     address: string;
     amount: number;
     feeRate?: number;
-  }, onchain?: boolean): Promise<string>;
+    memo?: string;
+  }): Promise<string>;
 
   /** Get virtual UTXOs */
-  getVtxos(): Promise<VirtualCoin[]>;
+  getVtxos(filter?: { withSpendableInSettlement?: boolean }): Promise<ExtendedVirtualCoin[]>;
 
   /** Get boarding UTXOs */
-  getBoardingUtxos(): Promise<BoardingUtxo[]>;
+  getBoardingUtxos(): Promise<ExtendedCoin[]>;
 
   /** Settle transactions */
-  settle(params: {
-    inputs: (VirtualCoin | BoardingUtxo)[];
+  settle(params?: {
+    inputs: ExtendedCoin[];
     outputs: {
       address: string;
       amount: bigint;
     }[];
-  }): Promise<string>;
+  }, eventCallback?: (event: SettlementEvent) => void): Promise<string>;
 
   /** Get transaction history */
-  getTransactionHistory(): Promise<Transaction[]>;
+  getTransactionHistory(): Promise<ArkTransaction[]>;
+
+  /** Exit vtxos unilaterally */
+  exit(outpoints?: Outpoint[]): Promise<void>;
 }
 
 /** Transaction types */
 enum TxType {
-  TxSent = 'sent',
-  TxReceived = 'received'
+  TxSent = 'SENT',
+  TxReceived = 'RECEIVED'
 }
 
 /** Transaction history entry */
-interface Transaction {
+interface ArkTransaction {
+  key: {
+    boardingTxid: string;
+    commitmentTxid: string;
+    redeemTxid: string;
+  };
   type: TxType;
   amount: number;
   settled: boolean;
-  key: {
-    boardingTxid?: string;
-    redeemTxid?: string;
-  };
+  createdAt: number;
 }
 
 /** Virtual coin (off-chain UTXO) */
 interface VirtualCoin {
   txid: string;
+  vout: number;
   value: number;
   virtualStatus: {
-    state: 'pending' | 'settled';
+    state: 'pending' | 'settled' | 'swept' | 'spent';
   };
+  spentBy?: string;
+  createdAt: Date;
 }
 
 /** Boarding UTXO */
