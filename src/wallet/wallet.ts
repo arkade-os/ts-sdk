@@ -1022,6 +1022,68 @@ export class Wallet implements IWallet {
         }
     }
 
+    async notifyIncomingFunds(
+        eventCallback: (
+            coins: Coin[] | VirtualCoin[],
+            stopFunc: () => void
+        ) => void
+    ): Promise<void> {
+        if (this.onchainProvider && this.onchainAddress) {
+            this.onchainProvider.watchAddresses(
+                [this.onchainAddress],
+                (txs, stopFunc) => {
+                    console.log("New onchain transactions:", txs);
+                    const coins: Coin[] = txs.map((tx) => {
+                        const vout = tx.vout.findIndex(
+                            (v) =>
+                                v.scriptpubkey_address === this.onchainAddress
+                        );
+
+                        if (vout === -1) {
+                            throw new Error(
+                                `No vout found for address ${this.onchainAddress} in transaction ${tx.txid}`
+                            );
+                        }
+
+                        return {
+                            txid: tx.txid,
+                            vout,
+                            value: Number(tx.vout[vout].value),
+                            status: tx.status,
+                        };
+                    });
+                    eventCallback(coins, stopFunc);
+                }
+            );
+        }
+
+        if (this.indexerProvider && this.offchainAddress) {
+            const abortController = new AbortController();
+
+            const aliceAddress = (await this.getAddress()).offchain;
+            const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
+
+            const subscriptionId =
+                await this.indexerProvider.subscribeForScripts([
+                    hex.encode(aliceScript.slice(2)),
+                ]);
+
+            const subscription = this.indexerProvider.getSubscription(
+                subscriptionId,
+                abortController.signal
+            );
+
+            const stopFunc = () =>
+                this.indexerProvider?.unsubscribeForScripts(subscriptionId);
+
+            for await (const update of subscription) {
+                if (update.newVtxos?.length > 0) {
+                    eventCallback(update.newVtxos, stopFunc);
+                }
+            }
+        }
+    }
+
     private async handleBatchStartedEvent(
         event: BatchStartedEvent,
         intentId: string,

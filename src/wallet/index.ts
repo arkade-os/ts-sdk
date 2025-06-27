@@ -168,4 +168,10 @@ export interface IWallet {
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
     exit(outpoints?: Outpoint[]): Promise<void>;
+    notifyIncomingFunds(
+        eventCallback: (
+            coins: Coin[] | VirtualCoin[],
+            stopFunc: () => void
+        ) => void
+    ): Promise<void>;
 }
