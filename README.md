@@ -124,7 +124,7 @@ const wallet = await ServiceWorkerWallet.create('/service-worker.js')
 // initialize the wallet
 await wallet.init({
   network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
-  privateKey: 'your_private_key_hex', // Use private key string, not identity object
+  privateKey: 'your_private_key_hex',
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
