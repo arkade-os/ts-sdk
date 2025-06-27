@@ -554,6 +554,34 @@ describe("Wallet SDK Integration Tests", () => {
         expect(virtualCoins[0].value).toBe(fundAmount);
     });
 
+    it("should perform a collaborative exit", { timeout: 60000 }, async () => {
+        const alice = await createTestWallet();
+        const aliceAddresses = await alice.wallet.getAddress();
+
+        // faucet offchain address
+        const fundAmount = 10_000;
+        execSync(
+            `${arkdExec} ark send --to ${aliceAddresses.offchain} --amount ${fundAmount} --password secret`
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        const vtxos = await alice.wallet.getVtxos();
+        expect(vtxos).toHaveLength(1);
+
+        const exitTxid = await alice.wallet.settle({
+            inputs: vtxos,
+            outputs: [
+                {
+                    address: aliceAddresses.onchain,
+                    amount: BigInt(fundAmount),
+                },
+            ],
+        });
+
+        expect(exitTxid).toBeDefined();
+    });
+
     it("should settle a recoverable VTXO", { timeout: 60000 }, async () => {
         const alice = await createTestWallet();
         const aliceAddresses = await alice.wallet.getAddress();

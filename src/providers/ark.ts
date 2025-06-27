@@ -1,8 +1,7 @@
-import { TxGraph, TxGraphChunk } from "../tree/txGraph";
+import { TxGraphChunk } from "../tree/txGraph";
 import { Outpoint } from "../wallet";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
-import { PartialSig } from "../musig2";
 
 // Define event types
 export interface ArkEvent {
@@ -41,7 +40,6 @@ export type BatchFinalizationEvent = {
     type: SettlementEventType.BatchFinalization;
     id: string;
     commitmentTx: string;
-    connectorsIndex: Map<string, Outpoint>; // `vtxoTxid:vtxoIndex` -> connectorOutpoint
 };
 
 export type BatchFinalizedEvent = {
@@ -103,6 +101,13 @@ export type SettlementEvent =
     | TreeTxEvent
     | TreeSignatureEvent;
 
+export interface MarketHour {
+    nextStartTime: bigint;
+    nextEndTime: bigint;
+    period: bigint;
+    roundInterval: bigint;
+}
+
 export interface ArkInfo {
     pubkey: string;
     vtxoTreeExpiry: bigint;
@@ -111,10 +116,7 @@ export interface ArkInfo {
     network: string;
     dust: bigint;
     forfeitAddress: string;
-    marketHour?: {
-        start: number;
-        end: number;
-    };
+    marketHour?: MarketHour;
     version: string;
     utxoMinAmount: bigint;
     utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
@@ -141,7 +143,7 @@ export interface Vtxo {
     script: string;
     createdAt: bigint;
     expiresAt: bigint;
-    commitmentTxid: string;
+    commitmentTxids: string[];
     preconfirmed: boolean;
     swept: boolean;
     redeemed: boolean;
@@ -177,7 +179,10 @@ export interface ArkProvider {
         signedForfeitTxs: string[],
         signedCommitmentTx?: string
     ): Promise<void>;
-    getEventStream(signal: AbortSignal): AsyncIterableIterator<SettlementEvent>;
+    getEventStream(
+        signal: AbortSignal,
+        topics: string[]
+    ): AsyncIterableIterator<SettlementEvent>;
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
@@ -207,6 +212,20 @@ export class RestArkProvider implements ArkProvider {
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
+            marketHour: fromServer.marketHour
+                ? {
+                      nextStartTime: BigInt(
+                          fromServer.marketHour.nextStartTime ?? 0
+                      ),
+                      nextEndTime: BigInt(
+                          fromServer.marketHour.nextEndTime ?? 0
+                      ),
+                      period: BigInt(fromServer.marketHour.period ?? 0),
+                      roundInterval: BigInt(
+                          fromServer.marketHour.roundInterval ?? 0
+                      ),
+                  }
+                : undefined,
         };
     }
 
@@ -419,13 +438,18 @@ export class RestArkProvider implements ArkProvider {
     }
 
     async *getEventStream(
-        signal: AbortSignal
+        signal: AbortSignal,
+        topics: string[]
     ): AsyncIterableIterator<SettlementEvent> {
         const url = `${this.serverUrl}/v1/batch/events`;
+        const queryParams =
+            topics.length > 0
+                ? `?${topics.map((topic) => `topics=${encodeURIComponent(topic)}`).join("&")}`
+                : "";
 
         while (!signal?.aborted) {
             try {
-                const response = await fetch(url, {
+                const response = await fetch(url + queryParams, {
                     headers: {
                         Accept: "application/json",
                     },
@@ -561,17 +585,6 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    private toConnectorsIndex(
-        connectorsIndex: ProtoTypes.RoundFinalizationEvent["connectorsIndex"]
-    ): Map<string, Outpoint> {
-        return new Map(
-            Object.entries(connectorsIndex).map(([key, value]) => [
-                key,
-                { txid: value.txid, vout: value.vout },
-            ])
-        );
-    }
-
     private parseSettlementEvent(
         data: ProtoTypes.EventData
     ): SettlementEvent | null {
@@ -591,9 +604,6 @@ export class RestArkProvider implements ArkProvider {
                 type: SettlementEventType.BatchFinalization,
                 id: data.batchFinalization.id,
                 commitmentTx: data.batchFinalization.commitmentTx,
-                connectorsIndex: this.toConnectorsIndex(
-                    data.batchFinalization.connectorsIndex
-                ),
             };
         }
 
@@ -691,7 +701,7 @@ export class RestArkProvider implements ArkProvider {
                         script: vtxo.script,
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
-                        commitmentTxid: vtxo.commitmentTxid,
+                        commitmentTxids: vtxo.commitmentTxids,
                         preconfirmed: vtxo.preconfirmed,
                         swept: vtxo.swept,
                         redeemed: vtxo.redeemed,
@@ -708,7 +718,7 @@ export class RestArkProvider implements ArkProvider {
                             script: vtxo.script,
                             createdAt: BigInt(vtxo.createdAt),
                             expiresAt: BigInt(vtxo.expiresAt),
-                            commitmentTxid: vtxo.commitmentTxid,
+                            commitmentTxids: vtxo.commitmentTxids,
                             preconfirmed: vtxo.preconfirmed,
                             swept: vtxo.swept,
                             redeemed: vtxo.redeemed,
@@ -734,7 +744,7 @@ export class RestArkProvider implements ArkProvider {
                         script: vtxo.script,
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
-                        commitmentTxid: vtxo.commitmentTxid,
+                        commitmentTxids: vtxo.commitmentTxids,
                         preconfirmed: vtxo.preconfirmed,
                         swept: vtxo.swept,
                         redeemed: vtxo.redeemed,
@@ -750,7 +760,7 @@ export class RestArkProvider implements ArkProvider {
                         script: vtxo.script,
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
-                        commitmentTxid: vtxo.commitmentTxid,
+                        commitmentTxids: vtxo.commitmentTxids,
                         preconfirmed: vtxo.preconfirmed,
                         swept: vtxo.swept,
                         redeemed: vtxo.redeemed,
@@ -801,7 +811,6 @@ namespace ProtoTypes {
         id: string;
         intentIdHashes: string[];
         batchExpiry: string;
-        forfeitAddress: string;
     }
 
     interface RoundFailed {
@@ -812,12 +821,6 @@ namespace ProtoTypes {
     export interface RoundFinalizationEvent {
         id: string;
         commitmentTx: string;
-        connectorsIndex: {
-            [key: string]: {
-                txid: string;
-                vout: number;
-            };
-        };
     }
 
     interface RoundFinalizedEvent {
@@ -862,7 +865,7 @@ namespace ProtoTypes {
         script: string;
         createdAt: string;
         expiresAt: string;
-        commitmentTxid: string;
+        commitmentTxids: string[];
         preconfirmed: boolean;
         swept: boolean;
         redeemed: boolean;

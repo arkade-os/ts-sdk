@@ -7,7 +7,7 @@ import {
     p2tr,
     tapLeafHash,
 } from "@scure/btc-signer/payment";
-import { Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer";
 import {
     TaprootControlBlock,
     TransactionInput,
@@ -457,8 +457,8 @@ export class Wallet implements IWallet {
                         },
                         virtualStatus: {
                             state: spentStatus?.spent ? "spent" : "pending",
-                            batchTxID: spentStatus?.spent
-                                ? spentStatus.txid
+                            commitmentTxIds: spentStatus?.spent
+                                ? [spentStatus.txid]
                                 : undefined,
                         },
                         createdAt: tx.status.confirmed
@@ -476,7 +476,7 @@ export class Wallet implements IWallet {
             const tx: ArkTransaction = {
                 key: {
                     boardingTxid: utxo.txid,
-                    roundTxid: "",
+                    commitmentTxid: "",
                     redeemTxid: "",
                 },
                 amount: utxo.value,
@@ -797,8 +797,14 @@ export class Wallet implements IWallet {
         try {
             let step: SettlementEventType | undefined;
 
+            const topics = [
+                ...signingPublicKeys,
+                ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
+            ];
+
             const settlementStream = this.arkProvider.getEventStream(
-                abortController.signal
+                abortController.signal,
+                topics
             );
 
             // roundId, sweepTapTreeRoot and forfeitOutputScript are set once the BatchStarted event is received
@@ -1161,7 +1167,10 @@ export class Wallet implements IWallet {
             base64.decode(event.commitmentTx)
         );
         let hasBoardingUtxos = false;
-        let needForfeitTx = false;
+
+        let connectorIndex = 0;
+
+        const connectorsLeaves = connectorsGraph?.leaves() || [];
 
         for (const input of inputs) {
             // check if the input is an offchain "virtual" coin
@@ -1207,62 +1216,58 @@ export class Wallet implements IWallet {
                 continue;
             }
 
-            needForfeitTx = true;
-            if (!connectorsGraph) {
-                throw new Error(
-                    "Connectors graph not set, something went wrong"
-                );
+            if (connectorsLeaves.length === 0) {
+                throw new Error("connectors not received");
             }
 
-            const connectorsLeaves = connectorsGraph.leaves();
-            const connectorOutpoint = event.connectorsIndex.get(
-                `${vtxo.txid}:${vtxo.vout}`
+            if (connectorIndex >= connectorsLeaves.length) {
+                throw new Error("not enough connectors received");
+            }
+
+            const connectorLeaf = connectorsLeaves[connectorIndex];
+            const connectorTxId = hex.encode(
+                sha256x2(connectorLeaf.toBytes(true)).reverse()
             );
-            if (!connectorOutpoint) {
-                throw new Error("Connector outpoint not found");
+            const connectorOutput = connectorLeaf.getOutput(0);
+            if (!connectorOutput) {
+                throw new Error("connector output not found");
             }
 
-            let connectorOutput: TransactionOutput | undefined;
-            for (const leaf of connectorsLeaves) {
-                const leafTxid = hex.encode(
-                    sha256x2(leaf.toBytes(true)).reverse()
-                );
-                if (leafTxid === connectorOutpoint.txid) {
-                    try {
-                        connectorOutput = leaf.getOutput(
-                            connectorOutpoint.vout
-                        );
-                        break;
-                    } catch {
-                        throw new Error("Invalid connector tx");
-                    }
-                }
-            }
-            if (
-                !connectorOutput ||
-                !connectorOutput.amount ||
-                !connectorOutput.script
-            ) {
-                throw new Error("Connector output not found");
+            const connectorAmount = connectorOutput.amount;
+            const connectorPkScript = connectorOutput.script;
+
+            if (!connectorAmount || !connectorPkScript) {
+                throw new Error("invalid connector output");
             }
 
-            let forfeitTx = buildForfeitTx({
-                connectorInput: connectorOutpoint,
-                connectorAmount: connectorOutput.amount,
-                serverPkScript: forfeitOutputScript,
-                connectorPkScript: connectorOutput.script,
-                vtxoAmount: BigInt(vtxo.value),
-                vtxoInput: input,
-                vtxoPkScript: VtxoScript.decode(input.tapTree).pkScript,
-            });
+            connectorIndex++;
 
-            // add the tapscript
-            forfeitTx.updateInput(1, {
-                tapLeafScript: [input.forfeitTapLeafScript],
-            });
+            let forfeitTx = buildForfeitTx(
+                [
+                    {
+                        txid: input.txid,
+                        index: input.vout,
+                        witnessUtxo: {
+                            amount: BigInt(vtxo.value),
+                            script: VtxoScript.decode(input.tapTree).pkScript,
+                        },
+                        sighashType: SigHash.DEFAULT,
+                        tapLeafScript: [input.forfeitTapLeafScript],
+                    },
+                    {
+                        txid: connectorTxId,
+                        index: 0,
+                        witnessUtxo: {
+                            amount: connectorAmount,
+                            script: connectorPkScript,
+                        },
+                    },
+                ],
+                forfeitOutputScript
+            );
 
             // do not sign the connector input
-            forfeitTx = await this.identity.sign(forfeitTx, [1]);
+            forfeitTx = await this.identity.sign(forfeitTx, [0]);
 
             signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
         }

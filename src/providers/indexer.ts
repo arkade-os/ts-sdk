@@ -78,7 +78,7 @@ export interface Vtxo {
     isRedeemed: boolean;
     isSpent: boolean;
     spentBy: string | null;
-    commitmentTxid: string;
+    commitmentTxids: string[];
 }
 
 export interface VtxoChain {
@@ -561,7 +561,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         vout: vtxo.outpoint.vout,
         value: Number(vtxo.amount),
         status: {
-            confirmed: !!vtxo.commitmentTxid,
+            confirmed: vtxo.commitmentTxids.length > 0,
         },
         virtualStatus: {
             state: vtxo.isSwept
@@ -569,7 +569,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
                 : vtxo.isPreconfirmed
                   ? "pending"
                   : "settled",
-            batchTxID: vtxo.commitmentTxid,
+            commitmentTxIds: vtxo.commitmentTxids,
             batchExpiry: vtxo.expiresAt
                 ? Number(vtxo.expiresAt) * 1000
                 : undefined,
@@ -594,7 +594,7 @@ function convertTransaction(tx: TxHistoryRecord): ArkTransaction {
     return {
         key: {
             boardingTxid: "",
-            roundTxid: tx.commitmentTxid ?? "",
+            commitmentTxid: tx.commitmentTxid ?? "",
             redeemTxid: tx.virtualTxid ?? "",
         },
         amount: Number(tx.amount),
@@ -694,7 +694,7 @@ namespace Response {
     }
 
     function isTxid(data: any): data is string {
-        return typeof data === "string";
+        return typeof data === "string" && data.length === 64;
     }
 
     export function isTxidArray(data: any): data is string[] {
@@ -716,7 +716,8 @@ namespace Response {
             typeof data.isSpent === "boolean" &&
             (typeof data.spentBy === "string" ||
                 typeof data.spentBy === "object") &&
-            typeof data.commitmentTxid === "string"
+            Array.isArray(data.commitmentTxids) &&
+            data.commitmentTxids.every(isTxid)
         );
     }
 
