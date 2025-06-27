@@ -215,7 +215,10 @@ interface IWallet {
 
   /** Be notified via callback */
   notifyIncomingFunds(
-    eventCallback: (coins: Coin[] | VirtualCoin[]) => void
+    eventCallback: (
+      coins: Coin[] | VirtualCoin[],
+      stopFunc: () => void
+    ) => void
   ): Promise<void>;
 }
 

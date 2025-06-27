@@ -1023,12 +1023,15 @@ export class Wallet implements IWallet {
     }
 
     async notifyIncomingFunds(
-        eventCallback: (coins: Coin[] | VirtualCoin[]) => void
+        eventCallback: (
+            coins: Coin[] | VirtualCoin[],
+            stopFunc: () => void
+        ) => void
     ): Promise<void> {
         if (this.onchainProvider && this.onchainAddress) {
             this.onchainProvider.watchAddresses(
                 [this.onchainAddress],
-                (txs) => {
+                (txs, stopFunc) => {
                     console.log("New onchain transactions:", txs);
                     const coins: Coin[] = txs.map((tx) => {
                         const vout = tx.vout.findIndex(
@@ -1049,15 +1052,17 @@ export class Wallet implements IWallet {
                             status: tx.status,
                         };
                     });
-                    eventCallback(coins);
+                    eventCallback(coins, stopFunc);
                 }
             );
         }
 
         if (this.indexerProvider && this.offchainAddress) {
             const abortController = new AbortController();
+
             const aliceAddress = (await this.getAddress()).offchain;
             const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
+
             const subscriptionId =
                 await this.indexerProvider.subscribeForScripts([
                     hex.encode(aliceScript.slice(2)),
@@ -1068,9 +1073,12 @@ export class Wallet implements IWallet {
                 abortController.signal
             );
 
+            const stopFunc = () =>
+                this.indexerProvider?.unsubscribeForScripts(subscriptionId);
+
             for await (const update of subscription) {
                 if (update.newVtxos?.length > 0) {
-                    eventCallback(update.newVtxos);
+                    eventCallback(update.newVtxos, stopFunc);
                 }
             }
         }

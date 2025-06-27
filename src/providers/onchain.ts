@@ -1,6 +1,5 @@
 import type { NetworkName } from "../networks";
 import { Coin } from "../wallet";
-import WebSocket from "isomorphic-ws";
 
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.space/api",
@@ -37,11 +36,11 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
     );
 };
 
-interface SubscribeMessage {
+export interface SubscribeMessage {
     "track-addresses": string[];
 }
 
-interface WebSocketMessage {
+export interface WebSocketMessage {
     "multi-address-transactions"?: Record<
         string,
         {
@@ -65,8 +64,11 @@ export interface OnchainProvider {
     }>;
     watchAddresses(
         addresses: string[],
-        eventCallback: (txs: ExplorerTransaction[]) => void
-    ): Promise<void>;
+        eventCallback: (
+            txs: ExplorerTransaction[],
+            stopFunc: () => void
+        ) => void
+    ): Promise<WebSocket>;
 }
 
 export class EsploraProvider implements OnchainProvider {
@@ -150,12 +152,13 @@ export class EsploraProvider implements OnchainProvider {
 
     async watchAddresses(
         addresses: string[],
-        callback: (txs: ExplorerTransaction[]) => void
-    ): Promise<void> {
-        const wsUrl = this.baseUrl.replace("http", "ws") + "/v1/ws/";
+        callback: (txs: ExplorerTransaction[], stopFunc: () => void) => void
+    ): Promise<WebSocket> {
+        // returns WebSocket instance for testing
+        const wsUrl = this.baseUrl.replace("http", "ws") + "/v1/ws";
         const ws = new WebSocket(wsUrl);
 
-        ws.on("open", () => {
+        ws.addEventListener("open", () => {
             // subscribe to address updates
             const subscribeMsg: SubscribeMessage = {
                 "track-addresses": addresses,
@@ -163,11 +166,12 @@ export class EsploraProvider implements OnchainProvider {
             ws.send(JSON.stringify(subscribeMsg));
         });
 
-        ws.on("message", (data: WebSocket.Data) => {
+        ws.addEventListener("message", (event: MessageEvent) => {
             try {
                 const newTxs: ExplorerTransaction[] = [];
-
-                const message: WebSocketMessage = JSON.parse(data.toString());
+                const message: WebSocketMessage = JSON.parse(
+                    event.data.toString()
+                );
                 if (!message["multi-address-transactions"]) return;
                 const aux = message["multi-address-transactions"];
 
@@ -184,11 +188,11 @@ export class EsploraProvider implements OnchainProvider {
                     }
                 }
                 // callback with new transactions
-                if (newTxs.length > 0) callback(newTxs);
+                if (newTxs.length > 0) callback(newTxs, ws.close);
             } catch (_) {}
         });
 
-        ws.on("error", async (error: Error) => {
+        ws.addEventListener("error", async () => {
             // websocket is not reliable, so we will fallback to polling
             const pollingInterval = 5_000; // 5 seconds
 
@@ -206,7 +210,7 @@ export class EsploraProvider implements OnchainProvider {
                 `${tx.txid}_${tx.status.block_time}`;
 
             // polling for new transactions
-            setInterval(async () => {
+            const intervalId = setInterval(async () => {
                 // get current transactions
                 // we will compare with initialTxs to find new ones
                 const currentTxs = await getAllTxs();
@@ -223,10 +227,13 @@ export class EsploraProvider implements OnchainProvider {
 
                     if (newTxs.length > 0) {
                         initialTxs.push(...newTxs);
-                        callback(newTxs);
+                        const stopFunc = () => clearInterval(intervalId);
+                        callback(newTxs, stopFunc);
                     }
                 }
             }, pollingInterval);
         });
+
+        return ws;
     }
 }

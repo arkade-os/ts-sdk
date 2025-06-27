@@ -1,21 +1,35 @@
-import { describe, it, expect, vi, beforeEach, Mock } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EsploraProvider, Coin } from "../src";
-import WebSocket from "isomorphic-ws";
-import { ExplorerTransaction } from "../src/providers/onchain";
+import {
+    ExplorerTransaction,
+    SubscribeMessage,
+    WebSocketMessage,
+} from "../src/providers/onchain";
 
-// Create a mock WebSocket class with vi.fn() methods
-const mockWs = {
-    on: vi.fn(),
-    send: vi.fn(),
-    // Add other WebSocket methods as needed
-};
+// Mock WebSocket
+class MockWebSocket {
+    url: string;
+    listeners: Map<string, (event: any) => void> = new Map();
+    send = vi.fn();
+    close = vi.fn();
 
-// Mock the ws module
-vi.mock("isomorphic-ws", () => {
-    return {
-        default: vi.fn(() => mockWs),
-    };
-});
+    constructor(url: string) {
+        this.url = url;
+    }
+
+    addEventListener(event: string, callback: (event: any) => void) {
+        this.listeners.set(event, callback);
+    }
+
+    // Simulate WebSocket events
+    simulateEvent(event: string, data: any) {
+        const callback = this.listeners.get(event);
+        if (callback) callback(data);
+    }
+}
+
+// Define a type for the mock to satisfy TypeScript
+type MockWebSocketInstance = InstanceType<typeof MockWebSocket>;
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -147,176 +161,155 @@ describe("EsploraProvider", () => {
     });
 
     describe("watchAddresses", () => {
-        let mockWs: any;
-        let callback: Mock;
-        const address = "bcrt1q24qjaswxsa24tvrd7n2huxdakd4x2k4t846qfh";
-        const provider = new EsploraProvider("http://localhost:3000");
-        const mockTx1: ExplorerTransaction = {
-            txid: "12345",
-            vout: [{ value: "100000", scriptpubkey_address: "" }],
-            status: {
-                confirmed: false,
-                block_time: 0,
+        const callback = vi.fn();
+        let provider: EsploraProvider;
+        const baseUrl = "http://localhost:3000";
+        const wsUrl = "ws://localhost:3000/v1/ws";
+        const addresses = ["addr1", "addr2"];
+        const transactions: ExplorerTransaction[] = [
+            {
+                txid: "tx1",
+                vout: [{ scriptpubkey_address: addresses[0], value: "1000" }],
+                status: { confirmed: false, block_time: 123 },
             },
-        };
-        const mockTx2: ExplorerTransaction = {
-            txid: "67890",
-            vout: [{ value: "200000", scriptpubkey_address: "" }],
-            status: {
-                confirmed: true,
-                block_time: 1700000000,
+            {
+                txid: "tx2",
+                vout: [{ scriptpubkey_address: addresses[1], value: "2000" }],
+                status: { confirmed: true, block_time: 124 },
             },
-        };
+        ];
 
         beforeEach(() => {
-            // reset mocks
-            vi.clearAllMocks();
-            callback = vi.fn();
-            mockFetch.mockReset();
-            // get the mocked WebSocket instance
-            mockWs = new WebSocket("ws://test");
+            provider = new EsploraProvider(baseUrl);
+            vi.spyOn(provider, "getTransactions").mockImplementation(
+                async () => []
+            );
+            vi.stubGlobal("WebSocket", MockWebSocket);
+            vi.useFakeTimers();
         });
 
-        it("should subscribe to the correct address on web socket open", () => {
-            // arrange
-            let openHandler: Function;
-            mockWs.on.mockImplementation((event: string, handler: Function) => {
-                if (event === "open") openHandler = handler;
-            });
+        afterEach(() => {
+            vi.restoreAllMocks();
+            vi.unstubAllGlobals();
+            vi.useRealTimers();
+        });
 
-            // act
-            provider.watchAddresses([address], callback);
-            openHandler!(); // simulate WebSocket open event
+        it("connects to the correct WebSocket URL", async () => {
+            // arrange
+            const conn = (await provider.watchAddresses(
+                addresses,
+                callback
+            )) as unknown as MockWebSocketInstance;
 
             // assert
-            expect(mockWs.send).toHaveBeenCalledWith(
-                JSON.stringify({ "track-addresses": [address] })
+            expect(conn.url).toBe(wsUrl);
+            expect(conn.close).toBeDefined();
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it("sends subscription message on WebSocket open", async () => {
+            // arrange
+            const conn = (await provider.watchAddresses(
+                addresses,
+                callback
+            )) as unknown as MockWebSocketInstance;
+
+            // act
+            conn.simulateEvent("open", {});
+
+            // assert
+            const expectedMsg: SubscribeMessage = {
+                "track-addresses": addresses,
+            };
+            expect(conn.send).toHaveBeenCalledWith(JSON.stringify(expectedMsg));
+            expect(callback).not.toHaveBeenCalled();
+        });
+
+        it("processes valid WebSocket message and calls callback with transactions", async () => {
+            // arrange
+            const message: WebSocketMessage = {
+                "multi-address-transactions": {
+                    [addresses[0]]: {
+                        mempool: [transactions[0]],
+                        confirmed: [],
+                        removed: [],
+                    },
+                    [addresses[1]]: {
+                        mempool: [],
+                        confirmed: [transactions[1]],
+                        removed: [],
+                    },
+                },
+            };
+
+            const conn = (await provider.watchAddresses(
+                addresses,
+                callback
+            )) as unknown as MockWebSocketInstance;
+
+            // act
+            conn.simulateEvent("message", { data: JSON.stringify(message) });
+
+            // assert
+            expect(callback).toHaveBeenCalledWith(
+                transactions,
+                expect.any(Function)
             );
         });
 
-        it("should invoke callback with transaction when multi-address-transactions message is received", () => {
+        it("ignores invalid WebSocket messages", async () => {
             // arrange
-            const mockMessage = {
-                "multi-address-transactions": {
-                    [address]: {
-                        mempool: [mockTx1],
-                    },
-                },
-            };
-            let messageHandler: Function;
-            mockWs.on.mockImplementation((event: string, handler: Function) => {
-                if (event === "message") messageHandler = handler;
-            });
+            const conn = (await provider.watchAddresses(
+                addresses,
+                callback
+            )) as unknown as MockWebSocketInstance;
 
             // act
-            provider.watchAddresses([address], callback);
-            messageHandler!(JSON.stringify(mockMessage));
-
-            // assert
-            expect(callback).toHaveBeenCalledWith([mockTx1]);
-            expect(callback).toHaveBeenCalledTimes(1);
-        });
-
-        it("should handle multiple transactions in a single message", () => {
-            // arrange
-            const mockMessage = {
-                "multi-address-transactions": {
-                    [address]: {
-                        mempool: [mockTx1],
-                        confirmed: [mockTx2],
-                    },
-                },
-            };
-            let messageHandler: Function;
-            mockWs.on.mockImplementation((event: string, handler: Function) => {
-                if (event === "message") messageHandler = handler;
-            });
-
-            // act
-            provider.watchAddresses([address], callback);
-            messageHandler!(JSON.stringify(mockMessage));
-
-            // assert
-            expect(callback).toHaveBeenCalledTimes(1);
-            expect(callback).toHaveBeenCalledWith([mockTx1, mockTx2]);
-        });
-
-        it("should not invoke callback on invalid message", () => {
-            // arrange
-            let messageHandler: Function;
-            mockWs.on.mockImplementation((event: string, handler: Function) => {
-                if (event === "message") messageHandler = handler;
-            });
-
-            // act
-            provider.watchAddresses([address], callback);
-            messageHandler!("invalid JSON"); // simulate invalid message
+            conn.simulateEvent("message", { data: "invalid json" });
 
             // assert
             expect(callback).not.toHaveBeenCalled();
         });
 
-        it("should not invoke callback on message without address-transactions", () => {
-            // arrange
-            const mockMessage = { ping: "pong" };
-            let messageHandler: Function;
-            mockWs.on.mockImplementation((event: string, handler: Function) => {
-                if (event === "message") messageHandler = handler;
-            });
+        it("ignores messages without multi-address-transactions", async () => {
+            // assert
+            const conn = (await provider.watchAddresses(
+                addresses,
+                callback
+            )) as unknown as MockWebSocketInstance;
 
             // act
-            provider.watchAddresses([address], callback);
-            messageHandler!(JSON.stringify(mockMessage));
+            conn.simulateEvent("message", { data: JSON.stringify({}) });
 
             // assert
             expect(callback).not.toHaveBeenCalled();
         });
 
-        it(
-            "should handle web socket errors and fallback to polling",
-            { timeout: 15000 },
-            async () => {
-                // arrange
-                let errorHandler: Function;
-                mockWs.on.mockImplementation(
-                    (event: string, handler: Function) => {
-                        if (event === "error") errorHandler = handler;
-                    }
-                );
+        it("falls back to polling on WebSocket error", async () => {
+            const initialTxs: ExplorerTransaction[] = [transactions[0]];
+            const newTxs: ExplorerTransaction[] = [transactions[1]];
 
-                mockFetch
-                    .mockResolvedValueOnce({
-                        ok: true,
-                        json: () => Promise.resolve([]),
-                    })
-                    .mockResolvedValueOnce({
-                        ok: true,
-                        json: () => Promise.resolve([mockTx1]),
-                    })
-                    .mockResolvedValueOnce({
-                        ok: true,
-                        json: () => Promise.resolve([mockTx1, mockTx2]),
-                    });
+            vi.spyOn(provider, "getTransactions")
+                .mockResolvedValueOnce(initialTxs) // initial fetch for addr1
+                .mockResolvedValueOnce([]) // initial fetch for addr2
+                .mockResolvedValueOnce([...initialTxs, ...newTxs]) // polling fetch for addr1
+                .mockResolvedValueOnce([]); // polling fetch for addr2
 
-                // act
-                provider.watchAddresses([address], callback);
-                const error = new Error("WebSocket error");
-                errorHandler!(error);
+            const conn = (await provider.watchAddresses(
+                addresses,
+                callback
+            )) as unknown as MockWebSocketInstance;
 
-                // wait for polling
-                await new Promise((resolve) => setTimeout(resolve, 6000));
+            // act
+            conn.simulateEvent("error", {});
 
-                // assert
-                expect(callback).toHaveBeenCalledTimes(1);
-                expect(callback).toHaveBeenCalledWith([mockTx1]);
+            // assert
+            expect(provider.getTransactions).toHaveBeenCalledTimes(2); // once per address
+            expect(callback).not.toHaveBeenCalled();
 
-                // wait for polling
-                await new Promise((resolve) => setTimeout(resolve, 6000));
-
-                // assert
-                expect(callback).toHaveBeenCalledTimes(2);
-                expect(callback).toHaveBeenCalledWith([mockTx2]);
-            }
-        );
+            // Simulate polling after 5 seconds
+            await vi.advanceTimersByTimeAsync(5000);
+            expect(callback).toHaveBeenCalledWith(newTxs, expect.any(Function));
+        });
     });
 });
