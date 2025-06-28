@@ -96,6 +96,67 @@ describe("Wallet SDK Integration Tests", () => {
     });
 
     it(
+        "should settle 2 VTXOs in the same round",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestWallet();
+            const bob = await createTestWallet();
+
+            const aliceOffchainAddress = (await alice.wallet.getAddress())
+                .offchain;
+            expect(aliceOffchainAddress).toBeDefined();
+
+            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+            expect(bobOffchainAddress).toBeDefined();
+
+            const fundAmount = 1000;
+            execSync(
+                `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+            );
+            execSync(
+                `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`
+            );
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            const virtualCoins = await alice.wallet.getVtxos();
+            expect(virtualCoins).toHaveLength(1);
+            const aliceVtxo = virtualCoins[0];
+            expect(aliceVtxo.txid).toBeDefined();
+
+            const bobVirtualCoins = await bob.wallet.getVtxos();
+            expect(bobVirtualCoins).toHaveLength(1);
+            const bobVtxo = bobVirtualCoins[0];
+            expect(bobVtxo.txid).toBeDefined();
+
+            const [aliceSettleTxid, bobSettleTxid] = await Promise.all([
+                alice.wallet.settle({
+                    inputs: [aliceVtxo],
+                    outputs: [
+                        {
+                            address: aliceOffchainAddress!,
+                            amount: BigInt(fundAmount),
+                        },
+                    ],
+                }),
+                bob.wallet.settle({
+                    inputs: [bobVtxo],
+                    outputs: [
+                        {
+                            address: bobOffchainAddress!,
+                            amount: BigInt(fundAmount),
+                        },
+                    ],
+                }),
+            ]);
+
+            expect(aliceSettleTxid).toBeDefined();
+            expect(bobSettleTxid).toBeDefined();
+            expect(aliceSettleTxid).toBe(bobSettleTxid);
+        }
+    );
+
+    it(
         "should perform a complete onchain roundtrip payment",
         { timeout: 30000 },
         async () => {
