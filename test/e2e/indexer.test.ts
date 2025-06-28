@@ -1,12 +1,12 @@
 import { expect, describe, it } from "vitest";
-import { faucetOffchain, createTestWallet, createVtxo } from "./utils";
+import { faucetOffchain, createTestArkWallet, createVtxo } from "./utils";
 import { ArkAddress, Outpoint, RestIndexerProvider } from "../../src";
 import { hex } from "@scure/base";
 
 describe("Indexer provider", () => {
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
+        const alice = await createTestArkWallet();
         const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
         expect(aliceOffchainAddress).toBeDefined();
 
@@ -51,7 +51,7 @@ describe("Indexer provider", () => {
 
     it("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
+        const alice = await createTestArkWallet();
         const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
         expect(aliceOffchainAddress).toBeDefined();
 
@@ -109,12 +109,12 @@ describe("Indexer provider", () => {
         const abortController = new AbortController();
 
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
+        const alice = await createTestArkWallet();
         const aliceAddress = (await alice.wallet.getAddress()).offchain;
         const aliceScript = ArkAddress.decode(aliceAddress!).pkScript.slice(2);
 
         // Create fresh wallet instance for this test
-        const bob = await createTestWallet();
+        const bob = await createTestArkWallet();
         const bobAddress = (await bob.wallet.getAddress()).offchain;
         const bobScript = ArkAddress.decode(bobAddress!).pkScript.slice(2);
 

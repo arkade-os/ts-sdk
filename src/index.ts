@@ -13,7 +13,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     WalletBalance,
-    SendBitcoinParams,
+    SendParams,
     Recipient,
     SettleParams,
     VtxoTaprootAddress,
@@ -28,6 +28,7 @@ import {
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import { OnchainWallet } from "./wallet/onchain";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
@@ -73,6 +74,7 @@ export {
     Wallet,
     ServiceWorkerWallet,
     InMemoryKey,
+    OnchainWallet,
 
     // Providers
     ESPLORA_URL,
@@ -133,7 +135,7 @@ export type {
     ExtendedCoin,
     ExtendedVirtualCoin,
     WalletBalance,
-    SendBitcoinParams,
+    SendParams,
     Recipient,
     SettleParams,
     VtxoTaprootAddress,

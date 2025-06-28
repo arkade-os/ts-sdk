@@ -1,7 +1,7 @@
 import {
     IWallet,
     WalletBalance,
-    SendBitcoinParams,
+    SendParams,
     SettleParams,
     AddressInfo,
     Coin,
@@ -303,7 +303,7 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
+    async send(params: SendParams): Promise<string> {
         const message: Request.SendBitcoin = {
             type: "SEND_BITCOIN",
             params,
