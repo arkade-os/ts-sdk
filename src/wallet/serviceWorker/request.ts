@@ -1,5 +1,5 @@
 import { NetworkName } from "../../networks";
-import { SettleParams, SendBitcoinParams, Outpoint, GetVtxosFilter } from "..";
+import { SettleParams, SendParams, Outpoint, GetVtxosFilter } from "..";
 
 export namespace Request {
     export type Type =
@@ -8,7 +8,6 @@ export namespace Request {
         | "GET_ADDRESS"
         | "GET_ADDRESS_INFO"
         | "GET_BALANCE"
-        | "GET_COINS"
         | "GET_VTXOS"
         | "GET_VIRTUAL_COINS"
         | "GET_BOARDING_UTXOS"
@@ -86,14 +85,6 @@ export namespace Request {
         return message.type === "GET_BALANCE";
     }
 
-    export interface GetCoins extends Base {
-        type: "GET_COINS";
-    }
-
-    export function isGetCoins(message: Base): message is GetCoins {
-        return message.type === "GET_COINS";
-    }
-
     export interface GetVtxos extends Base {
         type: "GET_VTXOS";
         filter?: GetVtxosFilter;
@@ -125,7 +116,7 @@ export namespace Request {
 
     export interface SendBitcoin extends Base {
         type: "SEND_BITCOIN";
-        params: SendBitcoinParams;
+        params: SendParams;
     }
 
     export function isSendBitcoin(message: Base): message is SendBitcoin {

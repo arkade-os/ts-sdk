@@ -52,7 +52,7 @@ import {
     isSubdust,
     IWallet,
     Outpoint,
-    SendBitcoinParams,
+    SendParams,
     SettleParams,
     TxType,
     VirtualCoin,
@@ -78,14 +78,13 @@ export class Wallet implements IWallet {
         private identity: Identity,
         private network: Network,
         private onchainProvider: OnchainProvider,
-        private onchainP2TR: P2TR,
-        private arkProvider?: ArkProvider,
-        private indexerProvider?: IndexerProvider,
-        private arkServerPublicKey?: Bytes,
-        readonly offchainTapscript?: DefaultVtxo.Script,
-        readonly boardingTapscript?: DefaultVtxo.Script,
-        readonly serverUnrollScript?: CSVMultisigTapscript.Type,
-        readonly forfeitOutputScript?: Bytes
+        private arkProvider: ArkProvider,
+        private indexerProvider: IndexerProvider,
+        private arkServerPublicKey: Bytes,
+        readonly offchainTapscript: DefaultVtxo.Script,
+        readonly boardingTapscript: DefaultVtxo.Script,
+        readonly serverUnrollScript: CSVMultisigTapscript.Type,
+        readonly forfeitOutputScript: Bytes
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -100,86 +99,62 @@ export class Wallet implements IWallet {
             throw new Error("Invalid configured public key");
         }
 
-        let arkProvider: ArkProvider | undefined;
-        if (config.arkServerUrl) {
-            arkProvider = new RestArkProvider(config.arkServerUrl);
-        }
+        const arkProvider = new RestArkProvider(config.arkServerUrl);
+        const indexerProvider = new RestIndexerProvider(config.arkServerUrl);
 
-        let indexerProvider: IndexerProvider | undefined;
-        if (config.arkServerUrl) {
-            indexerProvider = new RestIndexerProvider(config.arkServerUrl);
-        }
-
-        // Save onchain Taproot address key-path only
-        const onchainP2TR = p2tr(pubkey, undefined, network);
-
-        if (arkProvider) {
-            const info = await arkProvider.getInfo();
-            if (info.network !== config.network) {
-                throw new Error(
-                    `The Ark Server URL expects ${info.network} but ${config.network} was configured`
-                );
-            }
-            const exitTimelock: RelativeTimelock = {
-                value: info.unilateralExitDelay,
-                type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
-            };
-            const boardingTimelock: RelativeTimelock = {
-                value: info.boardingExitDelay,
-                type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
-            };
-            // Generate tapscripts for offchain and boarding address
-            const serverPubKey = hex.decode(info.pubkey).slice(1);
-            const bareVtxoTapscript = new DefaultVtxo.Script({
-                pubKey: pubkey,
-                serverPubKey,
-                csvTimelock: exitTimelock,
-            });
-            const boardingTapscript = new DefaultVtxo.Script({
-                pubKey: pubkey,
-                serverPubKey,
-                csvTimelock: boardingTimelock,
-            });
-
-            // Save tapscripts
-            const offchainTapscript = bareVtxoTapscript;
-
-            // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-            const serverUnrollScript = CSVMultisigTapscript.encode({
-                timelock: exitTimelock,
-                pubkeys: [serverPubKey],
-            });
-
-            // parse the server forfeit address
-            // server is expecting funds to be sent to this address
-            const forfeitAddress = Address(network).decode(info.forfeitAddress);
-            const forfeitOutputScript = OutScript.encode(forfeitAddress);
-
-            return new Wallet(
-                config.identity,
-                network,
-                onchainProvider,
-                onchainP2TR,
-                arkProvider,
-                indexerProvider,
-                serverPubKey,
-                offchainTapscript,
-                boardingTapscript,
-                serverUnrollScript,
-                forfeitOutputScript
+        const info = await arkProvider.getInfo();
+        if (info.network !== config.network) {
+            throw new Error(
+                `The Ark Server URL expects ${info.network} but ${config.network} was configured`
             );
         }
+        const exitTimelock: RelativeTimelock = {
+            value: info.unilateralExitDelay,
+            type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+        };
+        const boardingTimelock: RelativeTimelock = {
+            value: info.boardingExitDelay,
+            type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
+        };
+        // Generate tapscripts for offchain and boarding address
+        const serverPubKey = hex.decode(info.pubkey).slice(1);
+        const bareVtxoTapscript = new DefaultVtxo.Script({
+            pubKey: pubkey,
+            serverPubKey,
+            csvTimelock: exitTimelock,
+        });
+        const boardingTapscript = new DefaultVtxo.Script({
+            pubKey: pubkey,
+            serverPubKey,
+            csvTimelock: boardingTimelock,
+        });
+
+        // Save tapscripts
+        const offchainTapscript = bareVtxoTapscript;
+
+        // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
+        const serverUnrollScript = CSVMultisigTapscript.encode({
+            timelock: exitTimelock,
+            pubkeys: [serverPubKey],
+        });
+
+        // parse the server forfeit address
+        // server is expecting funds to be sent to this address
+        const forfeitAddress = Address(network).decode(info.forfeitAddress);
+        const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
         return new Wallet(
             config.identity,
             network,
             onchainProvider,
-            onchainP2TR
+            arkProvider,
+            indexerProvider,
+            serverPubKey,
+            offchainTapscript,
+            boardingTapscript,
+            serverUnrollScript,
+            forfeitOutputScript
         );
-    }
-
-    get onchainAddress(): string {
-        return this.onchainP2TR.address || "";
     }
 
     get boardingAddress(): ArkAddress {
@@ -210,30 +185,14 @@ export class Wallet implements IWallet {
     }
 
     getAddress(): Promise<Addresses> {
-        const addressInfo: Addresses = {
-            onchain: this.onchainAddress,
+        return Promise.resolve({
+            offchain: this.offchainAddress.encode(),
+            boarding: this.boardingOnchainAddress,
             bip21: BIP21.create({
-                address: this.onchainAddress,
+                address: this.boardingOnchainAddress,
+                ark: this.offchainAddress.encode(),
             }),
-        };
-
-        // Only include Ark-related fields if Ark provider is configured and address is available
-        if (
-            this.arkProvider &&
-            this.offchainTapscript &&
-            this.boardingTapscript &&
-            this.arkServerPublicKey
-        ) {
-            const offchainAddress = this.offchainAddress.encode();
-            addressInfo.offchain = offchainAddress;
-            addressInfo.bip21 = BIP21.create({
-                address: this.onchainP2TR.address,
-                ark: offchainAddress,
-            });
-            addressInfo.boarding = this.boardingOnchainAddress;
-        }
-
-        return Promise.resolve(addressInfo);
+        });
     }
 
     getAddressInfo(): Promise<AddressInfo> {
@@ -268,74 +227,33 @@ export class Wallet implements IWallet {
     }
 
     async getBalance(): Promise<WalletBalance> {
-        // Get onchain coins
-        const coins = await this.getCoins();
-        const onchainConfirmed = coins
-            .filter((coin) => coin.status.confirmed)
-            .reduce((sum, coin) => sum + coin.value, 0);
-        const onchainUnconfirmed = coins
-            .filter((coin) => !coin.status.confirmed)
-            .reduce((sum, coin) => sum + coin.value, 0);
-        const onchainTotal = onchainConfirmed + onchainUnconfirmed;
-
         // Get offchain coins if Indexer provider is configured
-        let offchainSettled = 0;
-        let offchainPending = 0;
-        let offchainSwept = 0;
-        if (this.indexerProvider) {
-            const vtxos = await this.getVtxos();
-            offchainSettled = vtxos
-                .filter((coin) => coin.virtualStatus.state === "settled")
-                .reduce((sum, coin) => sum + coin.value, 0);
-            offchainPending = vtxos
-                .filter((coin) => coin.virtualStatus.state === "pending")
-                .reduce((sum, coin) => sum + coin.value, 0);
-            offchainSwept = vtxos
-                .filter(
-                    (coin) =>
-                        isSpendable(coin) &&
-                        coin.virtualStatus.state === "swept"
-                )
-                .reduce((sum, coin) => sum + coin.value, 0);
-        }
-        const offchainTotal = offchainSettled + offchainPending + offchainSwept;
+        let settled = 0;
+        let preconfirmed = 0;
+        let swept = 0;
+        const vtxos = await this.getVtxos();
+        settled = vtxos
+            .filter((coin) => coin.virtualStatus.state === "settled")
+            .reduce((sum, coin) => sum + coin.value, 0);
+        preconfirmed = vtxos
+            .filter((coin) => coin.virtualStatus.state === "pending")
+            .reduce((sum, coin) => sum + coin.value, 0);
+        swept = vtxos
+            .filter(
+                (coin) =>
+                    isSpendable(coin) && coin.virtualStatus.state === "swept"
+            )
+            .reduce((sum, coin) => sum + coin.value, 0);
 
         return {
-            onchain: {
-                confirmed: onchainConfirmed,
-                unconfirmed: onchainUnconfirmed,
-                total: onchainTotal,
-            },
-            offchain: {
-                swept: offchainSwept,
-                settled: offchainSettled,
-                pending: offchainPending,
-                total: offchainTotal,
-            },
-            total: onchainTotal + offchainTotal,
+            swept,
+            settled,
+            preconfirmed,
+            total: settled + preconfirmed + swept,
         };
     }
 
-    async getCoins(): Promise<Coin[]> {
-        // TODO: add caching logic to lower the number of requests to provider
-        const address = await this.getAddress();
-        return this.onchainProvider.getCoins(address.onchain);
-    }
-
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        if (
-            !this.arkProvider ||
-            !this.indexerProvider ||
-            !this.offchainTapscript
-        ) {
-            return [];
-        }
-
-        const address = await this.getAddress();
-        if (!address.offchain) {
-            return [];
-        }
-
         const spendableVtxos = await this.getVirtualCoins(filter);
         const encodedOffchainTapscript = this.offchainTapscript.encode();
         const forfeit = this.offchainTapscript.forfeit();
@@ -352,14 +270,7 @@ export class Wallet implements IWallet {
     private async getVirtualCoins(
         filter: GetVtxosFilter = { withSpendableInSettlement: true }
     ): Promise<VirtualCoin[]> {
-        if (!this.indexerProvider) {
-            return [];
-        }
-
         const address = await this.getAddress();
-        if (!address.offchain) {
-            return [];
-        }
 
         const getVtxosArgs = {
             addresses: [address.offchain],
@@ -376,10 +287,6 @@ export class Wallet implements IWallet {
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        if (!this.indexerProvider) {
-            return [];
-        }
-
         const vtxos = await this.indexerProvider.getVtxos({
             addresses: [this.offchainAddress.encode()],
         });
@@ -518,96 +425,13 @@ export class Wallet implements IWallet {
         }));
     }
 
-    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
+    async send(params: SendParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }
 
-        // If Ark is configured and amount is suitable, send via offchain
-        if (this.arkProvider && this.isOffchainSuitable(params.address)) {
-            return this.sendOffchain(params);
-        }
-
-        if (params.amount < Wallet.DUST_AMOUNT) {
-            throw new Error("Amount is below dust limit");
-        }
-
-        // Otherwise, send via onchain
-        return this.sendOnchain(params);
-    }
-
-    private isOffchainSuitable(address: string): boolean {
-        try {
-            ArkAddress.decode(address);
-            return true;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    private async sendOnchain(params: SendBitcoinParams): Promise<string> {
-        const coins = await this.getCoins();
-        const feeRate = params.feeRate || Wallet.FEE_RATE;
-
-        // Ensure fee is an integer by rounding up
-        const estimatedFee = Math.ceil(174 * feeRate);
-        const totalNeeded = params.amount + estimatedFee;
-
-        // Select coins
-        const selected = selectCoins(coins, totalNeeded);
-        if (!selected.inputs) {
-            throw new Error("Insufficient funds");
-        }
-
-        // Create transaction
-        let tx = new Transaction();
-
-        // Add inputs
-        for (const input of selected.inputs) {
-            tx.addInput({
-                txid: input.txid,
-                index: input.vout,
-                witnessUtxo: {
-                    script: this.onchainP2TR.script,
-                    amount: BigInt(input.value),
-                },
-                tapInternalKey: this.onchainP2TR.tapInternalKey,
-            });
-        }
-
-        // Add payment output
-        tx.addOutputAddress(
-            params.address,
-            BigInt(params.amount),
-            this.network
-        );
-        // Add change output if needed
-        if (selected.changeAmount > 0) {
-            tx.addOutputAddress(
-                this.onchainAddress,
-                BigInt(selected.changeAmount),
-                this.network
-            );
-        }
-
-        // Sign inputs and Finalize
-        tx = await this.identity.sign(tx);
-        tx.finalize();
-
-        // Broadcast
-        const txid = await this.onchainProvider.broadcastTransaction(tx.hex);
-        return txid;
-    }
-
-    private async sendOffchain(params: SendBitcoinParams): Promise<string> {
-        if (
-            !this.arkProvider ||
-            !this.indexerProvider ||
-            !this.offchainAddress ||
-            !this.offchainTapscript ||
-            !this.serverUnrollScript
-        ) {
-            throw new Error("wallet not initialized");
+        if (!isValidArkAddress(params.address)) {
+            throw new Error("Invalid Ark address " + params.address);
         }
 
         // recoverable and subdust coins can't be spent in offchain tx
@@ -1424,4 +1248,13 @@ function getSequence(bip322Input: ExtendedCoin): number | undefined {
     } catch {}
 
     return sequence;
+}
+
+function isValidArkAddress(address: string): boolean {
+    try {
+        ArkAddress.decode(address);
+        return true;
+    } catch (e) {
+        return false;
+    }
 }

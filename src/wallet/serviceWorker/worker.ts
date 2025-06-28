@@ -247,7 +247,7 @@ export class Worker {
         }
 
         try {
-            const txid = await this.wallet.sendBitcoin(message.params);
+            const txid = await this.wallet.send(message.params);
             event.source?.postMessage(
                 Response.sendBitcoinSuccess(message.id, txid)
             );
@@ -349,32 +349,23 @@ export class Worker {
         }
 
         try {
-            const coins = await this.wallet.getCoins();
-            const onchainConfirmed = coins
-                .filter((coin) => coin.status.confirmed)
-                .reduce((sum, coin) => sum + coin.value, 0);
-            const onchainUnconfirmed = coins
-                .filter((coin) => !coin.status.confirmed)
-                .reduce((sum, coin) => sum + coin.value, 0);
-            const onchainTotal = onchainConfirmed + onchainUnconfirmed;
-
             const spendableVtxos =
                 await this.vtxoRepository.getSpendableVtxos();
-            const offchainSettledBalance = spendableVtxos.reduce(
+            const settled = spendableVtxos.reduce(
                 (sum, vtxo) =>
                     vtxo.virtualStatus.state === "settled"
                         ? sum + vtxo.value
                         : sum,
                 0
             );
-            const offchainPendingBalance = spendableVtxos.reduce(
+            const preconfirmed = spendableVtxos.reduce(
                 (sum, vtxo) =>
                     vtxo.virtualStatus.state === "pending"
                         ? sum + vtxo.value
                         : sum,
                 0
             );
-            const offchainSweptBalance = spendableVtxos.reduce(
+            const swept = spendableVtxos.reduce(
                 (sum, vtxo) =>
                     vtxo.virtualStatus.state === "swept"
                         ? sum + vtxo.value
@@ -382,60 +373,16 @@ export class Worker {
                 0
             );
 
-            const offchainTotal =
-                offchainSettledBalance +
-                offchainPendingBalance +
-                offchainSweptBalance;
-
             event.source?.postMessage(
                 Response.balance(message.id, {
-                    onchain: {
-                        confirmed: onchainConfirmed,
-                        unconfirmed: onchainUnconfirmed,
-                        total: onchainTotal,
-                    },
-                    offchain: {
-                        swept: offchainSweptBalance,
-                        settled: offchainSettledBalance,
-                        pending: offchainPendingBalance,
-                        total: offchainTotal,
-                    },
-                    total: onchainTotal + offchainTotal,
+                    swept,
+                    settled,
+                    preconfirmed,
+                    total: settled + preconfirmed + swept,
                 })
             );
         } catch (error: unknown) {
             console.error("Error getting balance:", error);
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            event.source?.postMessage(Response.error(message.id, errorMessage));
-        }
-    }
-
-    private async handleGetCoins(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isGetCoins(message)) {
-            console.error("Invalid GET_COINS message format", message);
-            event.source?.postMessage(
-                Response.error(message.id, "Invalid GET_COINS message format")
-            );
-            return;
-        }
-
-        if (!this.wallet) {
-            console.error("Wallet not initialized");
-            event.source?.postMessage(
-                Response.error(message.id, "Wallet not initialized")
-            );
-            return;
-        }
-
-        try {
-            const coins = await this.wallet.getCoins();
-            event.source?.postMessage(Response.coins(message.id, coins));
-        } catch (error: unknown) {
-            console.error("Error getting coins:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
@@ -652,10 +599,6 @@ export class Worker {
             }
             case "GET_BALANCE": {
                 await this.handleGetBalance(event);
-                break;
-            }
-            case "GET_COINS": {
-                await this.handleGetCoins(event);
                 break;
             }
             case "GET_VTXOS": {

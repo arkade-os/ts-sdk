@@ -1,6 +1,5 @@
 import {
     WalletBalance,
-    Coin,
     VirtualCoin,
     ArkTransaction,
     AddressInfo as WalletAddressInfo,
@@ -17,7 +16,6 @@ export namespace Response {
         | "ADDRESS"
         | "ADDRESS_INFO"
         | "BALANCE"
-        | "COINS"
         | "VTXOS"
         | "VIRTUAL_COINS"
         | "BOARDING_UTXOS"
@@ -148,25 +146,6 @@ export namespace Response {
             type: "BALANCE",
             success: true,
             balance,
-            id,
-        };
-    }
-
-    export interface Coins extends Base {
-        type: "COINS";
-        success: true;
-        coins: Coin[];
-    }
-
-    export function isCoins(response: Base): response is Coins {
-        return response.type === "COINS" && response.success === true;
-    }
-
-    export function coins(id: string, coins: Coin[]): Coins {
-        return {
-            type: "COINS",
-            success: true,
-            coins,
             id,
         };
     }

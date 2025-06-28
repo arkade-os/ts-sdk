@@ -8,29 +8,21 @@ import { Bytes } from "@scure/btc-signer/utils";
 export interface WalletConfig {
     network: NetworkName;
     identity: Identity;
+    arkServerUrl: string;
     esploraUrl?: string;
-    arkServerUrl?: string;
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
 }
 
 export interface WalletBalance {
-    onchain: {
-        confirmed: number;
-        unconfirmed: number;
-        total: number;
-    };
-    offchain: {
-        swept: number;
-        settled: number;
-        pending: number;
-        total: number;
-    };
+    swept: number;
+    settled: number;
+    preconfirmed: number;
     total: number;
 }
 
-export interface SendBitcoinParams {
+export interface SendParams {
     address: string;
     amount: number;
     feeRate?: number;
@@ -63,9 +55,8 @@ export interface AddressInfo {
 }
 
 export interface Addresses {
-    onchain: string;
-    offchain?: string;
-    boarding?: string;
+    offchain: string;
+    boarding: string;
     bip21: string;
 }
 
@@ -156,13 +147,12 @@ export interface IWallet {
     getAddress(): Promise<Addresses>;
     getAddressInfo(): Promise<AddressInfo>;
     getBalance(): Promise<WalletBalance>;
-    getCoins(): Promise<Coin[]>;
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
     // Transaction operations
-    sendBitcoin(params: SendBitcoinParams): Promise<string>;
+    send(params: SendParams): Promise<string>;
     settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
