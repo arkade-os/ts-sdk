@@ -62,10 +62,10 @@ import {
     Chain,
     ChainedTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Connector,
 } from "./providers/indexer";
 
 export {
@@ -157,8 +157,8 @@ export type {
     Chain,
     ChainedTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Connector,
 };

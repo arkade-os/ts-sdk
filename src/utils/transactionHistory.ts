@@ -13,7 +13,7 @@ function findVtxosSpentInSettlement(
 
     return vtxos.filter((v) => {
         if (!v.spentBy) return false;
-        return v.spentBy === vtxo.virtualStatus.batchTxID;
+        return vtxo.virtualStatus.commitmentTxIds?.includes(v.spentBy) ?? false;
     });
 }
 
@@ -40,7 +40,7 @@ function findVtxosResultedFromSpentBy(
     return vtxos.filter((v) => {
         if (
             v.virtualStatus.state !== "pending" &&
-            v.virtualStatus.batchTxID === spentBy
+            v.virtualStatus.commitmentTxIds?.includes(spentBy)
         ) {
             return true;
         }
@@ -83,7 +83,10 @@ export function vtxosToTxs(
     for (const vtxo of [...spendable, ...spent]) {
         if (
             vtxo.virtualStatus.state !== "pending" &&
-            boardingRounds.has(vtxo.virtualStatus.batchTxID || "")
+            vtxo.virtualStatus.commitmentTxIds &&
+            vtxo.virtualStatus.commitmentTxIds.some((txid) =>
+                boardingRounds.has(txid)
+            )
         ) {
             continue;
         }
@@ -103,7 +106,7 @@ export function vtxosToTxs(
         }
 
         const txKey: TxKey = {
-            roundTxid: vtxo.virtualStatus.batchTxID || "",
+            commitmentTxid: vtxo.virtualStatus.commitmentTxIds?.[0] || "",
             boardingTxid: "",
             redeemTxid: "",
         };
@@ -155,7 +158,7 @@ export function vtxosToTxs(
         const vtxo = getVtxo(resultedVtxos, vtxos);
 
         const txKey: TxKey = {
-            roundTxid: vtxo.virtualStatus.batchTxID || "",
+            commitmentTxid: vtxo.virtualStatus.commitmentTxIds?.[0] || "",
             boardingTxid: "",
             redeemTxid: "",
         };

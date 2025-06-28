@@ -96,6 +96,67 @@ describe("Wallet SDK Integration Tests", () => {
     });
 
     it(
+        "should settle 2 VTXOs in the same round",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestWallet();
+            const bob = await createTestWallet();
+
+            const aliceOffchainAddress = (await alice.wallet.getAddress())
+                .offchain;
+            expect(aliceOffchainAddress).toBeDefined();
+
+            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+            expect(bobOffchainAddress).toBeDefined();
+
+            const fundAmount = 1000;
+            execSync(
+                `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+            );
+            execSync(
+                `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`
+            );
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            const virtualCoins = await alice.wallet.getVtxos();
+            expect(virtualCoins).toHaveLength(1);
+            const aliceVtxo = virtualCoins[0];
+            expect(aliceVtxo.txid).toBeDefined();
+
+            const bobVirtualCoins = await bob.wallet.getVtxos();
+            expect(bobVirtualCoins).toHaveLength(1);
+            const bobVtxo = bobVirtualCoins[0];
+            expect(bobVtxo.txid).toBeDefined();
+
+            const [aliceSettleTxid, bobSettleTxid] = await Promise.all([
+                alice.wallet.settle({
+                    inputs: [aliceVtxo],
+                    outputs: [
+                        {
+                            address: aliceOffchainAddress!,
+                            amount: BigInt(fundAmount),
+                        },
+                    ],
+                }),
+                bob.wallet.settle({
+                    inputs: [bobVtxo],
+                    outputs: [
+                        {
+                            address: bobOffchainAddress!,
+                            amount: BigInt(fundAmount),
+                        },
+                    ],
+                }),
+            ]);
+
+            expect(aliceSettleTxid).toBeDefined();
+            expect(bobSettleTxid).toBeDefined();
+            expect(aliceSettleTxid).toBe(bobSettleTxid);
+        }
+    );
+
+    it(
         "should perform a complete onchain roundtrip payment",
         { timeout: 30000 },
         async () => {
@@ -481,8 +542,41 @@ describe("Wallet SDK Integration Tests", () => {
         await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
     });
 
+    it("should redeem a note", { timeout: 60000 }, async () => {
+        // Create fresh wallet instance for this test
+        const alice = await createTestWallet();
+        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        expect(aliceOffchainAddress).toBeDefined();
+
+        const fundAmount = 1000;
+
+        const arknote = execSync(
+            `${arkdExec} arkd wallet note --amount ${fundAmount}`
+        )
+            .toString()
+            .replace(/\n/g, "");
+
+        const settleTxid = await alice.wallet.settle({
+            inputs: [ArkNote.fromString(arknote)],
+            outputs: [
+                {
+                    address: aliceOffchainAddress!,
+                    amount: BigInt(fundAmount),
+                },
+            ],
+        });
+
+        expect(settleTxid).toBeDefined();
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const virtualCoins = await alice.wallet.getVtxos();
+        expect(virtualCoins).toHaveLength(1);
+        expect(virtualCoins[0].value).toBe(fundAmount);
+    });
+
     it.skip(
-        "should be able to unilateral exit VTXO",
+        "should perform a unilateral exit",
         { timeout: 60000 },
         async () => {
             const alice = await createTestWallet();
@@ -521,37 +615,32 @@ describe("Wallet SDK Integration Tests", () => {
         }
     );
 
-    it("should redeem a note", { timeout: 60000 }, async () => {
-        // Create fresh wallet instance for this test
+    it("should perform a collaborative exit", { timeout: 60000 }, async () => {
         const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
-        expect(aliceOffchainAddress).toBeDefined();
+        const aliceAddresses = await alice.wallet.getAddress();
 
-        const fundAmount = 1000;
+        // faucet offchain address
+        const fundAmount = 10_000;
+        execSync(
+            `${arkdExec} ark send --to ${aliceAddresses.offchain} --amount ${fundAmount} --password secret`
+        );
 
-        const arknote = execSync(
-            `${arkdExec} arkd wallet note --amount ${fundAmount}`
-        )
-            .toString()
-            .replace(/\n/g, "");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
-        const settleTxid = await alice.wallet.settle({
-            inputs: [ArkNote.fromString(arknote)],
+        const vtxos = await alice.wallet.getVtxos();
+        expect(vtxos).toHaveLength(1);
+
+        const exitTxid = await alice.wallet.settle({
+            inputs: vtxos,
             outputs: [
                 {
-                    address: aliceOffchainAddress!,
+                    address: aliceAddresses.onchain,
                     amount: BigInt(fundAmount),
                 },
             ],
         });
 
-        expect(settleTxid).toBeDefined();
-
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        const virtualCoins = await alice.wallet.getVtxos();
-        expect(virtualCoins).toHaveLength(1);
-        expect(virtualCoins[0].value).toBe(fundAmount);
+        expect(exitTxid).toBeDefined();
     });
 
     it("should settle a recoverable VTXO", { timeout: 60000 }, async () => {

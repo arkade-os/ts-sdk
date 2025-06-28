@@ -10,18 +10,21 @@ describe("ArkAddress", () => {
                 // Test decoding
                 const addr = ArkAddress.decode(fixture.addr);
 
-                // Check HRP is valid
-                expect(["ark", "tark"]).toContain(addr.hrp);
-
                 // Check server public key matches expected
                 expect(hex.encode(addr.serverPubKey)).toBe(
                     fixture.expectedServerKey.slice(2)
                 ); // Remove '02' prefix
 
                 // Check VTXO taproot key matches expected
-                expect(hex.encode(addr.tweakedPubKey)).toBe(
+                expect(hex.encode(addr.vtxoTaprootKey)).toBe(
                     fixture.expectedUserKey.slice(2)
                 ); // Remove '02' prefix
+
+                // Check version matches expected
+                expect(addr.version).toBe(fixture.expectedVersion);
+
+                // Check prefix matches expected
+                expect(addr.hrp).toBe(fixture.expectedPrefix);
 
                 // Test encoding
                 const encoded = addr.encode();

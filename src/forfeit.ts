@@ -1,61 +1,29 @@
-import { SigHash, Transaction } from "@scure/btc-signer";
-import { Outpoint } from "./wallet";
+import { Transaction } from "@scure/btc-signer";
 import { P2A } from "./utils/anchor";
+import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
 
-interface ForfeitTxParams {
-    connectorInput: Outpoint;
-    vtxoInput: Outpoint;
-    vtxoAmount: bigint;
-    connectorAmount: bigint;
-    vtxoPkScript: Uint8Array;
-    connectorPkScript: Uint8Array;
-    serverPkScript: Uint8Array;
-    txLocktime?: number;
-}
-
-export function buildForfeitTx({
-    connectorInput,
-    vtxoInput,
-    vtxoAmount,
-    connectorAmount,
-    vtxoPkScript,
-    connectorPkScript,
-    serverPkScript,
-    txLocktime,
-}: ForfeitTxParams): Transaction {
+export function buildForfeitTx(
+    inputs: TransactionInputUpdate[],
+    forfeitPkScript: Uint8Array,
+    txLocktime?: number
+): Transaction {
     const tx = new Transaction({
         version: 3,
         lockTime: txLocktime,
     });
 
-    // Add connector input
-    tx.addInput({
-        txid: connectorInput.txid,
-        index: connectorInput.vout,
-        witnessUtxo: {
-            script: connectorPkScript,
-            amount: connectorAmount,
-        },
-        sequence: 0xffffffff,
-    });
-
-    // Add VTXO input
-    tx.addInput({
-        txid: vtxoInput.txid,
-        index: vtxoInput.vout,
-        witnessUtxo: {
-            script: vtxoPkScript,
-            amount: vtxoAmount,
-        },
-        sequence: txLocktime ? 0xfffffffe : 0xffffffff, // MAX_SEQUENCE - 1 if locktime is set
-        sighashType: SigHash.DEFAULT,
-    });
-
-    const amount = BigInt(vtxoAmount) + BigInt(connectorAmount);
+    let amount = 0n;
+    for (const input of inputs) {
+        if (!input.witnessUtxo) {
+            throw new Error("input needs witness utxo");
+        }
+        amount += input.witnessUtxo.amount;
+        tx.addInput(input);
+    }
 
     // Add main output to server
     tx.addOutput({
-        script: serverPkScript,
+        script: forfeitPkScript,
         amount,
     });
 
