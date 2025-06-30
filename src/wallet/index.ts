@@ -22,7 +22,7 @@ export interface WalletBalance {
     total: number;
 }
 
-export interface SendParams {
+export interface SendBitcoinParams {
     address: string;
     amount: number;
     feeRate?: number;
@@ -152,7 +152,7 @@ export interface IWallet {
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
     // Transaction operations
-    send(params: SendParams): Promise<string>;
+    sendBitcoin(params: SendBitcoinParams): Promise<string>;
     settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void

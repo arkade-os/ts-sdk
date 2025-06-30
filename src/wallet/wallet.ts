@@ -52,7 +52,7 @@ import {
     isSubdust,
     IWallet,
     Outpoint,
-    SendParams,
+    SendBitcoinParams,
     SettleParams,
     TxType,
     VirtualCoin,
@@ -425,7 +425,7 @@ export class Wallet implements IWallet {
         }));
     }
 
-    async send(params: SendParams): Promise<string> {
+    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }

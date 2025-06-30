@@ -1,5 +1,5 @@
 import { p2tr, P2TR } from "@scure/btc-signer/payment";
-import { Coin, SendParams } from ".";
+import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
@@ -52,7 +52,7 @@ export class OnchainWallet {
         return onchainTotal;
     }
 
-    async send(params: SendParams): Promise<string> {
+    async send(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }

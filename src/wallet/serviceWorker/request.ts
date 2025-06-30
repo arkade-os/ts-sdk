@@ -1,5 +1,5 @@
 import { NetworkName } from "../../networks";
-import { SettleParams, SendParams, Outpoint, GetVtxosFilter } from "..";
+import { SettleParams, SendBitcoinParams, Outpoint, GetVtxosFilter } from "..";
 
 export namespace Request {
     export type Type =
@@ -116,7 +116,7 @@ export namespace Request {
 
     export interface SendBitcoin extends Base {
         type: "SEND_BITCOIN";
-        params: SendParams;
+        params: SendBitcoinParams;
     }
 
     export function isSendBitcoin(message: Base): message is SendBitcoin {

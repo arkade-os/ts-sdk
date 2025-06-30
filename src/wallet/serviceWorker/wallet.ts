@@ -1,10 +1,9 @@
 import {
     IWallet,
     WalletBalance,
-    SendParams,
+    SendBitcoinParams,
     SettleParams,
     AddressInfo,
-    Coin,
     ArkTransaction,
     WalletConfig,
     ExtendedCoin,
@@ -251,23 +250,6 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async getCoins(): Promise<Coin[]> {
-        const message: Request.GetCoins = {
-            type: "GET_COINS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isCoins(response)) {
-                return response.coins;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get coins: ${error}`);
-        }
-    }
-
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
@@ -303,7 +285,7 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async send(params: SendParams): Promise<string> {
+    async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         const message: Request.SendBitcoin = {
             type: "SEND_BITCOIN",
             params,
