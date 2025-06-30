@@ -600,6 +600,13 @@ export class RestArkProvider implements ArkProvider {
                     buffer = lines[lines.length - 1];
                 }
             } catch (error) {
+                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                // these timeouts are set by builtin fetch function
+                if (isFetchTimeoutError(error)) {
+                    console.debug("Timeout error ignored");
+                    continue;
+                }
+
                 console.error("Address subscription error:", error);
                 throw error;
             }
@@ -925,4 +932,18 @@ namespace ProtoTypes {
         connectors: Tree;
         stage: string; // RoundStage as string
     }
+}
+
+function isFetchTimeoutError(err: any): boolean {
+    const checkError = (error: any) => {
+        return (
+            error instanceof Error &&
+            (error.name === "HeadersTimeoutError" ||
+                error.name === "BodyTimeoutError" ||
+                (error as any).code === "UND_ERR_HEADERS_TIMEOUT" ||
+                (error as any).code === "UND_ERR_BODY_TIMEOUT")
+        );
+    };
+
+    return checkError(err) || checkError((err as any).cause);
 }
