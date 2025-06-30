@@ -135,7 +135,7 @@ export type {
     ExtendedCoin,
     ExtendedVirtualCoin,
     WalletBalance,
-    SendBitcoinParams as SendParams,
+    SendBitcoinParams,
     Recipient,
     SettleParams,
     VtxoTaprootAddress,
