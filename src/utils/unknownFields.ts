@@ -1,50 +1,142 @@
-import { RawWitness, Transaction } from "@scure/btc-signer";
+import * as bip68 from "bip68";
+import { RawWitness, ScriptNum, Transaction } from "@scure/btc-signer";
+import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
 
-const ARK_UNKNOWN_KEY_TYPE = 255;
+// Key values for ark psbt fields
+export enum ArkPsbtFieldKey {
+    VtxoTaprootTree = "taptree",
+    VtxoTreeExpiry = "expiry",
+    Cosigner = "cosigner",
+    ConditionWitness = "condition",
+}
 
-// Constant for condition witness key prefix
-export const CONDITION_WITNESS_KEY_PREFIX = new TextEncoder().encode(
-    "condition"
+// Every ark psbt field has key type 255
+export const ArkPsbtFieldKeyType = 255;
+
+export interface ArkPsbtFieldCoder<T> {
+    key: ArkPsbtFieldKey;
+    encode: (
+        value: T
+    ) => NonNullable<TransactionInputUpdate["unknown"]>[number];
+    decode: (
+        value: NonNullable<TransactionInputUpdate["unknown"]>[number]
+    ) => T | null;
+}
+
+// setArkPsbtField appends a new unknown field to the input at inputIndex
+export function setArkPsbtField<T>(
+    tx: Transaction,
+    inputIndex: number,
+    coder: ArkPsbtFieldCoder<T>,
+    value: T
+): void {
+    tx.updateInput(inputIndex, {
+        unknown: [
+            ...(tx.getInput(inputIndex)?.unknown ?? []),
+            coder.encode(value),
+        ],
+    });
+}
+
+// getArkPsbtFields returns all the values of the given coder for the input at inputIndex
+export function getArkPsbtFields<T>(
+    tx: Transaction,
+    inputIndex: number,
+    coder: ArkPsbtFieldCoder<T>
+): T[] {
+    const unknown = tx.getInput(inputIndex)?.unknown ?? [];
+
+    const fields: T[] = [];
+    for (const u of unknown) {
+        if (u[0].type !== ArkPsbtFieldKeyType) continue;
+        const v = coder.decode(u);
+        if (v) fields.push(v);
+    }
+    return fields;
+}
+
+// VtxoTaprootTree is set to pass all spending leaves of the vtxo input
+export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
+    key: ArkPsbtFieldKey.VtxoTaprootTree,
+    encode: (value) => [
+        {
+            type: 255,
+            key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTaprootTree],
+        },
+        value,
+    ],
+    decode: (value) => nullIfCatch(() => value[1]),
+};
+
+// ConditionWitness is set to pass the witness data used to finalize the conditionMultisigClosure
+export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
+    key: ArkPsbtFieldKey.ConditionWitness,
+    encode: (value) => [
+        {
+            type: 255,
+            key: encodedPsbtFieldKey[ArkPsbtFieldKey.ConditionWitness],
+        },
+        RawWitness.encode(value),
+    ],
+    decode: (value) => nullIfCatch(() => RawWitness.decode(value[1])),
+};
+
+// CosignerPublicKey is set on every TxGraph transactions to identify the musig2 public keys
+export const CosignerPublicKey: ArkPsbtFieldCoder<{
+    index: number;
+    key: Uint8Array;
+}> = {
+    key: ArkPsbtFieldKey.Cosigner,
+    encode: (value) => [
+        {
+            type: 255,
+            key: new Uint8Array([
+                ...encodedPsbtFieldKey[ArkPsbtFieldKey.Cosigner],
+                value.index,
+            ]),
+        },
+        value.key,
+    ],
+    decode: (unknown) =>
+        nullIfCatch(() => ({
+            index: unknown[0].key[unknown[0].key.length - 1],
+            key: unknown[1],
+        })),
+};
+
+// VtxoTreeExpiry is set to pass the expiry time of the input
+export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
+    type: "blocks" | "seconds";
+    value: bigint;
+}> = {
+    key: ArkPsbtFieldKey.VtxoTreeExpiry,
+    encode: (value) => [
+        { type: 255, key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTreeExpiry] },
+        ScriptNum(6, true).encode(value.value === 0n ? 0n : value.value),
+    ],
+    decode: (unknown) =>
+        nullIfCatch(() => {
+            const v = ScriptNum(6, true).decode(unknown[1]);
+            if (!v) return null;
+            const { blocks, seconds } = bip68.decode(Number(v));
+            return {
+                type: blocks ? "blocks" : "seconds",
+                value: BigInt(blocks ?? seconds ?? 0),
+            };
+        }),
+};
+
+const encodedPsbtFieldKey: Record<string, Uint8Array> = Object.fromEntries(
+    Object.values(ArkPsbtFieldKey).map((key) => [
+        key,
+        new TextEncoder().encode(key),
+    ])
 );
 
-export const VTXO_TAPROOT_TREE_KEY_PREFIX = new TextEncoder().encode("taptree");
-
-export function addVtxoTaprootTree(
-    inIndex: number,
-    tx: Transaction,
-    tapTree: Uint8Array
-): void {
-    tx.updateInput(inIndex, {
-        unknown: [
-            ...(tx.getInput(inIndex)?.unknown ?? []),
-            [
-                {
-                    type: ARK_UNKNOWN_KEY_TYPE,
-                    key: VTXO_TAPROOT_TREE_KEY_PREFIX,
-                },
-                tapTree,
-            ],
-        ],
-    });
-}
-
-export function addConditionWitness(
-    inIndex: number,
-    tx: Transaction,
-    witness: Uint8Array[]
-): void {
-    const witnessBytes = RawWitness.encode(witness);
-
-    tx.updateInput(inIndex, {
-        unknown: [
-            ...(tx.getInput(inIndex)?.unknown ?? []),
-            [
-                {
-                    type: ARK_UNKNOWN_KEY_TYPE,
-                    key: CONDITION_WITNESS_KEY_PREFIX,
-                },
-                witnessBytes,
-            ],
-        ],
-    });
-}
+const nullIfCatch = <T>(fn: () => T): T | null => {
+    try {
+        return fn();
+    } catch (err) {
+        return null;
+    }
+};

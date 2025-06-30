@@ -3,7 +3,8 @@ import { Transaction } from "@scure/btc-signer";
 import { base64 } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { aggregateKeys } from "../musig2";
-import { getCosignerKeys, TreeNode, TxTree, TxTreeError } from "./vtxoTree";
+import { TreeNode, TxTree, TxTreeError } from "./vtxoTree";
+import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
     new TxTreeError(`invalid settlement transaction: ${tx}`);
@@ -206,7 +207,11 @@ function validateNode(
         }
 
         // Get cosigner keys from input
-        const cosignerKeys = getCosignerKeys(childTx);
+        const cosignerKeys = getArkPsbtFields(
+            childTx,
+            0,
+            CosignerPublicKey
+        ).map((c) => c.key);
 
         // Aggregate keys
         const { finalKey } = aggregateKeys(cosignerKeys, true, {
