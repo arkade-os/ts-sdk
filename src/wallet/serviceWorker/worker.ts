@@ -2,7 +2,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { InMemoryKey } from "../../identity/inMemoryKey";
-import { isRecoverable, isSpendable, isSubdust, VtxoTaprootAddress } from "..";
+import { isSpendable, VtxoTaprootAddress } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -349,36 +349,59 @@ export class Worker {
         }
 
         try {
-            const spendableVtxos =
-                await this.vtxoRepository.getSpendableVtxos();
-            const settled = spendableVtxos.reduce(
-                (sum, vtxo) =>
-                    vtxo.virtualStatus.state === "settled"
-                        ? sum + vtxo.value
-                        : sum,
-                0
-            );
-            const preconfirmed = spendableVtxos.reduce(
-                (sum, vtxo) =>
-                    vtxo.virtualStatus.state === "pending"
-                        ? sum + vtxo.value
-                        : sum,
-                0
-            );
-            const swept = spendableVtxos.reduce(
-                (sum, vtxo) =>
-                    vtxo.virtualStatus.state === "swept"
-                        ? sum + vtxo.value
-                        : sum,
-                0
-            );
+            const [boardingUtxos, spendableVtxos, sweptVtxos] =
+                await Promise.all([
+                    this.wallet.getBoardingUtxos(),
+                    this.vtxoRepository.getSpendableVtxos(),
+                    this.vtxoRepository.getSweptVtxos(),
+                ]);
+
+            // boarding
+            let confirmed = 0;
+            let unconfirmed = 0;
+            for (const utxo of boardingUtxos) {
+                if (utxo.status.confirmed) {
+                    confirmed += utxo.value;
+                } else {
+                    unconfirmed += utxo.value;
+                }
+            }
+
+            // offchain
+            let settled = 0;
+            let preconfirmed = 0;
+            let recoverable = 0;
+            for (const vtxo of spendableVtxos) {
+                if (vtxo.virtualStatus.state === "settled") {
+                    settled += vtxo.value;
+                } else if (vtxo.virtualStatus.state === "pending") {
+                    preconfirmed += vtxo.value;
+                }
+            }
+            for (const vtxo of sweptVtxos) {
+                if (isSpendable(vtxo)) {
+                    recoverable += vtxo.value;
+                }
+            }
+
+            const totalBoarding = confirmed + unconfirmed;
+            const totalOffchain = settled + preconfirmed + recoverable;
 
             event.source?.postMessage(
                 Response.balance(message.id, {
-                    swept,
-                    settled,
-                    preconfirmed,
-                    total: settled + preconfirmed + swept,
+                    boarding: {
+                        confirmed,
+                        unconfirmed,
+                        total: totalBoarding,
+                    },
+                    offchain: {
+                        settled,
+                        preconfirmed,
+                        available: settled + preconfirmed,
+                        recoverable,
+                        total: totalOffchain,
+                    },
+                    total: totalBoarding + totalOffchain,
                 })
             );
         } catch (error: unknown) {

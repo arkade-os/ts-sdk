@@ -16,10 +16,19 @@ export interface WalletConfig {
 }
 
 export interface WalletBalance {
-    swept: number;
-    settled: number;
-    preconfirmed: number;
-    total: number;
+    boarding: {
+        confirmed: number;
+        unconfirmed: number;
+        total: number;
+    };
+    offchain: {
+        settled: number;
+        preconfirmed: number;
+        available: number; // settled + preconfirmed
+        recoverable: number; // subdust and (swept=true & unspent=true)
+        total: number; // available + recoverable
+    };
+    total: number; // onchain.total + offchain.total
 }
 
 export interface SendBitcoinParams {

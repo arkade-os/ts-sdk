@@ -56,7 +56,7 @@ describe("Wallet", () => {
             expect(balance).toBe(100000);
         });
 
-        it("should include virtual coins when ARK is configured", async () => {
+        it("should calculate balance from virtual coins", async () => {
             const mockServerResponse = {
                 vtxos: [
                     {
@@ -95,6 +95,10 @@ describe("Wallet", () => {
                 })
                 .mockResolvedValueOnce({
                     ok: true,
+                    json: () => Promise.resolve(mockUTXOs),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
                     json: () => Promise.resolve(mockServerResponse),
                 });
 
@@ -105,7 +109,13 @@ describe("Wallet", () => {
             });
 
             const balance = await wallet.getBalance();
-            expect(balance.settled).toBe(50000);
+            expect(balance.offchain.settled).toBe(50000);
+            expect(balance.boarding.total).toBe(100000);
+            expect(balance.offchain.preconfirmed).toBe(0);
+            expect(balance.offchain.available).toBe(50000);
+            expect(balance.offchain.recoverable).toBe(0);
+            expect(balance.offchain.total).toBe(50000);
+            expect(balance.total).toBe(150000);
         });
     });
 

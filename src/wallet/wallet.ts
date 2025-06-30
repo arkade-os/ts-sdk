@@ -227,29 +227,56 @@ export class Wallet implements IWallet {
     }
 
     async getBalance(): Promise<WalletBalance> {
-        // Get offchain coins if Indexer provider is configured
+        const [boardingUtxos, vtxos] = await Promise.all([
+            this.getBoardingUtxos(),
+            this.getVtxos(),
+        ]);
+
+        // boarding
+        let confirmed = 0;
+        let unconfirmed = 0;
+        for (const utxo of boardingUtxos) {
+            if (utxo.status.confirmed) {
+                confirmed += utxo.value;
+            } else {
+                unconfirmed += utxo.value;
+            }
+        }
+
+        // offchain
         let settled = 0;
         let preconfirmed = 0;
-        let swept = 0;
-        const vtxos = await this.getVtxos();
+        let recoverable = 0;
         settled = vtxos
             .filter((coin) => coin.virtualStatus.state === "settled")
             .reduce((sum, coin) => sum + coin.value, 0);
         preconfirmed = vtxos
             .filter((coin) => coin.virtualStatus.state === "pending")
             .reduce((sum, coin) => sum + coin.value, 0);
-        swept = vtxos
+        recoverable = vtxos
             .filter(
                 (coin) =>
                     isSpendable(coin) && coin.virtualStatus.state === "swept"
             )
             .reduce((sum, coin) => sum + coin.value, 0);
 
+        const totalBoarding = confirmed + unconfirmed;
+        const totalOffchain = settled + preconfirmed + recoverable;
+
         return {
-            swept,
-            settled,
-            preconfirmed,
-            total: settled + preconfirmed + swept,
+            boarding: {
+                confirmed,
+                unconfirmed,
+                total: totalBoarding,
+            },
+            offchain: {
+                settled,
+                preconfirmed,
+                available: settled + preconfirmed,
+                recoverable,
+                total: totalOffchain,
+            },
+            total: totalBoarding + totalOffchain,
         };
     }
 
