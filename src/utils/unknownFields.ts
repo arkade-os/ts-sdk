@@ -60,7 +60,7 @@ export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
     key: ArkPsbtFieldKey.VtxoTaprootTree,
     encode: (value) => [
         {
-            type: 255,
+            type: ArkPsbtFieldKeyType,
             key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTaprootTree],
         },
         value,
@@ -73,7 +73,7 @@ export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
     key: ArkPsbtFieldKey.ConditionWitness,
     encode: (value) => [
         {
-            type: 255,
+            type: ArkPsbtFieldKeyType,
             key: encodedPsbtFieldKey[ArkPsbtFieldKey.ConditionWitness],
         },
         RawWitness.encode(value),
@@ -89,7 +89,7 @@ export const CosignerPublicKey: ArkPsbtFieldCoder<{
     key: ArkPsbtFieldKey.Cosigner,
     encode: (value) => [
         {
-            type: 255,
+            type: ArkPsbtFieldKeyType,
             key: new Uint8Array([
                 ...encodedPsbtFieldKey[ArkPsbtFieldKey.Cosigner],
                 value.index,
@@ -111,7 +111,10 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
 }> = {
     key: ArkPsbtFieldKey.VtxoTreeExpiry,
     encode: (value) => [
-        { type: 255, key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTreeExpiry] },
+        {
+            type: ArkPsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkPsbtFieldKey.VtxoTreeExpiry],
+        },
         ScriptNum(6, true).encode(value.value === 0n ? 0n : value.value),
     ],
     decode: (unknown) =>
