@@ -4,32 +4,15 @@ export async function setupServiceWorker(path: string): Promise<ServiceWorker> {
         throw new Error("Service workers are not supported in this browser");
     }
 
-    // check for existing registration
-    const existingRegistration =
-        await navigator.serviceWorker.getRegistration(path);
-    let registration: ServiceWorkerRegistration;
-
-    if (existingRegistration) {
-        registration = existingRegistration;
-        // Force unregister and re-register to ensure we get the latest version
-        await existingRegistration.unregister();
-    }
-
-    registration = await navigator.serviceWorker.register(path);
+    const registration = await navigator.serviceWorker.register(path);
 
     // Handle updates
     registration.addEventListener("updatefound", () => {
         const newWorker = registration.installing;
         if (!newWorker) return;
-
-        newWorker.addEventListener("statechange", () => {
-            if (
-                newWorker.state === "activated" &&
-                navigator.serviceWorker.controller
-            ) {
-                console.info("Service worker activated, reloading...");
-                window.location.reload();
-            }
+        newWorker.addEventListener("activate", () => {
+            console.info("New service worker activated, reloading...");
+            window.location.reload();
         });
     });
 
