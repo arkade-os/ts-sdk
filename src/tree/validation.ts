@@ -4,6 +4,7 @@ import { base64 } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { aggregateKeys } from "../musig2";
 import { TxGraph } from "./txGraph";
+import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
     new Error(`invalid settlement transaction: ${tx}`);
@@ -130,13 +131,19 @@ export function validateVtxoTxGraph(
                 );
             }
 
-            const cosigners = getCosignerKeys(child.root);
+            const cosigners = getArkPsbtFields(
+                child.root,
+                0,
+                CosignerPublicKey
+            );
 
             if (cosigners.length === 0) {
                 throw ErrMissingCosignersPublicKeys;
             }
 
-            const { finalKey } = aggregateKeys(cosigners, true, {
+            const cosignerKeys = cosigners.map((c) => c.key);
+
+            const { finalKey } = aggregateKeys(cosignerKeys, true, {
                 taprootTweak: sweepTapTreeRoot,
             });
 
@@ -148,39 +155,4 @@ export function validateVtxoTxGraph(
             }
         }
     }
-}
-
-// Helper function to get cosigner keys from a transaction
-function getCosignerKeys(tx: Transaction): Uint8Array[] {
-    const keys: Uint8Array[] = [];
-
-    const input = tx.getInput(0);
-
-    if (!input.unknown) return keys;
-
-    for (const unknown of input.unknown) {
-        const ok = parsePrefixedCosignerKey(
-            new Uint8Array([unknown[0].type, ...unknown[0].key])
-        );
-
-        if (!ok) continue;
-
-        // Assuming the value is already a valid public key in compressed format
-        keys.push(unknown[1]);
-    }
-
-    return keys;
-}
-
-function parsePrefixedCosignerKey(key: Uint8Array): boolean {
-    const COSIGNER_KEY_PREFIX = new Uint8Array(
-        "cosigner".split("").map((c) => c.charCodeAt(0))
-    );
-
-    if (key.length < COSIGNER_KEY_PREFIX.length) return false;
-
-    for (let i = 0; i < COSIGNER_KEY_PREFIX.length; i++) {
-        if (key[i] !== COSIGNER_KEY_PREFIX[i]) return false;
-    }
-    return true;
 }

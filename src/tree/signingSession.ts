@@ -1,9 +1,9 @@
 import * as musig2 from "../musig2";
-import { getCosignerKeys } from "./unknownFields";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 import { randomPrivateKeyBytes, sha256x2 } from "@scure/btc-signer/utils";
+import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 import { TxGraph } from "./txGraph";
 
 export const ErrMissingVtxoGraph = new Error("missing vtxo graph");
@@ -118,7 +118,9 @@ export class TreeSignerSession implements SignerSession {
         const prevoutAmounts: bigint[] = [];
         const prevoutScripts: Uint8Array[] = [];
 
-        const cosigners = getCosignerKeys(g.root);
+        const cosigners = getArkPsbtFields(g.root, 0, CosignerPublicKey).map(
+            (c) => c.key
+        );
 
         const { finalKey } = musig2.aggregateKeys(cosigners, true, {
             taprootTweak: this.scriptRoot,
