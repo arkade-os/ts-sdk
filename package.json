@@ -75,7 +75,8 @@
     "prettier": "3.4.2",
     "rimraf": "^5.0.0",
     "typescript": "5.7.2",
-    "vitest": "2.1.9"
+    "vitest": "2.1.9",
+    "ws": "8.18.3"
   },
   "keywords": [
     "bitcoin",
