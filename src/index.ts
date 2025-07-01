@@ -27,6 +27,7 @@ import {
     Addresses,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
+import { TxGraph, TxGraphChunk } from "./tree/txGraph";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
@@ -69,10 +70,10 @@ import {
     Chain,
     ChainedTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Tx,
 } from "./providers/indexer";
 
 export {
@@ -135,6 +136,9 @@ export {
 
     // BIP322
     BIP322,
+
+    // TxGraph
+    TxGraph,
 };
 
 // Type exports
@@ -172,11 +176,14 @@ export type {
     Chain,
     ChainedTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Tx,
 
     // Ark PSBT fields
     ArkPsbtFieldCoder,
+
+    // TxGraph
+    TxGraphChunk,
 };
