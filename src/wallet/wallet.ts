@@ -1057,8 +1057,6 @@ export class Wallet implements IWallet {
         }
 
         if (this.indexerProvider && this.offchainAddress) {
-            const abortController = new AbortController();
-
             const aliceAddress = (await this.getAddress()).offchain;
             const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
 
@@ -1069,7 +1067,7 @@ export class Wallet implements IWallet {
 
             const subscription = this.indexerProvider.getSubscription(
                 subscriptionId,
-                abortController.signal
+                new AbortController().signal
             );
 
             const stopFunc = () =>
@@ -1081,6 +1079,15 @@ export class Wallet implements IWallet {
                 }
             }
         }
+    }
+
+    async waitForIncomingFunds(): Promise<Coin[]> {
+        return new Promise((resolve) => {
+            this.notifyIncomingFunds((coins, stopFunc) => {
+                resolve(coins);
+                stopFunc();
+            });
+        });
     }
 
     private async handleBatchStartedEvent(
