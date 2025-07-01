@@ -991,7 +991,7 @@ export class Wallet implements IWallet {
             throw new Error("No vtxos to exit");
         }
 
-        const trees = new Map<string, TxTree>();
+        // const trees = new Map<string, TxTree>();
         const transactions: string[] = [];
 
         // for (const vtxo of vtxos) {

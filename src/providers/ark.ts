@@ -1,5 +1,5 @@
 import { TreeNode, TxTree } from "../tree/vtxoTree";
-import { Outpoint, VirtualCoin } from "../wallet";
+import { Outpoint } from "../wallet";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 

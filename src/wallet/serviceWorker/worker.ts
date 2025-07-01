@@ -2,7 +2,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { InMemoryKey } from "../../identity/inMemoryKey";
-import { isRecoverable, isSpendable, isSubdust, VtxoTaprootAddress } from "..";
+import { isSpendable, VtxoTaprootAddress } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
