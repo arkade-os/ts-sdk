@@ -369,7 +369,7 @@ export class Worker {
             );
             const offchainPendingBalance = spendableVtxos.reduce(
                 (sum, vtxo) =>
-                    vtxo.virtualStatus.state === "pending"
+                    vtxo.virtualStatus.state === "preconfirmed"
                         ? sum + vtxo.value
                         : sum,
                 0
@@ -540,7 +540,7 @@ export class Worker {
         }
 
         try {
-            const { boardingTxs, roundsToIgnore } =
+            const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
                 await this.wallet.getBoardingTxs();
 
             const { spendable, spent } =
