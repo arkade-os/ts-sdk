@@ -63,8 +63,6 @@ import { TxTree } from "../tree/vtxoTree";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
-    // TODO get dust from ark server?
-    static DUST_AMOUNT = BigInt(546); // Bitcoin dust limit in satoshis = 546
     static FEE_RATE = 1; // sats/vbyte
 
     private constructor(
@@ -465,10 +463,6 @@ export class Wallet implements IWallet {
     ): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
-        }
-
-        if (params.amount < Wallet.DUST_AMOUNT) {
-            throw new Error("Amount is below dust limit");
         }
 
         // If Ark is configured and amount is suitable, send via offchain

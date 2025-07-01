@@ -167,20 +167,6 @@ describe("Wallet", () => {
             mockFetch.mockReset();
         });
 
-        it("should throw error when amount is less than dust", async () => {
-            const wallet = await Wallet.create({
-                network: "mutinynet",
-                identity: mockIdentity,
-            });
-
-            await expect(
-                wallet.sendBitcoin({
-                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                    amount: 100, // Less than dust
-                })
-            ).rejects.toThrow("Amount is below dust limit");
-        });
-
         it("should throw error when amount is negative", async () => {
             const wallet = await Wallet.create({
                 network: "mutinynet",
