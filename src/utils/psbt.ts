@@ -7,15 +7,18 @@ import {
     TapLeafScript,
     VtxoScript,
 } from "../script/base";
-import { addVtxoTaprootTree } from "./unknownFields";
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
-import { sha256x2 } from "@scure/btc-signer/utils";
+import { Bytes, sha256x2 } from "@scure/btc-signer/utils";
+import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 
 export type VirtualTxInput = {
+    // the script used to spend the vtxo
     tapLeafScript: TapLeafScript;
+    // the script used to spend the checkpoint vtxo, if not provided, fallback to tapLeafScript
+    checkpointTapLeafScript?: Bytes;
 } & EncodedVtxoScript &
     Pick<VirtualCoin, "txid" | "vout" | "value">;
 
@@ -91,8 +94,7 @@ function buildVirtualTx(
             tapLeafScript: [input.tapLeafScript],
         });
 
-        // add BIP371 encoded taproot tree to the unknown key field
-        addVtxoTaprootTree(i, tx, input.tapTree);
+        setArkPsbtField(tx, i, VtxoTaprootTree, input.tapTree);
     }
 
     for (const output of outputs) {
@@ -111,7 +113,8 @@ function buildCheckpointTx(
 ): { tx: Transaction; input: VirtualTxInput } {
     // create the checkpoint vtxo script from collaborative closure
     const collaborativeClosure = decodeTapscript(
-        scriptFromTapLeafScript(vtxo.tapLeafScript)
+        vtxo.checkpointTapLeafScript ??
+            scriptFromTapLeafScript(vtxo.tapLeafScript)
     );
 
     // create the checkpoint vtxo script combining collaborative closure and server unroll script

@@ -73,8 +73,9 @@ describe("Wallet", () => {
                         isSwept: false,
                         isRedeemed: false,
                         isSpent: false,
-                        commitmentTxid:
+                        commitmentTxids: [
                             "f3e437911673f477f314f8fc31eb08def6ccff9edcd0524c10bcf5fc05009d69",
+                        ],
                     },
                 ],
             };

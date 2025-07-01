@@ -27,6 +27,7 @@ import {
     Addresses,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
+import { TxGraph, TxGraphChunk } from "./tree/txGraph";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -45,8 +46,15 @@ import {
 } from "./script/tapscript";
 import { buildOffchainTx, VirtualTxInput, OffchainTx } from "./utils/psbt";
 import {
-    addConditionWitness,
-    CONDITION_WITNESS_KEY_PREFIX,
+    VtxoTaprootTree,
+    ConditionWitness,
+    getArkPsbtFields,
+    setArkPsbtField,
+    ArkPsbtFieldCoder,
+    ArkPsbtFieldKey,
+    ArkPsbtFieldKeyType,
+    CosignerPublicKey,
+    VtxoTreeExpiry,
 } from "./utils/unknownFields";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
@@ -63,10 +71,10 @@ import {
     Chain,
     ChainedTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Tx,
 } from "./providers/indexer";
 
 export {
@@ -106,9 +114,17 @@ export {
     ConditionMultisigTapscript,
     CLTVMultisigTapscript,
 
+    // Ark PSBT fields
+    ArkPsbtFieldKey,
+    ArkPsbtFieldKeyType,
+    setArkPsbtField,
+    getArkPsbtFields,
+    CosignerPublicKey,
+    VtxoTreeExpiry,
+
     // Utils
-    addConditionWitness,
-    CONDITION_WITNESS_KEY_PREFIX,
+    VtxoTaprootTree,
+    ConditionWitness,
     buildOffchainTx,
 
     // Arknote
@@ -122,6 +138,9 @@ export {
 
     // BIP322
     BIP322,
+
+    // TxGraph
+    TxGraph,
 };
 
 // Type exports
@@ -159,8 +178,14 @@ export type {
     Chain,
     ChainedTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Tx,
+
+    // Ark PSBT fields
+    ArkPsbtFieldCoder,
+
+    // TxGraph
+    TxGraphChunk,
 };

@@ -51,11 +51,9 @@ export interface CommitmentTx {
     totalOutputVtxos: number;
 }
 
-export interface Node {
+export interface Tx {
     txid: string;
-    parentTxid: string;
-    level: number;
-    levelIndex: number;
+    children: Record<string, string>;
 }
 
 export interface TxHistoryRecord {
@@ -80,7 +78,7 @@ export interface Vtxo {
     isRedeemed: boolean;
     isSpent: boolean;
     spentBy: string | null;
-    commitmentTxid: string;
+    commitmentTxids: string[];
 }
 
 export interface VtxoChain {
@@ -93,7 +91,7 @@ export interface IndexerProvider {
     getVtxoTree(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Node[]>;
+    ): Promise<Tx[]>;
     getVtxoTreeLeaves(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
@@ -102,7 +100,7 @@ export interface IndexerProvider {
     getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Node[]>;
+    ): Promise<Tx[]>;
     getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
@@ -156,7 +154,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getVtxoTree(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Node[]> {
+    ): Promise<Tx[]> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const params = new URLSearchParams();
         if (opts) {
@@ -173,7 +171,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
         }
         const data = await res.json();
-        if (!Response.isNodeArray(data.vtxoTree)) {
+        if (!Response.isTxsArray(data.vtxoTree)) {
             throw new Error("Invalid vtxo tree data received");
         }
         return data.vtxoTree;
@@ -223,7 +221,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Node[]> {
+    ): Promise<Tx[]> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
         const params = new URLSearchParams();
         if (opts) {
@@ -242,7 +240,7 @@ export class RestIndexerProvider implements IndexerProvider {
             );
         }
         const data = await res.json();
-        if (!Response.isNodeArray(data.connectors)) {
+        if (!Response.isTxsArray(data.connectors)) {
             throw new Error("Invalid commitment tx connectors data received");
         }
         return data.connectors;
@@ -563,7 +561,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         vout: vtxo.outpoint.vout,
         value: Number(vtxo.amount),
         status: {
-            confirmed: !!vtxo.commitmentTxid,
+            confirmed: !vtxo.isSwept && !vtxo.isPreconfirmed,
         },
         virtualStatus: {
             state: vtxo.isSwept
@@ -571,7 +569,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
                 : vtxo.isPreconfirmed
                   ? "pending"
                   : "settled",
-            batchTxID: vtxo.commitmentTxid,
+            commitmentTxIds: vtxo.commitmentTxids,
             batchExpiry: vtxo.expiresAt
                 ? Number(vtxo.expiresAt) * 1000
                 : undefined,
@@ -596,7 +594,7 @@ function convertTransaction(tx: TxHistoryRecord): ArkTransaction {
     return {
         key: {
             boardingTxid: "",
-            roundTxid: tx.commitmentTxid ?? "",
+            commitmentTxid: tx.commitmentTxid ?? "",
             redeemTxid: tx.virtualTxid ?? "",
         },
         amount: Number(tx.amount),
@@ -662,18 +660,18 @@ namespace Response {
         return Array.isArray(data) && data.every(isOutpoint);
     }
 
-    function isNode(data: any): data is Node {
+    function isTx(data: any): data is Tx {
         return (
             typeof data === "object" &&
             typeof data.txid === "string" &&
-            typeof data.parentTxid === "string" &&
-            typeof data.level === "number" &&
-            typeof data.levelIndex === "number"
+            typeof data.children === "object" &&
+            Object.values(data.children).every(isTxid) &&
+            Object.keys(data.children).every((k) => Number.isInteger(Number(k)))
         );
     }
 
-    export function isNodeArray(data: any): data is Node[] {
-        return Array.isArray(data) && data.every(isNode);
+    export function isTxsArray(data: any): data is Tx[] {
+        return Array.isArray(data) && data.every(isTx);
     }
 
     function isTxHistoryRecord(data: any): data is TxHistoryRecord {
@@ -696,7 +694,7 @@ namespace Response {
     }
 
     function isTxid(data: any): data is string {
-        return typeof data === "string";
+        return typeof data === "string" && data.length === 64;
     }
 
     export function isTxidArray(data: any): data is string[] {
@@ -718,7 +716,8 @@ namespace Response {
             typeof data.isSpent === "boolean" &&
             (typeof data.spentBy === "string" ||
                 typeof data.spentBy === "object") &&
-            typeof data.commitmentTxid === "string"
+            Array.isArray(data.commitmentTxids) &&
+            data.commitmentTxids.every(isTxid)
         );
     }
 

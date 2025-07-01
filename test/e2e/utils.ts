@@ -74,8 +74,6 @@ export async function createVtxo(
         throw new Error("No VTXOs found after onboarding transaction.");
     }
 
-    const vtxo = virtualCoins[0];
-
     const settleTxid = await alice.wallet.settle({
         inputs: virtualCoins,
         outputs: [

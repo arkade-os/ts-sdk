@@ -80,13 +80,15 @@ console.log('History:', history)
 
 // Example history entry:
 {
+  key: {
+    boardingTxid: '...', // for boarding transactions
+    commitmentTxid: '...', // for commitment transactions
+    redeemTxid: '...'    // for regular transactions
+  },
   type: TxType.TxReceived, // or TxType.TxSent
   amount: 50000,
   settled: true,
-  key: {
-    boardingTxid: '...', // for boarding transactions
-    redeemTxid: '...'    // for regular transactions
-  }
+  createdAt: 1234567890
 }
 ```
 
@@ -189,6 +191,21 @@ interface IWallet {
   }): Promise<string>;
 
   /** Get virtual UTXOs */
+  getVtxos(filter?: { withSpendableInSettlement?: boolean }): Promise<ExtendedVirtualCoin[]>;
+
+  /** Get boarding UTXOs */
+  getBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+  /** Settle transactions */
+  settle(params?: {
+    inputs: ExtendedCoin[];
+    outputs: {
+      address: string;
+      amount: bigint;
+    }[];
+  }, eventCallback?: (event: SettlementEvent) => void): Promise<string>;
+
+  /** Get virtual UTXOs */
   getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
 
   /** Get boarding UTXOs */
@@ -208,23 +225,28 @@ interface IWallet {
 
   /** Get transaction history */
   getTransactionHistory(): Promise<ArkTransaction[]>;
+
+  /** Exit vtxos unilaterally */
+  exit(outpoints?: Outpoint[]): Promise<void>;
 }
 
 /** Transaction types */
 enum TxType {
-  TxSent = 'sent',
-  TxReceived = 'received'
+  TxSent = 'SENT',
+  TxReceived = 'RECEIVED'
 }
 
 /** Transaction history entry */
 interface ArkTransaction {
+  key: {
+    boardingTxid: string;
+    commitmentTxid: string;
+    redeemTxid: string;
+  };
   type: TxType;
   amount: number;
   settled: boolean;
-  key: {
-    boardingTxid?: string;
-    redeemTxid?: string;
-  };
+  createdAt: number;
 }
 
 /** Virtual coin (off-chain UTXO) */
@@ -234,9 +256,9 @@ interface ExtendedVirtualCoin {
   value: number;
   virtualStatus: {
     state: 'pending' | 'settled' | 'swept' | 'spent';
-    batchTxID?: string;
-    batchExpiry?: number;
   };
+  spentBy?: string;
+  createdAt: Date;
 }
 
 /** Boarding UTXO */
