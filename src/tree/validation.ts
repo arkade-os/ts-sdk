@@ -20,13 +20,13 @@ export const ErrInvalidTaprootScript = new Error("invalid taproot script");
 export const ErrInvalidRoundTxOutputs = new Error(
     "invalid round transaction outputs"
 );
-export const ErrWrongRoundTxid = new Error("wrong round txid");
+export const ErrWrongCommitmentTxid = new Error("wrong commitment txid");
 export const ErrMissingCosignersPublicKeys = new Error(
     "missing cosigners public keys"
 );
 
-const SHARED_OUTPUT_INDEX = 0;
-const CONNECTORS_OUTPUT_INDEX = 1;
+const BATCH_OUTPUT_VTXO_INDEX = 0;
+const BATCH_OUTPUT_CONNECTORS_INDEX = 1;
 
 export function validateConnectorsTxGraph(
     settlementTxB64: string,
@@ -39,7 +39,7 @@ export function validateConnectorsTxGraph(
     const rootInput = connectorsGraph.root.getInput(0);
 
     const settlementTx = Transaction.fromPSBT(base64.decode(settlementTxB64));
-    if (settlementTx.outputsLength <= CONNECTORS_OUTPUT_INDEX)
+    if (settlementTx.outputsLength <= BATCH_OUTPUT_CONNECTORS_INDEX)
         throw ErrInvalidSettlementTxOutputs;
 
     const expectedRootTxid = hex.encode(
@@ -51,31 +51,30 @@ export function validateConnectorsTxGraph(
     if (hex.encode(rootInput.txid) !== expectedRootTxid)
         throw ErrWrongSettlementTxid;
 
-    if (rootInput.index !== CONNECTORS_OUTPUT_INDEX)
+    if (rootInput.index !== BATCH_OUTPUT_CONNECTORS_INDEX)
         throw ErrWrongSettlementTxid;
 }
 
-// ValidateVtxoTxGraph checks if the given vtxo graph is valid
-// roundTxid & roundTxIndex & roundTxAmount are used to validate the root input outpoint
-// serverPubkey & vtxoTreeExpiry are used to validate the sweep tapscript leaves
-// besides that, the function validates:
+// ValidateVtxoTxGraph checks if the given vtxo graph is valid.
+// The function validates:
 // - the number of nodes
 // - the number of leaves
-// - children coherence with parent
-// - every control block and taproot output scripts
-// - input and output amounts
+// - children coherence with parent.
+// - every control block and taproot output scripts.
+// - input and output amounts.
 export function validateVtxoTxGraph(
     graph: TxGraph,
     roundTransaction: Transaction,
     sweepTapTreeRoot: Uint8Array
 ): void {
-    if (roundTransaction.outputsLength < SHARED_OUTPUT_INDEX + 1) {
+    if (roundTransaction.outputsLength < BATCH_OUTPUT_VTXO_INDEX + 1) {
         throw ErrInvalidRoundTxOutputs;
     }
 
-    const roundTxAmount =
-        roundTransaction.getOutput(SHARED_OUTPUT_INDEX)?.amount;
-    if (!roundTxAmount) {
+    const batchOutputAmount = roundTransaction.getOutput(
+        BATCH_OUTPUT_VTXO_INDEX
+    )?.amount;
+    if (!batchOutputAmount) {
         throw ErrInvalidRoundTxOutputs;
     }
 
@@ -84,16 +83,16 @@ export function validateVtxoTxGraph(
     }
 
     const rootInput = graph.root.getInput(0);
-    const roundTxid = hex.encode(
+    const commitmentTxid = hex.encode(
         sha256x2(roundTransaction.toBytes(true)).reverse()
     );
 
     if (
         !rootInput.txid ||
-        hex.encode(rootInput.txid) !== roundTxid ||
-        rootInput.index !== SHARED_OUTPUT_INDEX
+        hex.encode(rootInput.txid) !== commitmentTxid ||
+        rootInput.index !== BATCH_OUTPUT_VTXO_INDEX
     ) {
-        throw ErrWrongRoundTxid;
+        throw ErrWrongCommitmentTxid;
     }
 
     let sumRootValue = 0n;
@@ -104,7 +103,7 @@ export function validateVtxoTxGraph(
         }
     }
 
-    if (sumRootValue !== roundTxAmount) {
+    if (sumRootValue !== batchOutputAmount) {
         throw ErrInvalidAmount;
     }
 
