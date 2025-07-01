@@ -6,12 +6,13 @@ import {
     TxType,
     VHTLC,
     Identity,
-    addConditionWitness,
     RestIndexerProvider,
     RestArkProvider,
     ArkNote,
     CSVMultisigTapscript,
     buildOffchainTx,
+    ConditionWitness,
+    setArkPsbtField,
 } from "../../src";
 import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -410,7 +411,7 @@ describe("Wallet SDK Integration Tests", () => {
         const bobVHTLCIdentity: Identity = {
             sign: async (tx: Transaction, inputIndexes?: number[]) => {
                 const cpy = tx.clone();
-                addConditionWitness(0, cpy, [preimage]);
+                setArkPsbtField(cpy, 0, ConditionWitness, [preimage]);
                 return bob.sign(cpy, inputIndexes);
             },
             xOnlyPublicKey: bob.xOnlyPublicKey,

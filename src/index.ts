@@ -44,8 +44,15 @@ import {
 } from "./script/tapscript";
 import { buildOffchainTx, VirtualTxInput, OffchainTx } from "./utils/psbt";
 import {
-    addConditionWitness,
-    CONDITION_WITNESS_KEY_PREFIX,
+    VtxoTaprootTree,
+    ConditionWitness,
+    getArkPsbtFields,
+    setArkPsbtField,
+    ArkPsbtFieldCoder,
+    ArkPsbtFieldKey,
+    ArkPsbtFieldKeyType,
+    CosignerPublicKey,
+    VtxoTreeExpiry,
 } from "./utils/unknownFields";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
@@ -104,9 +111,17 @@ export {
     ConditionMultisigTapscript,
     CLTVMultisigTapscript,
 
+    // Ark PSBT fields
+    ArkPsbtFieldKey,
+    ArkPsbtFieldKeyType,
+    setArkPsbtField,
+    getArkPsbtFields,
+    CosignerPublicKey,
+    VtxoTreeExpiry,
+
     // Utils
-    addConditionWitness,
-    CONDITION_WITNESS_KEY_PREFIX,
+    VtxoTaprootTree,
+    ConditionWitness,
     buildOffchainTx,
 
     // Arknote
@@ -161,4 +176,7 @@ export type {
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+
+    // Ark PSBT fields
+    ArkPsbtFieldCoder,
 };

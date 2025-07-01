@@ -7,12 +7,12 @@ import {
     TapLeafScript,
     VtxoScript,
 } from "../script/base";
-import { addVtxoTaprootTree } from "./unknownFields";
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { Bytes, sha256x2 } from "@scure/btc-signer/utils";
+import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 
 export type VirtualTxInput = {
     // the script used to spend the vtxo
@@ -94,8 +94,7 @@ function buildVirtualTx(
             tapLeafScript: [input.tapLeafScript],
         });
 
-        // add BIP371 encoded taproot tree to the unknown key field
-        addVtxoTaprootTree(i, tx, input.tapTree);
+        setArkPsbtField(tx, i, VtxoTaprootTree, input.tapTree);
     }
 
     for (const output of outputs) {
