@@ -30,8 +30,7 @@ const wallet = await Wallet.create({
 
 // Get wallet addresses
 const addresses = await wallet.getAddress()
-console.log('Bitcoin Address:', addresses.onchain)
-console.log('Ark Address:', addresses.offchain)
+console.log('Offchain Address:', addresses.offchain)
 console.log('Boarding Address:', addresses.boarding)
 console.log('BIP21 URI:', addresses.bip21)
 ```
@@ -61,8 +60,9 @@ const settleTxid = await wallet.settle({
 ```typescript
 // Get detailed balance information
 const balance = await wallet.getBalance()
-console.log('Total Onchain:', balance.onchain.total)
-console.log('Total Offchain:', balance.offchain.total)
+console.log('Total Balance:', balance.total)
+console.log('Boarding Total:', balance.boarding.total)
+console.log('Offchain Total:', balance.offchain.total)
 
 // Get virtual UTXOs (off-chain)
 const virtualCoins = await wallet.getVtxos()
@@ -122,7 +122,7 @@ const wallet = await ServiceWorkerWallet.create('/service-worker.js')
 // initialize the wallet
 await wallet.init({
   network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
-  identity: identity,
+  privateKey: 'your_private_key_hex',
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
@@ -158,50 +158,56 @@ interface WalletConfig {
 interface IWallet {
   /** Get wallet addresses */
   getAddress(): Promise<{
-    onchain?: Address;
-    offchain?: Address;
-    boarding?: Address;
-    bip21?: string;
+    offchain: string;
+    boarding: string;
+    bip21: string;
   }>;
 
   /** Get wallet balance */
   getBalance(): Promise<{
-    onchain: {
-      total: number;
+    boarding: {
       confirmed: number;
       unconfirmed: number;
+      total: number;
     };
     offchain: {
-      total: number;
       settled: number;
-      pending: number;
+      preconfirmed: number;
+      available: number;
+      recoverable: number;
+      total: number;
     };
+    total: number;
   }>;
 
-  /** Send bitcoin (on-chain or off-chain) */
+  /** Send bitcoin (off-chain only) */
   sendBitcoin(params: {
     address: string;
     amount: number;
     feeRate?: number;
-  }, onchain?: boolean): Promise<string>;
-
-  /** Get virtual UTXOs */
-  getVtxos(): Promise<VirtualCoin[]>;
-
-  /** Get boarding UTXOs */
-  getBoardingUtxos(): Promise<BoardingUtxo[]>;
-
-  /** Settle transactions */
-  settle(params: {
-    inputs: (VirtualCoin | BoardingUtxo)[];
-    outputs: {
-      address: string;
-      amount: bigint;
-    }[];
+    memo?: string;
   }): Promise<string>;
 
+  /** Get virtual UTXOs */
+  getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
+
+  /** Get boarding UTXOs */
+  getBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+  /** Settle transactions */
+  settle(
+    params?: {
+      inputs: ExtendedCoin[];
+      outputs: {
+        address: string;
+        amount: bigint;
+      }[];
+    },
+    eventCallback?: (event: SettlementEvent) => void
+  ): Promise<string>;
+
   /** Get transaction history */
-  getTransactionHistory(): Promise<Transaction[]>;
+  getTransactionHistory(): Promise<ArkTransaction[]>;
 }
 
 /** Transaction types */
@@ -211,7 +217,7 @@ enum TxType {
 }
 
 /** Transaction history entry */
-interface Transaction {
+interface ArkTransaction {
   type: TxType;
   amount: number;
   settled: boolean;
@@ -222,19 +228,28 @@ interface Transaction {
 }
 
 /** Virtual coin (off-chain UTXO) */
-interface VirtualCoin {
+interface ExtendedVirtualCoin {
   txid: string;
+  vout: number;
   value: number;
   virtualStatus: {
-    state: 'pending' | 'settled';
+    state: 'pending' | 'settled' | 'swept' | 'spent';
+    batchTxID?: string;
+    batchExpiry?: number;
   };
 }
 
 /** Boarding UTXO */
-interface BoardingUtxo {
+interface ExtendedCoin {
   txid: string;
   vout: number;
   value: number;
+  status: {
+    confirmed: boolean;
+    block_height?: number;
+    block_hash?: string;
+    block_time?: number;
+  };
 }
 ```
 
