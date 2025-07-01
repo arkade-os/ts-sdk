@@ -144,7 +144,7 @@ describe("Ark integration tests", () => {
 
             // Send from Alice to Bob offchain
             const sendAmount = 5000; // 5k sats instead of 50k
-            await alice.wallet.send({
+            await alice.wallet.sendBitcoin({
                 address: bobOffchainAddress!,
                 amount: sendAmount,
             });
@@ -211,7 +211,7 @@ describe("Ark integration tests", () => {
 
         // Send from Alice to Bob offchain
         const sendAmount = 5000;
-        const sendTxid = await alice.wallet.send({
+        const sendTxid = await alice.wallet.sendBitcoin({
             address: bobOffchainAddress!,
             amount: sendAmount,
         });
@@ -572,7 +572,7 @@ describe("Ark integration tests", () => {
         );
 
         // alice should send offchain tx with subdust output
-        await alice.wallet.send({
+        await alice.wallet.sendBitcoin({
             address: bobAddresses.offchain!,
             amount: 1,
         });
@@ -585,7 +585,7 @@ describe("Ark integration tests", () => {
 
         // bob shouldn't be able to send offchain tx with subdust output
         await expect(
-            bob.wallet.send({
+            bob.wallet.sendBitcoin({
                 address: bobAddresses.offchain!,
                 amount: 1,
             })
@@ -594,7 +594,7 @@ describe("Ark integration tests", () => {
         // bob shouldn't be able to settle cause the total amount is less than the dust amount
         await expect(bob.wallet.settle()).rejects.toThrow();
 
-        await alice.wallet.send({
+        await alice.wallet.sendBitcoin({
             address: bobAddresses.offchain!,
             amount: fundAmount - 1,
         });
