@@ -97,7 +97,7 @@ describe("Wallet SDK Integration Tests", () => {
     });
 
     it(
-        "should settle 2 VTXOs in the same round",
+        "should settle 2 clients in the same batch",
         { timeout: 60000 },
         async () => {
             const alice = await createTestWallet();
@@ -576,47 +576,43 @@ describe("Wallet SDK Integration Tests", () => {
         expect(virtualCoins[0].value).toBe(fundAmount);
     });
 
-    it.skip(
-        "should perform a unilateral exit",
-        { timeout: 60000 },
-        async () => {
-            const alice = await createTestWallet();
+    it.skip("should unroll", { timeout: 60000 }, async () => {
+        const alice = await createTestWallet();
 
-            const aliceAddresses = await alice.wallet.getAddress();
-            const boardingAddress = aliceAddresses.boarding;
-            const offchainAddress = aliceAddresses.offchain;
+        const aliceAddresses = await alice.wallet.getAddress();
+        const boardingAddress = aliceAddresses.boarding;
+        const offchainAddress = aliceAddresses.offchain;
 
-            // faucet
-            execSync(`nigiri faucet ${boardingAddress} 0.0001`);
+        // faucet
+        execSync(`nigiri faucet ${boardingAddress} 0.0001`);
 
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
-            const boardingInputs = await alice.wallet.getBoardingUtxos();
-            expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+        const boardingInputs = await alice.wallet.getBoardingUtxos();
+        expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
-            await alice.wallet.settle({
-                inputs: boardingInputs,
-                outputs: [
-                    {
-                        address: offchainAddress!,
-                        amount: BigInt(10000),
-                    },
-                ],
-            });
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+        await alice.wallet.settle({
+            inputs: boardingInputs,
+            outputs: [
+                {
+                    address: offchainAddress!,
+                    amount: BigInt(10000),
+                },
+            ],
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            const virtualCoins = await alice.wallet.getVtxos();
-            expect(virtualCoins).toHaveLength(1);
-            const vtxo = virtualCoins[0];
-            expect(vtxo.txid).toBeDefined();
-            await alice.wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-            const virtualCoinsAfterExit = await alice.wallet.getVtxos();
-            expect(virtualCoinsAfterExit).toHaveLength(0);
-        }
-    );
+        const virtualCoins = await alice.wallet.getVtxos();
+        expect(virtualCoins).toHaveLength(1);
+        const vtxo = virtualCoins[0];
+        expect(vtxo.txid).toBeDefined();
+        await alice.wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const virtualCoinsAfterExit = await alice.wallet.getVtxos();
+        expect(virtualCoinsAfterExit).toHaveLength(0);
+    });
 
-    it("should perform a collaborative exit", { timeout: 60000 }, async () => {
+    it("should exit collaboratively", { timeout: 60000 }, async () => {
         const alice = await createTestWallet();
         const aliceAddresses = await alice.wallet.getAddress();
 
