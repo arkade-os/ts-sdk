@@ -27,6 +27,7 @@ import {
     Addresses,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
+import { TxGraph, TxGraphChunk } from "./tree/txGraph";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
@@ -135,6 +136,9 @@ export {
 
     // BIP322
     BIP322,
+
+    // TxGraph
+    TxGraph,
 };
 
 // Type exports
@@ -179,4 +183,7 @@ export type {
 
     // Ark PSBT fields
     ArkPsbtFieldCoder,
+
+    // TxGraph
+    TxGraphChunk,
 };
