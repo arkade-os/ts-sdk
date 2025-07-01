@@ -1032,7 +1032,6 @@ export class Wallet implements IWallet {
             this.onchainProvider.watchAddresses(
                 [this.onchainAddress],
                 (txs, stopFunc) => {
-                    console.log("New onchain transactions:", txs);
                     const coins: Coin[] = txs.map((tx) => {
                         const vout = tx.vout.findIndex(
                             (v) =>
