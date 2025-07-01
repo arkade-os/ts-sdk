@@ -1,6 +1,5 @@
 import {
     WalletBalance,
-    Coin,
     VirtualCoin,
     ArkTransaction,
     AddressInfo as WalletAddressInfo,
@@ -17,7 +16,6 @@ export namespace Response {
         | "ADDRESS"
         | "ADDRESS_INFO"
         | "BALANCE"
-        | "COINS"
         | "VTXOS"
         | "VIRTUAL_COINS"
         | "BOARDING_UTXOS"
@@ -143,30 +141,18 @@ export namespace Response {
         return response.type === "BALANCE" && response.success === true;
     }
 
+    /**
+     * Creates a BALANCE response object containing wallet balance information.
+     *
+     * @param id - The unique identifier for the response
+     * @param balance - The wallet balance data to include in the response
+     * @returns A Balance response object with the specified balance information
+     */
     export function balance(id: string, balance: WalletBalance): Balance {
         return {
             type: "BALANCE",
             success: true,
             balance,
-            id,
-        };
-    }
-
-    export interface Coins extends Base {
-        type: "COINS";
-        success: true;
-        coins: Coin[];
-    }
-
-    export function isCoins(response: Base): response is Coins {
-        return response.type === "COINS" && response.success === true;
-    }
-
-    export function coins(id: string, coins: Coin[]): Coins {
-        return {
-            type: "COINS",
-            success: true,
-            coins,
             id,
         };
     }

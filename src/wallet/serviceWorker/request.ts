@@ -8,7 +8,6 @@ export namespace Request {
         | "GET_ADDRESS"
         | "GET_ADDRESS_INFO"
         | "GET_BALANCE"
-        | "GET_COINS"
         | "GET_VTXOS"
         | "GET_VIRTUAL_COINS"
         | "GET_BOARDING_UTXOS"
@@ -82,16 +81,13 @@ export namespace Request {
         type: "GET_BALANCE";
     }
 
+    /**
+     * Determines whether a request message is of type "GET_BALANCE".
+     *
+     * @returns True if the message is a GetBalance request; otherwise, false.
+     */
     export function isGetBalance(message: Base): message is GetBalance {
         return message.type === "GET_BALANCE";
-    }
-
-    export interface GetCoins extends Base {
-        type: "GET_COINS";
-    }
-
-    export function isGetCoins(message: Base): message is GetCoins {
-        return message.type === "GET_COINS";
     }
 
     export interface GetVtxos extends Base {
