@@ -51,7 +51,7 @@ export interface CommitmentTx {
     totalOutputVtxos: number;
 }
 
-export interface Connector {
+export interface Tx {
     txid: string;
     children: Record<string, string>;
 }
@@ -91,7 +91,7 @@ export interface IndexerProvider {
     getVtxoTree(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Node[]>;
+    ): Promise<Tx[]>;
     getVtxoTreeLeaves(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
@@ -100,7 +100,7 @@ export interface IndexerProvider {
     getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Connector[]>;
+    ): Promise<Tx[]>;
     getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
@@ -154,7 +154,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getVtxoTree(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Node[]> {
+    ): Promise<Tx[]> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const params = new URLSearchParams();
         if (opts) {
@@ -171,7 +171,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
         }
         const data = await res.json();
-        if (!Response.isConnectorsArray(data.vtxoTree)) {
+        if (!Response.isTxsArray(data.vtxoTree)) {
             throw new Error("Invalid vtxo tree data received");
         }
         return data.vtxoTree;
@@ -221,7 +221,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Connector[]> {
+    ): Promise<Tx[]> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
         const params = new URLSearchParams();
         if (opts) {
@@ -240,7 +240,7 @@ export class RestIndexerProvider implements IndexerProvider {
             );
         }
         const data = await res.json();
-        if (!Response.isConnectorsArray(data.connectors)) {
+        if (!Response.isTxsArray(data.connectors)) {
             throw new Error("Invalid commitment tx connectors data received");
         }
         return data.connectors;
@@ -561,7 +561,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         vout: vtxo.outpoint.vout,
         value: Number(vtxo.amount),
         status: {
-            confirmed: vtxo.commitmentTxids.length > 0,
+            confirmed: !vtxo.isSwept && !vtxo.isPreconfirmed,
         },
         virtualStatus: {
             state: vtxo.isSwept
@@ -660,7 +660,7 @@ namespace Response {
         return Array.isArray(data) && data.every(isOutpoint);
     }
 
-    function isConnector(data: any): data is Connector {
+    function isTx(data: any): data is Tx {
         return (
             typeof data === "object" &&
             typeof data.txid === "string" &&
@@ -670,8 +670,8 @@ namespace Response {
         );
     }
 
-    export function isConnectorsArray(data: any): data is Connector[] {
-        return Array.isArray(data) && data.every(isConnector);
+    export function isTxsArray(data: any): data is Tx[] {
+        return Array.isArray(data) && data.every(isTx);
     }
 
     function isTxHistoryRecord(data: any): data is TxHistoryRecord {

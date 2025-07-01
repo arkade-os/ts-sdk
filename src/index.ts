@@ -73,7 +73,7 @@ import {
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
-    Connector,
+    Tx,
 } from "./providers/indexer";
 
 export {
@@ -179,7 +179,7 @@ export type {
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
-    Connector,
+    Tx,
 
     // Ark PSBT fields
     ArkPsbtFieldCoder,
