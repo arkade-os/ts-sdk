@@ -1,6 +1,7 @@
 import * as bip68 from "bip68";
 import { RawWitness, ScriptNum, Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
+import { hex } from "@scure/base";
 
 // Key values for ark psbt fields
 export enum ArkPsbtFieldKey {
@@ -39,6 +40,7 @@ export function setArkPsbtField<T>(
 }
 
 // getArkPsbtFields returns all the values of the given coder for the input at inputIndex
+// Multiple fields of the same type can exist in a single input.
 export function getArkPsbtFields<T>(
     tx: Transaction,
     inputIndex: number,
@@ -48,7 +50,6 @@ export function getArkPsbtFields<T>(
 
     const fields: T[] = [];
     for (const u of unknown) {
-        if (u[0].type !== ArkPsbtFieldKeyType) continue;
         const v = coder.decode(u);
         if (v) fields.push(v);
     }
@@ -65,7 +66,12 @@ export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
         },
         value,
     ],
-    decode: (value) => nullIfCatch(() => value[1]),
+    decode: (value) =>
+        nullIfCatch(() => {
+            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.VtxoTaprootTree))
+                return null;
+            return value[1];
+        }),
 };
 
 // ConditionWitness is set to pass the witness data used to finalize the conditionMultisigClosure
@@ -78,7 +84,12 @@ export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
         },
         RawWitness.encode(value),
     ],
-    decode: (value) => nullIfCatch(() => RawWitness.decode(value[1])),
+    decode: (value) =>
+        nullIfCatch(() => {
+            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.ConditionWitness))
+                return null;
+            return RawWitness.decode(value[1]);
+        }),
 };
 
 // CosignerPublicKey is set on every TxGraph transactions to identify the musig2 public keys
@@ -98,10 +109,14 @@ export const CosignerPublicKey: ArkPsbtFieldCoder<{
         value.key,
     ],
     decode: (unknown) =>
-        nullIfCatch(() => ({
-            index: unknown[0].key[unknown[0].key.length - 1],
-            key: unknown[1],
-        })),
+        nullIfCatch(() => {
+            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.Cosigner))
+                return null;
+            return {
+                index: unknown[0].key[unknown[0].key.length - 1],
+                key: unknown[1],
+            };
+        }),
 };
 
 // VtxoTreeExpiry is set to pass the expiry time of the input
@@ -119,6 +134,8 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
     ],
     decode: (unknown) =>
         nullIfCatch(() => {
+            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.VtxoTreeExpiry))
+                return null;
             const v = ScriptNum(6, true).decode(unknown[1]);
             if (!v) return null;
             const { blocks, seconds } = bip68.decode(Number(v));
@@ -143,3 +160,13 @@ const nullIfCatch = <T>(fn: () => T): T | null => {
         return null;
     }
 };
+
+function checkKeyIncludes(
+    key: { type: number; key: Uint8Array },
+    arkPsbtFieldKey: ArkPsbtFieldKey
+): boolean {
+    const expected = hex.encode(encodedPsbtFieldKey[arkPsbtFieldKey]);
+    return hex
+        .encode(new Uint8Array([key.type, ...key.key]))
+        .includes(expected);
+}
