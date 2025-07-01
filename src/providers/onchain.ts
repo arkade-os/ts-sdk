@@ -188,7 +188,7 @@ export class EsploraProvider implements OnchainProvider {
                     }
                 }
                 // callback with new transactions
-                if (newTxs.length > 0) callback(newTxs, ws.close);
+                if (newTxs.length > 0) callback(newTxs, ws.close.bind(ws));
             } catch (_) {}
         });
 
