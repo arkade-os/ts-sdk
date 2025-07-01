@@ -44,6 +44,9 @@ wallet.notifyIncomingFunds((coins) => {
   const amount = coins.reduce((sum, a) => sum + a.value)
   console.log('received ${coins.length} coins totalling ${amount} sats')
 })
+
+// or block and wait for incoming funds
+const coins = await wallet.waitForIncomingFunds()
 ```
 
 ### Sending Bitcoin
@@ -220,6 +223,9 @@ interface IWallet {
       stopFunc: () => void
     ) => void
   ): Promise<void>;
+
+  /** Block and wait for payment */
+  waitForIncomingFunds(): Promise<Coin[]>;
 }
 
 /** Transaction types */

@@ -13,7 +13,7 @@ export const ARK_SERVER_PUBKEY =
 export const X_ONLY_PUBLIC_KEY = hex.decode(ARK_SERVER_PUBKEY).slice(1);
 
 export interface TestWallet {
-    wallet: IWallet;
+    wallet: Wallet;
     identity: InMemoryKey;
 }
 

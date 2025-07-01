@@ -694,6 +694,64 @@ describe("Wallet SDK Integration Tests", () => {
             expect(notified).toBeTruthy();
         }
     );
+
+    it(
+        "should wait for offchain incoming funds",
+        { timeout: 6000 },
+        async () => {
+            const alice = await createTestWallet();
+            const aliceAddress = (await alice.wallet.getAddress()).offchain;
+            expect(aliceAddress).toBeDefined();
+
+            const now = new Date();
+            const fundAmount = 10000;
+
+            // faucet in a few moments
+            setTimeout(() => faucetOffchain(aliceAddress!, fundAmount), 1000);
+
+            // wait for coins to arrive
+            const coins = await alice.wallet.waitForIncomingFunds();
+            const vtxos = coins as VirtualCoin[];
+
+            // assert
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].spentBy).toBeFalsy();
+            expect(vtxos[0].value).toBe(fundAmount);
+            expect(vtxos[0].status.confirmed).toBeTruthy();
+            expect(vtxos[0].virtualStatus.state).toBe("pending");
+            const age = now.getTime() - vtxos[0].createdAt.getTime();
+            expect(age).toBeLessThanOrEqual(4000);
+        }
+    );
+
+    it(
+        "should wait for onchain incoming funds",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestWallet();
+            const aliceAddress = (await alice.wallet.getAddress()).onchain;
+            expect(aliceAddress).toBeDefined();
+
+            const now = new Date();
+            const fundAmount = 10000;
+
+            // faucet in a few moments
+            setTimeout(() => faucetOnchain(aliceAddress!, fundAmount), 1000);
+
+            // wait for coins to arrive
+            const coins = await alice.wallet.waitForIncomingFunds();
+            const utxos = coins as Coin[];
+
+            // assert
+            expect(utxos).toHaveLength(1);
+            expect(utxos[0].value).toBe(fundAmount);
+            expect(utxos[0].status.confirmed).toBeTruthy();
+            expect(utxos[0].status.block_time).toBeDefined();
+            const age = now.getTime() - utxos[0].status.block_time! * 1000;
+            expect(age).toBeLessThanOrEqual(10000);
+        }
+    );
+
     it("should send subdust amount", { timeout: 60000 }, async () => {
         const alice = await createTestWallet();
         const bob = await createTestWallet();

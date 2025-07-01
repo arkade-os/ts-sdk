@@ -28,9 +28,7 @@ class UnexpectedResponseError extends Error {
 }
 
 // ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
-export class ServiceWorkerWallet
-    implements Omit<IWallet, "notifyIncomingFunds">
-{
+export class ServiceWorkerWallet implements IWallet {
     private serviceWorker?: ServiceWorker;
 
     static async create(svcWorkerPath: string): Promise<ServiceWorkerWallet> {
