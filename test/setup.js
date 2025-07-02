@@ -85,7 +85,7 @@ async function setupArkServer() {
         const serverInfo = JSON.parse(
             execSync("curl -s http://localhost:7070/v1/info").toString()
         );
-        console.log("Ark Server Public Key:", serverInfo.pubkey);
+        console.log("Ark Server Public Key:", serverInfo.signerPubkey);
 
         // Get arkd address and fund it with nigiri faucet
         const arkdAddress = (

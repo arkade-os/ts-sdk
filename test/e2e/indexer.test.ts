@@ -19,13 +19,15 @@ describe("Indexer provider", () => {
             "http://localhost:7070"
         );
 
-        const spendableVtxos = await indexerProvider.getVtxos({
-            addresses: [aliceOffchainAddress!],
+        const spendableVtxosResponse = await indexerProvider.getVtxos({
+            scripts: [
+                hex.encode(ArkAddress.decode(aliceOffchainAddress!).pkScript),
+            ],
             spendableOnly: true,
         });
-        expect(spendableVtxos).toHaveLength(1);
+        expect(spendableVtxosResponse.vtxos).toHaveLength(1);
 
-        const spendableVtxo = spendableVtxos[0];
+        const spendableVtxo = spendableVtxosResponse.vtxos[0];
         expect(spendableVtxo.txid).toBeDefined();
         expect(spendableVtxo.vout).toBeDefined();
         expect(spendableVtxo.value).toBe(fundAmount);
@@ -35,13 +37,14 @@ describe("Indexer provider", () => {
             vout: spendableVtxo.vout,
         };
 
-        const tree = await indexerProvider.getVtxoTree(outpoint);
-        expect(tree).toBeDefined();
-        expect(tree).toHaveLength(0);
+        const treeResponse = await indexerProvider.getVtxoTree(outpoint);
+        expect(treeResponse.vtxoTree).toBeDefined();
+        expect(treeResponse.vtxoTree).toHaveLength(0);
 
-        const leaves = await indexerProvider.getVtxoTreeLeaves(outpoint);
-        expect(leaves).toBeDefined();
-        expect(leaves).toHaveLength(0);
+        const leavesResponse =
+            await indexerProvider.getVtxoTreeLeaves(outpoint);
+        expect(leavesResponse.leaves).toBeDefined();
+        expect(leavesResponse.leaves).toHaveLength(0);
 
         // TODO: Uncomment when the API is ready
         // const chain = await indexerProvider.getVtxoChain(outpoint);
@@ -75,27 +78,39 @@ describe("Indexer provider", () => {
         // expect(commitmentTx.batches["0"].totalOutputVtxos).toBe(1);
         // TODO: uncomment when fix API
 
-        const connects = await indexerProvider.getCommitmentTxConnectors(txid);
-        expect(connects).toBeDefined();
-        expect(connects.length).toBeGreaterThanOrEqual(1);
+        const connectsResponse =
+            await indexerProvider.getCommitmentTxConnectors(txid);
+        expect(connectsResponse.connectors).toBeDefined();
+        expect(connectsResponse.connectors.length).toBeGreaterThanOrEqual(1);
 
-        const forfeits = await indexerProvider.getCommitmentTxForfeitTxs(txid);
-        expect(forfeits).toBeDefined();
-        expect(forfeits.length).toBeGreaterThanOrEqual(1);
+        const forfeitsResponse =
+            await indexerProvider.getCommitmentTxForfeitTxs(txid);
+        expect(forfeitsResponse.txids).toBeDefined();
+        expect(forfeitsResponse.txids.length).toBeGreaterThanOrEqual(1);
 
-        const leaves = await indexerProvider.getCommitmentTxForfeitTxs(txid);
-        expect(leaves).toBeDefined();
-        expect(leaves.length).toBeGreaterThanOrEqual(1);
+        const leavesResponse =
+            await indexerProvider.getCommitmentTxLeaves(txid);
+        expect(leavesResponse.leaves).toBeDefined();
+        expect(leavesResponse.leaves.length).toBeGreaterThanOrEqual(1);
 
-        const swepts = await indexerProvider.getCommitmentTxSwept(txid);
-        expect(swepts).toBeDefined();
-        expect(swepts.length).toBeGreaterThanOrEqual(0);
+        const sweptsResponse = await indexerProvider.getBatchSweepTransactions({
+            txid,
+            vout: 0,
+        });
+        expect(sweptsResponse.sweptBy).toBeDefined();
+        expect(sweptsResponse.sweptBy.length).toBeGreaterThanOrEqual(0);
 
-        const batchTree = await indexerProvider.getVtxoTree({ txid, vout: 0 });
-        expect(batchTree.length).toBeGreaterThanOrEqual(1);
+        const batchTreeResponse = await indexerProvider.getVtxoTree({
+            txid,
+            vout: 0,
+        });
+        expect(batchTreeResponse.vtxoTree.length).toBeGreaterThanOrEqual(1);
 
-        const btl = await indexerProvider.getVtxoTreeLeaves({ txid, vout: 0 });
-        expect(btl.length).toBeGreaterThanOrEqual(1);
+        const btlResponse = await indexerProvider.getVtxoTreeLeaves({
+            txid,
+            vout: 0,
+        });
+        expect(btlResponse.leaves.length).toBeGreaterThanOrEqual(1);
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {

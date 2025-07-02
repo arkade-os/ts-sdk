@@ -75,11 +75,12 @@ describe("Wallet", () => {
                         script: "cf63d80fddd790bb2de2b639545b7298d3b5c33d483d84b0be399fe828720fcf",
                         isPreconfirmed: false,
                         isSwept: false,
-                        isRedeemed: false,
+                        isUnrolled: false,
                         isSpent: false,
                         commitmentTxids: [
                             "f3e437911673f477f314f8fc31eb08def6ccff9edcd0524c10bcf5fc05009d69",
                         ],
+                        settledBy: null,
                     },
                 ],
             };
@@ -89,7 +90,7 @@ describe("Wallet", () => {
                     ok: true,
                     json: () =>
                         Promise.resolve({
-                            pubkey: mockServerKeyHex,
+                            signerPubkey: mockServerKeyHex,
                             batchExpiry: BigInt(144),
                             unilateralExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
@@ -105,6 +106,10 @@ describe("Wallet", () => {
                 .mockResolvedValueOnce({
                     ok: true,
                     json: () => Promise.resolve(mockServerResponse),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
                 });
 
             const wallet = await Wallet.create({
@@ -200,7 +205,7 @@ describe("Wallet", () => {
 
     describe("getInfos", () => {
         const mockArkInfo = {
-            pubkey: mockServerKeyHex,
+            signerPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
             unilateralExitDelay: BigInt(144),
             roundInterval: BigInt(144),

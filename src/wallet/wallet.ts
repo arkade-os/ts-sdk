@@ -132,7 +132,7 @@ export class Wallet implements IWallet {
                 type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
             };
             // Generate tapscripts for offchain and boarding address
-            const serverPubKey = hex.decode(info.pubkey).slice(1);
+            const serverPubKey = hex.decode(info.signerPubkey).slice(1);
             const bareVtxoTapscript = new DefaultVtxo.Script({
                 pubKey: pubkey,
                 serverPubKey,
@@ -353,7 +353,7 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(
-        filter: GetVtxosFilter = { withSpendableInSettlement: true }
+        filter: GetVtxosFilter = { withRecoverable: true }
     ): Promise<VirtualCoin[]> {
         if (!this.indexerProvider) {
             return [];
@@ -364,15 +364,20 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const getVtxosArgs = {
-            addresses: [address.offchain],
-            spendableOnly: !filter.withSpendableInSettlement,
-        };
+        const scripts = [hex.encode(this.offchainAddress.pkScript)];
 
-        let vtxos = await this.indexerProvider.getVtxos(getVtxosArgs);
+        const response = await this.indexerProvider.getVtxos({
+            scripts,
+            spendableOnly: true,
+        });
+        const vtxos = response.vtxos;
 
-        if (filter.withSpendableInSettlement) {
-            vtxos = vtxos.filter((v) => isSpendable(v));
+        if (filter.withRecoverable) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts,
+                recoverableOnly: true,
+            });
+            vtxos.push(...response.vtxos);
         }
 
         return vtxos;
@@ -383,8 +388,8 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const vtxos = await this.indexerProvider.getVtxos({
-            addresses: [this.offchainAddress.encode()],
+        const response = await this.indexerProvider.getVtxos({
+            scripts: [hex.encode(this.offchainAddress.pkScript)],
         });
 
         const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
@@ -392,7 +397,7 @@ export class Wallet implements IWallet {
         const spendableVtxos = [];
         const spentVtxos = [];
 
-        for (const vtxo of vtxos) {
+        for (const vtxo of response.vtxos) {
             if (isSpendable(vtxo)) {
                 spendableVtxos.push(vtxo);
             } else {
@@ -615,7 +620,7 @@ export class Wallet implements IWallet {
 
         // recoverable and subdust coins can't be spent in offchain tx
         const virtualCoins = await this.getVirtualCoins({
-            withSpendableInSettlement: false,
+            withRecoverable: false,
         });
 
         const selected = selectVirtualCoins(virtualCoins, params.amount);

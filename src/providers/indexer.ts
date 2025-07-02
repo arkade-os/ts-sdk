@@ -13,8 +13,10 @@ export enum IndexerTxType {
 
 export enum ChainedTxType {
     INDEXER_CHAINED_TX_TYPE_UNSPECIFIED = 0,
-    INDEXER_CHAINED_TX_TYPE_VIRTUAL = 1,
-    INDEXER_CHAINED_TX_TYPE_COMMITMENT = 2,
+    INDEXER_CHAINED_TX_TYPE_COMMITMENT = 1,
+    INDEXER_CHAINED_TX_TYPE_ARK = 2,
+    INDEXER_CHAINED_TX_TYPE_TREE = 3,
+    INDEXER_CHAINED_TX_TYPE_CHECKPOINT = 4,
 }
 
 export interface PageResponse {
@@ -30,15 +32,11 @@ export interface Batch {
     swept: boolean;
 }
 
-export interface Chain {
+export interface ChainTx {
     txid: string;
-    spends: ChainedTx[];
     expiresAt: string;
-}
-
-export interface ChainedTx {
-    txid: string;
     type: ChainedTxType;
+    spends: string[]; // txids of the transactions in the chain used as input of the current tx
 }
 
 export interface CommitmentTx {
@@ -59,7 +57,6 @@ export interface Tx {
 export interface TxHistoryRecord {
     commitmentTxid?: string;
     virtualTxid?: string;
-
     type: IndexerTxType;
     amount: string;
     createdAt: string;
@@ -75,48 +72,44 @@ export interface Vtxo {
     script: string;
     isPreconfirmed: boolean;
     isSwept: boolean;
-    isRedeemed: boolean;
+    isUnrolled: boolean;
     isSpent: boolean;
     spentBy: string | null;
     commitmentTxids: string[];
+    settledBy?: string;
+    arkTxid?: string;
 }
 
 export interface VtxoChain {
-    chain: Chain[];
-    depth: number;
-    rootCommitmentTxid: string;
+    chain: ChainTx[];
+    page?: PageResponse;
 }
 
 export interface IndexerProvider {
     getVtxoTree(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Tx[]>;
+    ): Promise<{ vtxoTree: Tx[]; page?: PageResponse }>;
     getVtxoTreeLeaves(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Outpoint[]>;
+    ): Promise<{ leaves: Outpoint[]; page?: PageResponse }>;
+    getBatchSweepTransactions(
+        batchOutpoint: Outpoint
+    ): Promise<{ sweptBy: string[] }>;
     getCommitmentTx(txid: string): Promise<CommitmentTx>;
     getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Tx[]>;
+    ): Promise<{ connectors: Tx[]; page?: PageResponse }>;
     getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<string[]>;
+    ): Promise<{ txids: string[]; page?: PageResponse }>;
     getCommitmentTxLeaves(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Outpoint[]>;
-    getCommitmentTxSwept(txid: string): Promise<string[]>;
-    getTransactionHistory(
-        address: string,
-        opts?: PaginationOptions & {
-            startTime?: number;
-            endTime?: number;
-        }
-    ): Promise<ArkTransaction[]>;
+    ): Promise<{ leaves: Outpoint[]; page?: PageResponse }>;
     getSubscription(
         subscriptionId: string,
         abortSignal: AbortSignal
@@ -125,19 +118,23 @@ export interface IndexerProvider {
         newVtxos: VirtualCoin[];
         spentVtxos: VirtualCoin[];
     }>;
-    getVirtualTxs(txids: string[], opts?: PaginationOptions): Promise<string[]>;
+    getVirtualTxs(
+        txids: string[],
+        opts?: PaginationOptions
+    ): Promise<{ txs: string[]; page?: PageResponse }>;
     getVtxoChain(
         vtxoOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<VtxoChain>;
     getVtxos(
         opts?: PaginationOptions & {
-            addresses?: string[];
+            scripts?: string[];
             outpoints?: Outpoint[];
             spendableOnly?: boolean;
             spentOnly?: boolean;
+            recoverableOnly?: boolean;
         }
-    ): Promise<VirtualCoin[]>;
+    ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }>;
     subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -154,7 +151,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getVtxoTree(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Tx[]> {
+    ): Promise<{ vtxoTree: Tx[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const params = new URLSearchParams();
         if (opts) {
@@ -171,16 +168,16 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch vtxo tree: ${res.statusText}`);
         }
         const data = await res.json();
-        if (!Response.isTxsArray(data.vtxoTree)) {
+        if (!Response.isVtxoTreeResponse(data)) {
             throw new Error("Invalid vtxo tree data received");
         }
-        return data.vtxoTree;
+        return data;
     }
 
     async getVtxoTreeLeaves(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
-    ): Promise<Outpoint[]> {
+    ): Promise<{ leaves: Outpoint[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
         const params = new URLSearchParams();
         if (opts) {
@@ -199,10 +196,28 @@ export class RestIndexerProvider implements IndexerProvider {
             );
         }
         const data = await res.json();
-        if (!Response.isOutpointArray(data.leaves)) {
+        if (!Response.isVtxoTreeLeavesResponse(data)) {
             throw new Error("Invalid vtxos tree leaves data received");
         }
-        return data.leaves;
+        return data;
+    }
+
+    async getBatchSweepTransactions(
+        batchOutpoint: Outpoint
+    ): Promise<{ sweptBy: string[] }> {
+        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
+        console.log("url", url);
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(
+                `Failed to fetch batch sweep transactions: ${res.statusText}`
+            );
+        }
+        const data = await res.json();
+        if (!Response.isBatchSweepTransactionsResponse(data)) {
+            throw new Error("Invalid batch sweep transactions data received");
+        }
+        return data;
     }
 
     async getCommitmentTx(txid: string): Promise<CommitmentTx> {
@@ -221,7 +236,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Tx[]> {
+    ): Promise<{ connectors: Tx[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
         const params = new URLSearchParams();
         if (opts) {
@@ -240,16 +255,16 @@ export class RestIndexerProvider implements IndexerProvider {
             );
         }
         const data = await res.json();
-        if (!Response.isTxsArray(data.connectors)) {
+        if (!Response.isConnectorsResponse(data)) {
             throw new Error("Invalid commitment tx connectors data received");
         }
-        return data.connectors;
+        return data;
     }
 
     async getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<string[]> {
+    ): Promise<{ txids: string[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/forfeitTxs`;
         const params = new URLSearchParams();
         if (opts) {
@@ -268,16 +283,16 @@ export class RestIndexerProvider implements IndexerProvider {
             );
         }
         const data = await res.json();
-        if (!Response.isTxidArray(data.txids)) {
+        if (!Response.isForfeitTxsResponse(data)) {
             throw new Error("Invalid commitment tx forfeitTxs data received");
         }
-        return data.txids;
+        return data;
     }
 
     async getCommitmentTxLeaves(
         txid: string,
         opts?: PaginationOptions
-    ): Promise<Outpoint[]> {
+    ): Promise<{ leaves: Outpoint[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/commitmentTx/${txid}/leaves`;
         const params = new URLSearchParams();
         if (opts) {
@@ -296,25 +311,10 @@ export class RestIndexerProvider implements IndexerProvider {
             );
         }
         const data = await res.json();
-        if (!Response.isOutpointArray(data.leaves)) {
+        if (!Response.isCommitmentTxLeavesResponse(data)) {
             throw new Error("Invalid commitment tx leaves data received");
         }
-        return data.leaves;
-    }
-
-    async getCommitmentTxSwept(txid: string): Promise<string[]> {
-        const url = `${this.serverUrl}/v1/commitmentTx/${txid}/swept`;
-        const res = await fetch(url);
-        if (!res.ok) {
-            throw new Error(
-                `Failed to fetch commitment tx swept: ${res.statusText}`
-            );
-        }
-        const data = await res.json();
-        if (!Response.isTxidArray(data.sweptBy)) {
-            throw new Error("Invalid commitment tx swept data received");
-        }
-        return data.sweptBy;
+        return data;
     }
 
     async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
@@ -386,43 +386,10 @@ export class RestIndexerProvider implements IndexerProvider {
         }
     }
 
-    async getTransactionHistory(
-        address: string,
-        opts?: PaginationOptions & {
-            startTime?: number;
-            endTime?: number;
-        }
-    ): Promise<ArkTransaction[]> {
-        let url = `${this.serverUrl}/v1/history/${address}`;
-        const params = new URLSearchParams();
-        if (opts) {
-            if (opts.startTime !== undefined)
-                params.append("startTime", opts.startTime.toString());
-            if (opts.endTime !== undefined)
-                params.append("endTime", opts.endTime.toString());
-            if (opts.pageIndex !== undefined)
-                params.append("page.index", opts.pageIndex.toString());
-            if (opts.pageSize !== undefined)
-                params.append("page.size", opts.pageSize.toString());
-        }
-        if (params.toString()) {
-            url += "?" + params.toString();
-        }
-        const res = await fetch(url);
-        if (!res.ok) {
-            throw new Error(`Failed to fetch tx history: ${res.statusText}`);
-        }
-        const data = await res.json();
-        if (!Response.isTxHistoryRecordArray(data.history)) {
-            throw new Error("Invalid transaction history data received");
-        }
-        return data.history.map(convertTransaction);
-    }
-
     async getVirtualTxs(
         txids: string[],
         opts?: PaginationOptions
-    ): Promise<string[]> {
+    ): Promise<{ txs: string[]; page?: PageResponse }> {
         let url = `${this.serverUrl}/v1/virtualTx/${txids.join(",")}`;
         const params = new URLSearchParams();
         if (opts) {
@@ -439,10 +406,10 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch virtual txs: ${res.statusText}`);
         }
         const data = await res.json();
-        if (!Response.isTxidArray(data.txs)) {
+        if (!Response.isVirtualTxsResponse(data)) {
             throw new Error("Invalid virtual txs data received");
         }
-        return data.txs;
+        return data;
     }
 
     async getVtxoChain(
@@ -465,7 +432,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch vtxo chain: ${res.statusText}`);
         }
         const data = await res.json();
-        if (!Response.isVtxoChain(data)) {
+        if (!Response.isVtxoChainResponse(data)) {
             throw new Error("Invalid vtxo chain data received");
         }
         return data;
@@ -473,16 +440,28 @@ export class RestIndexerProvider implements IndexerProvider {
 
     async getVtxos(
         opts?: PaginationOptions & {
-            addresses?: string[];
+            scripts?: string[];
             outpoints?: Outpoint[];
             spendableOnly?: boolean;
             spentOnly?: boolean;
+            recoverableOnly?: boolean;
         }
-    ): Promise<VirtualCoin[]> {
+    ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {
+        // scripts and outpoints are mutually exclusive
+        if (opts?.scripts && opts?.outpoints) {
+            throw new Error(
+                "scripts and outpoints are mutually exclusive options"
+            );
+        }
+
+        if (!opts?.scripts && !opts?.outpoints) {
+            throw new Error("Either scripts or outpoints must be provided");
+        }
+
         let url = `${this.serverUrl}/v1/vtxos`;
         const params = new URLSearchParams();
-        if (opts?.addresses && opts.addresses.length > 0) {
-            params.append("addresses", opts.addresses.join(","));
+        if (opts?.scripts && opts.scripts.length > 0) {
+            params.append("scripts", opts.scripts.join(","));
         }
         if (opts?.outpoints && opts.outpoints.length > 0) {
             const outpointStrings = opts.outpoints.map(
@@ -495,6 +474,11 @@ export class RestIndexerProvider implements IndexerProvider {
                 params.append("spendableOnly", opts.spendableOnly.toString());
             if (opts.spentOnly !== undefined)
                 params.append("spentOnly", opts.spentOnly.toString());
+            if (opts.recoverableOnly !== undefined)
+                params.append(
+                    "recoverableOnly",
+                    opts.recoverableOnly.toString()
+                );
             if (opts.pageIndex !== undefined)
                 params.append("page.index", opts.pageIndex.toString());
             if (opts.pageSize !== undefined)
@@ -508,11 +492,14 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch vtxos: ${res.statusText}`);
         }
         const data = await res.json();
-        if (!Response.isVtxoArray(data.vtxos)) {
+        if (!Response.isVtxosResponse(data)) {
             console.error("Invalid vtxos data received:", data);
             throw new Error("Invalid vtxos data received");
         }
-        return data.vtxos.map(convertVtxo);
+        return {
+            vtxos: data.vtxos.map(convertVtxo),
+            page: data.page,
+        };
     }
 
     async subscribeForScripts(
@@ -575,6 +562,8 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
                 : undefined,
         },
         spentBy: vtxo.spentBy ?? "",
+        settledBy: vtxo.settledBy,
+        arkTxId: vtxo.arkTxid,
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
     };
 }
@@ -616,21 +605,14 @@ namespace Response {
         );
     }
 
-    function isChain(data: any): data is Chain {
+    function isChain(data: any): data is ChainTx {
         return (
             typeof data === "object" &&
             typeof data.txid === "string" &&
+            typeof data.expiresAt === "string" &&
+            Object.values(ChainedTxType).includes(data.type) &&
             Array.isArray(data.spends) &&
-            data.spends.every(isChainedTx) &&
-            typeof data.expiresAt === "string"
-        );
-    }
-
-    function isChainedTx(data: any): data is ChainedTx {
-        return (
-            typeof data === "object" &&
-            typeof data.txid === "string" &&
-            Object.values(ChainedTxType).includes(data.type)
+            data.spends.every((spend: any) => typeof spend === "string")
         );
     }
 
@@ -712,7 +694,7 @@ namespace Response {
             typeof data.script === "string" &&
             typeof data.isPreconfirmed === "boolean" &&
             typeof data.isSwept === "boolean" &&
-            typeof data.isRedeemed === "boolean" &&
+            typeof data.isUnrolled === "boolean" &&
             typeof data.isSpent === "boolean" &&
             (typeof data.spentBy === "string" ||
                 typeof data.spentBy === "object") &&
@@ -725,13 +707,118 @@ namespace Response {
         return Array.isArray(data) && data.every(isVtxo);
     }
 
-    export function isVtxoChain(data: any): data is VtxoChain {
+    function isPageResponse(data: any): data is PageResponse {
+        return (
+            typeof data === "object" &&
+            typeof data.current === "number" &&
+            typeof data.next === "number" &&
+            typeof data.total === "number"
+        );
+    }
+
+    export function isVtxoTreeResponse(
+        data: any
+    ): data is { vtxoTree: Tx[]; page?: PageResponse } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.vtxoTree) &&
+            data.vtxoTree.every(isTx) &&
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isVtxoTreeLeavesResponse(
+        data: any
+    ): data is { leaves: Outpoint[]; page?: PageResponse } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.leaves) &&
+            data.leaves.every(isOutpoint) &&
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isConnectorsResponse(
+        data: any
+    ): data is { connectors: Tx[]; page?: PageResponse } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.connectors) &&
+            data.connectors.every(isTx) &&
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isForfeitTxsResponse(
+        data: any
+    ): data is { txids: string[]; page?: PageResponse } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.txids) &&
+            data.txids.every(isTxid) &&
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isCommitmentTxLeavesResponse(
+        data: any
+    ): data is { leaves: Outpoint[]; page?: PageResponse } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.leaves) &&
+            data.leaves.every(isOutpoint) &&
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isSweptCommitmentTxResponse(
+        data: any
+    ): data is { sweptBy: string[] } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.sweptBy) &&
+            data.sweptBy.every(isTxid)
+        );
+    }
+
+    export function isBatchSweepTransactionsResponse(
+        data: any
+    ): data is { sweptBy: string[] } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.sweptBy) &&
+            data.sweptBy.every(isTxid)
+        );
+    }
+
+    export function isVirtualTxsResponse(
+        data: any
+    ): data is { txs: string[]; page?: PageResponse } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.txs) &&
+            data.txs.every(isTxid) &&
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isVtxoChainResponse(data: any): data is VtxoChain {
         return (
             typeof data === "object" &&
             Array.isArray(data.chain) &&
             data.chain.every(isChain) &&
-            typeof data.depth === "number" &&
-            typeof data.rootCommitmentTxid === "string"
+            (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isVtxosResponse(
+        data: any
+    ): data is { vtxos: Vtxo[]; page?: PageResponse } {
+        return (
+            typeof data === "object" &&
+            Array.isArray(data.vtxos) &&
+            data.vtxos.every(isVtxo) &&
+            (!data.page || isPageResponse(data.page))
         );
     }
 }

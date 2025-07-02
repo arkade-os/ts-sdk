@@ -1,6 +1,6 @@
 import { expect, describe, it, beforeAll } from "vitest";
 import { Transaction } from "@scure/btc-signer";
-import { base64 } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { execSync } from "child_process";
 import {
     TxType,
@@ -484,11 +484,11 @@ describe("Wallet SDK Integration Tests", () => {
             "http://localhost:7070"
         );
 
-        const spendableVtxos = await indexerProvider.getVtxos({
-            addresses: [address],
+        const spendableVtxosResponse = await indexerProvider.getVtxos({
+            scripts: [hex.encode(vhtlcScript.pkScript)],
             spendableOnly: true,
         });
-        expect(spendableVtxos).toHaveLength(1);
+        expect(spendableVtxosResponse.vtxos).toHaveLength(1);
 
         const infos = await arkProvider.getInfo();
         const serverUnrollScript = CSVMultisigTapscript.encode({
@@ -499,7 +499,7 @@ describe("Wallet SDK Integration Tests", () => {
             pubkeys: [X_ONLY_PUBLIC_KEY],
         });
 
-        const vtxo = spendableVtxos[0];
+        const vtxo = spendableVtxosResponse.vtxos[0];
 
         const { virtualTx, checkpoints } = buildOffchainTx(
             [
@@ -669,7 +669,7 @@ describe("Wallet SDK Integration Tests", () => {
         await new Promise((resolve) => setTimeout(resolve, 10000));
 
         const vtxos = await alice.wallet.getVtxos({
-            withSpendableInSettlement: false,
+            withRecoverable: false,
         });
         expect(vtxos).toHaveLength(1);
         const vtxo = vtxos[0];
@@ -682,7 +682,7 @@ describe("Wallet SDK Integration Tests", () => {
         await new Promise((resolve) => setTimeout(resolve, 20_000));
 
         const vtxosAfterSweep = await alice.wallet.getVtxos({
-            withSpendableInSettlement: true,
+            withRecoverable: true,
         });
         expect(vtxosAfterSweep).toHaveLength(1);
         const vtxoAfterSweep = vtxosAfterSweep[0];

@@ -84,11 +84,10 @@ export class Worker {
         const exit = this.wallet.offchainTapscript.exit();
 
         // set the initial vtxos state
-        const vtxos = (
-            await this.indexerProvider.getVtxos({
-                addresses: [addressInfo.offchain.address],
-            })
-        ).map((vtxo) => ({
+        const response = await this.indexerProvider.getVtxos({
+            scripts: [hex.encode(this.wallet.offchainAddress.pkScript)],
+        });
+        const vtxos = response.vtxos.map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: forfeit,
             intentTapLeafScript: exit,
@@ -463,8 +462,14 @@ export class Worker {
         }
 
         try {
-            const vtxos = await this.vtxoRepository.getSpendableVtxos();
-            if (message.filter?.withSpendableInSettlement) {
+            let vtxos = await this.vtxoRepository.getSpendableVtxos();
+            if (!message.filter?.withRecoverable) {
+                // exclude subdust is we don't want recoverable
+                vtxos = vtxos.filter((v) => !isSubdust(v, Wallet.DUST_AMOUNT));
+            }
+
+            if (message.filter?.withRecoverable) {
+                // get also swept and spendable vtxos
                 const sweptVtxos = await this.vtxoRepository.getSweptVtxos();
                 vtxos.push(...sweptVtxos.filter(isSpendable));
             }
