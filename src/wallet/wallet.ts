@@ -67,8 +67,6 @@ import { TxGraph, TxGraphChunk } from "../tree/txGraph";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
-    // TODO get dust from ark server?
-    static DUST_AMOUNT = BigInt(546); // Bitcoin dust limit in satoshis = 546
     static FEE_RATE = 1; // sats/vbyte
 
     private constructor(
@@ -81,7 +79,8 @@ export class Wallet implements IWallet {
         readonly offchainTapscript: DefaultVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
-        readonly forfeitOutputScript: Bytes
+        readonly forfeitOutputScript: Bytes,
+        readonly dustAmount: bigint
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -145,7 +144,8 @@ export class Wallet implements IWallet {
             offchainTapscript,
             boardingTapscript,
             serverUnrollScript,
-            forfeitOutputScript
+            forfeitOutputScript,
+            info.dust
         );
     }
 
@@ -468,7 +468,7 @@ export class Wallet implements IWallet {
 
         const outputAddress = ArkAddress.decode(params.address);
         const outputScript =
-            BigInt(params.amount) < Wallet.DUST_AMOUNT
+            BigInt(params.amount) < this.dustAmount
                 ? outputAddress.subdustPkScript
                 : outputAddress.pkScript;
 
@@ -482,7 +482,7 @@ export class Wallet implements IWallet {
         // add change output if needed
         if (selected.changeAmount > 0) {
             const changeOutputScript =
-                BigInt(selected.changeAmount) < Wallet.DUST_AMOUNT
+                BigInt(selected.changeAmount) < this.dustAmount
                     ? this.offchainAddress.subdustPkScript
                     : this.offchainAddress.pkScript;
 
@@ -1048,7 +1048,7 @@ export class Wallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(vtxo) || isSubdust(vtxo, Wallet.DUST_AMOUNT)) {
+            if (isRecoverable(vtxo) || isSubdust(vtxo, this.dustAmount)) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
