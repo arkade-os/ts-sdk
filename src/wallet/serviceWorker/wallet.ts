@@ -80,7 +80,7 @@ export class ServiceWorkerWallet implements IWallet {
             type: "INIT_WALLET",
             id: getRandomId(),
             privateKey: config.privateKey,
-            arkServerUrl: config.arkServerUrl || "",
+            arkServerUrl: config.arkServerUrl,
             arkServerPublicKey: config.arkServerPublicKey,
         };
 
