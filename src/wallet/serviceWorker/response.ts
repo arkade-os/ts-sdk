@@ -1,12 +1,4 @@
-import {
-    WalletBalance,
-    Coin,
-    VirtualCoin,
-    ArkTransaction,
-    AddressInfo as WalletAddressInfo,
-    IWallet,
-    Addresses,
-} from "..";
+import { WalletBalance, VirtualCoin, ArkTransaction, IWallet } from "..";
 import { SettlementEvent } from "../../providers/ark";
 
 export namespace Response {
@@ -15,9 +7,8 @@ export namespace Response {
         | "SETTLE_EVENT"
         | "SETTLE_SUCCESS"
         | "ADDRESS"
-        | "ADDRESS_INFO"
+        | "BOARDING_ADDRESS"
         | "BALANCE"
-        | "COINS"
         | "VTXOS"
         | "VIRTUAL_COINS"
         | "BOARDING_UTXOS"
@@ -95,40 +86,36 @@ export namespace Response {
     export interface Address extends Base {
         type: "ADDRESS";
         success: true;
-        addresses: Addresses;
+        address: string;
     }
 
     export function isAddress(response: Base): response is Address {
         return response.type === "ADDRESS" && response.success === true;
     }
 
-    export function addresses(id: string, addresses: Addresses): Address {
+    export function address(id: string, address: string): Address {
         return {
             type: "ADDRESS",
             success: true,
-            addresses,
+            address,
             id,
         };
     }
 
-    export interface AddressInfo extends Base {
-        type: "ADDRESS_INFO";
+    export interface BoardingAddress extends Base {
+        type: "BOARDING_ADDRESS";
         success: true;
-        addressInfo: WalletAddressInfo;
+        address: string;
     }
 
-    export function isAddressInfo(response: Base): response is AddressInfo {
-        return response.type === "ADDRESS_INFO" && response.success === true;
-    }
-
-    export function addressInfo(
+    export function boardingAddress(
         id: string,
-        addressInfo: WalletAddressInfo
-    ): AddressInfo {
+        address: string
+    ): BoardingAddress {
         return {
-            type: "ADDRESS_INFO",
+            type: "BOARDING_ADDRESS",
             success: true,
-            addressInfo,
+            address,
             id,
         };
     }
@@ -148,25 +135,6 @@ export namespace Response {
             type: "BALANCE",
             success: true,
             balance,
-            id,
-        };
-    }
-
-    export interface Coins extends Base {
-        type: "COINS";
-        success: true;
-        coins: Coin[];
-    }
-
-    export function isCoins(response: Base): response is Coins {
-        return response.type === "COINS" && response.success === true;
-    }
-
-    export function coins(id: string, coins: Coin[]): Coins {
-        return {
-            type: "COINS",
-            success: true,
-            coins,
             id,
         };
     }

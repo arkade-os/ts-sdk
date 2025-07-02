@@ -1,4 +1,3 @@
-import { NetworkName } from "../../networks";
 import { SettleParams, SendBitcoinParams, Outpoint, GetVtxosFilter } from "..";
 
 export namespace Request {
@@ -6,9 +5,8 @@ export namespace Request {
         | "INIT_WALLET"
         | "SETTLE"
         | "GET_ADDRESS"
-        | "GET_ADDRESS_INFO"
+        | "GET_BOARDING_ADDRESS"
         | "GET_BALANCE"
-        | "GET_COINS"
         | "GET_VTXOS"
         | "GET_VIRTUAL_COINS"
         | "GET_BOARDING_UTXOS"
@@ -33,7 +31,6 @@ export namespace Request {
         type: "INIT_WALLET";
         privateKey: string;
         arkServerUrl: string;
-        network: NetworkName;
         arkServerPublicKey?: string;
     }
 
@@ -44,8 +41,6 @@ export namespace Request {
             typeof message.privateKey === "string" &&
             "arkServerUrl" in message &&
             typeof message.arkServerUrl === "string" &&
-            "network" in message &&
-            typeof message.network === "string" &&
             ("arkServerPublicKey" in message
                 ? typeof message.arkServerPublicKey === "string" ||
                   message.arkServerPublicKey === undefined
@@ -70,12 +65,14 @@ export namespace Request {
         return message.type === "GET_ADDRESS";
     }
 
-    export interface GetAddressInfo extends Base {
-        type: "GET_ADDRESS_INFO";
+    export interface GetBoardingAddress extends Base {
+        type: "GET_BOARDING_ADDRESS";
     }
 
-    export function isGetAddressInfo(message: Base): message is GetAddressInfo {
-        return message.type === "GET_ADDRESS_INFO";
+    export function isGetBoardingAddress(
+        message: Base
+    ): message is GetBoardingAddress {
+        return message.type === "GET_BOARDING_ADDRESS";
     }
 
     export interface GetBalance extends Base {
@@ -84,14 +81,6 @@ export namespace Request {
 
     export function isGetBalance(message: Base): message is GetBalance {
         return message.type === "GET_BALANCE";
-    }
-
-    export interface GetCoins extends Base {
-        type: "GET_COINS";
-    }
-
-    export function isGetCoins(message: Base): message is GetCoins {
-        return message.type === "GET_COINS";
     }
 
     export interface GetVtxos extends Base {

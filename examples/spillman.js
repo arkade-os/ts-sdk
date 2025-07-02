@@ -40,14 +40,12 @@ async function main() {
     console.log("\nInitializing Bob's wallet...");
     const bobWallet = await Wallet.create({
         identity: bob,
-        network: "regtest",
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
     });
 
     const aliceWallet = await Wallet.create({
         identity: alice,
-        network: "regtest",
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
     });

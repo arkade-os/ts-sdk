@@ -3,13 +3,10 @@ import {
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
-    AddressInfo,
-    Coin,
     ArkTransaction,
     WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
-    Addresses,
     Outpoint,
     GetVtxosFilter,
 } from "..";
@@ -81,8 +78,7 @@ export class ServiceWorkerWallet implements IWallet {
             type: "INIT_WALLET",
             id: getRandomId(),
             privateKey: config.privateKey,
-            network: config.network,
-            arkServerUrl: config.arkServerUrl || "",
+            arkServerUrl: config.arkServerUrl,
             arkServerPublicKey: config.arkServerPublicKey,
         };
 
@@ -200,7 +196,7 @@ export class ServiceWorkerWallet implements IWallet {
         });
     }
 
-    async getAddress(): Promise<Addresses> {
+    async getAddress(): Promise<string> {
         const message: Request.GetAddress = {
             type: "GET_ADDRESS",
             id: getRandomId(),
@@ -209,7 +205,7 @@ export class ServiceWorkerWallet implements IWallet {
         try {
             const response = await this.sendMessage(message);
             if (Response.isAddress(response)) {
-                return response.addresses;
+                return response.address;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
@@ -217,20 +213,20 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async getAddressInfo(): Promise<AddressInfo> {
-        const message: Request.GetAddressInfo = {
-            type: "GET_ADDRESS_INFO",
+    async getBoardingAddress(): Promise<string> {
+        const message: Request.GetBoardingAddress = {
+            type: "GET_BOARDING_ADDRESS",
             id: getRandomId(),
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isAddressInfo(response)) {
-                return response.addressInfo;
+            if (Response.isAddress(response)) {
+                return response.address;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
-            throw new Error(`Failed to get address info: ${error}`);
+            throw new Error(`Failed to get boarding address: ${error}`);
         }
     }
 
@@ -248,23 +244,6 @@ export class ServiceWorkerWallet implements IWallet {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
-        }
-    }
-
-    async getCoins(): Promise<Coin[]> {
-        const message: Request.GetCoins = {
-            type: "GET_COINS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isCoins(response)) {
-                return response.coins;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get coins: ${error}`);
         }
     }
 

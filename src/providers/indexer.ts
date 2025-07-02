@@ -493,6 +493,7 @@ export class RestIndexerProvider implements IndexerProvider {
         }
         const data = await res.json();
         if (!Response.isVtxosResponse(data)) {
+            console.log(JSON.stringify(data, null, 2));
             console.error("Invalid vtxos data received:", data);
             throw new Error("Invalid vtxos data received");
         }
@@ -688,23 +689,19 @@ namespace Response {
             typeof data === "object" &&
             isOutpoint(data.outpoint) &&
             typeof data.createdAt === "string" &&
-            (typeof data.expiresAt === "string" ||
-                typeof data.expiresAt === "object") &&
+            typeof data.expiresAt === "string" &&
             typeof data.amount === "string" &&
             typeof data.script === "string" &&
             typeof data.isPreconfirmed === "boolean" &&
             typeof data.isSwept === "boolean" &&
             typeof data.isUnrolled === "boolean" &&
             typeof data.isSpent === "boolean" &&
-            (typeof data.spentBy === "string" ||
-                typeof data.spentBy === "object") &&
+            (!data.spentBy || typeof data.spentBy === "string") &&
+            (!data.settledBy || typeof data.settledBy === "string") &&
+            (!data.arkTxid || typeof data.arkTxid === "string") &&
             Array.isArray(data.commitmentTxids) &&
             data.commitmentTxids.every(isTxid)
         );
-    }
-
-    export function isVtxoArray(data: any): data is Vtxo[] {
-        return Array.isArray(data) && data.every(isVtxo);
     }
 
     function isPageResponse(data: any): data is PageResponse {
