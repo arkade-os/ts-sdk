@@ -3,7 +3,6 @@ import {
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
-    AddressInfo,
     ArkTransaction,
     WalletConfig,
     ExtendedCoin,
@@ -212,23 +211,6 @@ export class ServiceWorkerWallet implements IWallet {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get address: ${error}`);
-        }
-    }
-
-    async getAddressInfo(): Promise<AddressInfo> {
-        const message: Request.GetAddressInfo = {
-            type: "GET_ADDRESS_INFO",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isAddressInfo(response)) {
-                return response.addressInfo;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get address info: ${error}`);
         }
     }
 

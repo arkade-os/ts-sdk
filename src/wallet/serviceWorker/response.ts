@@ -2,7 +2,6 @@ import {
     WalletBalance,
     VirtualCoin,
     ArkTransaction,
-    AddressInfo as WalletAddressInfo,
     IWallet,
     Addresses,
 } from "..";
@@ -14,7 +13,6 @@ export namespace Response {
         | "SETTLE_EVENT"
         | "SETTLE_SUCCESS"
         | "ADDRESS"
-        | "ADDRESS_INFO"
         | "BALANCE"
         | "VTXOS"
         | "VIRTUAL_COINS"
@@ -105,28 +103,6 @@ export namespace Response {
             type: "ADDRESS",
             success: true,
             addresses,
-            id,
-        };
-    }
-
-    export interface AddressInfo extends Base {
-        type: "ADDRESS_INFO";
-        success: true;
-        addressInfo: WalletAddressInfo;
-    }
-
-    export function isAddressInfo(response: Base): response is AddressInfo {
-        return response.type === "ADDRESS_INFO" && response.success === true;
-    }
-
-    export function addressInfo(
-        id: string,
-        addressInfo: WalletAddressInfo
-    ): AddressInfo {
-        return {
-            type: "ADDRESS_INFO",
-            success: true,
-            addressInfo,
             id,
         };
     }

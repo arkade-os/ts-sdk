@@ -43,30 +43,10 @@ export interface SettleParams {
     outputs: Output[];
 }
 
-// VtxoTaprootAddress embed the tapscripts composing the address
-// it admits the internal key is the unspendable x-only public key
-export interface VtxoTaprootAddress {
-    address: string;
-    scripts: {
-        exit: string[];
-        forfeit: string[];
-    };
-}
-
-export interface AddressInfo {
-    offchain: VtxoTaprootAddress;
-    boarding: VtxoTaprootAddress;
-}
-
 export interface Addresses {
     offchain: string;
     boarding: string;
     bip21: string;
-}
-
-export interface TapscriptInfo {
-    offchain?: string[];
-    boarding?: string[];
 }
 
 export interface Status {
@@ -149,7 +129,6 @@ export type GetVtxosFilter = {
 export interface IWallet {
     // Address and balance management
     getAddress(): Promise<Addresses>;
-    getAddressInfo(): Promise<AddressInfo>;
     getBalance(): Promise<WalletBalance>;
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;

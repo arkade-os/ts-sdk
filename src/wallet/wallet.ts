@@ -38,9 +38,7 @@ import {
 import { Identity } from "../identity";
 import {
     Addresses,
-    AddressInfo,
     ArkTransaction,
-    Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
@@ -184,37 +182,6 @@ export class Wallet implements IWallet {
                 address: this.boardingOnchainAddress,
                 ark: this.offchainAddress.encode(),
             }),
-        });
-    }
-
-    getAddressInfo(): Promise<AddressInfo> {
-        if (
-            !this.arkProvider ||
-            !this.offchainTapscript ||
-            !this.boardingTapscript ||
-            !this.arkServerPublicKey
-        ) {
-            throw new Error("Ark provider not configured");
-        }
-
-        const offchainAddress = this.offchainAddress.encode();
-        const boardingAddress = this.boardingOnchainAddress;
-
-        return Promise.resolve({
-            offchain: {
-                address: offchainAddress,
-                scripts: {
-                    exit: [this.offchainTapscript.exitScript],
-                    forfeit: [this.offchainTapscript.forfeitScript],
-                },
-            },
-            boarding: {
-                address: boardingAddress,
-                scripts: {
-                    exit: [this.boardingTapscript.exitScript],
-                    forfeit: [this.boardingTapscript.forfeitScript],
-                },
-            },
         });
     }
 

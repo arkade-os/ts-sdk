@@ -2,7 +2,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { InMemoryKey } from "../../identity/inMemoryKey";
-import { isSpendable, VtxoTaprootAddress } from "..";
+import { isSpendable } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -14,6 +14,7 @@ import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { ArkAddress } from "../../script/address";
 import { VtxoScript } from "../../script/base";
 import { hex } from "@scure/base";
+import { DefaultVtxo } from "../../script/default";
 
 // Worker is a class letting to interact with ServiceWorkerWallet from the client
 // it aims to be run in a service worker context
@@ -72,21 +73,18 @@ export class Worker {
             return;
         }
         // subscribe to address updates
-        const addressInfo = await this.wallet.getAddressInfo();
-        if (!addressInfo.offchain) {
-            return;
-        }
-
         await this.vtxoRepository.open();
 
         const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
         const forfeit = this.wallet.offchainTapscript.forfeit();
         const exit = this.wallet.offchainTapscript.exit();
 
+        const address = this.wallet.offchainAddress.encode();
+
         // set the initial vtxos state
         const vtxos = (
             await this.indexerProvider.getVtxos({
-                addresses: [addressInfo.offchain.address],
+                addresses: [address],
             })
         ).map((vtxo) => ({
             ...vtxo,
@@ -97,21 +95,22 @@ export class Worker {
 
         await this.vtxoRepository.addOrUpdate(vtxos);
 
-        this.processVtxoSubscription(addressInfo.offchain);
+        this.processVtxoSubscription({
+            address,
+            vtxoScript: this.wallet.offchainTapscript,
+        });
     }
 
     private async processVtxoSubscription({
         address,
-        scripts,
-    }: VtxoTaprootAddress) {
+        vtxoScript,
+    }: {
+        address: string;
+        vtxoScript: DefaultVtxo.Script;
+    }) {
         try {
-            const addressScripts = [...scripts.exit, ...scripts.forfeit];
-
-            const vtxoScript = new VtxoScript(addressScripts.map(hex.decode));
-            const forfeitTapLeafScript = vtxoScript.findLeaf(
-                scripts.forfeit[0]
-            );
-            const intentTapLeafScript = vtxoScript.findLeaf(scripts.exit[0]);
+            const forfeitTapLeafScript = vtxoScript.forfeit();
+            const intentTapLeafScript = vtxoScript.exit();
 
             const abortController = new AbortController();
             const subscriptionId =
@@ -285,42 +284,6 @@ export class Worker {
             );
         } catch (error: unknown) {
             console.error("Error getting address:", error);
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            event.source?.postMessage(Response.error(message.id, errorMessage));
-        }
-    }
-
-    private async handleGetAddressInfo(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isGetAddressInfo(message)) {
-            console.error("Invalid GET_ADDRESS_INFO message format", message);
-            event.source?.postMessage(
-                Response.error(
-                    message.id,
-                    "Invalid GET_ADDRESS_INFO message format"
-                )
-            );
-            return;
-        }
-
-        if (!this.wallet) {
-            console.error("Wallet not initialized");
-            event.source?.postMessage(
-                Response.error(message.id, "Wallet not initialized")
-            );
-            return;
-        }
-
-        try {
-            const addressInfo = await this.wallet.getAddressInfo();
-            event.source?.postMessage(
-                Response.addressInfo(message.id, addressInfo)
-            );
-        } catch (error: unknown) {
-            console.error("Error getting address info:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
@@ -610,10 +573,6 @@ export class Worker {
             }
             case "GET_ADDRESS": {
                 await this.handleGetAddress(event);
-                break;
-            }
-            case "GET_ADDRESS_INFO": {
-                await this.handleGetAddressInfo(event);
                 break;
             }
             case "GET_BALANCE": {

@@ -1,4 +1,3 @@
-import { NetworkName } from "../../networks";
 import { SettleParams, SendBitcoinParams, Outpoint, GetVtxosFilter } from "..";
 
 export namespace Request {
@@ -6,7 +5,6 @@ export namespace Request {
         | "INIT_WALLET"
         | "SETTLE"
         | "GET_ADDRESS"
-        | "GET_ADDRESS_INFO"
         | "GET_BALANCE"
         | "GET_VTXOS"
         | "GET_VIRTUAL_COINS"
@@ -64,14 +62,6 @@ export namespace Request {
 
     export function isGetAddress(message: Base): message is GetAddress {
         return message.type === "GET_ADDRESS";
-    }
-
-    export interface GetAddressInfo extends Base {
-        type: "GET_ADDRESS_INFO";
-    }
-
-    export function isGetAddressInfo(message: Base): message is GetAddressInfo {
-        return message.type === "GET_ADDRESS_INFO";
     }
 
     export interface GetBalance extends Base {
