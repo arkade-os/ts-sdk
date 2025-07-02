@@ -1103,15 +1103,6 @@ export class Wallet implements IWallet {
         }
     }
 
-    async waitForIncomingFunds(): Promise<Coin[]> {
-        return new Promise((resolve) => {
-            this.notifyIncomingFunds((coins, stopFunc) => {
-                resolve(coins);
-                stopFunc();
-            });
-        });
-    }
-
     private async handleBatchStartedEvent(
         event: BatchStartedEvent,
         intentId: string,
