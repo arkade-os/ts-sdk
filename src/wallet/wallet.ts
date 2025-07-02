@@ -1,12 +1,6 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
-import {
-    Address,
-    OutScript,
-    P2TR,
-    p2tr,
-    tapLeafHash,
-} from "@scure/btc-signer/payment";
+import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment";
 import { SigHash, Transaction } from "@scure/btc-signer";
 import {
     TaprootControlBlock,
@@ -17,7 +11,7 @@ import { vtxosToTxs } from "../utils/transactionHistory";
 import { BIP21 } from "../utils/bip21";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { selectCoins, selectVirtualCoins } from "../utils/coinselect";
+import { selectVirtualCoins } from "../utils/coinselect";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
@@ -267,13 +261,10 @@ export class Wallet implements IWallet {
                 unconfirmed,
                 total: totalBoarding,
             },
-            offchain: {
-                settled,
-                preconfirmed,
-                available: settled + preconfirmed,
-                recoverable,
-                total: totalOffchain,
-            },
+            settled,
+            preconfirmed,
+            available: settled + preconfirmed,
+            recoverable,
             total: totalBoarding + totalOffchain,
         };
     }

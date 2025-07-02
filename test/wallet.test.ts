@@ -104,18 +104,16 @@ describe("Wallet", () => {
                 });
 
             const wallet = await Wallet.create({
-                network: "mutinynet",
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
             });
 
             const balance = await wallet.getBalance();
-            expect(balance.offchain.settled).toBe(50000);
+            expect(balance.settled).toBe(50000);
             expect(balance.boarding.total).toBe(100000);
-            expect(balance.offchain.preconfirmed).toBe(0);
-            expect(balance.offchain.available).toBe(50000);
-            expect(balance.offchain.recoverable).toBe(0);
-            expect(balance.offchain.total).toBe(50000);
+            expect(balance.preconfirmed).toBe(0);
+            expect(balance.available).toBe(50000);
+            expect(balance.recoverable).toBe(0);
             expect(balance.total).toBe(150000);
         });
     });
@@ -218,7 +216,6 @@ describe("Wallet", () => {
             });
 
             const wallet = await Wallet.create({
-                network: "mutinynet",
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
             });

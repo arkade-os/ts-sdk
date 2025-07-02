@@ -393,13 +393,10 @@ export class Worker {
                         unconfirmed,
                         total: totalBoarding,
                     },
-                    offchain: {
-                        settled,
-                        preconfirmed,
-                        available: settled + preconfirmed,
-                        recoverable,
-                        total: totalOffchain,
-                    },
+                    settled,
+                    preconfirmed,
+                    available: settled + preconfirmed,
+                    recoverable,
                     total: totalBoarding + totalOffchain,
                 })
             );

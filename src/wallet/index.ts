@@ -1,6 +1,5 @@
 import { Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
-import { NetworkName } from "../networks";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils";
@@ -20,14 +19,11 @@ export interface WalletBalance {
         unconfirmed: number;
         total: number;
     };
-    offchain: {
-        settled: number;
-        preconfirmed: number;
-        available: number; // settled + preconfirmed
-        recoverable: number; // subdust and (swept=true & unspent=true)
-        total: number; // available + recoverable
-    };
-    total: number; // onchain.total + offchain.total
+    settled: number;
+    preconfirmed: number;
+    available: number; // settled + preconfirmed
+    recoverable: number; // subdust and (swept=true & unspent=true)
+    total: number;
 }
 
 export interface SendBitcoinParams {
