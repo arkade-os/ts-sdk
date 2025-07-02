@@ -62,7 +62,7 @@ export async function createVtxo(
     alice: TestArkWallet,
     amount: number
 ): Promise<string> {
-    const address = (await alice.wallet.getAddress()).offchain;
+    const address = await alice.wallet.getAddress();
     if (!address) throw new Error("Offchain address not defined.");
 
     faucetOffchain(address, amount);
