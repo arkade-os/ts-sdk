@@ -1,5 +1,5 @@
-import { TreeNode, TxTree } from "../tree/vtxoTree";
-import { Outpoint, VirtualCoin } from "../wallet";
+import { TxGraphChunk } from "../tree/txGraph";
+import { Outpoint } from "../wallet";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 
@@ -40,7 +40,6 @@ export type BatchFinalizationEvent = {
     type: SettlementEventType.BatchFinalization;
     id: string;
     commitmentTx: string;
-    connectorsIndex: Map<string, Outpoint>; // `vtxoTxid:vtxoIndex` -> connectorOutpoint
 };
 
 export type BatchFinalizedEvent = {
@@ -80,7 +79,7 @@ export type TreeTxEvent = {
     id: string;
     topic: string[];
     batchIndex: number;
-    treeTx: TreeNode;
+    chunk: TxGraphChunk;
 };
 
 export type TreeSignatureEvent = {
@@ -88,8 +87,7 @@ export type TreeSignatureEvent = {
     id: string;
     topic: string[];
     batchIndex: number;
-    level: number;
-    levelIndex: number;
+    txid: string;
     signature: string;
 };
 
@@ -103,6 +101,13 @@ export type SettlementEvent =
     | TreeTxEvent
     | TreeSignatureEvent;
 
+export interface MarketHour {
+    nextStartTime: bigint;
+    nextEndTime: bigint;
+    period: bigint;
+    roundInterval: bigint;
+}
+
 export interface ArkInfo {
     pubkey: string;
     vtxoTreeExpiry: bigint;
@@ -111,25 +116,13 @@ export interface ArkInfo {
     network: string;
     dust: bigint;
     forfeitAddress: string;
-    marketHour?: {
-        start: number;
-        end: number;
-    };
+    marketHour?: MarketHour;
     version: string;
     utxoMinAmount: bigint;
     utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
     vtxoMinAmount: bigint;
     vtxoMaxAmount: bigint; // -1 means no limit (default)
     boardingExitDelay: bigint;
-}
-
-export interface Round {
-    id: string;
-    start: Date;
-    end: Date;
-    vtxoTree: TxTree;
-    forfeitTxs: string[];
-    connectors: TxTree;
 }
 
 export interface Intent {
@@ -150,7 +143,7 @@ export interface Vtxo {
     script: string;
     createdAt: bigint;
     expiresAt: bigint;
-    commitmentTxid: string;
+    commitmentTxids: string[];
     preconfirmed: boolean;
     swept: boolean;
     redeemed: boolean;
@@ -186,7 +179,10 @@ export interface ArkProvider {
         signedForfeitTxs: string[],
         signedCommitmentTx?: string
     ): Promise<void>;
-    getEventStream(signal: AbortSignal): AsyncIterableIterator<SettlementEvent>;
+    getEventStream(
+        signal: AbortSignal,
+        topics: string[]
+    ): AsyncIterableIterator<SettlementEvent>;
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
@@ -216,6 +212,20 @@ export class RestArkProvider implements ArkProvider {
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
+            marketHour: fromServer.marketHour
+                ? {
+                      nextStartTime: BigInt(
+                          fromServer.marketHour.nextStartTime ?? 0
+                      ),
+                      nextEndTime: BigInt(
+                          fromServer.marketHour.nextEndTime ?? 0
+                      ),
+                      period: BigInt(fromServer.marketHour.period ?? 0),
+                      roundInterval: BigInt(
+                          fromServer.marketHour.roundInterval ?? 0
+                      ),
+                  }
+                : undefined,
         };
     }
 
@@ -370,7 +380,7 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 batchId,
                 pubkey,
-                treeNonces: encodeNoncesMatrix(nonces),
+                treeNonces: encodeMusig2Nonces(nonces),
             }),
         });
 
@@ -394,7 +404,7 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 batchId,
                 pubkey,
-                treeSignatures: encodeSignaturesMatrix(signatures),
+                treeSignatures: encodeMusig2Signatures(signatures),
             }),
         });
 
@@ -428,13 +438,18 @@ export class RestArkProvider implements ArkProvider {
     }
 
     async *getEventStream(
-        signal: AbortSignal
+        signal: AbortSignal,
+        topics: string[]
     ): AsyncIterableIterator<SettlementEvent> {
         const url = `${this.serverUrl}/v1/batch/events`;
+        const queryParams =
+            topics.length > 0
+                ? `?${topics.map((topic) => `topics=${encodeURIComponent(topic)}`).join("&")}`
+                : "";
 
         while (!signal?.aborted) {
             try {
-                const response = await fetch(url, {
+                const response = await fetch(url + queryParams, {
                     headers: {
                         Accept: "application/json",
                     },
@@ -570,17 +585,6 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    private toConnectorsIndex(
-        connectorsIndex: ProtoTypes.RoundFinalizationEvent["connectorsIndex"]
-    ): Map<string, Outpoint> {
-        return new Map(
-            Object.entries(connectorsIndex).map(([key, value]) => [
-                key,
-                { txid: value.txid, vout: value.vout },
-            ])
-        );
-    }
-
     private parseSettlementEvent(
         data: ProtoTypes.EventData
     ): SettlementEvent | null {
@@ -600,9 +604,6 @@ export class RestArkProvider implements ArkProvider {
                 type: SettlementEventType.BatchFinalization,
                 id: data.batchFinalization.id,
                 commitmentTx: data.batchFinalization.commitmentTx,
-                connectorsIndex: this.toConnectorsIndex(
-                    data.batchFinalization.connectorsIndex
-                ),
             };
         }
 
@@ -640,20 +641,32 @@ export class RestArkProvider implements ArkProvider {
             return {
                 type: SettlementEventType.TreeNoncesAggregated,
                 id: data.treeNoncesAggregated.id,
-                treeNonces: decodeNoncesMatrix(
-                    hex.decode(data.treeNoncesAggregated.treeNonces)
+                treeNonces: decodeMusig2Nonces(
+                    data.treeNoncesAggregated.treeNonces
                 ),
             };
         }
 
         // Check for TreeTx event
         if (data.treeTx) {
+            const children = Object.fromEntries(
+                Object.entries(data.treeTx.children).map(
+                    ([outputIndex, txid]) => {
+                        return [parseInt(outputIndex), txid];
+                    }
+                )
+            );
+
             return {
                 type: SettlementEventType.TreeTx,
                 id: data.treeTx.id,
                 topic: data.treeTx.topic,
                 batchIndex: data.treeTx.batchIndex,
-                treeTx: data.treeTx.treeTx,
+                chunk: {
+                    txid: data.treeTx.txid,
+                    tx: data.treeTx.tx,
+                    children,
+                },
             };
         }
 
@@ -663,8 +676,7 @@ export class RestArkProvider implements ArkProvider {
                 id: data.treeSignature.id,
                 topic: data.treeSignature.topic,
                 batchIndex: data.treeSignature.batchIndex,
-                level: data.treeSignature.level,
-                levelIndex: data.treeSignature.levelIndex,
+                txid: data.treeSignature.txid,
                 signature: data.treeSignature.signature,
             };
         }
@@ -689,7 +701,7 @@ export class RestArkProvider implements ArkProvider {
                         script: vtxo.script,
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
-                        commitmentTxid: vtxo.commitmentTxid,
+                        commitmentTxids: vtxo.commitmentTxids,
                         preconfirmed: vtxo.preconfirmed,
                         swept: vtxo.swept,
                         redeemed: vtxo.redeemed,
@@ -706,7 +718,7 @@ export class RestArkProvider implements ArkProvider {
                             script: vtxo.script,
                             createdAt: BigInt(vtxo.createdAt),
                             expiresAt: BigInt(vtxo.expiresAt),
-                            commitmentTxid: vtxo.commitmentTxid,
+                            commitmentTxids: vtxo.commitmentTxids,
                             preconfirmed: vtxo.preconfirmed,
                             swept: vtxo.swept,
                             redeemed: vtxo.redeemed,
@@ -732,7 +744,7 @@ export class RestArkProvider implements ArkProvider {
                         script: vtxo.script,
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
-                        commitmentTxid: vtxo.commitmentTxid,
+                        commitmentTxids: vtxo.commitmentTxids,
                         preconfirmed: vtxo.preconfirmed,
                         swept: vtxo.swept,
                         redeemed: vtxo.redeemed,
@@ -748,7 +760,7 @@ export class RestArkProvider implements ArkProvider {
                         script: vtxo.script,
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
-                        commitmentTxid: vtxo.commitmentTxid,
+                        commitmentTxids: vtxo.commitmentTxids,
                         preconfirmed: vtxo.preconfirmed,
                         swept: vtxo.swept,
                         redeemed: vtxo.redeemed,
@@ -765,138 +777,40 @@ export class RestArkProvider implements ArkProvider {
     }
 }
 
-function encodeMatrix(matrix: Uint8Array[][]): Uint8Array {
-    // Calculate total size needed:
-    // 4 bytes for number of rows
-    // For each row: 4 bytes for length + sum of encoded cell lengths + isNil byte * cell count
-    let totalSize = 4;
-    for (const row of matrix) {
-        totalSize += 4; // row length
-        for (const cell of row) {
-            totalSize += 1;
-            totalSize += cell.length;
-        }
+function encodeMusig2Nonces(nonces: TreeNonces): string {
+    const noncesObject: Record<string, string> = {};
+    for (const [txid, nonce] of nonces) {
+        noncesObject[txid] = hex.encode(nonce.pubNonce);
     }
+    return JSON.stringify(noncesObject);
+}
 
-    // Create buffer and DataView
-    const buffer = new ArrayBuffer(totalSize);
-    const view = new DataView(buffer);
-    let offset = 0;
+function encodeMusig2Signatures(signatures: TreePartialSigs): string {
+    const sigObject: Record<string, string> = {};
+    for (const [txid, sig] of signatures) {
+        sigObject[txid] = hex.encode(sig.encode());
+    }
+    return JSON.stringify(sigObject);
+}
 
-    // Write number of rows
-    view.setUint32(offset, matrix.length, true); // true for little-endian
-    offset += 4;
-
-    // Write each row
-    for (const row of matrix) {
-        // Write row length
-        view.setUint32(offset, row.length, true);
-        offset += 4;
-
-        // Write each cell
-        for (const cell of row) {
-            const notNil = cell.length > 0;
-            view.setInt8(offset, notNil ? 1 : 0);
-            offset += 1;
-            if (!notNil) {
-                continue;
+function decodeMusig2Nonces(str: string): TreeNonces {
+    const noncesObject = JSON.parse(str);
+    return new Map(
+        Object.entries(noncesObject).map(([txid, nonce]) => {
+            if (typeof nonce !== "string") {
+                throw new Error("invalid nonce");
             }
-            new Uint8Array(buffer).set(cell, offset);
-            offset += cell.length;
-        }
-    }
-
-    return new Uint8Array(buffer);
-}
-
-function decodeMatrix(matrix: Uint8Array, cellLength: number): Uint8Array[][] {
-    // Create DataView to read the buffer
-    const view = new DataView(
-        matrix.buffer,
-        matrix.byteOffset,
-        matrix.byteLength
-    );
-    let offset = 0;
-
-    // Read number of rows
-    const numRows = view.getUint32(offset, true); // true for little-endian
-    offset += 4;
-
-    // Initialize result matrix
-    const result: Uint8Array[][] = [];
-
-    // Read each row
-    for (let i = 0; i < numRows; i++) {
-        // Read row length
-        const rowLength = view.getUint32(offset, true);
-        offset += 4;
-
-        const row: Uint8Array[] = [];
-
-        // Read each cell in the row
-        for (let j = 0; j < rowLength; j++) {
-            const notNil = view.getUint8(offset) === 1;
-            offset += 1;
-            if (notNil) {
-                const cell = new Uint8Array(
-                    matrix.buffer,
-                    matrix.byteOffset + offset,
-                    cellLength
-                );
-                row.push(new Uint8Array(cell));
-                offset += cellLength;
-            } else {
-                row.push(new Uint8Array());
-            }
-        }
-
-        result.push(row);
-    }
-
-    return result;
-}
-
-function decodeNoncesMatrix(matrix: Uint8Array): TreeNonces {
-    const decoded = decodeMatrix(matrix, 66);
-    return decoded.map((row) => row.map((nonce) => ({ pubNonce: nonce })));
-}
-
-function encodeNoncesMatrix(nonces: TreeNonces): string {
-    return hex.encode(
-        encodeMatrix(
-            nonces.map((row) =>
-                row.map((nonce) => (nonce ? nonce.pubNonce : new Uint8Array()))
-            )
-        )
-    );
-}
-
-function encodeSignaturesMatrix(signatures: TreePartialSigs): string {
-    return hex.encode(
-        encodeMatrix(
-            signatures.map((row) =>
-                row.map((s) => (s ? s.encode() : new Uint8Array()))
-            )
-        )
+            return [txid, { pubNonce: hex.decode(nonce) }];
+        })
     );
 }
 
 // ProtoTypes namespace defines unexported types representing the raw data received from the server
 namespace ProtoTypes {
-    interface Node {
-        txid: string;
-        tx: string;
-        parentTxid: string;
-        level: number;
-        levelIndex: number;
-        leaf: boolean;
-    }
-
     interface BatchStartedEvent {
         id: string;
         intentIdHashes: string[];
         batchExpiry: string;
-        forfeitAddress: string;
     }
 
     interface RoundFailed {
@@ -907,12 +821,6 @@ namespace ProtoTypes {
     export interface RoundFinalizationEvent {
         id: string;
         commitmentTx: string;
-        connectorsIndex: {
-            [key: string]: {
-                txid: string;
-                vout: number;
-            };
-        };
     }
 
     interface RoundFinalizedEvent {
@@ -931,19 +839,20 @@ namespace ProtoTypes {
         treeNonces: string;
     }
 
-    interface BatchTreeEvent {
+    interface TreeTxEvent {
         id: string;
         topic: string[];
         batchIndex: number;
-        treeTx: Node;
+        txid: string;
+        tx: string;
+        children: Record<string, string>;
     }
 
-    interface BatchTreeSignatureEvent {
+    interface TreeSignatureEvent {
         id: string;
         topic: string[];
         batchIndex: number;
-        level: number;
-        levelIndex: number;
+        txid: string;
         signature: string;
     }
 
@@ -956,7 +865,7 @@ namespace ProtoTypes {
         script: string;
         createdAt: string;
         expiresAt: string;
-        commitmentTxid: string;
+        commitmentTxids: string[];
         preconfirmed: boolean;
         swept: boolean;
         redeemed: boolean;
@@ -971,8 +880,8 @@ namespace ProtoTypes {
         batchFinalized?: RoundFinalizedEvent;
         treeSigningStarted?: RoundSigningEvent;
         treeNoncesAggregated?: RoundSigningNoncesGeneratedEvent;
-        treeTx?: BatchTreeEvent;
-        treeSignature?: BatchTreeSignatureEvent;
+        treeTx?: TreeTxEvent;
+        treeSignature?: TreeSignatureEvent;
     }
 
     export interface TransactionData {

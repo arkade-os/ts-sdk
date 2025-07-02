@@ -7,7 +7,7 @@ import {
     p2tr,
     tapLeafHash,
 } from "@scure/btc-signer/payment";
-import { Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer";
 import {
     TaprootControlBlock,
     TransactionInput,
@@ -37,7 +37,10 @@ import {
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
-import { validateConnectorsTree, validateVtxoTree } from "../tree/validation";
+import {
+    validateConnectorsTxGraph,
+    validateVtxoTxGraph,
+} from "../tree/validation";
 import { Identity } from "../identity";
 import {
     Addresses,
@@ -59,14 +62,14 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes, sha256 } from "@scure/btc-signer/utils";
+import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
-import { TxTree } from "../tree/vtxoTree";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
+import { TxGraph, TxGraphChunk } from "../tree/txGraph";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -454,8 +457,8 @@ export class Wallet implements IWallet {
                         },
                         virtualStatus: {
                             state: spentStatus?.spent ? "spent" : "pending",
-                            batchTxID: spentStatus?.spent
-                                ? spentStatus.txid
+                            commitmentTxIds: spentStatus?.spent
+                                ? [spentStatus.txid]
                                 : undefined,
                         },
                         createdAt: tx.status.confirmed
@@ -473,7 +476,7 @@ export class Wallet implements IWallet {
             const tx: ArkTransaction = {
                 key: {
                     boardingTxid: utxo.txid,
-                    roundTxid: "",
+                    commitmentTxid: "",
                     redeemTxid: "",
                 },
                 amount: utxo.value,
@@ -794,17 +797,25 @@ export class Wallet implements IWallet {
         try {
             let step: SettlementEventType | undefined;
 
+            const topics = [
+                ...signingPublicKeys,
+                ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
+            ];
+
             const settlementStream = this.arkProvider.getEventStream(
-                abortController.signal
+                abortController.signal,
+                topics
             );
 
             // roundId, sweepTapTreeRoot and forfeitOutputScript are set once the BatchStarted event is received
             let roundId: string | undefined;
             let sweepTapTreeRoot: Uint8Array | undefined;
-            let forfeitOutputScript: Bytes | undefined;
 
-            const vtxoTree = TxTree.empty();
-            const connectorsTree = TxTree.empty();
+            const vtxoChunks: TxGraphChunk[] = [];
+            const connectorsChunks: TxGraphChunk[] = [];
+
+            let vtxoGraph: TxGraph | undefined;
+            let connectorsGraph: TxGraph | undefined;
 
             for await (const event of settlementStream) {
                 if (eventCallback) {
@@ -831,7 +842,6 @@ export class Wallet implements IWallet {
                         if (!res.skip) {
                             step = event.type;
                             sweepTapTreeRoot = res.sweepTapTreeRoot;
-                            forfeitOutputScript = res.forfeitOutputScript;
                             roundId = res.roundId;
                             if (!hasOffchainOutputs) {
                                 // if there are no offchain outputs, we don't have to handle musig2 tree signatures
@@ -849,10 +859,10 @@ export class Wallet implements IWallet {
                         }
                         // index 0 = vtxo tree
                         if (event.batchIndex === 0) {
-                            vtxoTree.addNode(event.treeTx);
+                            vtxoChunks.push(event.chunk);
                             // index 1 = connectors tree
                         } else if (event.batchIndex === 1) {
-                            connectorsTree.addNode(event.treeTx);
+                            connectorsChunks.push(event.chunk);
                         } else {
                             throw new Error(
                                 `Invalid batch index: ${event.batchIndex}`
@@ -866,24 +876,21 @@ export class Wallet implements IWallet {
                         if (!hasOffchainOutputs) {
                             continue;
                         }
-                        // index 0 = vtxo tree
-                        if (event.batchIndex === 0) {
-                            vtxoTree.addSignature(
-                                event.signature,
-                                event.level,
-                                event.levelIndex
-                            );
-                            // index 1 = connectors tree
-                        } else if (event.batchIndex === 1) {
-                            connectorsTree.addSignature(
-                                event.signature,
-                                event.level,
-                                event.levelIndex
-                            );
-                        } else {
+
+                        if (!vtxoGraph) {
                             throw new Error(
-                                `Invalid batch index: ${event.batchIndex}`
+                                "Vtxo graph not set, something went wrong"
                             );
+                        }
+
+                        // index 0 = vtxo graph
+                        if (event.batchIndex === 0) {
+                            const tapKeySig = hex.decode(event.signature);
+                            vtxoGraph.update(event.txid, (tx) => {
+                                tx.updateInput(0, {
+                                    tapKeySig,
+                                });
+                            });
                         }
                         break;
                     // the server has started the signing process of the vtxo tree transactions
@@ -899,11 +906,20 @@ export class Wallet implements IWallet {
                             if (!sweepTapTreeRoot) {
                                 throw new Error("Sweep tap tree root not set");
                             }
+
+                            if (vtxoChunks.length === 0) {
+                                throw new Error(
+                                    "unsigned vtxo graph not received"
+                                );
+                            }
+
+                            vtxoGraph = TxGraph.create(vtxoChunks);
+
                             await this.handleSettlementSigningEvent(
                                 event,
                                 sweepTapTreeRoot,
                                 session,
-                                vtxoTree
+                                vtxoGraph
                             );
                         }
                         step = event.type;
@@ -932,15 +948,23 @@ export class Wallet implements IWallet {
                             continue;
                         }
 
-                        if (!forfeitOutputScript) {
+                        if (!this.forfeitOutputScript) {
                             throw new Error("Forfeit output script not set");
+                        }
+
+                        if (connectorsChunks.length > 0) {
+                            connectorsGraph = TxGraph.create(connectorsChunks);
+                            validateConnectorsTxGraph(
+                                event.commitmentTx,
+                                connectorsGraph
+                            );
                         }
 
                         await this.handleSettlementFinalizationEvent(
                             event,
                             params.inputs,
-                            forfeitOutputScript,
-                            connectorsTree
+                            this.forfeitOutputScript,
+                            connectorsGraph
                         );
                         step = event.type;
                         break;
@@ -988,7 +1012,6 @@ export class Wallet implements IWallet {
             throw new Error("No vtxos to exit");
         }
 
-        const trees = new Map<string, TxTree>();
         const transactions: string[] = [];
 
         // for (const vtxo of vtxos) {
@@ -1148,29 +1171,26 @@ export class Wallet implements IWallet {
         event: TreeSigningStartedEvent,
         sweepTapTreeRoot: Uint8Array,
         session: SignerSession,
-        unsignedVtxoTree: TxTree
+        vtxoGraph: TxGraph
     ) {
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
         }
 
         // validate the unsigned vtxo tree
-        validateVtxoTree(
-            event.unsignedCommitmentTx,
-            unsignedVtxoTree,
-            sweepTapTreeRoot
+        const commitmentTx = Transaction.fromPSBT(
+            base64.decode(event.unsignedCommitmentTx)
         );
+        validateVtxoTxGraph(vtxoGraph, commitmentTx, sweepTapTreeRoot);
 
         // TODO check if our registered outputs are in the vtxo tree
 
-        const settlementPsbt = base64.decode(event.unsignedCommitmentTx);
-        const settlementTx = Transaction.fromPSBT(settlementPsbt);
-        const sharedOutput = settlementTx.getOutput(0);
+        const sharedOutput = commitmentTx.getOutput(0);
         if (!sharedOutput?.amount) {
             throw new Error("Shared output not found");
         }
 
-        session.init(unsignedVtxoTree, sweepTapTreeRoot, sharedOutput.amount);
+        session.init(vtxoGraph, sweepTapTreeRoot, sharedOutput.amount);
 
         await this.arkProvider.submitTreeNonces(
             event.id,
@@ -1201,7 +1221,7 @@ export class Wallet implements IWallet {
         event: BatchFinalizationEvent,
         inputs: SettleParams["inputs"],
         forfeitOutputScript: Bytes,
-        connectors: TxTree
+        connectorsGraph?: TxGraph
     ) {
         if (!this.arkProvider) {
             throw new Error("Ark provider not configured");
@@ -1215,7 +1235,10 @@ export class Wallet implements IWallet {
             base64.decode(event.commitmentTx)
         );
         let hasBoardingUtxos = false;
-        let connectorsTreeValid = false;
+
+        let connectorIndex = 0;
+
+        const connectorsLeaves = connectorsGraph?.leaves() || [];
 
         for (const input of inputs) {
             // check if the input is an offchain "virtual" coin
@@ -1261,61 +1284,58 @@ export class Wallet implements IWallet {
                 continue;
             }
 
-            if (!connectorsTreeValid) {
-                // validate that the connectors tree is valid and contains our expected connectors
-                validateConnectorsTree(event.commitmentTx, connectors);
-                connectorsTreeValid = true;
+            if (connectorsLeaves.length === 0) {
+                throw new Error("connectors not received");
             }
 
-            const connectorsLeaves = connectors.leaves();
-            const connectorOutpoint = event.connectorsIndex.get(
-                `${vtxo.txid}:${vtxo.vout}`
+            if (connectorIndex >= connectorsLeaves.length) {
+                throw new Error("not enough connectors received");
+            }
+
+            const connectorLeaf = connectorsLeaves[connectorIndex];
+            const connectorTxId = hex.encode(
+                sha256x2(connectorLeaf.toBytes(true)).reverse()
             );
-            if (!connectorOutpoint) {
-                throw new Error("Connector outpoint not found");
+            const connectorOutput = connectorLeaf.getOutput(0);
+            if (!connectorOutput) {
+                throw new Error("connector output not found");
             }
 
-            let connectorOutput: TransactionOutput | undefined;
-            for (const leaf of connectorsLeaves) {
-                if (leaf.txid === connectorOutpoint.txid) {
-                    try {
-                        const connectorTx = Transaction.fromPSBT(
-                            base64.decode(leaf.tx)
-                        );
-                        connectorOutput = connectorTx.getOutput(
-                            connectorOutpoint.vout
-                        );
-                        break;
-                    } catch {
-                        throw new Error("Invalid connector tx");
-                    }
-                }
-            }
-            if (
-                !connectorOutput ||
-                !connectorOutput.amount ||
-                !connectorOutput.script
-            ) {
-                throw new Error("Connector output not found");
+            const connectorAmount = connectorOutput.amount;
+            const connectorPkScript = connectorOutput.script;
+
+            if (!connectorAmount || !connectorPkScript) {
+                throw new Error("invalid connector output");
             }
 
-            let forfeitTx = buildForfeitTx({
-                connectorInput: connectorOutpoint,
-                connectorAmount: connectorOutput.amount,
-                serverPkScript: forfeitOutputScript,
-                connectorPkScript: connectorOutput.script,
-                vtxoAmount: BigInt(vtxo.value),
-                vtxoInput: input,
-                vtxoPkScript: VtxoScript.decode(input.tapTree).pkScript,
-            });
+            connectorIndex++;
 
-            // add the tapscript
-            forfeitTx.updateInput(1, {
-                tapLeafScript: [input.forfeitTapLeafScript],
-            });
+            let forfeitTx = buildForfeitTx(
+                [
+                    {
+                        txid: input.txid,
+                        index: input.vout,
+                        witnessUtxo: {
+                            amount: BigInt(vtxo.value),
+                            script: VtxoScript.decode(input.tapTree).pkScript,
+                        },
+                        sighashType: SigHash.DEFAULT,
+                        tapLeafScript: [input.forfeitTapLeafScript],
+                    },
+                    {
+                        txid: connectorTxId,
+                        index: 0,
+                        witnessUtxo: {
+                            amount: connectorAmount,
+                            script: connectorPkScript,
+                        },
+                    },
+                ],
+                forfeitOutputScript
+            );
 
             // do not sign the connector input
-            forfeitTx = await this.identity.sign(forfeitTx, [1]);
+            forfeitTx = await this.identity.sign(forfeitTx, [0]);
 
             signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
         }
