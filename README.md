@@ -26,16 +26,16 @@ const wallet = await Wallet.create({
 })
 
 // Get wallet addresses
-const addresses = await wallet.getAddress()
-console.log('Offchain Address:', addresses.offchain)
-console.log('Boarding Address:', addresses.boarding)
-console.log('BIP21 URI:', addresses.bip21)
+const arkAddress = await wallet.getAddress()
+const boardingAddress = await wallet.getBoardingAddress()
+console.log('Ark Address:', arkAddress)
+console.log('Boarding Address:', boardingAddress)
 ```
 
 ### Sending Bitcoin
 
 ```typescript
-// Send bitcoin (automatically chooses on-chain or off-chain based on the address)
+// Send bitcoin via Ark
 const txid = await wallet.sendBitcoin({
   address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
   amount: 50000,  // in satoshis
@@ -59,7 +59,10 @@ const settleTxid = await wallet.settle({
 const balance = await wallet.getBalance()
 console.log('Total Balance:', balance.total)
 console.log('Boarding Total:', balance.boarding.total)
-console.log('Offchain Total:', balance.offchain.total)
+console.log('Offchain Available:', balance.available)
+console.log('Offchain Settled:', balance.settled)
+console.log('Offchain Preconfirmed:', balance.preconfirmed)
+console.log('Recoverable:', balance.recoverable)
 
 // Get virtual UTXOs (off-chain)
 const virtualCoins = await wallet.getVtxos()
@@ -120,7 +123,6 @@ const wallet = await ServiceWorkerWallet.create('/service-worker.js')
 
 // Initialize the wallet
 await wallet.init({
-  network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
   privateKey: 'your_private_key_hex',
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
@@ -156,15 +158,11 @@ interface WalletConfig {
 
 ```typescript
 interface IWallet {
-  /** Get wallet addresses */
-  getAddress(): Promise<{
-    offchain: string;
-    boarding: string;
-    bip21: string;
-  }>;
+  /** Get offchain address */
+  getAddress(): Promise<string>;
 
-  /** Get detailed address information including scripts */
-  getAddressInfo(): Promise<AddressInfo>;
+  /** Get boarding address */
+  getBoardingAddress(): Promise<string>;
 
   /** Get wallet balance */
   getBalance(): Promise<{
@@ -173,17 +171,14 @@ interface IWallet {
       unconfirmed: number;
       total: number;
     };
-    offchain: {
-      settled: number;
-      preconfirmed: number;
-      available: number;
-      recoverable: number;
-      total: number;
-    };
+    settled: number;
+    preconfirmed: number;
+    available: number;
+    recoverable: number;
     total: number;
   }>;
 
-  /** Send bitcoin to Ark addresses (off-chain transactions) */
+  /** Send bitcoin via Ark */
   sendBitcoin(params: {
     address: string;
     amount: number;
@@ -193,12 +188,6 @@ interface IWallet {
 
   /** Get virtual UTXOs */
   getVtxos(filter?: { withSpendableInSettlement?: boolean }): Promise<ExtendedVirtualCoin[]>;
-
-  /** Get boarding UTXOs */
-  getBoardingUtxos(): Promise<ExtendedCoin[]>;
-
-  /** Get virtual UTXOs */
-  getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
 
   /** Get boarding UTXOs */
   getBoardingUtxos(): Promise<ExtendedCoin[]>;
@@ -278,21 +267,6 @@ interface ExtendedCoin {
   intentTapLeafScript: TapLeafScript;
   tapTree: string;
   extraWitness?: Bytes[];
-}
-
-/** Address information with scripts */
-interface AddressInfo {
-  offchain: VtxoTaprootAddress;
-  boarding: VtxoTaprootAddress;
-}
-
-/** Vtxo Taproot address with embedded scripts */
-interface VtxoTaprootAddress {
-  address: string;
-  scripts: {
-    exit: string[];
-    forfeit: string[];
-  };
 }
 ```
 
