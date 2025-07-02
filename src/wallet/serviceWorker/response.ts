@@ -1,10 +1,4 @@
-import {
-    WalletBalance,
-    VirtualCoin,
-    ArkTransaction,
-    IWallet,
-    Addresses,
-} from "..";
+import { WalletBalance, VirtualCoin, ArkTransaction, IWallet } from "..";
 import { SettlementEvent } from "../../providers/ark";
 
 export namespace Response {
@@ -13,6 +7,7 @@ export namespace Response {
         | "SETTLE_EVENT"
         | "SETTLE_SUCCESS"
         | "ADDRESS"
+        | "BOARDING_ADDRESS"
         | "BALANCE"
         | "VTXOS"
         | "VIRTUAL_COINS"
@@ -91,18 +86,36 @@ export namespace Response {
     export interface Address extends Base {
         type: "ADDRESS";
         success: true;
-        addresses: Addresses;
+        address: string;
     }
 
     export function isAddress(response: Base): response is Address {
         return response.type === "ADDRESS" && response.success === true;
     }
 
-    export function addresses(id: string, addresses: Addresses): Address {
+    export function address(id: string, address: string): Address {
         return {
             type: "ADDRESS",
             success: true,
-            addresses,
+            address,
+            id,
+        };
+    }
+
+    export interface BoardingAddress extends Base {
+        type: "BOARDING_ADDRESS";
+        success: true;
+        address: string;
+    }
+
+    export function boardingAddress(
+        id: string,
+        address: string
+    ): BoardingAddress {
+        return {
+            type: "BOARDING_ADDRESS",
+            success: true,
+            address,
             id,
         };
     }

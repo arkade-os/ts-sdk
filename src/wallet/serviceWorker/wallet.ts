@@ -7,7 +7,6 @@ import {
     WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
-    Addresses,
     Outpoint,
     GetVtxosFilter,
 } from "..";
@@ -197,7 +196,7 @@ export class ServiceWorkerWallet implements IWallet {
         });
     }
 
-    async getAddress(): Promise<Addresses> {
+    async getAddress(): Promise<string> {
         const message: Request.GetAddress = {
             type: "GET_ADDRESS",
             id: getRandomId(),
@@ -206,11 +205,28 @@ export class ServiceWorkerWallet implements IWallet {
         try {
             const response = await this.sendMessage(message);
             if (Response.isAddress(response)) {
-                return response.addresses;
+                return response.address;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get address: ${error}`);
+        }
+    }
+
+    async getBoardingAddress(): Promise<string> {
+        const message: Request.GetBoardingAddress = {
+            type: "GET_BOARDING_ADDRESS",
+            id: getRandomId(),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isAddress(response)) {
+                return response.address;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to get boarding address: ${error}`);
         }
     }
 

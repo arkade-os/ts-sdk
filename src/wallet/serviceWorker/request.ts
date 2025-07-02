@@ -5,6 +5,7 @@ export namespace Request {
         | "INIT_WALLET"
         | "SETTLE"
         | "GET_ADDRESS"
+        | "GET_BOARDING_ADDRESS"
         | "GET_BALANCE"
         | "GET_VTXOS"
         | "GET_VIRTUAL_COINS"
@@ -62,6 +63,16 @@ export namespace Request {
 
     export function isGetAddress(message: Base): message is GetAddress {
         return message.type === "GET_ADDRESS";
+    }
+
+    export interface GetBoardingAddress extends Base {
+        type: "GET_BOARDING_ADDRESS";
+    }
+
+    export function isGetBoardingAddress(
+        message: Base
+    ): message is GetBoardingAddress {
+        return message.type === "GET_BOARDING_ADDRESS";
     }
 
     export interface GetBalance extends Base {

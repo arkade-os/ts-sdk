@@ -21,7 +21,6 @@ import {
     Outpoint,
     VirtualCoin,
     TxKey,
-    Addresses,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
 import { TxGraph, TxGraphChunk } from "./tree/txGraph";
@@ -154,7 +153,6 @@ export type {
     SendBitcoinParams,
     Recipient,
     SettleParams,
-    Addresses,
     Status,
     VirtualStatus,
     Outpoint,

@@ -43,12 +43,6 @@ export interface SettleParams {
     outputs: Output[];
 }
 
-export interface Addresses {
-    offchain: string;
-    boarding: string;
-    bip21: string;
-}
-
 export interface Status {
     confirmed: boolean;
     block_height?: number;
@@ -127,8 +121,10 @@ export type GetVtxosFilter = {
 };
 
 export interface IWallet {
-    // Address and balance management
-    getAddress(): Promise<Addresses>;
+    // returns the ark address
+    getAddress(): Promise<string>;
+    // returns the bitcoin address used to board the ark
+    getBoardingAddress(): Promise<string>;
     getBalance(): Promise<WalletBalance>;
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;

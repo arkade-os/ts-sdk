@@ -220,9 +220,11 @@ describe("Wallet", () => {
                 arkServerUrl: "http://localhost:7070",
             });
 
-            // Verify ark provider is configured by checking if offchain address is available
             const address = await wallet.getAddress();
-            expect(address.offchain).toBeDefined();
+            expect(address).toBeDefined();
+
+            const boardingAddress = await wallet.getBoardingAddress();
+            expect(boardingAddress).toBeDefined();
         });
     });
 });

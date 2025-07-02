@@ -79,7 +79,7 @@ export class Worker {
         const forfeit = this.wallet.offchainTapscript.forfeit();
         const exit = this.wallet.offchainTapscript.exit();
 
-        const address = this.wallet.offchainAddress.encode();
+        const address = this.wallet.arkAddress.encode();
 
         // set the initial vtxos state
         const vtxos = (
@@ -278,12 +278,49 @@ export class Worker {
         }
 
         try {
-            const addresses = await this.wallet.getAddress();
-            event.source?.postMessage(
-                Response.addresses(message.id, addresses)
-            );
+            const address = await this.wallet.getAddress();
+            event.source?.postMessage(Response.address(message.id, address));
         } catch (error: unknown) {
             console.error("Error getting address:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleGetBoardingAddress(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isGetBoardingAddress(message)) {
+            console.error(
+                "Invalid GET_BOARDING_ADDRESS message format",
+                message
+            );
+            event.source?.postMessage(
+                Response.error(
+                    message.id,
+                    "Invalid GET_BOARDING_ADDRESS message format"
+                )
+            );
+            return;
+        }
+
+        if (!this.wallet) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const address = await this.wallet.getBoardingAddress();
+            event.source?.postMessage(
+                Response.boardingAddress(message.id, address)
+            );
+        } catch (error: unknown) {
+            console.error("Error getting boarding address:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message
@@ -573,6 +610,10 @@ export class Worker {
             }
             case "GET_ADDRESS": {
                 await this.handleGetAddress(event);
+                break;
+            }
+            case "GET_BOARDING_ADDRESS": {
+                await this.handleGetBoardingAddress(event);
                 break;
             }
             case "GET_BALANCE": {
