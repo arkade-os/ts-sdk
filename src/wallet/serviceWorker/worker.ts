@@ -173,7 +173,6 @@ export class Worker {
             );
 
             this.wallet = await Wallet.create({
-                network: message.network,
                 identity: InMemoryKey.fromHex(message.privateKey),
                 arkServerUrl: message.arkServerUrl,
                 arkServerPublicKey: message.arkServerPublicKey,

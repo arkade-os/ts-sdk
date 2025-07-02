@@ -6,7 +6,6 @@ import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils";
 
 export interface WalletConfig {
-    network: NetworkName;
     identity: Identity;
     arkServerUrl: string;
     esploraUrl?: string;

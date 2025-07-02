@@ -91,12 +91,6 @@ export class Wallet implements IWallet {
     ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
-        const network = getNetwork(config.network as NetworkName);
-        const onchainProvider = new EsploraProvider(
-            config.esploraUrl || ESPLORA_URL[config.network as NetworkName]
-        );
-
-        // Derive onchain address
         const pubkey = config.identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
@@ -106,11 +100,12 @@ export class Wallet implements IWallet {
         const indexerProvider = new RestIndexerProvider(config.arkServerUrl);
 
         const info = await arkProvider.getInfo();
-        if (info.network !== config.network) {
-            throw new Error(
-                `The Ark Server URL expects ${info.network} but ${config.network} was configured`
-            );
-        }
+
+        const network = getNetwork(info.network as NetworkName);
+        const onchainProvider = new EsploraProvider(
+            config.esploraUrl || ESPLORA_URL[info.network as NetworkName]
+        );
+
         const exitTimelock: RelativeTimelock = {
             value: info.unilateralExitDelay,
             type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",

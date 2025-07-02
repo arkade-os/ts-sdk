@@ -19,13 +19,10 @@ const identity = InMemoryKey.fromHex('your_private_key_hex')
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
-  network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
   identity: identity,
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
-  // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  arkServerPublicKey: 'fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d'
 })
 
 // Get wallet addresses
@@ -110,7 +107,7 @@ await wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
 // service-worker.ts
 import { Worker } from '@arkade-os/sdk'
 
-// Worker is a class handling the communication between the main thread and the service worker
+// Worker handles communication between the main thread and service worker
 new Worker().start()
 ```
 
@@ -121,7 +118,7 @@ new Worker().start()
 // this will automatically register the service worker
 const wallet = await ServiceWorkerWallet.create('/service-worker.js')
 
-// initialize the wallet
+// Initialize the wallet
 await wallet.init({
   network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
   privateKey: 'your_private_key_hex',
@@ -129,7 +126,6 @@ await wallet.init({
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  arkServerPublicKey: 'fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d'
 })
 ```
 
@@ -141,16 +137,18 @@ await wallet.init({
 
 ```typescript
 interface WalletConfig {
-  /** Network to use ('bitcoin', 'testnet', 'regtest', 'signet', or 'mutinynet') */
-  network: NetworkName;
   /** Identity for signing transactions */
   identity: Identity;
+  /** Ark server URL */
+  arkServerUrl: string;
   /** Optional Esplora API URL */
   esploraUrl?: string;
-  /** Ark server URL (optional) */
-  arkServerUrl?: string;
   /** Ark server public key (optional) */
   arkServerPublicKey?: string;
+  /** Optional boarding timelock configuration */
+  boardingTimelock?: RelativeTimelock;
+  /** Optional exit timelock configuration */
+  exitTimelock?: RelativeTimelock;
 }
 ```
 
@@ -164,6 +162,9 @@ interface IWallet {
     boarding: string;
     bip21: string;
   }>;
+
+  /** Get detailed address information including scripts */
+  getAddressInfo(): Promise<AddressInfo>;
 
   /** Get wallet balance */
   getBalance(): Promise<{
@@ -182,7 +183,7 @@ interface IWallet {
     total: number;
   }>;
 
-  /** Send bitcoin (off-chain only) */
+  /** Send bitcoin to Ark addresses (off-chain transactions) */
   sendBitcoin(params: {
     address: string;
     amount: number;
@@ -195,15 +196,6 @@ interface IWallet {
 
   /** Get boarding UTXOs */
   getBoardingUtxos(): Promise<ExtendedCoin[]>;
-
-  /** Settle transactions */
-  settle(params?: {
-    inputs: ExtendedCoin[];
-    outputs: {
-      address: string;
-      amount: bigint;
-    }[];
-  }, eventCallback?: (event: SettlementEvent) => void): Promise<string>;
 
   /** Get virtual UTXOs */
   getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
@@ -229,7 +221,11 @@ interface IWallet {
   /** Exit vtxos unilaterally */
   exit(outpoints?: Outpoint[]): Promise<void>;
 }
+```
 
+### Types
+
+```typescript
 /** Transaction types */
 enum TxType {
   TxSent = 'SENT',
@@ -256,9 +252,15 @@ interface ExtendedVirtualCoin {
   value: number;
   virtualStatus: {
     state: 'pending' | 'settled' | 'swept' | 'spent';
+    commitmentTxIds?: string[];
+    batchExpiry?: number;
   };
   spentBy?: string;
   createdAt: Date;
+  forfeitTapLeafScript: TapLeafScript;
+  intentTapLeafScript: TapLeafScript;
+  tapTree: string;
+  extraWitness?: Bytes[];
 }
 
 /** Boarding UTXO */
@@ -272,10 +274,29 @@ interface ExtendedCoin {
     block_hash?: string;
     block_time?: number;
   };
+  forfeitTapLeafScript: TapLeafScript;
+  intentTapLeafScript: TapLeafScript;
+  tapTree: string;
+  extraWitness?: Bytes[];
+}
+
+/** Address information with scripts */
+interface AddressInfo {
+  offchain: VtxoTaprootAddress;
+  boarding: VtxoTaprootAddress;
+}
+
+/** Vtxo Taproot address with embedded scripts */
+interface VtxoTaprootAddress {
+  address: string;
+  scripts: {
+    exit: string[];
+    forfeit: string[];
+  };
 }
 ```
 
-#### Identity
+### Identity
 
 ```typescript
 export interface Identity {
@@ -311,7 +332,7 @@ pnpm format
 pnpm lint
 ```
 
-2.Install nigiri for integration tests:
+2. Install nigiri for integration tests:
 
 ```bash
 curl https://getnigiri.vulpem.com | bash

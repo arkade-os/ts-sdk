@@ -32,7 +32,6 @@ export namespace Request {
         type: "INIT_WALLET";
         privateKey: string;
         arkServerUrl: string;
-        network: NetworkName;
         arkServerPublicKey?: string;
     }
 
@@ -43,8 +42,6 @@ export namespace Request {
             typeof message.privateKey === "string" &&
             "arkServerUrl" in message &&
             typeof message.arkServerUrl === "string" &&
-            "network" in message &&
-            typeof message.network === "string" &&
             ("arkServerPublicKey" in message
                 ? typeof message.arkServerPublicKey === "string" ||
                   message.arkServerPublicKey === undefined

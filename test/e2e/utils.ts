@@ -41,7 +41,6 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
     const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
-        network: "regtest",
         identity,
         arkServerUrl: "http://localhost:7070",
         arkServerPublicKey: ARK_SERVER_PUBKEY,
