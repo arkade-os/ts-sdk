@@ -7,7 +7,7 @@ describe("Indexer provider", () => {
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -52,7 +52,7 @@ describe("Indexer provider", () => {
     it("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const indexerProvider = new RestIndexerProvider(
@@ -106,12 +106,12 @@ describe("Indexer provider", () => {
 
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
-        const aliceAddress = (await alice.wallet.getAddress()).offchain;
+        const aliceAddress = await alice.wallet.getAddress();
         const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
 
         // Create fresh wallet instance for this test
         const bob = await createTestArkWallet();
-        const bobAddress = (await bob.wallet.getAddress()).offchain;
+        const bobAddress = await bob.wallet.getAddress();
         const bobScript = ArkAddress.decode(bobAddress!).pkScript;
 
         if (!bobAddress || !aliceAddress) {

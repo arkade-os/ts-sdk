@@ -41,9 +41,8 @@ describe("Ark integration tests", () => {
     it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
 
-        const aliceAddresses = await alice.wallet.getAddress();
-        const boardingAddress = aliceAddresses.boarding;
-        const offchainAddress = aliceAddresses.offchain;
+        const boardingAddress = await alice.wallet.getBoardingAddress();
+        const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
         execSync(`nigiri faucet ${boardingAddress} 0.001`);
@@ -69,7 +68,7 @@ describe("Ark integration tests", () => {
     it("should settle a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -104,11 +103,10 @@ describe("Ark integration tests", () => {
             const alice = await createTestArkWallet();
             const bob = await createTestArkWallet();
 
-            const aliceOffchainAddress = (await alice.wallet.getAddress())
-                .offchain;
+            const aliceOffchainAddress = await alice.wallet.getAddress();
             expect(aliceOffchainAddress).toBeDefined();
 
-            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+            const bobOffchainAddress = await bob.wallet.getAddress();
             expect(bobOffchainAddress).toBeDefined();
 
             const fundAmount = 1000;
@@ -167,9 +165,8 @@ describe("Ark integration tests", () => {
             const bob = await createTestArkWallet();
 
             // Get addresses
-            const aliceOffchainAddress = (await alice.wallet.getAddress())
-                .offchain;
-            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+            const aliceOffchainAddress = await alice.wallet.getAddress();
+            const bobOffchainAddress = await bob.wallet.getAddress();
             expect(aliceOffchainAddress).toBeDefined();
             expect(bobOffchainAddress).toBeDefined();
 
@@ -229,14 +226,14 @@ describe("Ark integration tests", () => {
         const bob = await createTestArkWallet();
 
         // Get addresses
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
-        const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        const bobOffchainAddress = await bob.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
         expect(bobOffchainAddress).toBeDefined();
 
         // Alice onboarding
         const boardingAmount = 10000;
-        const boardingAddress = (await alice.wallet.getAddress()).boarding;
+        const boardingAddress = await alice.wallet.getBoardingAddress();
         execSync(
             `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
         );
@@ -489,7 +486,7 @@ describe("Ark integration tests", () => {
     it("should redeem a note", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -523,8 +520,8 @@ describe("Ark integration tests", () => {
         const alice = await createTestArkWallet();
 
         const aliceAddresses = await alice.wallet.getAddress();
-        const boardingAddress = aliceAddresses.boarding;
-        const offchainAddress = aliceAddresses.offchain;
+        const boardingAddress = await alice.wallet.getBoardingAddress();
+        const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
         execSync(`nigiri faucet ${boardingAddress} 0.0001`);
@@ -558,12 +555,12 @@ describe("Ark integration tests", () => {
     it("should exit collaboratively", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
         const onchainAlice = createTestOnchainWallet();
-        const aliceAddresses = await alice.wallet.getAddress();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
 
         // faucet offchain address
         const fundAmount = 10_000;
         execSync(
-            `${arkdExec} ark send --to ${aliceAddresses.offchain} --amount ${fundAmount} --password secret`
+            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
         await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -586,9 +583,8 @@ describe("Ark integration tests", () => {
 
     it("should settle a recoverable VTXO", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
-        const aliceAddresses = await alice.wallet.getAddress();
-        const boardingAddress = aliceAddresses.boarding;
-        const aliceOffchainAddress = aliceAddresses.offchain;
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        const boardingAddress = await alice.wallet.getBoardingAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         // faucet
@@ -651,17 +647,17 @@ describe("Ark integration tests", () => {
         const alice = await createTestArkWallet();
         const bob = await createTestArkWallet();
 
-        const aliceAddresses = await alice.wallet.getAddress();
-        const bobAddresses = await bob.wallet.getAddress();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        const bobOffchainAddress = await bob.wallet.getAddress();
 
         const fundAmount = 10_000;
         execSync(
-            `${arkdExec} ark send --to ${aliceAddresses.offchain} --amount ${fundAmount} --password secret`
+            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
         // alice should send offchain tx with subdust output
         await alice.wallet.sendBitcoin({
-            address: bobAddresses.offchain!,
+            address: bobOffchainAddress!,
             amount: 1,
         });
 
@@ -674,7 +670,7 @@ describe("Ark integration tests", () => {
         // bob shouldn't be able to send offchain tx with subdust output
         await expect(
             bob.wallet.sendBitcoin({
-                address: bobAddresses.offchain!,
+                address: bobOffchainAddress!,
                 amount: 1,
             })
         ).rejects.toThrow("Insufficient funds");
@@ -683,7 +679,7 @@ describe("Ark integration tests", () => {
         await expect(bob.wallet.settle()).rejects.toThrow();
 
         await alice.wallet.sendBitcoin({
-            address: bobAddresses.offchain!,
+            address: bobOffchainAddress!,
             amount: fundAmount - 1,
         });
 
