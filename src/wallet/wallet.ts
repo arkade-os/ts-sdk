@@ -1085,7 +1085,7 @@ export class Wallet implements IWallet {
 
             const subscriptionId =
                 await this.indexerProvider.subscribeForScripts([
-                    hex.encode(aliceScript.slice(2)),
+                    hex.encode(aliceScript),
                 ]);
 
             const subscription = this.indexerProvider.getSubscription(
