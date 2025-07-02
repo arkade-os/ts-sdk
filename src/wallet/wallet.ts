@@ -1080,8 +1080,7 @@ export class Wallet implements IWallet {
         }
 
         if (this.indexerProvider && this.offchainAddress) {
-            const aliceAddress = (await this.getAddress()).offchain;
-            const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
+            const aliceScript = this.offchainAddress.pkScript;
 
             const subscriptionId =
                 await this.indexerProvider.subscribeForScripts([
