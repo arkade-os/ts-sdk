@@ -260,7 +260,6 @@ interface VirtualCoin {
   txid: string;
   vout: number;
   value: number;
-  status: Status
   virtualStatus: {
     state: 'pending' | 'settled' | 'swept' | 'spent';
   };
@@ -269,14 +268,10 @@ interface VirtualCoin {
 }
 
 /** Boarding UTXO */
-interface ExtendedCoin {
+interface BoardingUtxo {
   txid: string;
   vout: number;
   value: number;
-  status: Status;
-  tapTree: Bytes;
-  intentTapLeafScript: TapLeafScript;
-  forfeitTapLeafScript: TapLeafScript;
 }
 ```
 
