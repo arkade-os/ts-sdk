@@ -11,12 +11,12 @@ export enum IndexerTxType {
     INDEXER_TX_TYPE_SENT = 2,
 }
 
-export enum ChainedTxType {
-    INDEXER_CHAINED_TX_TYPE_UNSPECIFIED = 0,
-    INDEXER_CHAINED_TX_TYPE_COMMITMENT = 1,
-    INDEXER_CHAINED_TX_TYPE_ARK = 2,
-    INDEXER_CHAINED_TX_TYPE_TREE = 3,
-    INDEXER_CHAINED_TX_TYPE_CHECKPOINT = 4,
+export enum ChainTxType {
+    UNSPECIFIED = "INDEXER_CHAINED_TX_TYPE_UNSPECIFIED",
+    COMMITMENT = "INDEXER_CHAINED_TX_TYPE_COMMITMENT",
+    ARK = "INDEXER_CHAINED_TX_TYPE_ARK",
+    TREE = "INDEXER_CHAINED_TX_TYPE_TREE",
+    CHECKPOINT = "INDEXER_CHAINED_TX_TYPE_CHECKPOINT",
 }
 
 export interface PageResponse {
@@ -35,7 +35,7 @@ export interface Batch {
 export interface ChainTx {
     txid: string;
     expiresAt: string;
-    type: ChainedTxType;
+    type: ChainTxType;
     spends: string[]; // txids of the transactions in the chain used as input of the current tx
 }
 
@@ -51,7 +51,7 @@ export interface CommitmentTx {
 
 export interface Tx {
     txid: string;
-    children: Record<string, string>;
+    children: Record<number, string>;
 }
 
 export interface TxHistoryRecord {
@@ -171,6 +171,15 @@ export class RestIndexerProvider implements IndexerProvider {
         if (!Response.isVtxoTreeResponse(data)) {
             throw new Error("Invalid vtxo tree data received");
         }
+
+        data.vtxoTree.forEach((tx) => {
+            tx.children = Object.fromEntries(
+                Object.entries(tx.children).map(([key, value]) => [
+                    Number(key),
+                    value,
+                ])
+            );
+        });
         return data;
     }
 
@@ -206,7 +215,6 @@ export class RestIndexerProvider implements IndexerProvider {
         batchOutpoint: Outpoint
     ): Promise<{ sweptBy: string[] }> {
         const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
-        console.log("url", url);
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(
@@ -227,6 +235,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error(`Failed to fetch commitment tx: ${res.statusText}`);
         }
         const data = await res.json();
+
         if (!Response.isCommitmentTx(data)) {
             throw new Error("Invalid commitment tx data received");
         }
@@ -258,6 +267,15 @@ export class RestIndexerProvider implements IndexerProvider {
         if (!Response.isConnectorsResponse(data)) {
             throw new Error("Invalid commitment tx connectors data received");
         }
+
+        data.connectors.forEach((tx) => {
+            tx.children = Object.fromEntries(
+                Object.entries(tx.children).map(([key, value]) => [
+                    Number(key),
+                    value,
+                ])
+            );
+        });
         return data;
     }
 
@@ -321,67 +339,58 @@ export class RestIndexerProvider implements IndexerProvider {
         const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
-            try {
-                const res = await fetch(url, {
-                    headers: {
-                        Accept: "application/json",
-                    },
-                });
+            const res = await fetch(url, {
+                headers: {
+                    Accept: "application/json",
+                },
+            });
 
-                if (!res.ok) {
-                    throw new Error(
-                        `Unexpected status ${res.status} when subscribing to address updates`
-                    );
+            if (!res.ok) {
+                throw new Error(
+                    `Unexpected status ${res.status} when subscribing to address updates`
+                );
+            }
+
+            if (!res.body) {
+                throw new Error("Response body is null");
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = "";
+
+            while (!abortSignal.aborted) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    break;
                 }
 
-                if (!res.body) {
-                    throw new Error("Response body is null");
-                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split("\n");
 
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
+                for (let i = 0; i < lines.length - 1; i++) {
+                    const line = lines[i].trim();
+                    if (!line) continue;
 
-                while (!abortSignal.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
-
-                        try {
-                            const data = JSON.parse(line);
-                            if ("result" in data) {
-                                yield {
-                                    scripts: data.result.scripts || [],
-                                    newVtxos: (data.result.newVtxos || []).map(
-                                        convertVtxo
-                                    ),
-                                    spentVtxos: (
-                                        data.result.spentVtxos || []
-                                    ).map(convertVtxo),
-                                };
-                            }
-                        } catch (err) {
-                            console.error(
-                                "Failed to parse address update:",
-                                err
-                            );
-                            throw err;
+                    try {
+                        const data = JSON.parse(line);
+                        if ("result" in data) {
+                            yield {
+                                scripts: data.result.scripts || [],
+                                newVtxos: (data.result.newVtxos || []).map(
+                                    convertVtxo
+                                ),
+                                spentVtxos: (data.result.spentVtxos || []).map(
+                                    convertVtxo
+                                ),
+                            };
                         }
+                    } catch (err) {
+                        throw err;
                     }
-
-                    buffer = lines[lines.length - 1];
                 }
-            } catch (error) {
-                console.error("Address subscription error:", error);
-                throw error;
+
+                buffer = lines[lines.length - 1];
             }
         }
     }
@@ -493,8 +502,6 @@ export class RestIndexerProvider implements IndexerProvider {
         }
         const data = await res.json();
         if (!Response.isVtxosResponse(data)) {
-            console.log(JSON.stringify(data, null, 2));
-            console.error("Invalid vtxos data received:", data);
             throw new Error("Invalid vtxos data received");
         }
         return {
@@ -611,7 +618,7 @@ namespace Response {
             typeof data === "object" &&
             typeof data.txid === "string" &&
             typeof data.expiresAt === "string" &&
-            Object.values(ChainedTxType).includes(data.type) &&
+            Object.values(ChainTxType).includes(data.type) &&
             Array.isArray(data.spends) &&
             data.spends.every((spend: any) => typeof spend === "string")
         );
@@ -794,7 +801,7 @@ namespace Response {
         return (
             typeof data === "object" &&
             Array.isArray(data.txs) &&
-            data.txs.every(isTxid) &&
+            data.txs.every((tx: any) => typeof tx === "string") &&
             (!data.page || isPageResponse(data.page))
         );
     }

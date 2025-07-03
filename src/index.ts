@@ -61,7 +61,7 @@ import {
     RestIndexerProvider,
     IndexerProvider,
     IndexerTxType,
-    ChainedTxType,
+    ChainTxType,
     PageResponse,
     Batch,
     ChainTx,
@@ -94,7 +94,7 @@ export {
     // Enums
     TxType,
     IndexerTxType,
-    ChainedTxType,
+    ChainTxType,
 
     // Service Worker
     Worker,
@@ -166,7 +166,7 @@ export type {
     IndexerProvider,
     PageResponse,
     Batch,
-    ChainTx as Chain,
+    ChainTx,
     CommitmentTx,
     TxHistoryRecord,
     Vtxo,
