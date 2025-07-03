@@ -9,10 +9,12 @@ import {
 } from "../providers/onchain";
 import { Transaction } from "@scure/btc-signer";
 import { selectCoins } from "../utils/coinselect";
+import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
+import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
-export class OnchainWallet {
-    static FEE_RATE = 1; // sats/vbyte
+export class OnchainWallet implements AnchorBumper {
     static DUST_AMOUNT = 546; // sats
+
     private onchainP2TR: P2TR;
     private provider: OnchainProvider;
     private network: Network;
@@ -61,7 +63,10 @@ export class OnchainWallet {
         }
 
         const coins = await this.getCoins();
-        const feeRate = params.feeRate || OnchainWallet.FEE_RATE;
+        let feeRate = params.feeRate;
+        if (!feeRate) {
+            feeRate = await this.provider.getFeeRate();
+        }
 
         // Ensure fee is an integer by rounding up
         const estimatedFee = Math.ceil(174 * feeRate);
@@ -111,5 +116,65 @@ export class OnchainWallet {
         // Broadcast
         const txid = await this.provider.broadcastTransaction(tx.hex);
         return txid;
+    }
+
+    async bumpP2A(parent: Transaction): Promise<[string, string]> {
+        const parentVsize = parent.vsize;
+
+        let child = new Transaction();
+        child.addInput(findP2AOutput(parent)); // throws if not found
+
+        const childVsize = TxWeightEstimator.create()
+            .addKeySpendInput(true)
+            .addP2AInput()
+            .addP2TROutput()
+            .vsize().value;
+
+        const packageVSize = parentVsize + Number(childVsize);
+
+        const feeRate = await this.provider.getFeeRate();
+        const fee = Math.ceil(feeRate * packageVSize);
+
+        // Select coins
+        let selected = selectCoins(await this.getCoins(), fee);
+        if (!selected.inputs) {
+            throw new Error("Insufficient funds to pay for the package");
+        }
+
+        // ensure we have a change
+        let change = BigInt(selected.changeAmount);
+        if (change == 0n) {
+            selected = selectCoins(await this.getCoins(), fee + 600);
+            if (!selected.inputs) {
+                throw new Error("Insufficient funds to pay for the package");
+            }
+            change = BigInt(selected.changeAmount) + 600n;
+        }
+
+        for (const input of selected.inputs) {
+            child.addInput({
+                txid: input.txid,
+                index: input.vout,
+                witnessUtxo: {
+                    script: this.onchainP2TR.script,
+                    amount: BigInt(input.value),
+                },
+                tapInternalKey: this.onchainP2TR.tapInternalKey,
+            });
+        }
+
+        child.addOutputAddress(this.address, P2A.amount + change, this.network);
+
+        // Sign inputs and Finalize
+        child = await this.identity.sign(child);
+        child.finalize();
+
+        try {
+            await this.provider.broadcastTransaction(parent.hex, child.hex);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            return [parent.hex, child.hex];
+        }
     }
 }

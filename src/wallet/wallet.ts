@@ -58,8 +58,13 @@ import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
-import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
+import {
+    IndexerProvider,
+    RestIndexerProvider,
+    ChainedTxType,
+} from "../providers/indexer";
 import { TxGraph, TxGraphChunk } from "../tree/txGraph";
+import { AnchorBumper } from "../utils/anchor";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -749,7 +754,7 @@ export class Wallet implements IWallet {
         throw new Error("Settlement failed");
     }
 
-    async exit(outpoints?: Outpoint[]): Promise<void> {
+    async unroll(bumper: AnchorBumper, outpoints?: Outpoint[]): Promise<void> {
         // TODO store the exit branches in repository
         // exit should not depend on the ark provider
         // or on the indexer provider
@@ -768,37 +773,76 @@ export class Wallet implements IWallet {
             throw new Error("No vtxos to exit");
         }
 
-        const transactions: string[] = [];
+        // For each vtxo, get the next transaction to unroll
+        for (const vtxo of vtxos) {
+            const outpoint: Outpoint = { txid: vtxo.txid, vout: vtxo.vout };
+            const nextTxHex = await this.nextTxToUnroll(outpoint);
 
-        // for (const vtxo of vtxos) {
-        //     const batchTxid = vtxo.virtualStatus.batchTxID;
-        //     if (!batchTxid) continue;
-        //     if (!trees.has(batchTxid)) {
-        //         const round =
-        //             await this.arkProvider?.getRound(batchTxid);
-        //         trees.set(batchTxid, round?.vtxoTree);
-        //     }
-        //
-        //     const tree = trees.get(batchTxid);
-        //     if (!tree) {
-        //         throw new Error("Tree not found");
-        //     }
-        //     const exitBranch = await tree.exitBranch(
-        //         vtxo.txid,
-        //         async (txid) => {
-        //             const status = await this.onchainProvider.getTxStatus(txid);
-        //             return status.confirmed;
-        //         }
-        //     );
-        //     transactions.push(...exitBranch);
-        // }
-
-        const broadcastedTxs = new Map<string, boolean>();
-        for (const tx of transactions) {
-            if (broadcastedTxs.has(tx)) continue;
-            const txid = await this.onchainProvider.broadcastTransaction(tx);
-            broadcastedTxs.set(txid, true);
+            if (nextTxHex) {
+                // TODO: Broadcast the transaction
+                console.log(
+                    `Next transaction to unroll for ${vtxo.txid}:${vtxo.vout}: ${nextTxHex}`
+                );
+            }
         }
+    }
+
+    private async nextTxToUnroll(vtxo: Outpoint): Promise<string> {
+        const chainResponse = await this.indexerProvider.getVtxoChain(vtxo);
+
+        let nextTxToBroadcast = "";
+
+        // Iterate through the chain from the end (most recent) to the beginning
+        for (let i = chainResponse.chain.length - 1; i >= 0; i--) {
+            const chain = chainResponse.chain[i];
+
+            // // Skip commitment transactions as they are always onchain
+            // if (
+            //     chain.type ===
+            //         ChainedTxType.INDEXER_CHAINED_TX_TYPE_COMMITMENT ||
+            //     chain.type === ChainedTxType.INDEXER_CHAINED_TX_TYPE_UNSPECIFIED
+            // ) {
+            //     continue;
+            // }
+
+            // try {
+            //     // Check if the transaction is confirmed onchain
+            //     const txInfo = await this.onchainProvider.getTxStatus(
+            //         chain.txid
+            //     );
+
+            //     // If found but not confirmed, it means the tx is in the mempool
+            //     // An unilateral exit is running, we must wait for it to be confirmed
+            //     if (!txInfo.confirmed) {
+            //         throw new Error(
+            //             `Pending confirmation for tx ${chain.txid}`
+            //         );
+            //     }
+            // } catch {
+            //     // If the tx is not found, it's offchain, let's break
+            //     nextTxToBroadcast = chain.txid;
+            //     break;
+            // }
+        }
+
+        if (!nextTxToBroadcast) {
+            throw new Error(
+                "No offchain txs found, the vtxo is already redeemed"
+            );
+        }
+
+        // Get the virtual transaction data
+        const virtualTxs = await this.indexerProvider.getVirtualTxs([
+            nextTxToBroadcast,
+        ]);
+
+        if (virtualTxs.length === 0) {
+            throw new Error(`Tx ${nextTxToBroadcast} not found`);
+        }
+
+        // For now, return the PSBT data as-is
+        // TODO: Implement proper PSBT finalization logic
+        return virtualTxs[0];
     }
 
     private async handleBatchStartedEvent(

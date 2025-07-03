@@ -24,7 +24,7 @@ export type ExplorerTransaction = {
 export interface OnchainProvider {
     getCoins(address: string): Promise<Coin[]>;
     getFeeRate(): Promise<number>;
-    broadcastTransaction(txHex: string): Promise<string>;
+    broadcastTransaction(...txs: string[]): Promise<string>;
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
     getTransactions(address: string): Promise<ExplorerTransaction[]>;
     getTxStatus(txid: string): Promise<{
@@ -54,21 +54,15 @@ export class EsploraProvider implements OnchainProvider {
         return fees.halfHourFee; // Return the "medium" priority fee rate
     }
 
-    async broadcastTransaction(txHex: string): Promise<string> {
-        const response = await fetch(`${this.baseUrl}/tx`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "text/plain",
-            },
-            body: txHex,
-        });
-
-        if (!response.ok) {
-            const error = await response.text();
-            throw new Error(`Failed to broadcast transaction: ${error}`);
+    async broadcastTransaction(...txs: string[]): Promise<string> {
+        switch (txs.length) {
+            case 1:
+                return this.broadcastTx(txs[0]);
+            case 2:
+                return this.broadcastPackage(txs[0], txs[1]);
+            default:
+                throw new Error("Only 1 or 1C1P package can be broadcast");
         }
-
-        return response.text(); // Returns the txid
     }
 
     async getTxOutspends(
@@ -111,5 +105,42 @@ export class EsploraProvider implements OnchainProvider {
             blockTime: data.block_time,
             blockHeight: data.block_height,
         };
+    }
+
+    private async broadcastPackage(
+        parent: string,
+        child: string
+    ): Promise<string> {
+        const response = await fetch(`${this.baseUrl}/txs/package`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify([parent, child]),
+        });
+
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Failed to broadcast package: ${error}`);
+        }
+
+        return response.json();
+    }
+
+    private async broadcastTx(tx: string): Promise<string> {
+        const response = await fetch(`${this.baseUrl}/tx`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "text/plain",
+            },
+            body: tx,
+        });
+
+        if (!response.ok) {
+            const error = await response.text();
+            throw new Error(`Failed to broadcast transaction: ${error}`);
+        }
+
+        return response.text(); // Returns the txid
     }
 }
