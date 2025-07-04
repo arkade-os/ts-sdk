@@ -843,11 +843,11 @@ export class Wallet implements IWallet {
         }
 
         if (this.indexerProvider && arkAddress) {
-            const aliceScript = this.offchainTapscript;
+            const offchainScript = this.offchainTapscript;
 
             const subscriptionId =
                 await this.indexerProvider.subscribeForScripts([
-                    hex.encode(aliceScript.pkScript),
+                    hex.encode(offchainScript.pkScript),
                 ]);
 
             const subscription = this.indexerProvider.getSubscription(
@@ -855,8 +855,10 @@ export class Wallet implements IWallet {
                 new AbortController().signal
             );
 
-            const stopFunc = () =>
-                this.indexerProvider?.unsubscribeForScripts(subscriptionId);
+            const stopFunc = async () =>
+                await this.indexerProvider?.unsubscribeForScripts(
+                    subscriptionId
+                );
 
             for await (const update of subscription) {
                 if (update.newVtxos?.length > 0) {
