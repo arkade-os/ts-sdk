@@ -190,7 +190,7 @@ export class EsploraProvider implements OnchainProvider {
                 // callback with new transactions
                 if (newTxs.length > 0) callback(newTxs, ws.close.bind(ws));
             } catch (error) {
-                console.error('Failed to process WebSocket message:', error);
+                console.error("Failed to process WebSocket message:", error);
             }
         });
 

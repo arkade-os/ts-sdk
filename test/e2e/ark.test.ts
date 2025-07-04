@@ -756,14 +756,18 @@ describe("Ark integration tests", () => {
         { timeout: 60000 },
         async () => {
             const alice = await createTestArkWallet();
-            const aliceBoardingAddress = await alice.wallet.getBoardingAddress();
+            const aliceBoardingAddress =
+                await alice.wallet.getBoardingAddress();
             expect(aliceBoardingAddress).toBeDefined();
 
             const now = new Date();
             const fundAmount = 10000;
 
             // faucet in a few moments
-            setTimeout(() => faucetOnchain(aliceBoardingAddress!, fundAmount), 1000);
+            setTimeout(
+                () => faucetOnchain(aliceBoardingAddress!, fundAmount),
+                1000
+            );
 
             // wait for coins to arrive
             const coins = await waitForIncomingFunds(alice.wallet);
