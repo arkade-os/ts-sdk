@@ -70,6 +70,8 @@ export interface Coin extends Outpoint {
 export interface VirtualCoin extends Coin {
     virtualStatus: VirtualStatus;
     spentBy?: string;
+    settledBy?: string;
+    arkTxId?: string;
     createdAt: Date;
 }
 
@@ -118,7 +120,7 @@ export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
 }
 
 export type GetVtxosFilter = {
-    withSpendableInSettlement?: boolean; // include the swept but unspent
+    withRecoverable?: boolean; // include the swept but unspent
 };
 
 export interface IWallet {

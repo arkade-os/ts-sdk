@@ -3,23 +3,6 @@ import { Outpoint } from "../wallet";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 
-// Define event types
-export interface ArkEvent {
-    type: "vtxo_created" | "vtxo_spent" | "vtxo_swept" | "vtxo_expired";
-    data: {
-        txid?: string;
-        address?: string;
-        amount?: number;
-        roundTxid?: string;
-        expireAt?: number;
-    };
-}
-
-export type VtxoInput = {
-    outpoint: Outpoint;
-    tapscripts: string[];
-};
-
 export type Output = {
     address: string; // onchain or off-chain
     amount: bigint; // Amount to send in satoshis
@@ -109,7 +92,7 @@ export interface MarketHour {
 }
 
 export interface ArkInfo {
-    pubkey: string;
+    signerPubkey: string;
     vtxoTreeExpiry: bigint;
     unilateralExitDelay: bigint;
     roundInterval: bigint;
@@ -132,9 +115,10 @@ export interface Intent {
 
 export interface TxNotification {
     txid: string;
+    tx: string;
     spentVtxos: Vtxo[];
     spendableVtxos: Vtxo[];
-    hex: string;
+    checkpointTxs?: Record<string, { txid: string; tx: string }>;
 }
 
 export interface Vtxo {
@@ -144,11 +128,13 @@ export interface Vtxo {
     createdAt: bigint;
     expiresAt: bigint;
     commitmentTxids: string[];
-    preconfirmed: boolean;
-    swept: boolean;
-    redeemed: boolean;
-    spent: boolean;
+    isPreconfirmed: boolean;
+    isSwept: boolean;
+    isUnrolled: boolean;
+    isSpent: boolean;
     spentBy: string;
+    settledBy?: string;
+    arkTxid?: string;
 }
 
 export interface ArkProvider {
@@ -164,7 +150,7 @@ export interface ArkProvider {
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
     registerIntent(intent: Intent): Promise<string>;
     deleteIntent(intent: Intent): Promise<void>;
-    confirmRegistration(intentId: string): Promise<{ blindedCreds: string }>;
+    confirmRegistration(intentId: string): Promise<void>;
     submitTreeNonces(
         batchId: string,
         pubkey: string,
@@ -343,9 +329,7 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async confirmRegistration(
-        intentId: string
-    ): Promise<{ blindedCreds: string }> {
+    async confirmRegistration(intentId: string): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/ack`;
         const response = await fetch(url, {
             method: "POST",
@@ -361,9 +345,6 @@ export class RestArkProvider implements ArkProvider {
             const errorText = await response.text();
             throw new Error(`Failed to confirm registration: ${errorText}`);
         }
-
-        const data = await response.json();
-        return { blindedCreds: data.blindedCreds };
     }
 
     async submitTreeNonces(
@@ -692,6 +673,7 @@ export class RestArkProvider implements ArkProvider {
             return {
                 commitmentTx: {
                     txid: data.commitmentTx.txid,
+                    tx: data.commitmentTx.tx,
                     spentVtxos: data.commitmentTx.spentVtxos.map((vtxo) => ({
                         outpoint: {
                             txid: vtxo.outpoint.txid,
@@ -702,11 +684,13 @@ export class RestArkProvider implements ArkProvider {
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
                         commitmentTxids: vtxo.commitmentTxids,
-                        preconfirmed: vtxo.preconfirmed,
-                        swept: vtxo.swept,
-                        redeemed: vtxo.redeemed,
-                        spent: vtxo.spent,
+                        isPreconfirmed: vtxo.isPreconfirmed,
+                        isSwept: vtxo.isSwept,
+                        isUnrolled: vtxo.isUnrolled,
+                        isSpent: vtxo.isSpent,
                         spentBy: vtxo.spentBy,
+                        settledBy: vtxo.settledBy,
+                        arkTxid: vtxo.arkTxid,
                     })),
                     spendableVtxos: data.commitmentTx.spendableVtxos.map(
                         (vtxo) => ({
@@ -719,14 +703,16 @@ export class RestArkProvider implements ArkProvider {
                             createdAt: BigInt(vtxo.createdAt),
                             expiresAt: BigInt(vtxo.expiresAt),
                             commitmentTxids: vtxo.commitmentTxids,
-                            preconfirmed: vtxo.preconfirmed,
-                            swept: vtxo.swept,
-                            redeemed: vtxo.redeemed,
-                            spent: vtxo.spent,
+                            isPreconfirmed: vtxo.isPreconfirmed,
+                            isSwept: vtxo.isSwept,
+                            isUnrolled: vtxo.isUnrolled,
+                            isSpent: vtxo.isSpent,
                             spentBy: vtxo.spentBy,
+                            settledBy: vtxo.settledBy,
+                            arkTxid: vtxo.arkTxid,
                         })
                     ),
-                    hex: data.commitmentTx.hex,
+                    checkpointTxs: data.commitmentTx.checkpointTxs,
                 },
             };
         }
@@ -735,6 +721,7 @@ export class RestArkProvider implements ArkProvider {
             return {
                 arkTx: {
                     txid: data.arkTx.txid,
+                    tx: data.arkTx.tx,
                     spentVtxos: data.arkTx.spentVtxos.map((vtxo) => ({
                         outpoint: {
                             txid: vtxo.outpoint.txid,
@@ -745,11 +732,13 @@ export class RestArkProvider implements ArkProvider {
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
                         commitmentTxids: vtxo.commitmentTxids,
-                        preconfirmed: vtxo.preconfirmed,
-                        swept: vtxo.swept,
-                        redeemed: vtxo.redeemed,
-                        spent: vtxo.spent,
+                        isPreconfirmed: vtxo.isPreconfirmed,
+                        isSwept: vtxo.isSwept,
+                        isUnrolled: vtxo.isUnrolled,
+                        isSpent: vtxo.isSpent,
                         spentBy: vtxo.spentBy,
+                        settledBy: vtxo.settledBy,
+                        arkTxid: vtxo.arkTxid,
                     })),
                     spendableVtxos: data.arkTx.spendableVtxos.map((vtxo) => ({
                         outpoint: {
@@ -761,13 +750,15 @@ export class RestArkProvider implements ArkProvider {
                         createdAt: BigInt(vtxo.createdAt),
                         expiresAt: BigInt(vtxo.expiresAt),
                         commitmentTxids: vtxo.commitmentTxids,
-                        preconfirmed: vtxo.preconfirmed,
-                        swept: vtxo.swept,
-                        redeemed: vtxo.redeemed,
-                        spent: vtxo.spent,
+                        isPreconfirmed: vtxo.isPreconfirmed,
+                        isSwept: vtxo.isSwept,
+                        isUnrolled: vtxo.isUnrolled,
+                        isSpent: vtxo.isSpent,
                         spentBy: vtxo.spentBy,
+                        settledBy: vtxo.settledBy,
+                        arkTxid: vtxo.arkTxid,
                     })),
-                    hex: data.arkTx.hex,
+                    checkpointTxs: data.arkTx.checkpointTxs,
                 },
             };
         }
@@ -813,28 +804,28 @@ namespace ProtoTypes {
         batchExpiry: string;
     }
 
-    interface RoundFailed {
+    interface BatchFailed {
         id: string;
         reason: string;
     }
 
-    export interface RoundFinalizationEvent {
+    export interface BatchFinalizationEvent {
         id: string;
         commitmentTx: string;
     }
 
-    interface RoundFinalizedEvent {
+    interface BatchFinalizedEvent {
         id: string;
         commitmentTxid: string;
     }
 
-    interface RoundSigningEvent {
+    interface TreeSigningStartedEvent {
         id: string;
         cosignersPubkeys: string[];
         unsignedCommitmentTx: string;
     }
 
-    interface RoundSigningNoncesGeneratedEvent {
+    interface TreeNoncesAggregatedEvent {
         id: string;
         treeNonces: string;
     }
@@ -866,20 +857,22 @@ namespace ProtoTypes {
         createdAt: string;
         expiresAt: string;
         commitmentTxids: string[];
-        preconfirmed: boolean;
-        swept: boolean;
-        redeemed: boolean;
-        spent: boolean;
+        isPreconfirmed: boolean;
+        isSwept: boolean;
+        isUnrolled: boolean;
+        isSpent: boolean;
         spentBy: string;
+        settledBy?: string;
+        arkTxid?: string;
     }
 
     export interface EventData {
         batchStarted?: BatchStartedEvent;
-        batchFailed?: RoundFailed;
-        batchFinalization?: RoundFinalizationEvent;
-        batchFinalized?: RoundFinalizedEvent;
-        treeSigningStarted?: RoundSigningEvent;
-        treeNoncesAggregated?: RoundSigningNoncesGeneratedEvent;
+        batchFailed?: BatchFailed;
+        batchFinalization?: BatchFinalizationEvent;
+        batchFinalized?: BatchFinalizedEvent;
+        treeSigningStarted?: TreeSigningStartedEvent;
+        treeNoncesAggregated?: TreeNoncesAggregatedEvent;
         treeTx?: TreeTxEvent;
         treeSignature?: TreeSignatureEvent;
     }
@@ -887,15 +880,17 @@ namespace ProtoTypes {
     export interface TransactionData {
         commitmentTx?: {
             txid: string;
+            tx: string;
             spentVtxos: VtxoData[];
             spendableVtxos: VtxoData[];
-            hex: string;
+            checkpointTxs?: Record<string, { txid: string; tx: string }>;
         };
         arkTx?: {
             txid: string;
+            tx: string;
             spentVtxos: VtxoData[];
             spendableVtxos: VtxoData[];
-            hex: string;
+            checkpointTxs?: Record<string, { txid: string; tx: string }>;
         };
     }
 }

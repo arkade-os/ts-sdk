@@ -71,12 +71,12 @@ export class Wallet implements IWallet {
     static FEE_RATE = 1; // sats/vbyte
 
     private constructor(
-        private identity: Identity,
-        private network: Network,
-        private onchainProvider: OnchainProvider,
-        private arkProvider: ArkProvider,
-        private indexerProvider: IndexerProvider,
-        private arkServerPublicKey: Bytes,
+        readonly identity: Identity,
+        readonly network: Network,
+        readonly onchainProvider: OnchainProvider,
+        readonly arkProvider: ArkProvider,
+        readonly indexerProvider: IndexerProvider,
+        readonly arkServerPublicKey: Bytes,
         readonly offchainTapscript: DefaultVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
@@ -109,7 +109,7 @@ export class Wallet implements IWallet {
             type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
         };
         // Generate tapscripts for offchain and boarding address
-        const serverPubKey = hex.decode(info.pubkey).slice(1);
+        const serverPubKey = hex.decode(info.signerPubkey).slice(1);
         const bareVtxoTapscript = new DefaultVtxo.Script({
             pubKey: pubkey,
             serverPubKey,
@@ -231,27 +231,34 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(
-        filter: GetVtxosFilter = { withSpendableInSettlement: true }
+        filter: GetVtxosFilter = { withRecoverable: true }
     ): Promise<VirtualCoin[]> {
-        const address = await this.getAddress();
+        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
 
-        const getVtxosArgs = {
-            addresses: [address],
-            spendableOnly: !filter.withSpendableInSettlement,
-        };
+        const response = await this.indexerProvider.getVtxos({
+            scripts,
+            spendableOnly: true,
+        });
+        const vtxos = response.vtxos;
 
-        let vtxos = await this.indexerProvider.getVtxos(getVtxosArgs);
-
-        if (filter.withSpendableInSettlement) {
-            vtxos = vtxos.filter((v) => isSpendable(v));
+        if (filter.withRecoverable) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts,
+                recoverableOnly: true,
+            });
+            vtxos.push(...response.vtxos);
         }
 
         return vtxos;
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const vtxos = await this.indexerProvider.getVtxos({
-            addresses: [this.arkAddress.encode()],
+        if (!this.indexerProvider) {
+            return [];
+        }
+
+        const response = await this.indexerProvider.getVtxos({
+            scripts: [hex.encode(this.offchainTapscript.pkScript)],
         });
 
         const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
@@ -259,7 +266,7 @@ export class Wallet implements IWallet {
         const spendableVtxos = [];
         const spentVtxos = [];
 
-        for (const vtxo of vtxos) {
+        for (const vtxo of response.vtxos) {
             if (isSpendable(vtxo)) {
                 spendableVtxos.push(vtxo);
             } else {
@@ -391,7 +398,7 @@ export class Wallet implements IWallet {
 
         // recoverable and subdust coins can't be spent in offchain tx
         const virtualCoins = await this.getVirtualCoins({
-            withSpendableInSettlement: false,
+            withRecoverable: false,
         });
 
         const selected = selectVirtualCoins(virtualCoins, params.amount);
