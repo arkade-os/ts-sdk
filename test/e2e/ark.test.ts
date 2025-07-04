@@ -13,6 +13,7 @@ import {
     buildOffchainTx,
     ConditionWitness,
     setArkPsbtField,
+    waitForIncomingFunds,
 } from "../../src";
 import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -20,13 +21,14 @@ import {
     arkdExec,
     X_ONLY_PUBLIC_KEY,
     createTestIdentity,
-    createTestWallet,
+    createTestArkWallet,
+    createTestOnchainWallet,
     faucetOffchain,
     faucetOnchain,
 } from "./utils";
 import { Coin, VirtualCoin } from "@arklabs/wallet-sdk";
 
-describe("Wallet SDK Integration Tests", () => {
+describe("Ark integration tests", () => {
     beforeAll(async () => {
         // Check if there's enough offchain balance before proceeding
         const balanceOutput = execSync(`${arkdExec} ark balance`).toString();
@@ -41,11 +43,10 @@ describe("Wallet SDK Integration Tests", () => {
     });
 
     it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
-        const alice = await createTestWallet();
+        const alice = await createTestArkWallet();
 
-        const aliceAddresses = await alice.wallet.getAddress();
-        const boardingAddress = aliceAddresses.boarding;
-        const offchainAddress = aliceAddresses.offchain;
+        const boardingAddress = await alice.wallet.getBoardingAddress();
+        const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
         execSync(`nigiri faucet ${boardingAddress} 0.001`);
@@ -70,8 +71,8 @@ describe("Wallet SDK Integration Tests", () => {
 
     it("should settle a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -103,14 +104,13 @@ describe("Wallet SDK Integration Tests", () => {
         "should settle 2 clients in the same batch",
         { timeout: 60000 },
         async () => {
-            const alice = await createTestWallet();
-            const bob = await createTestWallet();
+            const alice = await createTestArkWallet();
+            const bob = await createTestArkWallet();
 
-            const aliceOffchainAddress = (await alice.wallet.getAddress())
-                .offchain;
+            const aliceOffchainAddress = await alice.wallet.getAddress();
             expect(aliceOffchainAddress).toBeDefined();
 
-            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+            const bobOffchainAddress = await bob.wallet.getAddress();
             expect(bobOffchainAddress).toBeDefined();
 
             const fundAmount = 1000;
@@ -161,79 +161,24 @@ describe("Wallet SDK Integration Tests", () => {
     );
 
     it(
-        "should perform a complete onchain roundtrip payment",
-        { timeout: 30000 },
-        async () => {
-            // Create fresh wallet instances for this test
-            const alice = await createTestWallet();
-            const bob = await createTestWallet();
-
-            // Get addresses
-            const aliceAddress = (await alice.wallet.getAddress()).onchain;
-            const bobAddress = (await bob.wallet.getAddress()).onchain;
-
-            // Initial balance check
-            const aliceInitialBalance = await alice.wallet.getBalance();
-            const bobInitialBalance = await bob.wallet.getBalance();
-            expect(aliceInitialBalance.onchain.total).toBe(0);
-            expect(bobInitialBalance.onchain.total).toBe(0);
-
-            // Fund Alice's address using nigiri faucet
-            const faucetAmountSats = 0.001 * 100_000_000; // Amount in sats
-            execSync(`nigiri faucet ${aliceAddress} 0.001`);
-
-            // Wait for the faucet transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-
-            // Check Alice's balance after funding
-            const aliceBalanceAfterFunding = await alice.wallet.getBalance();
-            expect(aliceBalanceAfterFunding.onchain.total).toBe(
-                faucetAmountSats
-            );
-
-            // Send from Alice to Bob
-            const sendAmount = 50000; // 0.0005 BTC in sats
-            await alice.wallet.sendBitcoin({
-                address: bobAddress,
-                amount: sendAmount,
-                feeRate: 2,
-            });
-
-            // Wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-
-            // Final balance check
-            const aliceFinalBalance = await alice.wallet.getBalance();
-            const bobFinalBalance = await bob.wallet.getBalance();
-
-            // Verify the transaction was successful
-            expect(bobFinalBalance.onchain.total).toBe(sendAmount);
-            expect(aliceFinalBalance.onchain.total).toBeLessThan(
-                aliceBalanceAfterFunding.onchain.total
-            );
-        }
-    );
-
-    it(
         "should perform a complete offchain roundtrip payment",
         { timeout: 60000 },
         async () => {
             // Create fresh wallet instances for this test
-            const alice = await createTestWallet();
-            const bob = await createTestWallet();
+            const alice = await createTestArkWallet();
+            const bob = await createTestArkWallet();
 
             // Get addresses
-            const aliceOffchainAddress = (await alice.wallet.getAddress())
-                .offchain;
-            const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+            const aliceOffchainAddress = await alice.wallet.getAddress();
+            const bobOffchainAddress = await bob.wallet.getAddress();
             expect(aliceOffchainAddress).toBeDefined();
             expect(bobOffchainAddress).toBeDefined();
 
             // Initial balance check
             const aliceInitialBalance = await alice.wallet.getBalance();
             const bobInitialBalance = await bob.wallet.getBalance();
-            expect(aliceInitialBalance.offchain.total).toBe(0);
-            expect(bobInitialBalance.offchain.total).toBe(0);
+            expect(aliceInitialBalance.total).toBe(0);
+            expect(bobInitialBalance.total).toBe(0);
 
             // Initial virtual coins check
             expect((await alice.wallet.getVtxos()).length).toBe(0);
@@ -259,7 +204,7 @@ describe("Wallet SDK Integration Tests", () => {
 
             // Check Alice's balance after funding
             const aliceBalanceAfterFunding = await alice.wallet.getBalance();
-            expect(aliceBalanceAfterFunding.offchain.total).toBe(fundAmount);
+            expect(aliceBalanceAfterFunding.total).toBe(fundAmount);
 
             // Send from Alice to Bob offchain
             const sendAmount = 5000; // 5k sats instead of 50k
@@ -275,26 +220,24 @@ describe("Wallet SDK Integration Tests", () => {
             const aliceFinalBalance = await alice.wallet.getBalance();
             const bobFinalBalance = await bob.wallet.getBalance();
             // Verify the transaction was successful
-            expect(bobFinalBalance.offchain.total).toBe(sendAmount);
-            expect(aliceFinalBalance.offchain.total).toBe(
-                fundAmount - sendAmount
-            );
+            expect(bobFinalBalance.total).toBe(sendAmount);
+            expect(aliceFinalBalance.total).toBe(fundAmount - sendAmount);
         }
     );
 
     it("should return transaction history", { timeout: 60000 }, async () => {
-        const alice = await createTestWallet();
-        const bob = await createTestWallet();
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
 
         // Get addresses
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
-        const bobOffchainAddress = (await bob.wallet.getAddress()).offchain;
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        const bobOffchainAddress = await bob.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
         expect(bobOffchainAddress).toBeDefined();
 
         // Alice onboarding
         const boardingAmount = 10000;
-        const boardingAddress = (await alice.wallet.getAddress()).boarding;
+        const boardingAddress = await alice.wallet.getBoardingAddress();
         execSync(
             `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
         );
@@ -343,10 +286,8 @@ describe("Wallet SDK Integration Tests", () => {
         // Check final balances
         const aliceFinalBalance = await alice.wallet.getBalance();
         const bobFinalBalance = await bob.wallet.getBalance();
-        expect(bobFinalBalance.offchain.total).toBe(sendAmount);
-        expect(aliceFinalBalance.offchain.total).toBe(
-            boardingAmount - sendAmount
-        );
+        expect(bobFinalBalance.total).toBe(sendAmount);
+        expect(aliceFinalBalance.total).toBe(boardingAmount - sendAmount);
 
         // Get transaction history for Alice
         aliceHistory = await alice.wallet.getTransactionHistory();
@@ -548,8 +489,8 @@ describe("Wallet SDK Integration Tests", () => {
 
     it("should redeem a note", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -580,11 +521,11 @@ describe("Wallet SDK Integration Tests", () => {
     });
 
     it.skip("should unroll", { timeout: 60000 }, async () => {
-        const alice = await createTestWallet();
+        const alice = await createTestArkWallet();
 
         const aliceAddresses = await alice.wallet.getAddress();
-        const boardingAddress = aliceAddresses.boarding;
-        const offchainAddress = aliceAddresses.offchain;
+        const boardingAddress = await alice.wallet.getBoardingAddress();
+        const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
         execSync(`nigiri faucet ${boardingAddress} 0.0001`);
@@ -616,13 +557,14 @@ describe("Wallet SDK Integration Tests", () => {
     });
 
     it("should exit collaboratively", { timeout: 60000 }, async () => {
-        const alice = await createTestWallet();
-        const aliceAddresses = await alice.wallet.getAddress();
+        const alice = await createTestArkWallet();
+        const onchainAlice = createTestOnchainWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
 
         // faucet offchain address
         const fundAmount = 10_000;
         execSync(
-            `${arkdExec} ark send --to ${aliceAddresses.offchain} --amount ${fundAmount} --password secret`
+            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
         await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -634,7 +576,7 @@ describe("Wallet SDK Integration Tests", () => {
             inputs: vtxos,
             outputs: [
                 {
-                    address: aliceAddresses.onchain,
+                    address: onchainAlice.wallet.address,
                     amount: BigInt(fundAmount),
                 },
             ],
@@ -644,10 +586,9 @@ describe("Wallet SDK Integration Tests", () => {
     });
 
     it("should settle a recoverable VTXO", { timeout: 60000 }, async () => {
-        const alice = await createTestWallet();
-        const aliceAddresses = await alice.wallet.getAddress();
-        const boardingAddress = aliceAddresses.boarding;
-        const aliceOffchainAddress = aliceAddresses.offchain;
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        const boardingAddress = await alice.wallet.getBoardingAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         // faucet
@@ -710,8 +651,8 @@ describe("Wallet SDK Integration Tests", () => {
         "should be notified of offchain incoming funds",
         { timeout: 6000 },
         async () => {
-            const alice = await createTestWallet();
-            const aliceAddress = (await alice.wallet.getAddress()).offchain;
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
             expect(aliceAddress).toBeDefined();
 
             let notified = false;
@@ -747,10 +688,10 @@ describe("Wallet SDK Integration Tests", () => {
         "should be notified of onchain incoming funds",
         { timeout: 60000 },
         async () => {
-            const alice = await createTestWallet();
-            const aliceAddresses = await alice.wallet.getAddress();
-            const aliceOnchainAddress = aliceAddresses.onchain;
-            expect(aliceOnchainAddress).toBeDefined();
+            const alice = await createTestArkWallet();
+            const aliceBoardingAddress =
+                await alice.wallet.getBoardingAddress();
+            expect(aliceBoardingAddress).toBeDefined();
 
             let notified = false;
             const fundAmount = 10000;
@@ -772,7 +713,7 @@ describe("Wallet SDK Integration Tests", () => {
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
             // fund the onchain address using faucet
-            faucetOnchain(aliceOnchainAddress!, fundAmount);
+            faucetOnchain(aliceBoardingAddress!, fundAmount);
 
             // wait for the transaction to be processed
             await new Promise((resolve) => setTimeout(resolve, 10000));
@@ -785,8 +726,8 @@ describe("Wallet SDK Integration Tests", () => {
         "should wait for offchain incoming funds",
         { timeout: 6000 },
         async () => {
-            const alice = await createTestWallet();
-            const aliceAddress = (await alice.wallet.getAddress()).offchain;
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
             expect(aliceAddress).toBeDefined();
 
             const now = new Date();
@@ -796,7 +737,7 @@ describe("Wallet SDK Integration Tests", () => {
             setTimeout(() => faucetOffchain(aliceAddress!, fundAmount), 1000);
 
             // wait for coins to arrive
-            const coins = await alice.wallet.waitForIncomingFunds();
+            const coins = await waitForIncomingFunds(alice.wallet);
             const vtxos = coins as VirtualCoin[];
 
             // assert
@@ -814,8 +755,8 @@ describe("Wallet SDK Integration Tests", () => {
         "should wait for onchain incoming funds",
         { timeout: 60000 },
         async () => {
-            const alice = await createTestWallet();
-            const aliceAddress = (await alice.wallet.getAddress()).onchain;
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
             expect(aliceAddress).toBeDefined();
 
             const now = new Date();
@@ -825,7 +766,7 @@ describe("Wallet SDK Integration Tests", () => {
             setTimeout(() => faucetOnchain(aliceAddress!, fundAmount), 1000);
 
             // wait for coins to arrive
-            const coins = await alice.wallet.waitForIncomingFunds();
+            const coins = await waitForIncomingFunds(alice.wallet);
             const utxos = coins as Coin[];
 
             // assert
@@ -839,20 +780,20 @@ describe("Wallet SDK Integration Tests", () => {
     );
 
     it("should send subdust amount", { timeout: 60000 }, async () => {
-        const alice = await createTestWallet();
-        const bob = await createTestWallet();
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
 
-        const aliceAddresses = await alice.wallet.getAddress();
-        const bobAddresses = await bob.wallet.getAddress();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        const bobOffchainAddress = await bob.wallet.getAddress();
 
         const fundAmount = 10_000;
         execSync(
-            `${arkdExec} ark send --to ${aliceAddresses.offchain} --amount ${fundAmount} --password secret`
+            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
         // alice should send offchain tx with subdust output
         await alice.wallet.sendBitcoin({
-            address: bobAddresses.offchain!,
+            address: bobOffchainAddress!,
             amount: 1,
         });
 
@@ -860,12 +801,12 @@ describe("Wallet SDK Integration Tests", () => {
 
         // bob should have 1 sat in offchain balance
         const bobBalance = await bob.wallet.getBalance();
-        expect(bobBalance.offchain.total).toBe(1);
+        expect(bobBalance.total).toBe(1);
 
         // bob shouldn't be able to send offchain tx with subdust output
         await expect(
             bob.wallet.sendBitcoin({
-                address: bobAddresses.offchain!,
+                address: bobOffchainAddress!,
                 amount: 1,
             })
         ).rejects.toThrow("Insufficient funds");
@@ -874,7 +815,7 @@ describe("Wallet SDK Integration Tests", () => {
         await expect(bob.wallet.settle()).rejects.toThrow();
 
         await alice.wallet.sendBitcoin({
-            address: bobAddresses.offchain!,
+            address: bobOffchainAddress!,
             amount: fundAmount - 1,
         });
 

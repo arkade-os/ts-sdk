@@ -1,13 +1,13 @@
 import { expect, describe, it } from "vitest";
-import { faucetOffchain, createTestWallet, createVtxo } from "./utils";
+import { faucetOffchain, createTestArkWallet, createVtxo } from "./utils";
 import { ArkAddress, Outpoint, RestIndexerProvider } from "../../src";
 import { hex } from "@scure/base";
 
 describe("Indexer provider", () => {
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -51,8 +51,8 @@ describe("Indexer provider", () => {
 
     it("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const indexerProvider = new RestIndexerProvider(
@@ -105,13 +105,13 @@ describe("Indexer provider", () => {
         const abortController = new AbortController();
 
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceAddress = (await alice.wallet.getAddress()).offchain;
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
         const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
 
         // Create fresh wallet instance for this test
-        const bob = await createTestWallet();
-        const bobAddress = (await bob.wallet.getAddress()).offchain;
+        const bob = await createTestArkWallet();
+        const bobAddress = await bob.wallet.getAddress();
         const bobScript = ArkAddress.decode(bobAddress!).pkScript;
 
         if (!bobAddress || !aliceAddress) {

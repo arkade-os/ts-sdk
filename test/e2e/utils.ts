@@ -1,6 +1,6 @@
 import { utils } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { IWallet, Wallet, InMemoryKey } from "../../src";
+import { IWallet, Wallet, InMemoryKey, OnchainWallet } from "../../src";
 import { execSync } from "child_process";
 
 export const arkdExec =
@@ -12,8 +12,13 @@ export const ARK_SERVER_PUBKEY =
 
 export const X_ONLY_PUBLIC_KEY = hex.decode(ARK_SERVER_PUBKEY).slice(1);
 
-export interface TestWallet {
+export interface TestArkWallet {
     wallet: Wallet;
+    identity: InMemoryKey;
+}
+
+export interface TestOnchainWallet {
+    wallet: OnchainWallet;
     identity: InMemoryKey;
 }
 
@@ -23,11 +28,19 @@ export function createTestIdentity(): InMemoryKey {
     return InMemoryKey.fromHex(privateKeyHex);
 }
 
-export async function createTestWallet(): Promise<TestWallet> {
+export function createTestOnchainWallet(): TestOnchainWallet {
+    const identity = createTestIdentity();
+    const wallet = new OnchainWallet(identity, "regtest");
+    return {
+        wallet,
+        identity,
+    };
+}
+
+export async function createTestArkWallet(): Promise<TestArkWallet> {
     const identity = createTestIdentity();
 
     const wallet = await Wallet.create({
-        network: "regtest",
         identity,
         arkServerUrl: "http://localhost:7070",
         arkServerPublicKey: ARK_SERVER_PUBKEY,
@@ -51,10 +64,10 @@ export function faucetOnchain(address: string, amount: number): void {
 }
 
 export async function createVtxo(
-    alice: TestWallet,
+    alice: TestArkWallet,
     amount: number
 ): Promise<string> {
-    const address = (await alice.wallet.getAddress()).offchain;
+    const address = await alice.wallet.getAddress();
     if (!address) throw new Error("Offchain address not defined.");
 
     faucetOffchain(address, amount);

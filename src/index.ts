@@ -16,19 +16,16 @@ import {
     SendBitcoinParams,
     Recipient,
     SettleParams,
-    VtxoTaprootAddress,
-    AddressInfo,
-    TapscriptInfo,
     Status,
     VirtualStatus,
     Outpoint,
     VirtualCoin,
     TxKey,
-    Addresses,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
 import { TxGraph, TxGraphChunk } from "./tree/txGraph";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import { OnchainWallet } from "./wallet/onchain";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
@@ -75,12 +72,14 @@ import {
     VtxoChain,
     Tx,
 } from "./providers/indexer";
+import { waitForIncomingFunds } from "./utils/waitForIncomingFunds";
 
 export {
     // Classes
     Wallet,
     ServiceWorkerWallet,
     InMemoryKey,
+    OnchainWallet,
 
     // Providers
     ESPLORA_URL,
@@ -124,6 +123,7 @@ export {
     VtxoTaprootTree,
     ConditionWitness,
     buildOffchainTx,
+    waitForIncomingFunds,
 
     // Arknote
     ArkNote,
@@ -155,10 +155,6 @@ export type {
     SendBitcoinParams,
     Recipient,
     SettleParams,
-    VtxoTaprootAddress,
-    AddressInfo,
-    Addresses,
-    TapscriptInfo,
     Status,
     VirtualStatus,
     Outpoint,
