@@ -66,12 +66,12 @@ export class Wallet implements IWallet {
     static FEE_RATE = 1; // sats/vbyte
 
     private constructor(
-        private identity: Identity,
-        private network: Network,
-        private onchainProvider: OnchainProvider,
-        private arkProvider: ArkProvider,
-        private indexerProvider: IndexerProvider,
-        private arkServerPublicKey: Bytes,
+        readonly identity: Identity,
+        readonly network: Network,
+        readonly onchainProvider: OnchainProvider,
+        readonly arkProvider: ArkProvider,
+        readonly indexerProvider: IndexerProvider,
+        readonly arkServerPublicKey: Bytes,
         readonly offchainTapscript: DefaultVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
