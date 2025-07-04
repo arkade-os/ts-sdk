@@ -16,18 +16,16 @@ import {
     SendBitcoinParams,
     Recipient,
     SettleParams,
-    VtxoTaprootAddress,
-    AddressInfo,
-    TapscriptInfo,
     Status,
     VirtualStatus,
     Outpoint,
     VirtualCoin,
     TxKey,
-    Addresses,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
+import { TxGraph, TxGraphChunk } from "./tree/txGraph";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import { OnchainWallet } from "./wallet/onchain";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
@@ -63,16 +61,15 @@ import {
     RestIndexerProvider,
     IndexerProvider,
     IndexerTxType,
-    ChainedTxType,
+    ChainTxType,
     PageResponse,
     Batch,
-    Chain,
-    ChainedTx,
+    ChainTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Tx,
 } from "./providers/indexer";
 
 export {
@@ -80,6 +77,7 @@ export {
     Wallet,
     ServiceWorkerWallet,
     InMemoryKey,
+    OnchainWallet,
 
     // Providers
     ESPLORA_URL,
@@ -96,7 +94,7 @@ export {
     // Enums
     TxType,
     IndexerTxType,
-    ChainedTxType,
+    ChainTxType,
 
     // Service Worker
     Worker,
@@ -135,6 +133,9 @@ export {
 
     // BIP322
     BIP322,
+
+    // TxGraph
+    TxGraph,
 };
 
 // Type exports
@@ -151,10 +152,6 @@ export type {
     SendBitcoinParams,
     Recipient,
     SettleParams,
-    VtxoTaprootAddress,
-    AddressInfo,
-    Addresses,
-    TapscriptInfo,
     Status,
     VirtualStatus,
     Outpoint,
@@ -169,14 +166,16 @@ export type {
     IndexerProvider,
     PageResponse,
     Batch,
-    Chain,
-    ChainedTx,
+    ChainTx,
     CommitmentTx,
-    Node,
     TxHistoryRecord,
     Vtxo,
     VtxoChain,
+    Tx,
 
     // Ark PSBT fields
     ArkPsbtFieldCoder,
+
+    // TxGraph
+    TxGraphChunk,
 };

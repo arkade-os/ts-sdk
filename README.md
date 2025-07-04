@@ -19,27 +19,23 @@ const identity = InMemoryKey.fromHex('your_private_key_hex')
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
-  network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
   identity: identity,
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
-  // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  arkServerPublicKey: 'fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d'
 })
 
 // Get wallet addresses
-const addresses = await wallet.getAddress()
-console.log('Bitcoin Address:', addresses.onchain)
-console.log('Ark Address:', addresses.offchain)
-console.log('Boarding Address:', addresses.boarding)
-console.log('BIP21 URI:', addresses.bip21)
+const arkAddress = await wallet.getAddress()
+const boardingAddress = await wallet.getBoardingAddress()
+console.log('Ark Address:', arkAddress)
+console.log('Boarding Address:', boardingAddress)
 ```
 
 ### Sending Bitcoin
 
 ```typescript
-// Send bitcoin (automatically chooses on-chain or off-chain based on the address)
+// Send bitcoin via Ark
 const txid = await wallet.sendBitcoin({
   address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
   amount: 50000,  // in satoshis
@@ -61,8 +57,12 @@ const settleTxid = await wallet.settle({
 ```typescript
 // Get detailed balance information
 const balance = await wallet.getBalance()
-console.log('Total Onchain:', balance.onchain.total)
-console.log('Total Offchain:', balance.offchain.total)
+console.log('Total Balance:', balance.total)
+console.log('Boarding Total:', balance.boarding.total)
+console.log('Offchain Available:', balance.available)
+console.log('Offchain Settled:', balance.settled)
+console.log('Offchain Preconfirmed:', balance.preconfirmed)
+console.log('Recoverable:', balance.recoverable)
 
 // Get virtual UTXOs (off-chain)
 const virtualCoins = await wallet.getVtxos()
@@ -80,13 +80,15 @@ console.log('History:', history)
 
 // Example history entry:
 {
+  key: {
+    boardingTxid: '...', // for boarding transactions
+    commitmentTxid: '...', // for commitment transactions
+    redeemTxid: '...'    // for regular transactions
+  },
   type: TxType.TxReceived, // or TxType.TxSent
   amount: 50000,
   settled: true,
-  key: {
-    boardingTxid: '...', // for boarding transactions
-    redeemTxid: '...'    // for regular transactions
-  }
+  createdAt: 1234567890
 }
 ```
 
@@ -108,7 +110,7 @@ await wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
 // service-worker.ts
 import { Worker } from '@arkade-os/sdk'
 
-// Worker is a class handling the communication between the main thread and the service worker
+// Worker handles communication between the main thread and service worker
 new Worker().start()
 ```
 
@@ -119,15 +121,13 @@ new Worker().start()
 // this will automatically register the service worker
 const wallet = await ServiceWorkerWallet.create('/service-worker.js')
 
-// initialize the wallet
+// Initialize the wallet
 await wallet.init({
-  network: 'mutinynet',  // 'bitcoin', 'testnet', 'regtest', 'signet' or 'mutinynet'
-  identity: identity,
+  privateKey: 'your_private_key_hex',
   // Esplora API, can be left empty mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  arkServerPublicKey: 'fa73c6e4876ffb2dfc961d763cca9abc73d4b88efcb8f5e7ff92dc55e9aa553d'
 })
 ```
 
@@ -139,16 +139,18 @@ await wallet.init({
 
 ```typescript
 interface WalletConfig {
-  /** Network to use ('bitcoin', 'testnet', 'regtest', 'signet', or 'mutinynet') */
-  network: NetworkName;
   /** Identity for signing transactions */
   identity: Identity;
+  /** Ark server URL */
+  arkServerUrl: string;
   /** Optional Esplora API URL */
   esploraUrl?: string;
-  /** Ark server URL (optional) */
-  arkServerUrl?: string;
   /** Ark server public key (optional) */
   arkServerPublicKey?: string;
+  /** Optional boarding timelock configuration */
+  boardingTimelock?: RelativeTimelock;
+  /** Optional exit timelock configuration */
+  exitTimelock?: RelativeTimelock;
 }
 ```
 
@@ -156,89 +158,119 @@ interface WalletConfig {
 
 ```typescript
 interface IWallet {
-  /** Get wallet addresses */
-  getAddress(): Promise<{
-    onchain?: Address;
-    offchain?: Address;
-    boarding?: Address;
-    bip21?: string;
-  }>;
+  /** Get offchain address */
+  getAddress(): Promise<string>;
+
+  /** Get boarding address */
+  getBoardingAddress(): Promise<string>;
 
   /** Get wallet balance */
   getBalance(): Promise<{
-    onchain: {
-      total: number;
+    boarding: {
       confirmed: number;
       unconfirmed: number;
-    };
-    offchain: {
       total: number;
-      settled: number;
-      pending: number;
     };
+    settled: number;
+    preconfirmed: number;
+    available: number;
+    recoverable: number;
+    total: number;
   }>;
 
-  /** Send bitcoin (on-chain or off-chain) */
+  /** Send bitcoin via Ark */
   sendBitcoin(params: {
     address: string;
     amount: number;
     feeRate?: number;
-  }, onchain?: boolean): Promise<string>;
-
-  /** Get virtual UTXOs */
-  getVtxos(): Promise<VirtualCoin[]>;
-
-  /** Get boarding UTXOs */
-  getBoardingUtxos(): Promise<BoardingUtxo[]>;
-
-  /** Settle transactions */
-  settle(params: {
-    inputs: (VirtualCoin | BoardingUtxo)[];
-    outputs: {
-      address: string;
-      amount: bigint;
-    }[];
+    memo?: string;
   }): Promise<string>;
 
+  /** Get virtual UTXOs */
+  getVtxos(filter?: { withSpendableInSettlement?: boolean }): Promise<ExtendedVirtualCoin[]>;
+
+  /** Get boarding UTXOs */
+  getBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+  /** Settle transactions */
+  settle(
+    params?: {
+      inputs: ExtendedCoin[];
+      outputs: {
+        address: string;
+        amount: bigint;
+      }[];
+    },
+    eventCallback?: (event: SettlementEvent) => void
+  ): Promise<string>;
+
   /** Get transaction history */
-  getTransactionHistory(): Promise<Transaction[]>;
-}
+  getTransactionHistory(): Promise<ArkTransaction[]>;
 
-/** Transaction types */
-enum TxType {
-  TxSent = 'sent',
-  TxReceived = 'received'
-}
-
-/** Transaction history entry */
-interface Transaction {
-  type: TxType;
-  amount: number;
-  settled: boolean;
-  key: {
-    boardingTxid?: string;
-    redeemTxid?: string;
-  };
-}
-
-/** Virtual coin (off-chain UTXO) */
-interface VirtualCoin {
-  txid: string;
-  value: number;
-  virtualStatus: {
-    state: 'pending' | 'settled';
-  };
-}
-
-/** Boarding UTXO */
-interface BoardingUtxo {
-  txid: string;
-  vout: number;
-  value: number;
+  /** Exit vtxos unilaterally */
+  exit(outpoints?: Outpoint[]): Promise<void>;
 }
 ```
 
-#### Identity
+### Types
+
+```typescript
+/** Transaction types */
+enum TxType {
+  TxSent = 'SENT',
+  TxReceived = 'RECEIVED'
+}
+
+/** Transaction history entry */
+interface ArkTransaction {
+  key: {
+    boardingTxid: string;
+    commitmentTxid: string;
+    redeemTxid: string;
+  };
+  type: TxType;
+  amount: number;
+  settled: boolean;
+  createdAt: number;
+}
+
+/** Virtual coin (off-chain UTXO) */
+interface ExtendedVirtualCoin {
+  txid: string;
+  vout: number;
+  value: number;
+  virtualStatus: {
+    state: 'pending' | 'settled' | 'swept' | 'spent';
+    commitmentTxIds?: string[];
+    batchExpiry?: number;
+  };
+  spentBy?: string;
+  createdAt: Date;
+  forfeitTapLeafScript: TapLeafScript;
+  intentTapLeafScript: TapLeafScript;
+  tapTree: string;
+  extraWitness?: Bytes[];
+}
+
+/** Boarding UTXO */
+interface ExtendedCoin {
+  txid: string;
+  vout: number;
+  value: number;
+  status: {
+    confirmed: boolean;
+    block_height?: number;
+    block_hash?: string;
+    block_time?: number;
+  };
+  forfeitTapLeafScript: TapLeafScript;
+  intentTapLeafScript: TapLeafScript;
+  tapTree: string;
+  extraWitness?: Bytes[];
+}
+```
+
+### Identity
 
 ```typescript
 export interface Identity {
@@ -274,7 +306,7 @@ pnpm format
 pnpm lint
 ```
 
-2.Install nigiri for integration tests:
+2. Install nigiri for integration tests:
 
 ```bash
 curl https://getnigiri.vulpem.com | bash

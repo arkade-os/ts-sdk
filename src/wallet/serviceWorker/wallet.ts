@@ -3,20 +3,21 @@ import {
     WalletBalance,
     SendBitcoinParams,
     SettleParams,
-    AddressInfo,
-    Coin,
     ArkTransaction,
     WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
-    Addresses,
     Outpoint,
     GetVtxosFilter,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import { InMemoryKey } from "../../identity/inMemoryKey";
+import { Identity } from "../../identity";
+import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
+import { Transaction } from "@scure/btc-signer";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -28,8 +29,9 @@ class UnexpectedResponseError extends Error {
 }
 
 // ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
-export class ServiceWorkerWallet implements IWallet {
+export class ServiceWorkerWallet implements IWallet, Identity {
     private serviceWorker?: ServiceWorker;
+    private cachedXOnlyPublicKey: Uint8Array | undefined;
 
     static async create(svcWorkerPath: string): Promise<ServiceWorkerWallet> {
         try {
@@ -81,12 +83,16 @@ export class ServiceWorkerWallet implements IWallet {
             type: "INIT_WALLET",
             id: getRandomId(),
             privateKey: config.privateKey,
-            network: config.network,
-            arkServerUrl: config.arkServerUrl || "",
+            arkServerUrl: config.arkServerUrl,
             arkServerPublicKey: config.arkServerPublicKey,
         };
 
         await this.sendMessage(message);
+
+        const privKeyBytes = hex.decode(config.privateKey);
+        // cache the identity xOnlyPublicKey
+        this.cachedXOnlyPublicKey =
+            InMemoryKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
     }
 
     async clear() {
@@ -95,6 +101,9 @@ export class ServiceWorkerWallet implements IWallet {
             id: getRandomId(),
         };
         await this.sendMessage(message);
+
+        // clear the cached xOnlyPublicKey
+        this.cachedXOnlyPublicKey = undefined;
     }
 
     // register the service worker
@@ -200,7 +209,7 @@ export class ServiceWorkerWallet implements IWallet {
         });
     }
 
-    async getAddress(): Promise<Addresses> {
+    async getAddress(): Promise<string> {
         const message: Request.GetAddress = {
             type: "GET_ADDRESS",
             id: getRandomId(),
@@ -209,7 +218,7 @@ export class ServiceWorkerWallet implements IWallet {
         try {
             const response = await this.sendMessage(message);
             if (Response.isAddress(response)) {
-                return response.addresses;
+                return response.address;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
@@ -217,20 +226,20 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
-    async getAddressInfo(): Promise<AddressInfo> {
-        const message: Request.GetAddressInfo = {
-            type: "GET_ADDRESS_INFO",
+    async getBoardingAddress(): Promise<string> {
+        const message: Request.GetBoardingAddress = {
+            type: "GET_BOARDING_ADDRESS",
             id: getRandomId(),
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isAddressInfo(response)) {
-                return response.addressInfo;
+            if (Response.isAddress(response)) {
+                return response.address;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
-            throw new Error(`Failed to get address info: ${error}`);
+            throw new Error(`Failed to get boarding address: ${error}`);
         }
     }
 
@@ -248,23 +257,6 @@ export class ServiceWorkerWallet implements IWallet {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
-        }
-    }
-
-    async getCoins(): Promise<Coin[]> {
-        const message: Request.GetCoins = {
-            type: "GET_COINS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isCoins(response)) {
-                return response.coins;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get coins: ${error}`);
         }
     }
 
@@ -411,6 +403,35 @@ export class ServiceWorkerWallet implements IWallet {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to exit: ${error}`);
+        }
+    }
+
+    xOnlyPublicKey(): Uint8Array {
+        if (!this.cachedXOnlyPublicKey) {
+            throw new Error("Wallet not initialized");
+        }
+        return this.cachedXOnlyPublicKey;
+    }
+
+    signerSession(): SignerSession {
+        return TreeSignerSession.random();
+    }
+
+    async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
+        const message: Request.Sign = {
+            type: "SIGN",
+            tx: base64.encode(tx.toPSBT()),
+            inputIndexes,
+            id: getRandomId(),
+        };
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isSignSuccess(response)) {
+                return Transaction.fromPSBT(base64.decode(response.tx));
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to sign: ${error}`);
         }
     }
 }

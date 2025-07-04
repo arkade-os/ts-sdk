@@ -1,13 +1,22 @@
 import { expect, describe, it } from "vitest";
-import { faucetOffchain, createTestWallet, createVtxo } from "./utils";
-import { ArkAddress, Outpoint, RestIndexerProvider } from "../../src";
+import { faucetOffchain, createTestArkWallet, createVtxo } from "./utils";
+import {
+    ArkAddress,
+    Outpoint,
+    RestIndexerProvider,
+    TxGraph,
+    TxGraphChunk,
+    ChainTxType,
+} from "../../src";
 import { hex } from "@scure/base";
+import { sha256x2 } from "@scure/btc-signer/utils";
 
 describe("Indexer provider", () => {
-    it("should inspect a VTXO", { timeout: 60000 }, async () => {
+    // TODO: revert once fixed on arkd
+    it.skip("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
@@ -19,13 +28,15 @@ describe("Indexer provider", () => {
             "http://localhost:7070"
         );
 
-        const spendableVtxos = await indexerProvider.getVtxos({
-            addresses: [aliceOffchainAddress!],
+        const spendableVtxosResponse = await indexerProvider.getVtxos({
+            scripts: [
+                hex.encode(ArkAddress.decode(aliceOffchainAddress!).pkScript),
+            ],
             spendableOnly: true,
         });
-        expect(spendableVtxos).toHaveLength(1);
+        expect(spendableVtxosResponse.vtxos).toHaveLength(1);
 
-        const spendableVtxo = spendableVtxos[0];
+        const spendableVtxo = spendableVtxosResponse.vtxos[0];
         expect(spendableVtxo.txid).toBeDefined();
         expect(spendableVtxo.vout).toBeDefined();
         expect(spendableVtxo.value).toBe(fundAmount);
@@ -35,24 +46,20 @@ describe("Indexer provider", () => {
             vout: spendableVtxo.vout,
         };
 
-        const tree = await indexerProvider.getVtxoTree(outpoint);
-        expect(tree).toBeDefined();
-        expect(tree).toHaveLength(0);
+        const treeResponse = await indexerProvider.getVtxoTree(outpoint);
+        expect(treeResponse.vtxoTree).toBeDefined();
+        expect(treeResponse.vtxoTree).toHaveLength(0);
 
         const leaves = await indexerProvider.getVtxoTreeLeaves(outpoint);
         expect(leaves).toBeDefined();
         expect(leaves).toHaveLength(0);
-
-        // TODO: Uncomment when the API is ready
-        // const chain = await indexerProvider.getVtxoChain(outpoint);
-        // expect(chain).toBeDefined();
-        // expect(chain.chain).toHaveLength(1);
     });
 
-    it("should inspect a commitment tx", { timeout: 60000 }, async () => {
+    // TODO: revert once fixed on arkd
+    it.skip("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceOffchainAddress = (await alice.wallet.getAddress()).offchain;
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
         expect(aliceOffchainAddress).toBeDefined();
 
         const indexerProvider = new RestIndexerProvider(
@@ -74,49 +81,56 @@ describe("Indexer provider", () => {
         expect(commitmentTx.batches["0"].totalOutputAmount).toBe(fundAmountStr);
         expect(commitmentTx.batches["0"].totalOutputVtxos).toBe(1);
 
-        const connects = await indexerProvider.getCommitmentTxConnectors(txid);
-        expect(connects).toBeDefined();
-        expect(connects.length).toBe(1);
-        expect(connects[0].level).toBe(0);
-        expect(connects[0].levelIndex).toBe(0);
-        expect(connects[0].parentTxid).toBe(txid);
+        const connectsResponse =
+            await indexerProvider.getCommitmentTxConnectors(txid);
+        expect(connectsResponse.connectors).toBeDefined();
+        expect(connectsResponse.connectors.length).toBeGreaterThanOrEqual(1);
 
-        const forfeits = await indexerProvider.getCommitmentTxForfeitTxs(txid);
-        expect(forfeits).toBeDefined();
-        expect(forfeits.length).toBe(1);
+        const forfeitsResponse =
+            await indexerProvider.getCommitmentTxForfeitTxs(txid);
+        expect(forfeitsResponse.txids).toBeDefined();
+        expect(forfeitsResponse.txids.length).toBeGreaterThanOrEqual(1);
 
-        const leaves = await indexerProvider.getCommitmentTxForfeitTxs(txid);
-        expect(leaves).toBeDefined();
-        expect(leaves.length).toBe(1);
+        const leavesResponse =
+            await indexerProvider.getCommitmentTxLeaves(txid);
+        expect(leavesResponse.leaves).toBeDefined();
+        expect(leavesResponse.leaves.length).toBeGreaterThanOrEqual(1);
 
-        const swepts = await indexerProvider.getCommitmentTxSwept(txid);
-        expect(swepts).toBeDefined();
-        expect(swepts.length).toBe(0);
+        const sweptsResponse = await indexerProvider.getBatchSweepTransactions({
+            txid,
+            vout: 0,
+        });
+        expect(sweptsResponse.sweptBy).toBeDefined();
+        expect(sweptsResponse.sweptBy.length).toBeGreaterThanOrEqual(0);
 
-        const batchTree = await indexerProvider.getVtxoTree({ txid, vout: 0 });
-        expect(batchTree.length).toBe(1);
-        expect(batchTree[0].parentTxid).toBe(txid);
+        const batchTreeResponse = await indexerProvider.getVtxoTree({
+            txid,
+            vout: 0,
+        });
+        expect(batchTreeResponse.vtxoTree.length).toBeGreaterThanOrEqual(1);
 
-        const btl = await indexerProvider.getVtxoTreeLeaves({ txid, vout: 0 });
-        expect(btl.length).toBe(1);
-        expect(btl[0].txid).toBe(batchTree[0].txid);
+        const btlResponse = await indexerProvider.getVtxoTreeLeaves({
+            txid,
+            vout: 0,
+        });
+        expect(btlResponse.leaves.length).toBeGreaterThanOrEqual(1);
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {
         const start = Date.now();
         const fundAmount = 1000;
         const delayMilliseconds = 2100;
-        const abortController = new AbortController();
+        let abortController = new AbortController();
 
         // Create fresh wallet instance for this test
-        const alice = await createTestWallet();
-        const aliceAddress = (await alice.wallet.getAddress()).offchain;
-        const aliceScript = ArkAddress.decode(aliceAddress!).pkScript.slice(2);
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+        const aliceScript = ArkAddress.decode(aliceAddress!).pkScript;
 
         // Create fresh wallet instance for this test
-        const bob = await createTestWallet();
-        const bobAddress = (await bob.wallet.getAddress()).offchain;
-        const bobScript = ArkAddress.decode(bobAddress!).pkScript.slice(2);
+        const bob = await createTestArkWallet();
+        const bobAddress = await bob.wallet.getAddress();
+        const bobScript = ArkAddress.decode(bobAddress!).pkScript;
 
         if (!bobAddress || !aliceAddress) {
             throw new Error("Offchain address not defined.");
@@ -196,5 +210,229 @@ describe("Indexer provider", () => {
                 break;
             }
         }
+
+        // Test unsubscribeForScripts
+        // Unsubscribe from Alice's script specifically
+        await indexerProvider.unsubscribeForScripts(subscriptionId, [
+            hex.encode(aliceScript),
+        ]);
+
+        abortController = new AbortController();
+
+        // get subscription, should not fail cause bob script is still subscribed
+        indexerProvider.getSubscription(subscriptionId, abortController.signal);
+
+        abortController.abort();
+
+        // Unsubscribe from all scripts in the subscription
+        await indexerProvider.unsubscribeForScripts(subscriptionId);
+
+        abortController = new AbortController();
+        // get subscription, should fail cause all scripts are unsubscribed
+        const subscriptionAfterUnsubscribe = indexerProvider.getSubscription(
+            subscriptionId,
+            abortController.signal
+        );
+
+        // The error will be thrown when we try to iterate over the generator
+        await expect(async () => {
+            for await (const _ of subscriptionAfterUnsubscribe) {
+                // This should never be reached
+                break;
+            }
+        }).rejects.toThrow();
+
+        abortController.abort();
     });
+
+    it("should get vtxo chain", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+
+        const indexerProvider = new RestIndexerProvider(
+            "http://localhost:7070"
+        );
+
+        const fundAmount = 1000;
+        const commitmentTxid = await createVtxo(alice, fundAmount);
+        expect(commitmentTxid).toBeDefined();
+
+        const aliceVtxos = await alice.wallet.getVtxos();
+        expect(aliceVtxos).toBeDefined();
+        expect(aliceVtxos).toHaveLength(1);
+        const aliceVtxo = aliceVtxos[0];
+        expect(aliceVtxo.txid).toBeDefined();
+        expect(aliceVtxo.vout).toBeDefined();
+
+        const chainResponse = await indexerProvider.getVtxoChain(aliceVtxo);
+        expect(chainResponse.chain).toBeDefined();
+        expect(chainResponse.chain.length).toBeGreaterThanOrEqual(2);
+
+        const commitmentChainTx = chainResponse.chain.find(
+            (tx) => tx.txid === commitmentTxid
+        );
+        expect(commitmentChainTx).toBeDefined();
+        expect(commitmentChainTx?.type).toBe(ChainTxType.COMMITMENT);
+
+        const virtualChainTxs = chainResponse.chain
+            .filter((tx) => tx.type !== ChainTxType.COMMITMENT)
+            .map((tx) => tx);
+
+        // should get virtual txs in the chain
+        const virtualTxs = await indexerProvider.getVirtualTxs(
+            virtualChainTxs.map((tx) => tx.txid)
+        );
+        expect(virtualTxs.txs).toBeDefined();
+        expect(virtualTxs.txs.length).toBe(virtualChainTxs.length);
+        expect(virtualTxs.txs.length).toBeGreaterThanOrEqual(1);
+
+        // every virtual tx should be a tree tx
+        for (const tx of virtualChainTxs) {
+            expect(tx.type).toBe(ChainTxType.TREE);
+        }
+
+        // then alice sends a vtxo to herself via an offchain tx
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        const arkTxId = await alice.wallet.sendBitcoin({
+            address: aliceOffchainAddress,
+            amount: fundAmount,
+        });
+
+        const aliceVtxosAfterArkTx = await alice.wallet.getVtxos();
+        expect(aliceVtxosAfterArkTx).toBeDefined();
+        expect(aliceVtxosAfterArkTx).toHaveLength(1);
+
+        // should get the offchain tx in the chain
+        const chainResponseAfterOffchain = await indexerProvider.getVtxoChain(
+            aliceVtxosAfterArkTx[0]
+        );
+        expect(chainResponseAfterOffchain.chain).toBeDefined();
+        expect(chainResponseAfterOffchain.chain.length).toBeGreaterThan(
+            chainResponse.chain.length
+        );
+
+        // verify that the new chain is composed by the previous chain + the checkpoint + the ark tx
+        expect(chainResponseAfterOffchain.chain.length).toBe(
+            chainResponse.chain.length + 2
+        );
+
+        // every tx of the initial chain should be in the new chain
+        for (const tx of chainResponse.chain) {
+            expect(
+                chainResponseAfterOffchain.chain.some((t) => t.txid === tx.txid)
+            ).toBe(true);
+        }
+
+        // the ark tx should be the first tx in the chain
+        const firstTx = chainResponseAfterOffchain.chain[0];
+        expect(firstTx.type).toBe(ChainTxType.ARK);
+        expect(firstTx.txid).toBe(arkTxId);
+
+        // the checkpoint tx should be the second tx in the chain
+        const checkpointTx = chainResponseAfterOffchain.chain[1];
+        expect(checkpointTx.type).toBe(ChainTxType.CHECKPOINT);
+
+        expect(firstTx.spends).toHaveLength(1);
+        expect(firstTx.spends[0]).toBe(checkpointTx.txid);
+    });
+
+    it("should get vtxo tree txs", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+
+        const indexerProvider = new RestIndexerProvider(
+            "http://localhost:7070"
+        );
+
+        const fundAmount = 1000;
+        const commitmentTxid = await createVtxo(alice, fundAmount);
+        expect(commitmentTxid).toBeDefined();
+
+        const treeResponse = await indexerProvider.getVtxoTree({
+            txid: commitmentTxid,
+            vout: 0,
+        });
+
+        const graphChunks: TxGraphChunk[] = [];
+        for (const vtxoTreeTx of treeResponse.vtxoTree) {
+            const virtualTxs = await indexerProvider.getVirtualTxs([
+                vtxoTreeTx.txid,
+            ]);
+            expect(virtualTxs.txs).toBeDefined();
+            expect(virtualTxs.txs.length).toBe(1);
+            const virtualTx = virtualTxs.txs[0];
+
+            graphChunks.push({
+                txid: vtxoTreeTx.txid,
+                children: vtxoTreeTx.children,
+                tx: virtualTx,
+            });
+        }
+
+        const txGraph = TxGraph.create(graphChunks);
+        expect(txGraph).toBeDefined();
+
+        txGraph.validate();
+
+        const aliceVtxo = await alice.wallet.getVtxos();
+        expect(aliceVtxo).toBeDefined();
+        expect(aliceVtxo).toHaveLength(1);
+        const aliceVtxoOutpoint = aliceVtxo[0];
+        expect(aliceVtxoOutpoint.txid).toBeDefined();
+        expect(aliceVtxoOutpoint.vout).toBeDefined();
+
+        const leaves = txGraph.leaves();
+        expect(leaves).toBeDefined();
+        expect(leaves.length).toBeGreaterThanOrEqual(1);
+
+        const found = leaves.find((leaf) => {
+            const txid = hex.encode(sha256x2(leaf.toBytes(true)).reverse());
+            return txid === aliceVtxoOutpoint.txid;
+        });
+        expect(found).toBeDefined();
+    });
+
+    it(
+        "should get connectors from commitment tx",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+
+            const indexerProvider = new RestIndexerProvider(
+                "http://localhost:7070"
+            );
+
+            const fundAmount = 1000;
+            const commitmentTxid = await createVtxo(alice, fundAmount);
+            expect(commitmentTxid).toBeDefined();
+
+            const connectors =
+                await indexerProvider.getCommitmentTxConnectors(commitmentTxid);
+            expect(connectors.connectors).toBeDefined();
+            expect(connectors.connectors.length).toBeGreaterThanOrEqual(1);
+
+            const txGraphChunks: TxGraphChunk[] = [];
+            for (const connector of connectors.connectors) {
+                const virtualTxs = await indexerProvider.getVirtualTxs([
+                    connector.txid,
+                ]);
+                expect(virtualTxs.txs).toBeDefined();
+                expect(virtualTxs.txs.length).toBe(1);
+                const virtualTx = virtualTxs.txs[0];
+
+                txGraphChunks.push({
+                    txid: connector.txid,
+                    children: connector.children,
+                    tx: virtualTx,
+                });
+            }
+
+            const txGraph = TxGraph.create(txGraphChunks);
+            expect(txGraph).toBeDefined();
+
+            txGraph.validate();
+
+            const leaves = txGraph.leaves();
+            expect(leaves).toBeDefined();
+            expect(leaves.length).toBeGreaterThanOrEqual(1);
+        }
+    );
 });

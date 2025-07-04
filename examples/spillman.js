@@ -40,14 +40,12 @@ async function main() {
     console.log("\nInitializing Bob's wallet...");
     const bobWallet = await Wallet.create({
         identity: bob,
-        network: "regtest",
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
     });
 
     const aliceWallet = await Wallet.create({
         identity: alice,
-        network: "regtest",
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
     });
@@ -211,24 +209,25 @@ async function main() {
         // to close the channel, Alice or Bob can submit the last virtual tx to the server
         console.log("\nClosing channel...");
         const lastState = bobChannelStates[bobChannelStates.length - 1];
-        const { txid, signedCheckpoints } = await arkProvider.submitOffchainTx(
+        const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(lastState.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT()))
         );
 
         console.log(
             "Successfully submitted channel close! Transaction ID:",
-            txid
+            arkTxid
         );
 
         const finalCheckpoints = await Promise.all(
-            signedCheckpoints.map(async (c, i) => {
+            signedCheckpointTxs.map(async (c) => {
                 const tx = Transaction.fromPSBT(base64.decode(c), {
                     allowUnknown: true,
                 });
                 const signedCheckpoint = await bob.sign(tx, [0]);
                 // add alice's signature
-                const aliceCheckpoint = signedCheckpointsByAlice[i];
+                const aliceCheckpoint =
+                    signedCheckpointsByAlice[signedCheckpointTxs.indexOf(c)];
                 signedCheckpoint.updateInput(0, {
                     tapScriptSig: [
                         ...aliceCheckpoint.getInput(0).tapScriptSig,
@@ -239,7 +238,7 @@ async function main() {
             })
         );
 
-        await arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+        await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
         console.log("Successfully finalized channel close!");
 
         console.log("\nFinal Balances:");
@@ -277,18 +276,18 @@ async function main() {
         const signedTx = await alice.sign(virtualTx);
         console.log("Alice signed the refund transaction");
 
-        const { txid, signedCheckpoints } = await arkProvider.submitOffchainTx(
+        const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
             base64.encode(signedTx.toPSBT()),
             checkpoints.map((c) => base64.encode(c.toPSBT()))
         );
 
         console.log(
             "Successfully submitted channel refund! Transaction ID:",
-            txid
+            arkTxid
         );
 
         const finalCheckpoints = await Promise.all(
-            signedCheckpoints.map(async (c) => {
+            signedCheckpointTxs.map(async (c) => {
                 const tx = Transaction.fromPSBT(base64.decode(c), {
                     allowUnknown: true,
                 });
@@ -297,7 +296,7 @@ async function main() {
             })
         );
 
-        await arkProvider.finalizeOffchainTx(txid, finalCheckpoints);
+        await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
         console.log("Successfully finalized channel refund!");
 
         console.log("\nFinal Balances:");

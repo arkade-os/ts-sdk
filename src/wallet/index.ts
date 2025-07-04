@@ -1,32 +1,28 @@
 import { Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
-import { NetworkName } from "../networks";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils";
 
 export interface WalletConfig {
-    network: NetworkName;
     identity: Identity;
+    arkServerUrl: string;
     esploraUrl?: string;
-    arkServerUrl?: string;
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
 }
 
 export interface WalletBalance {
-    onchain: {
+    boarding: {
         confirmed: number;
         unconfirmed: number;
         total: number;
     };
-    offchain: {
-        swept: number;
-        settled: number;
-        pending: number;
-        total: number;
-    };
+    settled: number;
+    preconfirmed: number;
+    available: number; // settled + preconfirmed
+    recoverable: number; // subdust and (swept=true & unspent=true)
     total: number;
 }
 
@@ -47,33 +43,6 @@ export interface SettleParams {
     outputs: Output[];
 }
 
-// VtxoTaprootAddress embed the tapscripts composing the address
-// it admits the internal key is the unspendable x-only public key
-export interface VtxoTaprootAddress {
-    address: string;
-    scripts: {
-        exit: string[];
-        forfeit: string[];
-    };
-}
-
-export interface AddressInfo {
-    offchain: VtxoTaprootAddress;
-    boarding: VtxoTaprootAddress;
-}
-
-export interface Addresses {
-    onchain: string;
-    offchain?: string;
-    boarding?: string;
-    bip21: string;
-}
-
-export interface TapscriptInfo {
-    offchain?: string[];
-    boarding?: string[];
-}
-
 export interface Status {
     confirmed: boolean;
     block_height?: number;
@@ -83,7 +52,7 @@ export interface Status {
 
 export interface VirtualStatus {
     state: "preconfirmed" | "settled" | "swept" | "spent";
-    batchTxID?: string;
+    commitmentTxIds?: string[];
     batchExpiry?: number;
 }
 
@@ -100,6 +69,8 @@ export interface Coin extends Outpoint {
 export interface VirtualCoin extends Coin {
     virtualStatus: VirtualStatus;
     spentBy?: string;
+    settledBy?: string;
+    arkTxId?: string;
     createdAt: Date;
 }
 
@@ -148,15 +119,15 @@ export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
 }
 
 export type GetVtxosFilter = {
-    withSpendableInSettlement?: boolean; // include the swept but unspent
+    withRecoverable?: boolean; // include the swept but unspent
 };
 
 export interface IWallet {
-    // Address and balance management
-    getAddress(): Promise<Addresses>;
-    getAddressInfo(): Promise<AddressInfo>;
+    // returns the ark address
+    getAddress(): Promise<string>;
+    // returns the bitcoin address used to board the ark
+    getBoardingAddress(): Promise<string>;
     getBalance(): Promise<WalletBalance>;
-    getCoins(): Promise<Coin[]>;
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
