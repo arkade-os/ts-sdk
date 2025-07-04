@@ -431,7 +431,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
-            throw new Error(`Failed to exit: ${error}`);
+            throw new Error(`Failed to sign: ${error}`);
         }
     }
 }
