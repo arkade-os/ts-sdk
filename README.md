@@ -42,7 +42,7 @@ wallet.notifyIncomingFunds((coins) => {
 })
 
 // or block and wait for incoming funds
-const coins = await wallet.waitForIncomingFunds()
+const coins = await waitForIncomingFunds(wallet)
 ```
 
 ### Sending Bitcoin
@@ -227,9 +227,6 @@ interface IWallet {
       stopFunc: () => void
     ) => void
   ): Promise<void>;
-
-  /** Block and wait for payment */
-  waitForIncomingFunds(): Promise<Coin[]>;
 
   /** Exit vtxos unilaterally */
   exit(outpoints?: Outpoint[]): Promise<void>;
