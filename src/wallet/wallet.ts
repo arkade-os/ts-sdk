@@ -815,24 +815,28 @@ export class Wallet implements IWallet {
             this.onchainProvider.watchAddresses(
                 [boardingAddress],
                 (txs, stopFunc) => {
-                    const coins: Coin[] = txs.map((tx) => {
-                        const vout = tx.vout.findIndex(
-                            (v) => v.scriptpubkey_address === boardingAddress
-                        );
-
-                        if (vout === -1) {
-                            throw new Error(
-                                `No vout found for address ${boardingAddress} in transaction ${tx.txid}`
+                    const coins: Coin[] = txs
+                        .map((tx) => {
+                            const vout = tx.vout.findIndex(
+                                (v) =>
+                                    v.scriptpubkey_address === boardingAddress
                             );
-                        }
 
-                        return {
-                            txid: tx.txid,
-                            vout,
-                            value: Number(tx.vout[vout].value),
-                            status: tx.status,
-                        };
-                    });
+                            if (vout === -1) {
+                                console.warn(
+                                    `No vout found for address ${boardingAddress} in transaction ${tx.txid}`
+                                );
+                                return null;
+                            }
+
+                            return {
+                                txid: tx.txid,
+                                vout,
+                                value: Number(tx.vout[vout].value),
+                                status: tx.status,
+                            };
+                        })
+                        .filter((coin) => coin !== null);
                     eventCallback(coins, stopFunc);
                 }
             );
