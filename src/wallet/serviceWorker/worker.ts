@@ -13,8 +13,9 @@ import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { ArkAddress } from "../../script/address";
 import { VtxoScript } from "../../script/base";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
+import { Transaction } from "@scure/btc-signer";
 
 // Worker is a class letting to interact with ServiceWorkerWallet from the client
 // it aims to be run in a service worker context
@@ -591,6 +592,46 @@ export class Worker {
         }
     }
 
+    private async handleSign(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isSign(message)) {
+            console.error("Invalid SIGN message format", message);
+            event.source?.postMessage(
+                Response.error(message.id, "Invalid SIGN message format")
+            );
+            return;
+        }
+
+        if (!this.wallet) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const tx = Transaction.fromPSBT(base64.decode(message.tx));
+            const signedTx = await this.wallet.identity.sign(
+                tx,
+                message.inputIndexes
+            );
+            event.source?.postMessage(
+                Response.signSuccess(
+                    message.id,
+                    base64.encode(signedTx.toPSBT())
+                )
+            );
+        } catch (error: unknown) {
+            console.error("Error signing:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
     private async handleMessage(event: ExtendableMessageEvent) {
         this.messageCallback(event);
         const message = event.data;
@@ -647,6 +688,10 @@ export class Worker {
             }
             case "CLEAR": {
                 await this.handleClear(event);
+                break;
+            }
+            case "SIGN": {
+                await this.handleSign(event);
                 break;
             }
             default:

@@ -13,7 +13,11 @@ import {
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
-import { hex } from "@scure/base";
+import { base64, hex } from "@scure/base";
+import { InMemoryKey } from "../../identity/inMemoryKey";
+import { Identity } from "../../identity";
+import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
+import { Transaction } from "@scure/btc-signer";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -25,8 +29,9 @@ class UnexpectedResponseError extends Error {
 }
 
 // ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
-export class ServiceWorkerWallet implements IWallet {
+export class ServiceWorkerWallet implements IWallet, Identity {
     private serviceWorker?: ServiceWorker;
+    private cachedXOnlyPublicKey: Uint8Array | undefined;
 
     static async create(svcWorkerPath: string): Promise<ServiceWorkerWallet> {
         try {
@@ -83,6 +88,11 @@ export class ServiceWorkerWallet implements IWallet {
         };
 
         await this.sendMessage(message);
+
+        const privKeyBytes = hex.decode(config.privateKey);
+        // cache the identity xOnlyPublicKey
+        this.cachedXOnlyPublicKey =
+            InMemoryKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
     }
 
     async clear() {
@@ -91,6 +101,9 @@ export class ServiceWorkerWallet implements IWallet {
             id: getRandomId(),
         };
         await this.sendMessage(message);
+
+        // clear the cached xOnlyPublicKey
+        this.cachedXOnlyPublicKey = undefined;
     }
 
     // register the service worker
@@ -390,6 +403,35 @@ export class ServiceWorkerWallet implements IWallet {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to exit: ${error}`);
+        }
+    }
+
+    xOnlyPublicKey(): Uint8Array {
+        if (!this.cachedXOnlyPublicKey) {
+            throw new Error("Wallet not initialized");
+        }
+        return this.cachedXOnlyPublicKey;
+    }
+
+    signerSession(): SignerSession {
+        return TreeSignerSession.random();
+    }
+
+    async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
+        const message: Request.Sign = {
+            type: "SIGN",
+            tx: base64.encode(tx.toPSBT()),
+            inputIndexes,
+            id: getRandomId(),
+        };
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isSignSuccess(response)) {
+                return Transaction.fromPSBT(base64.decode(response.tx));
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to sign: ${error}`);
         }
     }
 }

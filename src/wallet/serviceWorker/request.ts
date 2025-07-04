@@ -14,7 +14,8 @@ export namespace Request {
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
         | "CLEAR"
-        | "EXIT";
+        | "EXIT"
+        | "SIGN";
 
     export interface Base {
         type: Type;
@@ -159,5 +160,25 @@ export namespace Request {
 
     export function isExit(message: Base): message is Exit {
         return message.type === "EXIT";
+    }
+
+    export interface Sign extends Base {
+        type: "SIGN";
+        tx: string;
+        inputIndexes?: number[];
+    }
+
+    export function isSign(message: Base): message is Sign {
+        return (
+            message.type === "SIGN" &&
+            "tx" in message &&
+            typeof message.tx === "string" &&
+            ("inputIndexes" in message
+                ? Array.isArray(message.inputIndexes) &&
+                  message.inputIndexes.every(
+                      (index) => typeof index === "number"
+                  )
+                : true)
+        );
     }
 }
