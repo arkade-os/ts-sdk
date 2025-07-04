@@ -12,7 +12,8 @@ import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 
 describe("Indexer provider", () => {
-    it("should inspect a VTXO", { timeout: 60000 }, async () => {
+    // TODO: revert once fixed on arkd
+    it.skip("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -54,7 +55,8 @@ describe("Indexer provider", () => {
         expect(leaves).toHaveLength(0);
     });
 
-    it("should inspect a commitment tx", { timeout: 60000 }, async () => {
+    // TODO: revert once fixed on arkd
+    it.skip("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
