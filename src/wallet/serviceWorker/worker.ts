@@ -2,7 +2,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { InMemoryKey } from "../../identity/inMemoryKey";
-import { isSpendable } from "..";
+import { isSpendable, isSubdust } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -80,14 +80,12 @@ export class Worker {
         const forfeit = this.wallet.offchainTapscript.forfeit();
         const exit = this.wallet.offchainTapscript.exit();
 
-        const address = this.wallet.arkAddress.encode();
-
+        const script = hex.encode(this.wallet.offchainTapscript.pkScript);
         // set the initial vtxos state
-        const vtxos = (
-            await this.indexerProvider.getVtxos({
-                addresses: [address],
-            })
-        ).map((vtxo) => ({
+        const response = await this.indexerProvider.getVtxos({
+            scripts: [script],
+        });
+        const vtxos = response.vtxos.map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: forfeit,
             intentTapLeafScript: exit,
@@ -97,16 +95,16 @@ export class Worker {
         await this.vtxoRepository.addOrUpdate(vtxos);
 
         this.processVtxoSubscription({
-            address,
+            script,
             vtxoScript: this.wallet.offchainTapscript,
         });
     }
 
     private async processVtxoSubscription({
-        address,
+        script,
         vtxoScript,
     }: {
-        address: string;
+        script: string;
         vtxoScript: DefaultVtxo.Script;
     }) {
         try {
@@ -115,9 +113,7 @@ export class Worker {
 
             const abortController = new AbortController();
             const subscriptionId =
-                await this.indexerProvider!.subscribeForScripts([
-                    hex.encode(ArkAddress.decode(address).pkScript),
-                ]);
+                await this.indexerProvider!.subscribeForScripts([script]);
             const subscription = this.indexerProvider!.getSubscription(
                 subscriptionId,
                 abortController.signal
@@ -430,8 +426,17 @@ export class Worker {
         }
 
         try {
-            const vtxos = await this.vtxoRepository.getSpendableVtxos();
-            if (message.filter?.withSpendableInSettlement) {
+            let vtxos = await this.vtxoRepository.getSpendableVtxos();
+            if (!message.filter?.withRecoverable) {
+                if (!this.wallet) throw new Error("Wallet not initialized");
+                // exclude subdust is we don't want recoverable
+                vtxos = vtxos.filter(
+                    (v) => !isSubdust(v, this.wallet!.dustAmount!)
+                );
+            }
+
+            if (message.filter?.withRecoverable) {
+                // get also swept and spendable vtxos
                 const sweptVtxos = await this.vtxoRepository.getSweptVtxos();
                 vtxos.push(...sweptVtxos.filter(isSpendable));
             }
