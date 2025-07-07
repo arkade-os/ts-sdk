@@ -138,19 +138,24 @@ export class EsploraProvider implements OnchainProvider {
         time: number;
         hash: string;
     }> {
-        const tipResponse = await fetch(`${this.baseUrl}/blocks/tip/hash`);
-        if (!tipResponse.ok) {
-            throw new Error(
-                `Failed to get chain tip: ${tipResponse.statusText}`
-            );
+        const tipBlocks = await fetch(`${this.baseUrl}/blocks/tip`);
+        if (!tipBlocks.ok) {
+            throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
         }
 
-        const hash = await tipResponse.text();
-        const blockResponse = await fetch(`${this.baseUrl}/block/${hash}`);
-        const block = await blockResponse.json();
+        const tip = await tipBlocks.json();
+        if (!isValidBlocksTip(tip)) {
+            throw new Error(`Invalid chain tip: ${JSON.stringify(tip)}`);
+        }
+
+        if (tip.length === 0) {
+            throw new Error("No chain tip found");
+        }
+
+        const hash = tip[0].id;
         return {
-            height: block.height,
-            time: block.mediantime,
+            height: tip[0].height,
+            time: tip[0].mediantime,
             hash,
         };
     }
@@ -191,4 +196,22 @@ export class EsploraProvider implements OnchainProvider {
 
         return response.text();
     }
+}
+
+function isValidBlocksTip(
+    tip: any
+): tip is { id: string; height: number; mediantime: number }[] {
+    return (
+        Array.isArray(tip) &&
+        tip.every((t) => {
+            t &&
+                typeof t === "object" &&
+                typeof t.id === "string" &&
+                t.id.length > 0 &&
+                typeof t.height === "number" &&
+                t.height >= 0 &&
+                typeof t.mediantime === "number" &&
+                t.mediantime > 0;
+        })
+    );
 }
