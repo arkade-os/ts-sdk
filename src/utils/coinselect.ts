@@ -8,21 +8,23 @@ import type { Coin, VirtualCoin } from "../wallet";
  */
 export function selectCoins(
     coins: Coin[],
-    targetAmount: number
+    targetAmount: bigint
 ): {
     inputs: Coin[] | null;
-    changeAmount: number;
+    changeAmount: bigint;
 } {
     // Sort coins by amount (descending)
-    const sortedCoins = [...coins].sort((a, b) => b.value - a.value);
+    const sortedCoins = [...coins].sort((a, b) =>
+        Number(BigInt(b.value) - BigInt(a.value))
+    );
 
     const selectedCoins: Coin[] = [];
-    let selectedAmount = 0;
+    let selectedAmount = 0n;
 
     // Select coins until we have enough
     for (const coin of sortedCoins) {
         selectedCoins.push(coin);
-        selectedAmount += coin.value;
+        selectedAmount += BigInt(coin.value);
 
         if (selectedAmount >= targetAmount) {
             break;
@@ -31,11 +33,16 @@ export function selectCoins(
 
     // Check if we have enough
     if (selectedAmount < targetAmount) {
-        return { inputs: null, changeAmount: 0 };
+        return { inputs: null, changeAmount: 0n };
     }
 
     // Calculate change
     const changeAmount = selectedAmount - targetAmount;
+
+    // Ensure changeAmount is a valid BigInt
+    if (typeof changeAmount !== "bigint") {
+        return { inputs: null, changeAmount: 0n };
+    }
 
     return {
         inputs: selectedCoins,
@@ -51,10 +58,10 @@ export function selectCoins(
  */
 export function selectVirtualCoins(
     coins: VirtualCoin[],
-    targetAmount: number
+    targetAmount: bigint
 ): {
     inputs: VirtualCoin[] | null;
-    changeAmount: number;
+    changeAmount: bigint;
 } {
     // Sort VTXOs by expiry (ascending) and amount (descending)
     const sortedCoins = [...coins].sort((a, b) => {
@@ -66,16 +73,16 @@ export function selectVirtualCoins(
         }
 
         // Then sort by amount
-        return b.value - a.value; // Larger amount first
+        return Number(BigInt(b.value) - BigInt(a.value)); // Larger amount first
     });
 
     const selectedCoins: VirtualCoin[] = [];
-    let selectedAmount = 0;
+    let selectedAmount = 0n;
 
     // Select coins until we have enough
     for (const coin of sortedCoins) {
         selectedCoins.push(coin);
-        selectedAmount += coin.value;
+        selectedAmount += BigInt(coin.value);
 
         if (selectedAmount >= targetAmount) {
             break;
@@ -84,11 +91,16 @@ export function selectVirtualCoins(
 
     // Check if we have enough
     if (selectedAmount < targetAmount) {
-        return { inputs: null, changeAmount: 0 };
+        return { inputs: null, changeAmount: 0n };
     }
 
     // Calculate change
     const changeAmount = selectedAmount - targetAmount;
+
+    // Ensure changeAmount is a valid BigInt
+    if (typeof changeAmount !== "bigint") {
+        return { inputs: null, changeAmount: 0n };
+    }
 
     return {
         inputs: selectedCoins,

@@ -418,7 +418,10 @@ export class Wallet implements IWallet {
             withRecoverable: false,
         });
 
-        const selected = selectVirtualCoins(virtualCoins, params.amount);
+        const selected = selectVirtualCoins(
+            virtualCoins,
+            BigInt(params.amount)
+        );
 
         if (!selected || !selected.inputs) {
             throw new Error("Insufficient funds");
@@ -443,7 +446,7 @@ export class Wallet implements IWallet {
         ];
 
         // add change output if needed
-        if (selected.changeAmount > 0) {
+        if (selected.changeAmount > 0n) {
             const changeOutputScript =
                 BigInt(selected.changeAmount) < this.dustAmount
                     ? this.arkAddress.subdustPkScript
