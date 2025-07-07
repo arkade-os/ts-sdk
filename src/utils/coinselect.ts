@@ -13,6 +13,18 @@ export function selectCoins(
     inputs: Coin[];
     changeAmount: bigint;
 } {
+    if (isNaN(targetAmount)) {
+        throw new Error("Target amount is NaN, got " + targetAmount);
+    }
+
+    if (targetAmount < 0) {
+        throw new Error("Target amount is negative, got " + targetAmount);
+    }
+
+    if (targetAmount === 0) {
+        return { inputs: [], changeAmount: 0n };
+    }
+
     // Sort coins by amount (descending)
     const sortedCoins = [...coins].sort((a, b) => b.value - a.value);
 

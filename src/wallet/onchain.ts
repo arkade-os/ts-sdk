@@ -137,13 +137,14 @@ export class OnchainWallet implements AnchorBumper {
         const fee = Math.ceil(feeRate * packageVSize);
 
         // Select coins
-        let selected = selectCoins(await this.getCoins(), fee);
+        const coins = await this.getCoins();
+        let selected = selectCoins(coins, fee);
 
         // ensure we have a change
-        let change = BigInt(selected.changeAmount);
+        let change = selected.changeAmount;
         if (change == 0n) {
-            selected = selectCoins(await this.getCoins(), fee + 600);
-            change = BigInt(selected.changeAmount) + 600n;
+            selected = selectCoins(coins, fee + 600);
+            change = selected.changeAmount + 600n;
         }
 
         for (const input of selected.inputs) {
