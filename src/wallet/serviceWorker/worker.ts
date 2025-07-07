@@ -585,7 +585,7 @@ export class Worker {
                 this.wallet.identity,
                 this.wallet.networkName
             );
-            await this.wallet.unroll(message.outpoints, onchainWallet);
+            await this.wallet.unroll(onchainWallet, message.outpoints);
             event.source?.postMessage(Response.unrollSuccess(message.id));
         } catch (error: unknown) {
             console.error("Error exiting:", error);

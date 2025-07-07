@@ -95,11 +95,24 @@ console.log('History:', history)
 ### Unilateral Exit
 
 ```typescript
-// Unilateral exit all vtxos
-await wallet.exit();
+
+// we need an AnchorBumper to pay for P2A outputs in vtxo branches
+// OnchainWallet implements the AnchorBumper interface
+const onchainWallet = new OnchainWallet(wallet.identity, 'regtest');
+
+// Unilateral exit all unspent vtxos
+await wallet.unroll(onchainWallet);
 
 // Unilateral exit a specific vtxo
-await wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
+await wallet.unroll(onchainWallet, [{ txid: vtxo.txid, vout: vtxo.vout }]);
+
+// Note: a VTXO may need several unrolls. Each unroll needs the previous one to be confirmed.
+// once the VTXO is fully unrolled, and the unilateralExitTimelock is reached,
+// you can complete the unroll with the completeUnroll method
+await wallet.completeUnroll(
+  [vtxo.txid], // the VTXO ids to complete
+  onchainWallet.address // the address to send the exit amount to
+);
 ```
 
 ### Running the wallet in a service worker

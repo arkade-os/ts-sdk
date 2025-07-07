@@ -557,10 +557,9 @@ describe("Ark integration tests", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
-        await alice.wallet.unroll(
-            [{ txid: vtxo.txid, vout: vtxo.vout }],
-            onchainAlice
-        );
+        await alice.wallet.unroll(onchainAlice, [
+            { txid: vtxo.txid, vout: vtxo.vout },
+        ]);
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 

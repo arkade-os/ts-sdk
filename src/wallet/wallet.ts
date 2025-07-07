@@ -778,7 +778,7 @@ export class Wallet implements IWallet {
         throw new Error("Settlement failed");
     }
 
-    async unroll(outpoints?: Outpoint[], bumper?: AnchorBumper): Promise<void> {
+    async unroll(bumper?: AnchorBumper, outpoints?: Outpoint[]): Promise<void> {
         if (!bumper) {
             throw new Error("AnchorBumber is undefined");
         }

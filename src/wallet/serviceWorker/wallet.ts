@@ -390,7 +390,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         }
     }
 
-    async unroll(outpoints?: Outpoint[], bumper?: AnchorBumper): Promise<void> {
+    async unroll(bumper?: AnchorBumper, outpoints?: Outpoint[]): Promise<void> {
         const message: Request.Unroll = {
             type: "UNROLL",
             outpoints,
