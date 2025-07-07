@@ -8,7 +8,8 @@ import type { Coin, VirtualCoin } from "../wallet";
  */
 export function selectCoins(
     coins: Coin[],
-    targetAmount: number
+    targetAmount: number,
+    forceChange: boolean = false
 ): {
     inputs: Coin[];
     changeAmount: bigint;
@@ -36,7 +37,11 @@ export function selectCoins(
         selectedCoins.push(coin);
         selectedAmount += coin.value;
 
-        if (selectedAmount >= targetAmount) {
+        if (
+            forceChange
+                ? selectedAmount > targetAmount
+                : selectedAmount >= targetAmount
+        ) {
             break;
         }
     }

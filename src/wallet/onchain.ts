@@ -136,16 +136,15 @@ export class OnchainWallet implements AnchorBumper {
         const feeRate = await this.provider.getFeeRate();
         const fee = Math.ceil(feeRate * packageVSize);
 
+        if (!fee) {
+            throw new Error(
+                `invalid fee, got ${fee} with vsize ${packageVSize}, feeRate ${feeRate}`
+            );
+        }
+
         // Select coins
         const coins = await this.getCoins();
-        let selected = selectCoins(coins, fee);
-
-        // ensure we have a change
-        let change = selected.changeAmount;
-        if (change == 0n) {
-            selected = selectCoins(coins, fee + 600);
-            change = selected.changeAmount + 600n;
-        }
+        const selected = selectCoins(coins, fee, true);
 
         for (const input of selected.inputs) {
             child.addInput({
@@ -159,7 +158,11 @@ export class OnchainWallet implements AnchorBumper {
             });
         }
 
-        child.addOutputAddress(this.address, P2A.amount + change, this.network);
+        child.addOutputAddress(
+            this.address,
+            P2A.amount + selected.changeAmount,
+            this.network
+        );
 
         // Sign inputs and Finalize
         child = await this.identity.sign(child);
