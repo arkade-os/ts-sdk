@@ -780,7 +780,7 @@ export class Wallet implements IWallet {
 
     async unroll(bumper?: AnchorBumper, outpoints?: Outpoint[]): Promise<void> {
         if (!bumper) {
-            throw new Error("AnchorBumber is undefined");
+            throw new Error("AnchorBumper is undefined");
         }
 
         // TODO store the exit branches in repository
