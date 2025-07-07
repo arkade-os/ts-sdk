@@ -835,7 +835,7 @@ export class Wallet implements IWallet {
         for (const vtxo of vtxos) {
             if (!vtxo.isUnrolled) {
                 throw new Error(
-                    `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, user unroll first`
+                    `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`
                 );
             }
 
