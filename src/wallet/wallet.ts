@@ -74,7 +74,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
-    static FEE_RATE = 1; // sats/vbyte
+    static MIN_FEE_RATE = 1; // sats/vbyte
 
     private constructor(
         readonly identity: Identity,
@@ -886,8 +886,10 @@ export class Wallet implements IWallet {
 
         txWeightEstimator.addP2TROutput();
 
-        const feeRate = await this.onchainProvider.getFeeRate();
-
+        let feeRate = await this.onchainProvider.getFeeRate();
+        if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
+            feeRate = Wallet.MIN_FEE_RATE;
+        }
         const feeAmount = txWeightEstimator.vsize().fee(BigInt(feeRate));
         if (feeAmount > totalAmount) {
             throw new Error("fee amount is greater than the total amount");

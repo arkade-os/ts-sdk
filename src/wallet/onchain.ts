@@ -13,6 +13,7 @@ import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
 export class OnchainWallet implements AnchorBumper {
+    static MIN_FEE_RATE = 1; // sat/vbyte
     static DUST_AMOUNT = 546; // sats
 
     private onchainP2TR: P2TR;
@@ -66,6 +67,10 @@ export class OnchainWallet implements AnchorBumper {
         let feeRate = params.feeRate;
         if (!feeRate) {
             feeRate = await this.provider.getFeeRate();
+        }
+
+        if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) {
+            feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
         // Ensure fee is an integer by rounding up
@@ -133,9 +138,11 @@ export class OnchainWallet implements AnchorBumper {
 
         const packageVSize = parentVsize + Number(childVsize);
 
-        const feeRate = await this.provider.getFeeRate();
+        let feeRate = await this.provider.getFeeRate();
+        if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) {
+            feeRate = OnchainWallet.MIN_FEE_RATE;
+        }
         const fee = Math.ceil(feeRate * packageVSize);
-
         if (!fee) {
             throw new Error(
                 `invalid fee, got ${fee} with vsize ${packageVSize}, feeRate ${feeRate}`

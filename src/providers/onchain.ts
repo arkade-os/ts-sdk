@@ -23,7 +23,7 @@ export type ExplorerTransaction = {
 
 export interface OnchainProvider {
     getCoins(address: string): Promise<Coin[]>;
-    getFeeRate(): Promise<number>;
+    getFeeRate(): Promise<number | undefined>;
     broadcastTransaction(...txs: string[]): Promise<string>;
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
     getTransactions(address: string): Promise<ExplorerTransaction[]>;
@@ -51,13 +51,13 @@ export class EsploraProvider implements OnchainProvider {
         return response.json();
     }
 
-    async getFeeRate(): Promise<number> {
+    async getFeeRate(): Promise<number | undefined> {
         const response = await fetch(`${this.baseUrl}/fee-estimates`);
         if (!response.ok) {
             throw new Error(`Failed to fetch fee rate: ${response.statusText}`);
         }
         const fees = (await response.json()) as Record<string, number>;
-        return fees["1"];
+        return fees["1"] ?? undefined;
     }
 
     async broadcastTransaction(...txs: string[]): Promise<string> {

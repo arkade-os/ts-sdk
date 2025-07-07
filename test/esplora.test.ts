@@ -69,7 +69,7 @@ describe("EsploraProvider", () => {
             expect(mockFetch).toHaveBeenCalledWith(
                 "http://localhost:3000/fee-estimates"
             );
-            expect(feeRate).toBe(80); // halfHourFee
+            expect(feeRate).toBe(80);
         });
 
         it("should throw error on failed fetch", async () => {
