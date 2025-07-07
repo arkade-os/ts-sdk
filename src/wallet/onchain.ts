@@ -73,7 +73,7 @@ export class OnchainWallet implements AnchorBumper {
         const totalNeeded = params.amount + estimatedFee;
 
         // Select coins
-        const selected = selectCoins(coins, BigInt(totalNeeded));
+        const selected = selectCoins(coins, totalNeeded);
         if (!selected.inputs) {
             throw new Error("Insufficient funds");
         }
@@ -101,10 +101,10 @@ export class OnchainWallet implements AnchorBumper {
             this.network
         );
         // Add change output if needed
-        if (selected.changeAmount > 0n) {
+        if (selected.changeAmount > 0) {
             tx.addOutputAddress(
                 this.address,
-                selected.changeAmount,
+                BigInt(selected.changeAmount),
                 this.network
             );
         }
@@ -140,7 +140,7 @@ export class OnchainWallet implements AnchorBumper {
         const fee = Math.ceil(feeRate * packageVSize);
 
         // Select coins
-        let selected = selectCoins(await this.getCoins(), BigInt(fee));
+        let selected = selectCoins(await this.getCoins(), fee);
         if (!selected.inputs) {
             throw new Error(
                 `Insufficient funds to pay for the package, needed ${fee} sats, got ${await this.getBalance()} sats`
@@ -148,13 +148,13 @@ export class OnchainWallet implements AnchorBumper {
         }
 
         // ensure we have a change
-        let change = selected.changeAmount;
+        let change = BigInt(selected.changeAmount);
         if (change == 0n) {
-            selected = selectCoins(await this.getCoins(), BigInt(fee + 600));
+            selected = selectCoins(await this.getCoins(), fee + 600);
             if (!selected.inputs) {
                 throw new Error("Insufficient funds to pay for the package");
             }
-            change = selected.changeAmount + 600n;
+            change = BigInt(selected.changeAmount) + 600n;
         }
 
         for (const input of selected.inputs) {
