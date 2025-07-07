@@ -13,6 +13,7 @@ import {
     buildOffchainTx,
     ConditionWitness,
     setArkPsbtField,
+    OnchainWallet,
 } from "../../src";
 import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -516,10 +517,9 @@ describe("Ark integration tests", () => {
         expect(virtualCoins[0].value).toBe(fundAmount);
     });
 
-    it.skip("should unroll", { timeout: 60000 }, async () => {
+    it("should unroll", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
 
-        const aliceAddresses = await alice.wallet.getAddress();
         const boardingAddress = await alice.wallet.getBoardingAddress();
         const offchainAddress = await alice.wallet.getAddress();
 
@@ -542,14 +542,37 @@ describe("Ark integration tests", () => {
         });
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
+        execSync(`nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`);
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
         const virtualCoins = await alice.wallet.getVtxos();
         expect(virtualCoins).toHaveLength(1);
         const vtxo = virtualCoins[0];
         expect(vtxo.txid).toBeDefined();
-        await alice.wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
+
+        const onchainAlice = new OnchainWallet(alice.identity, "regtest");
+
+        execSync(`nigiri faucet ${onchainAlice.address} 0.001`);
+
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        await alice.wallet.unroll(
+            [{ txid: vtxo.txid, vout: vtxo.vout }],
+            onchainAlice
+        );
+
         await new Promise((resolve) => setTimeout(resolve, 1000));
-        const virtualCoinsAfterExit = await alice.wallet.getVtxos();
-        expect(virtualCoinsAfterExit).toHaveLength(0);
+
+        execSync(`nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`);
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const virtualCoinsAfterExit = await alice.wallet.getVtxos({
+            withUnrolled: true,
+        });
+        expect(virtualCoinsAfterExit).toHaveLength(1);
+        expect(virtualCoinsAfterExit[0].isUnrolled).toBe(true);
     });
 
     it("should exit collaboratively", { timeout: 60000 }, async () => {

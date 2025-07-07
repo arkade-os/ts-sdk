@@ -18,6 +18,7 @@ import { InMemoryKey } from "../../identity/inMemoryKey";
 import { Identity } from "../../identity";
 import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
 import { Transaction } from "@scure/btc-signer";
+import { AnchorBumper } from "../../utils/anchor";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -389,20 +390,42 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         }
     }
 
-    async exit(outpoints?: Outpoint[]): Promise<void> {
-        const message: Request.Exit = {
-            type: "EXIT",
+    async unroll(outpoints?: Outpoint[], bumper?: AnchorBumper): Promise<void> {
+        const message: Request.Unroll = {
+            type: "UNROLL",
             outpoints,
             id: getRandomId(),
         };
         try {
             const response = await this.sendMessage(message);
-            if (response.type === "EXIT_SUCCESS") {
+            if (response.type === "UNROLL_SUCCESS") {
                 return;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to exit: ${error}`);
+        }
+    }
+
+    async completeUnroll(
+        vtxoTxids: string[],
+        outputAddress: string
+    ): Promise<void> {
+        const message: Request.CompleteUnroll = {
+            type: "COMPLETE_UNROLL",
+            vtxoTxids,
+            outputAddress,
+            id: getRandomId(),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isCompleteUnrollSuccess(response)) {
+                return;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to complete unroll: ${error}`);
         }
     }
 

@@ -27,10 +27,16 @@ export interface OnchainProvider {
     broadcastTransaction(...txs: string[]): Promise<string>;
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
     getTransactions(address: string): Promise<ExplorerTransaction[]>;
-    getTxStatus(txid: string): Promise<{
-        confirmed: boolean;
-        blockTime?: number;
-        blockHeight?: number;
+    getTxStatus(
+        txid: string
+    ): Promise<
+        | { confirmed: false }
+        | { confirmed: true; blockTime: number; blockHeight: number }
+    >;
+    getChainTip(): Promise<{
+        height: number;
+        time: number;
+        hash: string;
     }>;
 }
 
@@ -46,12 +52,12 @@ export class EsploraProvider implements OnchainProvider {
     }
 
     async getFeeRate(): Promise<number> {
-        const response = await fetch(`${this.baseUrl}/v1/fees/recommended`);
+        const response = await fetch(`${this.baseUrl}/fee-estimates`);
         if (!response.ok) {
             throw new Error(`Failed to fetch fee rate: ${response.statusText}`);
         }
-        const fees = await response.json();
-        return fees.halfHourFee; // Return the "medium" priority fee rate
+        const fees = (await response.json()) as Record<string, number>;
+        return fees["1"];
     }
 
     async broadcastTransaction(...txs: string[]): Promise<string> {
@@ -87,11 +93,27 @@ export class EsploraProvider implements OnchainProvider {
         return response.json();
     }
 
-    async getTxStatus(txid: string): Promise<{
-        confirmed: boolean;
-        blockTime?: number;
-        blockHeight?: number;
-    }> {
+    async getTxStatus(txid: string): Promise<
+        | {
+              confirmed: false;
+          }
+        | {
+              confirmed: true;
+              blockTime: number;
+              blockHeight: number;
+          }
+    > {
+        // make sure tx exists in mempool or in block
+        const txresponse = await fetch(`${this.baseUrl}/tx/${txid}`);
+        if (!txresponse.ok) {
+            throw new Error(txresponse.statusText);
+        }
+
+        const tx = await txresponse.json();
+        if (!tx.status.confirmed) {
+            return { confirmed: false };
+        }
+
         const response = await fetch(`${this.baseUrl}/tx/${txid}/status`);
         if (!response.ok) {
             throw new Error(
@@ -100,10 +122,36 @@ export class EsploraProvider implements OnchainProvider {
         }
 
         const data = await response.json();
+        if (!data.confirmed) {
+            return { confirmed: false };
+        }
+
         return {
             confirmed: data.confirmed,
             blockTime: data.block_time,
             blockHeight: data.block_height,
+        };
+    }
+
+    async getChainTip(): Promise<{
+        height: number;
+        time: number;
+        hash: string;
+    }> {
+        const tipResponse = await fetch(`${this.baseUrl}/blocks/tip/hash`);
+        if (!tipResponse.ok) {
+            throw new Error(
+                `Failed to get chain tip: ${tipResponse.statusText}`
+            );
+        }
+
+        const hash = await tipResponse.text();
+        const blockResponse = await fetch(`${this.baseUrl}/block/${hash}`);
+        const block = await blockResponse.json();
+        return {
+            height: block.height,
+            time: block.mediantime,
+            hash,
         };
     }
 
@@ -141,6 +189,6 @@ export class EsploraProvider implements OnchainProvider {
             throw new Error(`Failed to broadcast transaction: ${error}`);
         }
 
-        return response.text(); // Returns the txid
+        return response.text();
     }
 }

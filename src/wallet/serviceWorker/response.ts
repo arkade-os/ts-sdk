@@ -17,7 +17,8 @@ export namespace Response {
         | "WALLET_STATUS"
         | "ERROR"
         | "CLEAR_RESPONSE"
-        | "EXIT_SUCCESS"
+        | "UNROLL_SUCCESS"
+        | "COMPLETE_UNROLL_SUCCESS"
         | "SIGN_SUCCESS";
 
     export interface Base {
@@ -301,17 +302,39 @@ export namespace Response {
         };
     }
 
-    export interface ExitSuccess extends Base {
-        type: "EXIT_SUCCESS";
+    export interface UnrollSuccess extends Base {
+        type: "UNROLL_SUCCESS";
         success: true;
     }
 
-    export function exitSuccess(id: string): ExitSuccess {
+    export function unrollSuccess(id: string): UnrollSuccess {
         return {
-            type: "EXIT_SUCCESS",
+            type: "UNROLL_SUCCESS",
             success: true,
             id,
         };
+    }
+
+    export interface CompleteUnrollSuccess extends Base {
+        type: "COMPLETE_UNROLL_SUCCESS";
+        success: true;
+    }
+
+    export function completeUnrollSuccess(id: string): CompleteUnrollSuccess {
+        return {
+            type: "COMPLETE_UNROLL_SUCCESS",
+            success: true,
+            id,
+        };
+    }
+
+    export function isCompleteUnrollSuccess(
+        response: Base
+    ): response is CompleteUnrollSuccess {
+        return (
+            response.type === "COMPLETE_UNROLL_SUCCESS" &&
+            response.success === true
+        );
     }
 
     export interface SignSuccess extends Base {

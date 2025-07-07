@@ -121,7 +121,11 @@ export class OnchainWallet implements AnchorBumper {
     async bumpP2A(parent: Transaction): Promise<[string, string]> {
         const parentVsize = parent.vsize;
 
-        let child = new Transaction();
+        let child = new Transaction({
+            allowUnknownInputs: true,
+            allowLegacyWitnessUtxo: true,
+            version: 3,
+        });
         child.addInput(findP2AOutput(parent)); // throws if not found
 
         const childVsize = TxWeightEstimator.create()
@@ -138,7 +142,9 @@ export class OnchainWallet implements AnchorBumper {
         // Select coins
         let selected = selectCoins(await this.getCoins(), fee);
         if (!selected.inputs) {
-            throw new Error("Insufficient funds to pay for the package");
+            throw new Error(
+                `Insufficient funds to pay for the package, needed ${fee} sats, got ${await this.getBalance()} sats`
+            );
         }
 
         // ensure we have a change
@@ -167,7 +173,9 @@ export class OnchainWallet implements AnchorBumper {
 
         // Sign inputs and Finalize
         child = await this.identity.sign(child);
-        child.finalize();
+        for (let i = 1; i < child.inputsLength; i++) {
+            child.finalizeIdx(i);
+        }
 
         try {
             await this.provider.broadcastTransaction(parent.hex, child.hex);

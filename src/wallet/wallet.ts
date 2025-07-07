@@ -5,6 +5,7 @@ import { SigHash, Transaction } from "@scure/btc-signer";
 import {
     TaprootControlBlock,
     TransactionInput,
+    TransactionInputUpdate,
     TransactionOutput,
 } from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
@@ -54,17 +55,22 @@ import {
 } from ".";
 import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils";
 import { VtxoScript } from "../script/base";
-import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
+import {
+    ConditionCSVMultisigTapscript,
+    CSVMultisigTapscript,
+    RelativeTimelock,
+} from "../script/tapscript";
 import { buildOffchainTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import {
+    ChainTxType,
     IndexerProvider,
     RestIndexerProvider,
-    ChainedTxType,
 } from "../providers/indexer";
 import { TxGraph, TxGraphChunk } from "../tree/txGraph";
 import { AnchorBumper } from "../utils/anchor";
+import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -73,6 +79,7 @@ export class Wallet implements IWallet {
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
+        readonly networkName: NetworkName,
         readonly onchainProvider: OnchainProvider,
         readonly arkProvider: ArkProvider,
         readonly indexerProvider: IndexerProvider,
@@ -138,6 +145,7 @@ export class Wallet implements IWallet {
         return new Wallet(
             config.identity,
             network,
+            info.network as NetworkName,
             onchainProvider,
             arkProvider,
             indexerProvider,
@@ -231,7 +239,7 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(
-        filter: GetVtxosFilter = { withRecoverable: true }
+        filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
     ): Promise<VirtualCoin[]> {
         const scripts = [hex.encode(this.offchainTapscript.pkScript)];
 
@@ -247,6 +255,14 @@ export class Wallet implements IWallet {
                 recoverableOnly: true,
             });
             vtxos.push(...response.vtxos);
+        }
+
+        if (filter.withUnrolled) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts,
+                spentOnly: true,
+            });
+            vtxos.push(...response.vtxos.filter((vtxo) => vtxo.isUnrolled));
         }
 
         return vtxos;
@@ -325,6 +341,7 @@ export class Wallet implements IWallet {
                             confirmed: tx.status.confirmed,
                             block_time: tx.status.block_time,
                         },
+                        isUnrolled: true,
                         virtualStatus: {
                             state: spentStatus?.spent ? "spent" : "pending",
                             commitmentTxIds: spentStatus?.spent
@@ -761,7 +778,11 @@ export class Wallet implements IWallet {
         throw new Error("Settlement failed");
     }
 
-    async unroll(bumper: AnchorBumper, outpoints?: Outpoint[]): Promise<void> {
+    async unroll(outpoints?: Outpoint[], bumper?: AnchorBumper): Promise<void> {
+        if (!bumper) {
+            throw new Error("AnchorBumber is undefined");
+        }
+
         // TODO store the exit branches in repository
         // exit should not depend on the ark provider
         // or on the indexer provider
@@ -780,56 +801,149 @@ export class Wallet implements IWallet {
             throw new Error("No vtxos to exit");
         }
 
+        const txs = new Map<string, Transaction>();
+
         // For each vtxo, get the next transaction to unroll
         for (const vtxo of vtxos) {
             const outpoint: Outpoint = { txid: vtxo.txid, vout: vtxo.vout };
-            const nextTxHex = await this.nextTxToUnroll(outpoint);
+            const nextTx = await this.nextTxToUnroll(outpoint);
+            txs.set(nextTx.id, nextTx);
+        }
 
-            if (nextTxHex) {
-                // TODO: Broadcast the transaction
-                console.log(
-                    `Next transaction to unroll for ${vtxo.txid}:${vtxo.vout}: ${nextTxHex}`
-                );
-            }
+        for (const tx of txs.values()) {
+            const [parent, child] = await bumper.bumpP2A(tx);
+            await this.onchainProvider.broadcastTransaction(parent, child);
         }
     }
 
-    private async nextTxToUnroll(vtxo: Outpoint): Promise<string> {
+    async completeUnroll(
+        vtxoTxids: string[],
+        outputAddress: string
+    ): Promise<void> {
+        const chainTip = await this.onchainProvider.getChainTip();
+
+        let vtxos = await this.getVtxos({ withUnrolled: true });
+        vtxos = vtxos.filter((vtxo) => vtxoTxids.includes(vtxo.txid));
+
+        if (vtxos.length === 0) {
+            throw new Error("No vtxos to complete unroll");
+        }
+
+        const inputs: TransactionInputUpdate[] = [];
+        let totalAmount = 0n;
+        const txWeightEstimator = TxWeightEstimator.create();
+        for (const vtxo of vtxos) {
+            if (!vtxo.isUnrolled) {
+                throw new Error(
+                    `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, user unroll first`
+                );
+            }
+
+            const txStatus = await this.onchainProvider.getTxStatus(vtxo.txid);
+            if (!txStatus.confirmed) {
+                throw new Error(`tx ${vtxo.txid} is not confirmed`);
+            }
+
+            const exit = availableExitPath(
+                { height: txStatus.blockHeight, time: txStatus.blockTime },
+                chainTip,
+                vtxo
+            );
+            if (!exit) {
+                throw new Error(
+                    `no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`
+                );
+            }
+
+            const spendingLeaf = VtxoScript.decode(vtxo.tapTree).findLeaf(
+                hex.encode(exit.script)
+            );
+            if (!spendingLeaf) {
+                throw new Error(
+                    `spending leaf not found for vtxo ${vtxo.txid}:${vtxo.vout}`
+                );
+            }
+
+            totalAmount += BigInt(vtxo.value);
+            inputs.push({
+                txid: vtxo.txid,
+                index: vtxo.vout,
+                tapLeafScript: [spendingLeaf],
+                sequence: 0xffffffff - 1,
+                witnessUtxo: {
+                    amount: BigInt(vtxo.value),
+                    script: VtxoScript.decode(vtxo.tapTree).pkScript,
+                },
+                sighashType: SigHash.DEFAULT,
+            });
+            txWeightEstimator.addTapscriptInput(
+                64,
+                spendingLeaf[1].length,
+                TaprootControlBlock.encode(spendingLeaf[0]).length
+            );
+        }
+
+        const tx = new Transaction({ allowUnknownInputs: true, version: 2 });
+        for (const input of inputs) {
+            tx.addInput(input);
+        }
+
+        txWeightEstimator.addP2TROutput();
+
+        const feeRate = await this.onchainProvider.getFeeRate();
+
+        const feeAmount = txWeightEstimator.vsize().fee(BigInt(feeRate));
+        if (feeAmount > totalAmount) {
+            throw new Error("fee amount is greater than the total amount");
+        }
+
+        tx.addOutputAddress(outputAddress, totalAmount - feeAmount);
+
+        const signedTx = await this.identity.sign(tx);
+        signedTx.finalize();
+
+        await this.onchainProvider.broadcastTransaction(signedTx.hex);
+    }
+
+    private async nextTxToUnroll(vtxo: Outpoint): Promise<Transaction> {
         const chainResponse = await this.indexerProvider.getVtxoChain(vtxo);
 
-        let nextTxToBroadcast = "";
+        let nextTxToBroadcast: string | undefined;
 
-        // Iterate through the chain from the end (most recent) to the beginning
+        // Iterate through the chain from the end (root) to the beginning (leaf)
         for (let i = chainResponse.chain.length - 1; i >= 0; i--) {
             const chain = chainResponse.chain[i];
 
-            // // Skip commitment transactions as they are always onchain
-            // if (
-            //     chain.type ===
-            //         ChainedTxType.INDEXER_CHAINED_TX_TYPE_COMMITMENT ||
-            //     chain.type === ChainedTxType.INDEXER_CHAINED_TX_TYPE_UNSPECIFIED
-            // ) {
-            //     continue;
-            // }
+            // Skip commitment transactions as they are always onchain
+            if (
+                chain.type === ChainTxType.COMMITMENT ||
+                chain.type === ChainTxType.UNSPECIFIED
+            ) {
+                continue;
+            }
 
-            // try {
-            //     // Check if the transaction is confirmed onchain
-            //     const txInfo = await this.onchainProvider.getTxStatus(
-            //         chain.txid
-            //     );
+            let pendingConfirmation = false;
 
-            //     // If found but not confirmed, it means the tx is in the mempool
-            //     // An unilateral exit is running, we must wait for it to be confirmed
-            //     if (!txInfo.confirmed) {
-            //         throw new Error(
-            //             `Pending confirmation for tx ${chain.txid}`
-            //         );
-            //     }
-            // } catch {
-            //     // If the tx is not found, it's offchain, let's break
-            //     nextTxToBroadcast = chain.txid;
-            //     break;
-            // }
+            try {
+                // Check if the transaction is confirmed onchain
+                const txInfo = await this.onchainProvider.getTxStatus(
+                    chain.txid
+                );
+
+                // If found but not confirmed, it means the tx is in the mempool
+                // An unilateral exit is running, we must wait for it to be confirmed
+                if (!txInfo.confirmed) {
+                    pendingConfirmation = true;
+                    throw new PendingConfirmationError(chain.txid);
+                }
+            } catch (e) {
+                if (pendingConfirmation) {
+                    throw e;
+                }
+                // If the tx is not found, it's offchain, let's break
+                nextTxToBroadcast = chain.txid;
+                break;
+            }
         }
 
         if (!nextTxToBroadcast) {
@@ -843,13 +957,27 @@ export class Wallet implements IWallet {
             nextTxToBroadcast,
         ]);
 
-        if (virtualTxs.length === 0) {
+        if (virtualTxs.txs.length === 0) {
             throw new Error(`Tx ${nextTxToBroadcast} not found`);
         }
 
-        // For now, return the PSBT data as-is
-        // TODO: Implement proper PSBT finalization logic
-        return virtualTxs[0];
+        // finalize the input
+        const tx = Transaction.fromPSBT(base64.decode(virtualTxs.txs[0]), {
+            allowUnknownInputs: true,
+        });
+        const input = tx.getInput(0);
+        if (!input) {
+            throw new Error("Input not found");
+        }
+        const tapKeySig = input.tapKeySig;
+        if (!tapKeySig) {
+            throw new Error("Tap key sig not found");
+        }
+        tx.updateInput(0, {
+            finalScriptWitness: [tapKeySig],
+        });
+
+        return tx;
     }
 
     private async handleBatchStartedEvent(
@@ -1248,4 +1376,42 @@ function isValidArkAddress(address: string): boolean {
     } catch (e) {
         return false;
     }
+}
+
+export class PendingConfirmationError extends Error {
+    constructor(txid: string) {
+        super(`Pending confirmation for tx ${txid}`);
+    }
+}
+
+type BlockTime = {
+    height: number;
+    time: number;
+};
+
+function availableExitPath(
+    confirmedAt: BlockTime,
+    current: BlockTime,
+    vtxo: ExtendedVirtualCoin
+): CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type | undefined {
+    const exits = VtxoScript.decode(vtxo.tapTree).exitPaths();
+    for (const exit of exits) {
+        if (exit.params.timelock.type === "blocks") {
+            if (
+                current.height >=
+                confirmedAt.height + Number(exit.params.timelock.value)
+            ) {
+                return exit;
+            }
+        } else {
+            if (
+                current.time >=
+                confirmedAt.time + Number(exit.params.timelock.value)
+            ) {
+                return exit;
+            }
+        }
+    }
+
+    return undefined;
 }

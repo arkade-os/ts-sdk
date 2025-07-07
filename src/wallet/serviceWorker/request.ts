@@ -14,7 +14,8 @@ export namespace Request {
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
         | "CLEAR"
-        | "EXIT"
+        | "UNROLL"
+        | "COMPLETE_UNROLL"
         | "SIGN";
 
     export interface Base {
@@ -153,13 +154,30 @@ export namespace Request {
         type: "CLEAR";
     }
 
-    export interface Exit extends Base {
-        type: "EXIT";
+    export interface Unroll extends Base {
+        type: "UNROLL";
         outpoints?: Outpoint[];
     }
 
-    export function isExit(message: Base): message is Exit {
-        return message.type === "EXIT";
+    export function isUnroll(message: Base): message is Unroll {
+        return message.type === "UNROLL";
+    }
+
+    export interface CompleteUnroll extends Base {
+        type: "COMPLETE_UNROLL";
+        vtxoTxids: string[];
+        outputAddress: string;
+    }
+
+    export function isCompleteUnroll(message: Base): message is CompleteUnroll {
+        return (
+            message.type === "COMPLETE_UNROLL" &&
+            "vtxoTxids" in message &&
+            Array.isArray(message.vtxoTxids) &&
+            message.vtxoTxids.every((txid) => typeof txid === "string") &&
+            "outputAddress" in message &&
+            typeof message.outputAddress === "string"
+        );
     }
 
     export interface Sign extends Base {
