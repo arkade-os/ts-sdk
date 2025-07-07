@@ -420,10 +420,6 @@ export class Wallet implements IWallet {
 
         const selected = selectVirtualCoins(virtualCoins, params.amount);
 
-        if (!selected || !selected.inputs) {
-            throw new Error("Insufficient funds");
-        }
-
         const selectedLeaf = this.offchainTapscript.forfeit();
         if (!selectedLeaf) {
             throw new Error("Selected leaf not found");
@@ -443,9 +439,9 @@ export class Wallet implements IWallet {
         ];
 
         // add change output if needed
-        if (selected.changeAmount > 0) {
+        if (selected.changeAmount > 0n) {
             const changeOutputScript =
-                BigInt(selected.changeAmount) < this.dustAmount
+                selected.changeAmount < this.dustAmount
                     ? this.arkAddress.subdustPkScript
                     : this.arkAddress.pkScript;
 
