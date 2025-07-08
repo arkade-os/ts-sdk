@@ -491,9 +491,7 @@ describe("Ark integration tests", () => {
 
         const fundAmount = 1000;
 
-        const arknote = execSync(
-            `${arkdExec} arkd wallet note --amount ${fundAmount}`
-        )
+        const arknote = execSync(`${arkdExec} arkd note --amount ${fundAmount}`)
             .toString()
             .replace(/\n/g, "");
 
