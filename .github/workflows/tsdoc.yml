@@ -1,0 +1,107 @@
+# Simple workflow for deploying static content to GitHub Pages
+name: TSDoc Actions
+
+on:
+  release:
+  pull_request:
+    branches: [ master, next-version ]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  # Single deploy job since we're just deploying
+  deploy:
+    name: Deploy Documentation
+
+    # Deploy to the github-pages environment
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    # Specify runner + deployment step
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+  
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+    
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+    
+      - name: Setup pnpm cache
+        uses: actions/cache@v3
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Get version info
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+            echo "path=docs/${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "path=docs/commit/${{ github.sha }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: TSDoc Action
+        uses: erikyo/tsdoc-action@v1
+        with:
+          source_dir: ./src/*
+          output_dir: ./docs-temp
+          front_page: README.md
+
+      - name: Create versioned directory structure
+        run: |
+          mkdir -p ${{ steps.version.outputs.path }}
+          cp -r ./docs-temp/* ${{ steps.version.outputs.path }}/
+          
+          # Create index.html that redirects to the latest version
+          if [ "${{ github.event_name }}" = "release" ]; then
+            cat > docs/index.html << EOF
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <meta http-equiv="refresh" content="0; url=./${{ github.event.release.tag_name }}/">
+            <title>Redirecting to ${{ github.event.release.tag_name }}</title>
+          </head>
+          <body>
+            <p>Redirecting to <a href="./${{ github.event.release.tag_name }}/">${{ github.event.release.tag_name }}</a>...</p>
+          </body>
+          </html>
+          EOF
+          fi
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          # Upload entire docs directory
+          path: './docs'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2 
