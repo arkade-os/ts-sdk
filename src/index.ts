@@ -77,7 +77,7 @@ import {
 } from "./providers/indexer";
 
 export {
-    // Classes
+    // Wallets
     Wallet,
     ServiceWorkerWallet,
     InMemoryKey,
@@ -142,7 +142,6 @@ export {
     TxTree,
 };
 
-// Type exports
 export type {
     // Types and Interfaces
     Identity,
