@@ -36,7 +36,7 @@ console.log('Ark Address:', arkAddress)
 console.log('Boarding Address:', boardingAddress)
 
 // be notified when incoming funds
-const stopFunc = wallet.notifyIncomingFunds((coins) => {
+const stopFunc = await wallet.notifyIncomingFunds((coins) => {
   const amount = coins.reduce((sum, a) => sum + a.value)
   console.log('received ${coins.length} coins totalling ${amount} sats')
 })

@@ -807,6 +807,7 @@ export class Wallet implements IWallet {
     ): Promise<() => void> {
         const arkAddress = await this.getAddress();
         const boardingAddress = await this.getBoardingAddress();
+
         let onchainStopFunc: () => void;
         let indexerStopFunc: () => void;
 

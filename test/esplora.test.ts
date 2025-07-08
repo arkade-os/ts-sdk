@@ -160,7 +160,7 @@ describe("EsploraProvider", () => {
         });
     });
 
-    describe.skip("watchAddresses", () => {
+    describe("watchAddresses", () => {
         const callback = vi.fn();
         let provider: EsploraProvider;
         const baseUrl = "http://localhost:3000";
@@ -196,32 +196,36 @@ describe("EsploraProvider", () => {
 
         it("connects to the correct WebSocket URL", async () => {
             // arrange
-            const conn = (await provider.watchAddresses(
+            const ws = new MockWebSocket(wsUrl);
+            await provider.watchAddresses(
                 addresses,
-                callback
-            )) as unknown as MockWebSocketInstance;
+                callback,
+                ws as unknown as WebSocket
+            );
 
             // assert
-            expect(conn.url).toBe(wsUrl);
-            expect(conn.close).toBeDefined();
+            expect(ws.url).toBe(wsUrl);
+            expect(ws.close).toBeDefined();
             expect(callback).not.toHaveBeenCalled();
         });
 
         it("sends subscription message on WebSocket open", async () => {
             // arrange
-            const conn = (await provider.watchAddresses(
+            const ws = new MockWebSocket(wsUrl);
+            await provider.watchAddresses(
                 addresses,
-                callback
-            )) as unknown as MockWebSocketInstance;
+                callback,
+                ws as unknown as WebSocket
+            );
 
             // act
-            conn.simulateEvent("open", {});
+            ws.simulateEvent("open", {});
 
             // assert
             const expectedMsg: SubscribeMessage = {
                 "track-addresses": addresses,
             };
-            expect(conn.send).toHaveBeenCalledWith(JSON.stringify(expectedMsg));
+            expect(ws.send).toHaveBeenCalledWith(JSON.stringify(expectedMsg));
             expect(callback).not.toHaveBeenCalled();
         });
 
@@ -242,30 +246,31 @@ describe("EsploraProvider", () => {
                 },
             };
 
-            const conn = (await provider.watchAddresses(
+            const ws = new MockWebSocket(wsUrl);
+            await provider.watchAddresses(
                 addresses,
-                callback
-            )) as unknown as MockWebSocketInstance;
+                callback,
+                ws as unknown as WebSocket
+            );
 
             // act
-            conn.simulateEvent("message", { data: JSON.stringify(message) });
+            ws.simulateEvent("message", { data: JSON.stringify(message) });
 
             // assert
-            expect(callback).toHaveBeenCalledWith(
-                transactions,
-                expect.any(Function)
-            );
+            expect(callback).toHaveBeenCalledWith(transactions);
         });
 
         it("ignores invalid WebSocket messages", async () => {
             // arrange
-            const conn = (await provider.watchAddresses(
+            const ws = new MockWebSocket(wsUrl);
+            await provider.watchAddresses(
                 addresses,
-                callback
-            )) as unknown as MockWebSocketInstance;
+                callback,
+                ws as unknown as WebSocket
+            );
 
             // act
-            conn.simulateEvent("message", { data: "invalid json" });
+            ws.simulateEvent("message", { data: "invalid json" });
 
             // assert
             expect(callback).not.toHaveBeenCalled();
@@ -273,13 +278,15 @@ describe("EsploraProvider", () => {
 
         it("ignores messages without multi-address-transactions", async () => {
             // assert
-            const conn = (await provider.watchAddresses(
+            const ws = new MockWebSocket(wsUrl);
+            await provider.watchAddresses(
                 addresses,
-                callback
-            )) as unknown as MockWebSocketInstance;
+                callback,
+                ws as unknown as WebSocket
+            );
 
             // act
-            conn.simulateEvent("message", { data: JSON.stringify({}) });
+            ws.simulateEvent("message", { data: JSON.stringify({}) });
 
             // assert
             expect(callback).not.toHaveBeenCalled();
@@ -295,13 +302,15 @@ describe("EsploraProvider", () => {
                 .mockResolvedValueOnce([...initialTxs, ...newTxs]) // polling fetch for addr1
                 .mockResolvedValueOnce([]); // polling fetch for addr2
 
-            const conn = (await provider.watchAddresses(
+            const ws = new MockWebSocket(wsUrl);
+            await provider.watchAddresses(
                 addresses,
-                callback
-            )) as unknown as MockWebSocketInstance;
+                callback,
+                ws as unknown as WebSocket
+            );
 
             // act
-            conn.simulateEvent("error", {});
+            ws.simulateEvent("error", {});
 
             // assert
             expect(provider.getTransactions).toHaveBeenCalledTimes(2); // once per address
@@ -309,7 +318,7 @@ describe("EsploraProvider", () => {
 
             // Simulate polling after 5 seconds
             await vi.advanceTimersByTimeAsync(5000);
-            expect(callback).toHaveBeenCalledWith(newTxs, expect.any(Function));
+            expect(callback).toHaveBeenCalledWith(newTxs);
         });
     });
 });
