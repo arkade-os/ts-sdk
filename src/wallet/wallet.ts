@@ -65,8 +65,6 @@ import { TxTree, TxTreeChunk } from "../tree/txTree";
  * The wallet does not store any data locally and relies on Ark and onchain
  * providers to fetch UTXOs and VTXOs.
  *
- * @implements {IWallet}
- *
  * @example
  * ```typescript
  * // Create a wallet

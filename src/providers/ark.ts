@@ -1,7 +1,7 @@
 import { TxTreeChunk } from "../tree/txTree";
-import { Outpoint } from "../wallet";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
+import { Vtxo } from "./indexer";
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -121,22 +121,6 @@ export interface TxNotification {
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
 }
 
-export interface Vtxo {
-    outpoint: Outpoint;
-    amount: bigint;
-    script: string;
-    createdAt: bigint;
-    expiresAt: bigint;
-    commitmentTxids: string[];
-    isPreconfirmed: boolean;
-    isSwept: boolean;
-    isUnrolled: boolean;
-    isSpent: boolean;
-    spentBy: string;
-    settledBy?: string;
-    arkTxid?: string;
-}
-
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
     submitTx(
@@ -178,7 +162,6 @@ export interface ArkProvider {
 /**
  * REST-based Ark protocol provider implementation.
  *
- * @implements {ArkProvider}
  * @example
  * ```typescript
  * const provider = new RestArkProvider('https://ark.example.com');
@@ -690,10 +673,10 @@ export class RestArkProvider implements ArkProvider {
                             txid: vtxo.outpoint.txid,
                             vout: vtxo.outpoint.vout,
                         },
-                        amount: BigInt(vtxo.amount),
+                        amount: vtxo.amount,
                         script: vtxo.script,
-                        createdAt: BigInt(vtxo.createdAt),
-                        expiresAt: BigInt(vtxo.expiresAt),
+                        createdAt: vtxo.createdAt,
+                        expiresAt: vtxo.expiresAt,
                         commitmentTxids: vtxo.commitmentTxids,
                         isPreconfirmed: vtxo.isPreconfirmed,
                         isSwept: vtxo.isSwept,
@@ -709,10 +692,10 @@ export class RestArkProvider implements ArkProvider {
                                 txid: vtxo.outpoint.txid,
                                 vout: vtxo.outpoint.vout,
                             },
-                            amount: BigInt(vtxo.amount),
+                            amount: vtxo.amount,
                             script: vtxo.script,
-                            createdAt: BigInt(vtxo.createdAt),
-                            expiresAt: BigInt(vtxo.expiresAt),
+                            createdAt: vtxo.createdAt,
+                            expiresAt: vtxo.expiresAt,
                             commitmentTxids: vtxo.commitmentTxids,
                             isPreconfirmed: vtxo.isPreconfirmed,
                             isSwept: vtxo.isSwept,
@@ -738,10 +721,10 @@ export class RestArkProvider implements ArkProvider {
                             txid: vtxo.outpoint.txid,
                             vout: vtxo.outpoint.vout,
                         },
-                        amount: BigInt(vtxo.amount),
+                        amount: vtxo.amount,
                         script: vtxo.script,
-                        createdAt: BigInt(vtxo.createdAt),
-                        expiresAt: BigInt(vtxo.expiresAt),
+                        createdAt: vtxo.createdAt,
+                        expiresAt: vtxo.expiresAt,
                         commitmentTxids: vtxo.commitmentTxids,
                         isPreconfirmed: vtxo.isPreconfirmed,
                         isSwept: vtxo.isSwept,
@@ -756,10 +739,10 @@ export class RestArkProvider implements ArkProvider {
                             txid: vtxo.outpoint.txid,
                             vout: vtxo.outpoint.vout,
                         },
-                        amount: BigInt(vtxo.amount),
+                        amount: vtxo.amount,
                         script: vtxo.script,
-                        createdAt: BigInt(vtxo.createdAt),
-                        expiresAt: BigInt(vtxo.expiresAt),
+                        createdAt: vtxo.createdAt,
+                        expiresAt: vtxo.expiresAt,
                         commitmentTxids: vtxo.commitmentTxids,
                         isPreconfirmed: vtxo.isPreconfirmed,
                         isSwept: vtxo.isSwept,

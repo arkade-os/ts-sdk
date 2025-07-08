@@ -36,9 +36,6 @@ class UnexpectedResponseError extends Error {
  * The service worker runs in a separate thread and can persist data between
  * browser sessions.
  *
- * @implements {IWallet}
- * @implements {Identity}
- *
  * @example
  * ```typescript
  * // Create and initialize the service worker wallet

@@ -102,15 +102,15 @@ export interface ArkTransaction {
 }
 
 // ExtendedCoin and ExtendedVirtualCoin contains the utxo/vtxo data along with the vtxo script locking it
-type tapLeaves = {
+export type TapLeaves = {
     forfeitTapLeafScript: TapLeafScript;
     intentTapLeafScript: TapLeafScript;
 };
 
-export type ExtendedCoin = tapLeaves &
+export type ExtendedCoin = TapLeaves &
     EncodedVtxoScript &
     Coin & { extraWitness?: Bytes[] };
-export type ExtendedVirtualCoin = tapLeaves &
+export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 

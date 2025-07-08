@@ -10,8 +10,6 @@ import { ExtendedCoin, Status } from "../wallet";
  * are encoded as base58 strings with a human-readable prefix. It contains a
  * preimage and value.
  *
- * @implements {ExtendedCoin}
- *
  * @example
  * ```typescript
  * // Create an ArkNote

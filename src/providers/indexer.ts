@@ -1,6 +1,6 @@
 import { ArkTransaction, TxType, Outpoint, VirtualCoin } from "../wallet";
 
-type PaginationOptions = {
+export type PaginationOptions = {
     pageIndex?: number;
     pageSize?: number;
 };

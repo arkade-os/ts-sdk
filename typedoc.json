@@ -1,0 +1,39 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["./src/index.ts"],
+  "out": "./docs",
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/test/**",
+    "**/examples/**",
+    "**/node_modules/**"
+  ],
+  "excludePrivate": true,
+  "excludeProtected": true,
+  "excludeExternals": false,
+  "includeVersion": true,
+  "categorizeByGroup": true,
+  "categoryOrder": [
+    "Wallet",
+    "Providers",
+    "Scripts",
+    "Identity",
+    "Tree",
+    "Utils",
+    "Types",
+    "*"
+  ],
+  "defaultCategory": "Other",
+  "readme": "./README.md",
+  "name": "@arkade-os/sdk Documentation",
+  "theme": "default",
+  "hideGenerator": false,
+  "searchInComments": true,
+  "validation": {
+    "invalidLink": true,
+    "notExported": true
+  },
+  "plugin": [],
+  "logLevel": "Verbose"
+} 
