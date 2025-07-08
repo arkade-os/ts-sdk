@@ -6,12 +6,14 @@ export async function waitForIncomingFunds(
     let stopFunc: (() => void) | undefined;
 
     const promise = new Promise<Coin[] | VirtualCoin[]>((resolve) => {
-        wallet.notifyIncomingFunds((coins: Coin[] | VirtualCoin[]) => {
-            resolve(coins);
-            if (stopFunc) stopFunc();
-        }).then((stop) => {
-            stopFunc = stop;
-        });
+        wallet
+            .notifyIncomingFunds((coins: Coin[] | VirtualCoin[]) => {
+                resolve(coins);
+                if (stopFunc) stopFunc();
+            })
+            .then((stop) => {
+                stopFunc = stop;
+            });
     });
 
     return promise;

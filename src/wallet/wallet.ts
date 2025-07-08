@@ -850,19 +850,31 @@ export class Wallet implements IWallet {
                     hex.encode(offchainScript.pkScript),
                 ]);
 
+            const abortController = new AbortController();
             const subscription = this.indexerProvider.getSubscription(
                 subscriptionId,
-                new AbortController().signal
+                abortController.signal
             );
 
-            indexerStopFunc = () =>
-                this.indexerProvider?.unsubscribeForScripts(subscriptionId);
+            indexerStopFunc = async () => {
+                abortController.abort();
+                await this.indexerProvider?.unsubscribeForScripts(
+                    subscriptionId
+                );
+            };
 
-            for await (const update of subscription) {
-                if (update.newVtxos?.length > 0) {
-                    eventCallback(update.newVtxos);
+            // Handle subscription updates asynchronously without blocking
+            (async () => {
+                try {
+                    for await (const update of subscription) {
+                        if (update.newVtxos?.length > 0) {
+                            eventCallback(update.newVtxos);
+                        }
+                    }
+                } catch (error) {
+                    console.error("Subscription error:", error);
                 }
-            }
+            })();
         }
 
         const stopFunc = () => {
