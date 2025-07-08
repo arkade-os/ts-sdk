@@ -106,8 +106,6 @@ export namespace Unroll {
                     continue;
                 }
 
-                let pendingConfirmation = false;
-
                 try {
                     // Check if the transaction is confirmed onchain
                     const txInfo = await this.explorer.getTxStatus(
@@ -117,7 +115,6 @@ export namespace Unroll {
                     // If found but not confirmed, it means the tx is in the mempool
                     // An unilateral exit is running, we must wait for it to be confirmed
                     if (!txInfo.confirmed) {
-                        pendingConfirmation = true;
                         return {
                             type: StepType.WAIT,
                             txid: chainTx.txid,
@@ -125,9 +122,6 @@ export namespace Unroll {
                         };
                     }
                 } catch (e) {
-                    if (pendingConfirmation) {
-                        throw e;
-                    }
                     // If the tx is not found, it's offchain, let's break
                     nextTxToBroadcast = chainTx;
                     break;
