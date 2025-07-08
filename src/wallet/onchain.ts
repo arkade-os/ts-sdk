@@ -9,6 +9,23 @@ import {
 } from "../providers/onchain";
 import { Transaction } from "@scure/btc-signer";
 
+/**
+ * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
+ *
+ * This wallet handles regular Bitcoin transactions on the blockchain without
+ * using the Ark protocol. It supports P2TR (Pay-to-Taproot) addresses and
+ * provides basic Bitcoin wallet functionality.
+ *
+ * @example
+ * ```typescript
+ * const wallet = new OnchainWallet(identity, 'mainnet');
+ * const balance = await wallet.getBalance();
+ * const txid = await wallet.send({
+ *   address: 'bc1...',
+ *   amount: 50000
+ * });
+ * ```
+ */
 export class OnchainWallet {
     static FEE_RATE = 1; // sats/vbyte
     static DUST_AMOUNT = 546; // sats

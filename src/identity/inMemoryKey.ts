@@ -7,6 +7,21 @@ import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 const ZERO_32 = new Uint8Array(32).fill(0);
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
+/**
+ * In-memory key implementation for Bitcoin transaction signing.
+ *
+ * @example
+ * ```typescript
+ * // Create from hex string
+ * const key = InMemoryKey.fromHex('your_private_key_hex');
+ *
+ * // Create from raw bytes
+ * const key = InMemoryKey.fromPrivateKey(privateKeyBytes);
+ *
+ * // Sign a transaction
+ * const signedTx = await key.sign(transaction);
+ * ```
+ */
 export class InMemoryKey implements Identity {
     private key: Uint8Array;
 

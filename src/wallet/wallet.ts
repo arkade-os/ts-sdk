@@ -60,7 +60,33 @@ import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree, TxTreeChunk } from "../tree/txTree";
 
-// Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
+/**
+ * Main wallet implementation for Bitcoin transactions with Ark protocol support.
+ * The wallet does not store any data locally and relies on Ark and onchain
+ * providers to fetch UTXOs and VTXOs.
+ *
+ * @implements {IWallet}
+ *
+ * @example
+ * ```typescript
+ * // Create a wallet
+ * const wallet = await Wallet.create({
+ *   identity: InMemoryKey.fromHex('your_private_key'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Get addresses
+ * const arkAddress = await wallet.getAddress();
+ * const boardingAddress = await wallet.getBoardingAddress();
+ *
+ * // Send bitcoin
+ * const txid = await wallet.sendBitcoin({
+ *   address: 'tb1...',
+ *   amount: 50000
+ * });
+ * ```
+ */
 export class Wallet implements IWallet {
     static FEE_RATE = 1; // sats/vbyte
 

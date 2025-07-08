@@ -4,6 +4,14 @@ import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils";
 
+/**
+ * Configuration options for wallet initialization.
+ *
+ * Defines the parameters required to create and configure a wallet instance,
+ * including identity, server URLs, and optional timelock settings.
+ * If optional parameters are not provided, the wallet will fetch them from the
+ * Ark server.
+ */
 export interface WalletConfig {
     identity: Identity;
     arkServerUrl: string;
@@ -122,6 +130,13 @@ export type GetVtxosFilter = {
     withRecoverable?: boolean; // include the swept but unspent
 };
 
+/**
+ * Core wallet interface for Bitcoin transactions with Ark protocol support.
+ *
+ * This interface defines the contract that all wallet implementations must follow.
+ * It provides methods for address management, balance checking, virtual UTXO
+ * operations, and transaction management including sending, settling, and unrolling.
+ */
 export interface IWallet {
     // returns the ark address
     getAddress(): Promise<string>;

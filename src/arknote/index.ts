@@ -4,7 +4,26 @@ import { Bytes, sha256 } from "@scure/btc-signer/utils";
 import { Script } from "@scure/btc-signer";
 import { ExtendedCoin, Status } from "../wallet";
 
-// ArkNote is a fake VTXO coin that can be spent by revealing the preimage
+/**
+ * ArkNotes are special virtual coins in the Ark protocol that can be created
+ * and spent without requiring any transactions. The server mints them, and they
+ * are encoded as base58 strings with a human-readable prefix. It contains a
+ * preimage and value.
+ *
+ * @implements {ExtendedCoin}
+ *
+ * @example
+ * ```typescript
+ * // Create an ArkNote
+ * const note = new ArkNote(preimage, 50000);
+ *
+ * // Encode to string
+ * const noteString = note.toString();
+ *
+ * // Decode from string
+ * const decodedNote = ArkNote.fromString(noteString);
+ * ```
+ */
 export class ArkNote implements ExtendedCoin {
     static readonly DefaultHRP = "arknote";
     static readonly PreimageLength = 32; // 32 bytes for the preimage

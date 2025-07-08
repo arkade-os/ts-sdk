@@ -175,6 +175,17 @@ export interface ArkProvider {
     }>;
 }
 
+/**
+ * REST-based Ark protocol provider implementation.
+ *
+ * @implements {ArkProvider}
+ * @example
+ * ```typescript
+ * const provider = new RestArkProvider('https://ark.example.com');
+ * const info = await provider.getInfo();
+ * const result = await provider.submitTx(signedTx, checkpoints);
+ * ```
+ */
 export class RestArkProvider implements ArkProvider {
     constructor(public serverUrl: string) {}
 

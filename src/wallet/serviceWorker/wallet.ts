@@ -28,7 +28,31 @@ class UnexpectedResponseError extends Error {
     }
 }
 
-// ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
+/**
+ * Service Worker-based wallet implementation for browser environments.
+ *
+ * This wallet uses a service worker as a backend to handle wallet logic,
+ * providing secure key storage and transaction signing in web applications.
+ * The service worker runs in a separate thread and can persist data between
+ * browser sessions.
+ *
+ * @implements {IWallet}
+ * @implements {Identity}
+ *
+ * @example
+ * ```typescript
+ * // Create and initialize the service worker wallet
+ * const wallet = await ServiceWorkerWallet.create('/service-worker.js');
+ * await wallet.init({
+ *   privateKey: 'your_private_key_hex',
+ *   arkServerUrl: 'https://ark.example.com'
+ * });
+ *
+ * // Use like any other wallet
+ * const address = await wallet.getAddress();
+ * const balance = await wallet.getBalance();
+ * ```
+ */
 export class ServiceWorkerWallet implements IWallet, Identity {
     private serviceWorker?: ServiceWorker;
     private cachedXOnlyPublicKey: Uint8Array | undefined;
