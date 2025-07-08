@@ -38,7 +38,7 @@ console.log('Boarding Address:', boardingAddress)
 // be notified when incoming funds
 const stopFunc = await wallet.notifyIncomingFunds((coins) => {
   const amount = coins.reduce((sum, a) => sum + a.value)
-  console.log('received ${coins.length} coins totalling ${amount} sats')
+  console.log(`received ${coins.length} coins totalling ${amount} sats`)
 })
 
 // or block and wait for incoming funds
