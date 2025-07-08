@@ -12,8 +12,10 @@ function findVtxosSpentInSettlement(
     }
 
     return vtxos.filter((v) => {
-        if (!v.spentBy) return false;
-        return vtxo.virtualStatus.commitmentTxIds?.includes(v.spentBy) ?? false;
+        if (!v.settledBy) return false;
+        return (
+            vtxo.virtualStatus.commitmentTxIds?.includes(v.settledBy) ?? false
+        );
     });
 }
 
@@ -25,26 +27,26 @@ function findVtxosSpentInPayment(
     vtxo: VirtualCoin
 ): VirtualCoin[] {
     return vtxos.filter((v) => {
-        if (!v.spentBy) return false;
-        return v.spentBy === vtxo.txid;
+        if (!v.arkTxId) return false;
+        return v.arkTxId === vtxo.txid;
     });
 }
 
 /**
  * Helper function to find vtxos that resulted from a spentBy transaction
  */
-function findVtxosResultedFromSpentBy(
+function findVtxosResultedFromTxid(
     vtxos: VirtualCoin[],
-    spentBy: string
+    txid: string
 ): VirtualCoin[] {
     return vtxos.filter((v) => {
         if (
             v.virtualStatus.state !== "pending" &&
-            v.virtualStatus.commitmentTxIds?.includes(spentBy)
+            v.virtualStatus.commitmentTxIds?.includes(txid)
         ) {
             return true;
         }
-        return v.txid === spentBy;
+        return v.txid === txid;
     });
 }
 
@@ -106,7 +108,7 @@ export function vtxosToTxs(
         }
 
         const txKey: TxKey = {
-            commitmentTxid: vtxo.virtualStatus.commitmentTxIds?.[0] || "",
+            commitmentTxid: vtxo.spentBy || "",
             boardingTxid: "",
             redeemTxid: "",
         };
@@ -128,24 +130,30 @@ export function vtxosToTxs(
         });
     }
 
-    // send case
-    // All "spentBy" vtxos are payments unless:
-    // - they are settlements
-
-    // aggregate spent by spentId
-    const vtxosBySpentBy = new Map<string, VirtualCoin[]>();
+    // vtxos by settled by or ark txid
+    const vtxosByTxid = new Map<string, VirtualCoin[]>();
     for (const v of spent) {
-        if (!v.spentBy) continue;
-
-        if (!vtxosBySpentBy.has(v.spentBy)) {
-            vtxosBySpentBy.set(v.spentBy, []);
+        if (v.settledBy) {
+            if (!vtxosByTxid.has(v.settledBy)) {
+                vtxosByTxid.set(v.settledBy, []);
+            }
+            const currentVtxos = vtxosByTxid.get(v.settledBy)!;
+            vtxosByTxid.set(v.settledBy, [...currentVtxos, v]);
         }
-        const currentVtxos = vtxosBySpentBy.get(v.spentBy)!;
-        vtxosBySpentBy.set(v.spentBy, [...currentVtxos, v]);
+
+        if (!v.arkTxId) {
+            continue;
+        }
+
+        if (!vtxosByTxid.has(v.arkTxId)) {
+            vtxosByTxid.set(v.arkTxId, []);
+        }
+        const currentVtxos = vtxosByTxid.get(v.arkTxId)!;
+        vtxosByTxid.set(v.arkTxId, [...currentVtxos, v]);
     }
 
-    for (const [sb, vtxos] of vtxosBySpentBy) {
-        const resultedVtxos = findVtxosResultedFromSpentBy(
+    for (const [sb, vtxos] of vtxosByTxid) {
+        const resultedVtxos = findVtxosResultedFromTxid(
             [...spendable, ...spent],
             sb
         );
