@@ -64,11 +64,8 @@ export interface OnchainProvider {
     }>;
     watchAddresses(
         addresses: string[],
-        eventCallback: (
-            txs: ExplorerTransaction[],
-            stopFunc: () => void
-        ) => void
-    ): Promise<WebSocket>;
+        eventCallback: (txs: ExplorerTransaction[]) => void
+    ): Promise<() => void>;
 }
 
 export class EsploraProvider implements OnchainProvider {
@@ -152,9 +149,9 @@ export class EsploraProvider implements OnchainProvider {
 
     async watchAddresses(
         addresses: string[],
-        callback: (txs: ExplorerTransaction[], stopFunc: () => void) => void
-    ): Promise<WebSocket> {
-        // returns WebSocket instance for testing
+        callback: (txs: ExplorerTransaction[]) => void
+    ): Promise<() => void> {
+        let intervalId: NodeJS.Timeout | null = null;
         const wsUrl =
             this.baseUrl.replace(/^http(s)?:\/\//, "ws$1://") + "/v1/ws";
         const ws = new WebSocket(wsUrl);
@@ -189,7 +186,7 @@ export class EsploraProvider implements OnchainProvider {
                     }
                 }
                 // callback with new transactions
-                if (newTxs.length > 0) callback(newTxs, ws.close.bind(ws));
+                if (newTxs.length > 0) callback(newTxs);
             } catch (error) {
                 console.error("Failed to process WebSocket message:", error);
             }
@@ -213,7 +210,7 @@ export class EsploraProvider implements OnchainProvider {
                 `${tx.txid}_${tx.status.block_time}`;
 
             // polling for new transactions
-            const intervalId = setInterval(async () => {
+            intervalId = setInterval(async () => {
                 try {
                     // get current transactions
                     // we will compare with initialTxs to find new ones
@@ -234,8 +231,7 @@ export class EsploraProvider implements OnchainProvider {
 
                         if (newTxs.length > 0) {
                             initialTxs.push(...newTxs);
-                            const stopFunc = () => clearInterval(intervalId);
-                            callback(newTxs, stopFunc);
+                            callback(newTxs);
                         }
                     }
                 } catch (error) {
@@ -244,6 +240,11 @@ export class EsploraProvider implements OnchainProvider {
             }, pollingInterval);
         });
 
-        return ws;
+        const stopFunc = () => {
+            if (ws.readyState === WebSocket.OPEN) ws.close();
+            if (intervalId) clearInterval(intervalId);
+        };
+
+        return stopFunc;
     }
 }

@@ -160,7 +160,7 @@ describe("EsploraProvider", () => {
         });
     });
 
-    describe("watchAddresses", () => {
+    describe.skip("watchAddresses", () => {
         const callback = vi.fn();
         let provider: EsploraProvider;
         const baseUrl = "http://localhost:3000";

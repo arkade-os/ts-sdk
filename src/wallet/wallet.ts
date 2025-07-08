@@ -803,18 +803,17 @@ export class Wallet implements IWallet {
     }
 
     async notifyIncomingFunds(
-        eventCallback: (
-            coins: Coin[] | VirtualCoin[],
-            stopFunc: () => void
-        ) => void
-    ): Promise<void> {
+        eventCallback: (coins: Coin[] | VirtualCoin[]) => void
+    ): Promise<() => void> {
         const arkAddress = await this.getAddress();
         const boardingAddress = await this.getBoardingAddress();
+        let onchainStopFunc: () => void;
+        let indexerStopFunc: () => void;
 
         if (this.onchainProvider && boardingAddress) {
-            this.onchainProvider.watchAddresses(
+            onchainStopFunc = await this.onchainProvider.watchAddresses(
                 [boardingAddress],
-                (txs, stopFunc) => {
+                (txs) => {
                     const coins: Coin[] = txs
                         .map((tx) => {
                             const vout = tx.vout.findIndex(
@@ -837,7 +836,7 @@ export class Wallet implements IWallet {
                             };
                         })
                         .filter((coin) => coin !== null);
-                    eventCallback(coins, stopFunc);
+                    eventCallback(coins);
                 }
             );
         }
@@ -855,17 +854,22 @@ export class Wallet implements IWallet {
                 new AbortController().signal
             );
 
-            const stopFunc = async () =>
-                await this.indexerProvider?.unsubscribeForScripts(
-                    subscriptionId
-                );
+            indexerStopFunc = () =>
+                this.indexerProvider?.unsubscribeForScripts(subscriptionId);
 
             for await (const update of subscription) {
                 if (update.newVtxos?.length > 0) {
-                    eventCallback(update.newVtxos, stopFunc);
+                    eventCallback(update.newVtxos);
                 }
             }
         }
+
+        const stopFunc = () => {
+            onchainStopFunc?.();
+            indexerStopFunc?.();
+        };
+
+        return stopFunc;
     }
 
     private async handleBatchStartedEvent(

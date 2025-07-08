@@ -36,7 +36,7 @@ console.log('Ark Address:', arkAddress)
 console.log('Boarding Address:', boardingAddress)
 
 // be notified when incoming funds
-wallet.notifyIncomingFunds((coins) => {
+const stopFunc = wallet.notifyIncomingFunds((coins) => {
   const amount = coins.reduce((sum, a) => sum + a.value)
   console.log('received ${coins.length} coins totalling ${amount} sats')
 })
@@ -222,11 +222,8 @@ interface IWallet {
 
   /** Be notified via callback */
   notifyIncomingFunds(
-    eventCallback: (
-      coins: Coin[] | VirtualCoin[],
-      stopFunc: () => void
-    ) => void
-  ): Promise<void>;
+    eventCallback: (coins: Coin[] | VirtualCoin[]) => void
+  ): Promise<() => void>;
 
   /** Exit vtxos unilaterally */
   exit(outpoints?: Outpoint[]): Promise<void>;
