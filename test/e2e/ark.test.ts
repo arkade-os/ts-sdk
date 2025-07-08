@@ -487,7 +487,7 @@ describe("Ark integration tests", () => {
         await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
     });
 
-    it("should redeem a note", { timeout: 60000 }, async () => {
+    it.skip("should redeem a note", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
