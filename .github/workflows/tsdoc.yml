@@ -54,6 +54,9 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      - name: Install dependencies
+        run: pnpm install
+
       - name: Get version info
         id: version
         run: |
@@ -65,17 +68,13 @@ jobs:
             echo "path=docs/commit/${{ github.sha }}" >> $GITHUB_OUTPUT
           fi
 
-      - name: TSDoc Action
-        uses: erikyo/tsdoc-action@v1
-        with:
-          source_dir: ./src/*
-          output_dir: ./docs-temp
-          front_page: README.md
+      - name: Build TSDoc
+        run: pnpm run docs:build
 
       - name: Create versioned directory structure
         run: |
           mkdir -p ${{ steps.version.outputs.path }}
-          cp -r ./docs-temp/* ${{ steps.version.outputs.path }}/
+          cp -r ./docs/* ${{ steps.version.outputs.path }}/
           
           # Create index.html that redirects to the latest version
           if [ "${{ github.event_name }}" = "release" ]; then
