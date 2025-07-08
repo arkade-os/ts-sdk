@@ -487,7 +487,7 @@ describe("Ark integration tests", () => {
         await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
     });
 
-    it.skip("should redeem a note", { timeout: 60000 }, async () => {
+    it("should redeem a note", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -495,9 +495,7 @@ describe("Ark integration tests", () => {
 
         const fundAmount = 1000;
 
-        const arknote = execSync(
-            `${arkdExec} arkd wallet note --amount ${fundAmount}`
-        )
+        const arknote = execSync(`${arkdExec} arkd note --amount ${fundAmount}`)
             .toString()
             .replace(/\n/g, "");
 
