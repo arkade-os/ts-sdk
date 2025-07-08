@@ -142,7 +142,7 @@ export namespace Unroll {
             ]);
 
             if (virtualTxs.txs.length === 0) {
-                throw new Error(`Tx ${nextTxToBroadcast} not found`);
+                throw new Error(`Tx ${nextTxToBroadcast.txid} not found`);
             }
 
             const tx = Transaction.fromPSBT(base64.decode(virtualTxs.txs[0]), {
