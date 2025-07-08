@@ -1,4 +1,4 @@
-import { ArkTransaction, TxType, Outpoint, VirtualCoin } from "../wallet";
+import { Outpoint, VirtualCoin } from "../wallet";
 
 type PaginationOptions = {
     pageIndex?: number;

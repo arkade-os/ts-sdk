@@ -17,7 +17,6 @@ export namespace Response {
         | "WALLET_STATUS"
         | "ERROR"
         | "CLEAR_RESPONSE"
-        | "UNROLL_SUCCESS"
         | "COMPLETE_UNROLL_SUCCESS"
         | "SIGN_SUCCESS";
 
@@ -298,19 +297,6 @@ export namespace Response {
         return {
             type: "CLEAR_RESPONSE",
             success,
-            id,
-        };
-    }
-
-    export interface UnrollSuccess extends Base {
-        type: "UNROLL_SUCCESS";
-        success: true;
-    }
-
-    export function unrollSuccess(id: string): UnrollSuccess {
-        return {
-            type: "UNROLL_SUCCESS",
-            success: true,
             id,
         };
     }

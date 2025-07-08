@@ -16,9 +16,9 @@ export class OnchainWallet implements AnchorBumper {
     static MIN_FEE_RATE = 1; // sat/vbyte
     static DUST_AMOUNT = 546; // sats
 
-    private onchainP2TR: P2TR;
-    private provider: OnchainProvider;
-    private network: Network;
+    readonly onchainP2TR: P2TR;
+    readonly provider: OnchainProvider;
+    readonly network: Network;
 
     constructor(
         private identity: Identity,

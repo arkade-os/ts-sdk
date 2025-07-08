@@ -3,7 +3,6 @@ import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils";
-import { AnchorBumper } from "../utils/anchor";
 
 export interface WalletConfig {
     identity: Identity;
@@ -141,6 +140,5 @@ export interface IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
-    unroll(bumper?: AnchorBumper, outpoints?: Outpoint[]): Promise<void>;
     completeUnroll(vtxoTxids: string[], outputAddress: string): Promise<void>;
 }

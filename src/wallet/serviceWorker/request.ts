@@ -14,7 +14,6 @@ export namespace Request {
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
         | "CLEAR"
-        | "UNROLL"
         | "COMPLETE_UNROLL"
         | "SIGN";
 
@@ -152,15 +151,6 @@ export namespace Request {
 
     export interface Clear extends Base {
         type: "CLEAR";
-    }
-
-    export interface Unroll extends Base {
-        type: "UNROLL";
-        outpoints?: Outpoint[];
-    }
-
-    export function isUnroll(message: Base): message is Unroll {
-        return message.type === "UNROLL";
     }
 
     export interface CompleteUnroll extends Base {

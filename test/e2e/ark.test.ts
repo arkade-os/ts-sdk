@@ -14,6 +14,7 @@ import {
     ConditionWitness,
     setArkPsbtField,
     OnchainWallet,
+    Unroll,
 } from "../../src";
 import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -557,15 +558,22 @@ describe("Ark integration tests", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
-        await alice.wallet.unroll(onchainAlice, [
+        const session = await Unroll.Session.create(
             { txid: vtxo.txid, vout: vtxo.vout },
-        ]);
+            onchainAlice,
+            onchainAlice.provider,
+            new RestIndexerProvider("http://localhost:7070")
+        );
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-
-        execSync(`nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`);
-
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        for await (const done of session) {
+            switch (done.type) {
+                case (Unroll.StepType.WAIT, Unroll.StepType.UNROLL):
+                    execSync(
+                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
+                    );
+                    break;
+            }
+        }
 
         const virtualCoinsAfterExit = await alice.wallet.getVtxos({
             withUnrolled: true,

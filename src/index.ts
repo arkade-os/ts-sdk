@@ -72,6 +72,7 @@ import {
     VtxoChain,
     Tx,
 } from "./providers/indexer";
+import { Unroll } from "./wallet/unroll";
 
 export {
     // Classes
@@ -140,6 +141,7 @@ export {
 
     // Anchor
     P2A,
+    Unroll,
 };
 
 // Type exports

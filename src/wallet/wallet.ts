@@ -774,44 +774,6 @@ export class Wallet implements IWallet {
         throw new Error("Settlement failed");
     }
 
-    async unroll(bumper?: AnchorBumper, outpoints?: Outpoint[]): Promise<void> {
-        if (!bumper) {
-            throw new Error("AnchorBumper is undefined");
-        }
-
-        // TODO store the exit branches in repository
-        // exit should not depend on the ark provider
-        // or on the indexer provider
-        let vtxos = await this.getVtxos();
-        if (outpoints && outpoints.length > 0) {
-            vtxos = vtxos.filter((vtxo) =>
-                outpoints.some(
-                    (outpoint) =>
-                        vtxo.txid === outpoint.txid &&
-                        vtxo.vout === outpoint.vout
-                )
-            );
-        }
-
-        if (vtxos.length === 0) {
-            throw new Error("No vtxos to exit");
-        }
-
-        const txs = new Map<string, Transaction>();
-
-        // For each vtxo, get the next transaction to unroll
-        for (const vtxo of vtxos) {
-            const outpoint: Outpoint = { txid: vtxo.txid, vout: vtxo.vout };
-            const nextTx = await this.nextTxToUnroll(outpoint);
-            txs.set(nextTx.id, nextTx);
-        }
-
-        for (const tx of txs.values()) {
-            const [parent, child] = await bumper.bumpP2A(tx);
-            await this.onchainProvider.broadcastTransaction(parent, child);
-        }
-    }
-
     async completeUnroll(
         vtxoTxids: string[],
         outputAddress: string
@@ -901,81 +863,6 @@ export class Wallet implements IWallet {
         signedTx.finalize();
 
         await this.onchainProvider.broadcastTransaction(signedTx.hex);
-    }
-
-    private async nextTxToUnroll(vtxo: Outpoint): Promise<Transaction> {
-        const chainResponse = await this.indexerProvider.getVtxoChain(vtxo);
-
-        let nextTxToBroadcast: string | undefined;
-
-        // Iterate through the chain from the end (root) to the beginning (leaf)
-        for (let i = chainResponse.chain.length - 1; i >= 0; i--) {
-            const chain = chainResponse.chain[i];
-
-            // Skip commitment transactions as they are always onchain
-            if (
-                chain.type === ChainTxType.COMMITMENT ||
-                chain.type === ChainTxType.UNSPECIFIED
-            ) {
-                continue;
-            }
-
-            let pendingConfirmation = false;
-
-            try {
-                // Check if the transaction is confirmed onchain
-                const txInfo = await this.onchainProvider.getTxStatus(
-                    chain.txid
-                );
-
-                // If found but not confirmed, it means the tx is in the mempool
-                // An unilateral exit is running, we must wait for it to be confirmed
-                if (!txInfo.confirmed) {
-                    pendingConfirmation = true;
-                    throw new PendingConfirmationError(chain.txid);
-                }
-            } catch (e) {
-                if (pendingConfirmation) {
-                    throw e;
-                }
-                // If the tx is not found, it's offchain, let's break
-                nextTxToBroadcast = chain.txid;
-                break;
-            }
-        }
-
-        if (!nextTxToBroadcast) {
-            throw new Error(
-                "No offchain txs found, the vtxo is already redeemed"
-            );
-        }
-
-        // Get the virtual transaction data
-        const virtualTxs = await this.indexerProvider.getVirtualTxs([
-            nextTxToBroadcast,
-        ]);
-
-        if (virtualTxs.txs.length === 0) {
-            throw new Error(`Tx ${nextTxToBroadcast} not found`);
-        }
-
-        // finalize the input
-        const tx = Transaction.fromPSBT(base64.decode(virtualTxs.txs[0]), {
-            allowUnknownInputs: true,
-        });
-        const input = tx.getInput(0);
-        if (!input) {
-            throw new Error("Input not found");
-        }
-        const tapKeySig = input.tapKeySig;
-        if (!tapKeySig) {
-            throw new Error("Tap key sig not found");
-        }
-        tx.updateInput(0, {
-            finalScriptWitness: [tapKeySig],
-        });
-
-        return tx;
     }
 
     private async handleBatchStartedEvent(
@@ -1373,12 +1260,6 @@ function isValidArkAddress(address: string): boolean {
         return true;
     } catch (e) {
         return false;
-    }
-}
-
-export class PendingConfirmationError extends Error {
-    constructor(txid: string) {
-        super(`Pending confirmation for tx ${txid}`);
     }
 }
 

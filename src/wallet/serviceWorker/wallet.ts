@@ -18,7 +18,6 @@ import { InMemoryKey } from "../../identity/inMemoryKey";
 import { Identity } from "../../identity";
 import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
 import { Transaction } from "@scure/btc-signer";
-import { AnchorBumper } from "../../utils/anchor";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -387,23 +386,6 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
-        }
-    }
-
-    async unroll(bumper?: AnchorBumper, outpoints?: Outpoint[]): Promise<void> {
-        const message: Request.Unroll = {
-            type: "UNROLL",
-            outpoints,
-            id: getRandomId(),
-        };
-        try {
-            const response = await this.sendMessage(message);
-            if (response.type === "UNROLL_SUCCESS") {
-                return;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to exit: ${error}`);
         }
     }
 
