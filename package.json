@@ -76,7 +76,8 @@
     "wallet",
     "taproot",
     "ark",
-    "sdk"
+    "sdk",
+    "arkade"
   ],
   "author": "Ark Labs",
   "license": "MIT",
