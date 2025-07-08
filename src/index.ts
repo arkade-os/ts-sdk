@@ -23,7 +23,7 @@ import {
     TxKey,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
-import { TxGraph, TxGraphChunk } from "./tree/txGraph";
+import { TxTree, TxTreeChunk } from "./tree/txTree";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -40,7 +40,11 @@ import {
     MultisigTapscript,
     TapscriptType,
 } from "./script/tapscript";
-import { buildOffchainTx, VirtualTxInput, OffchainTx } from "./utils/psbt";
+import {
+    buildOffchainTx,
+    VirtualTxInput,
+    OffchainTx,
+} from "./utils/arkTransaction";
 import {
     VtxoTaprootTree,
     ConditionWitness,
@@ -134,8 +138,8 @@ export {
     // BIP322
     BIP322,
 
-    // TxGraph
-    TxGraph,
+    // TxTree
+    TxTree,
 };
 
 // Type exports
@@ -176,6 +180,6 @@ export type {
     // Ark PSBT fields
     ArkPsbtFieldCoder,
 
-    // TxGraph
-    TxGraphChunk,
+    // TxTree
+    TxTreeChunk,
 };

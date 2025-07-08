@@ -8,7 +8,6 @@ import {
     OnchainProvider,
 } from "../providers/onchain";
 import { Transaction } from "@scure/btc-signer";
-import { selectCoins } from "../utils/coinselect";
 
 export class OnchainWallet {
     static FEE_RATE = 1; // sats/vbyte
@@ -112,4 +111,47 @@ export class OnchainWallet {
         const txid = await this.provider.broadcastTransaction(tx.hex);
         return txid;
     }
+}
+
+/**
+ * Select coins to reach a target amount, prioritizing those closer to expiry
+ * @param coins List of coins to select from
+ * @param targetAmount Target amount to reach in satoshis
+ * @returns Selected coins and change amount, or null if insufficient funds
+ */
+function selectCoins(
+    coins: Coin[],
+    targetAmount: number
+): {
+    inputs: Coin[] | null;
+    changeAmount: number;
+} {
+    // Sort coins by amount (descending)
+    const sortedCoins = [...coins].sort((a, b) => b.value - a.value);
+
+    const selectedCoins: Coin[] = [];
+    let selectedAmount = 0;
+
+    // Select coins until we have enough
+    for (const coin of sortedCoins) {
+        selectedCoins.push(coin);
+        selectedAmount += coin.value;
+
+        if (selectedAmount >= targetAmount) {
+            break;
+        }
+    }
+
+    // Check if we have enough
+    if (selectedAmount < targetAmount) {
+        return { inputs: null, changeAmount: 0 };
+    }
+
+    // Calculate change
+    const changeAmount = selectedAmount - targetAmount;
+
+    return {
+        inputs: selectedCoins,
+        changeAmount,
+    };
 }

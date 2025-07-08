@@ -17,6 +17,10 @@ export enum TapscriptType {
     CLTVMultisig = "cltv-multisig",
 }
 
+/**
+ * ArkTapscript is the base element of vtxo scripts.
+ * It is used to encode and decode the different types of vtxo scripts.
+ */
 export interface ArkTapscript<T extends TapscriptType, Params> {
     type: T;
     params: Params;

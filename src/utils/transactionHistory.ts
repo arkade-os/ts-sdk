@@ -1,75 +1,11 @@
 import { ArkTransaction, TxType, TxKey, VirtualCoin } from "../wallet";
 
 /**
- * Helper function to find vtxos that were spent in a settlement
+ * @param spendable - Vtxos that are spendable
+ * @param spent - Vtxos that are spent
+ * @param boardingBatchTxids - Set of boarding batch txids
+ * @returns Ark transactions
  */
-function findVtxosSpentInSettlement(
-    vtxos: VirtualCoin[],
-    vtxo: VirtualCoin
-): VirtualCoin[] {
-    if (vtxo.virtualStatus.state === "preconfirmed") {
-        return [];
-    }
-
-    return vtxos.filter((v) => {
-        if (!v.settledBy) return false;
-        return (
-            vtxo.virtualStatus.commitmentTxIds?.includes(v.settledBy) ?? false
-        );
-    });
-}
-
-/**
- * Helper function to find vtxos that were spent in a payment
- */
-function findVtxosSpentInPayment(
-    vtxos: VirtualCoin[],
-    vtxo: VirtualCoin
-): VirtualCoin[] {
-    return vtxos.filter((v) => {
-        if (!v.arkTxId) return false;
-        return v.arkTxId === vtxo.txid;
-    });
-}
-
-/**
- * Helper function to find vtxos that resulted from a spentBy transaction
- */
-function findVtxosResultedFromTxid(
-    vtxos: VirtualCoin[],
-    txid: string
-): VirtualCoin[] {
-    return vtxos.filter((v) => {
-        if (
-            v.virtualStatus.state !== "preconfirmed" &&
-            v.virtualStatus.commitmentTxIds?.includes(txid)
-        ) {
-            return true;
-        }
-        return v.txid === txid;
-    });
-}
-
-/**
- * Helper function to reduce vtxos to their total amount
- */
-function reduceVtxosAmount(vtxos: VirtualCoin[]): number {
-    return vtxos.reduce((sum, v) => sum + v.value, 0);
-}
-
-/**
- * Helper function to get a vtxo from a list of vtxos
- */
-function getVtxo(
-    resultedVtxos: VirtualCoin[],
-    spentVtxos: VirtualCoin[]
-): VirtualCoin {
-    if (resultedVtxos.length === 0) {
-        return spentVtxos[0];
-    }
-    return resultedVtxos[0];
-}
-
 export function vtxosToTxs(
     spendable: VirtualCoin[],
     spent: VirtualCoin[],
@@ -184,6 +120,76 @@ export function vtxosToTxs(
     }
 
     return txs;
+}
+
+/**
+ * Helper function to find vtxos that were spent in a settlement
+ */
+function findVtxosSpentInSettlement(
+    vtxos: VirtualCoin[],
+    vtxo: VirtualCoin
+): VirtualCoin[] {
+    if (vtxo.virtualStatus.state === "preconfirmed") {
+        return [];
+    }
+
+    return vtxos.filter((v) => {
+        if (!v.settledBy) return false;
+        return (
+            vtxo.virtualStatus.commitmentTxIds?.includes(v.settledBy) ?? false
+        );
+    });
+}
+
+/**
+ * Helper function to find vtxos that were spent in a payment
+ */
+function findVtxosSpentInPayment(
+    vtxos: VirtualCoin[],
+    vtxo: VirtualCoin
+): VirtualCoin[] {
+    return vtxos.filter((v) => {
+        if (!v.arkTxId) return false;
+        return v.arkTxId === vtxo.txid;
+    });
+}
+
+/**
+ * Helper function to find vtxos that resulted from a spentBy transaction
+ */
+function findVtxosResultedFromTxid(
+    vtxos: VirtualCoin[],
+    txid: string
+): VirtualCoin[] {
+    return vtxos.filter((v) => {
+        if (
+            v.virtualStatus.state !== "preconfirmed" &&
+            v.virtualStatus.commitmentTxIds?.includes(txid)
+        ) {
+            return true;
+        }
+        return v.txid === txid;
+    });
+}
+
+/**
+ * Helper function to reduce vtxos to their total amount
+ */
+function reduceVtxosAmount(vtxos: VirtualCoin[]): number {
+    return vtxos.reduce((sum, v) => sum + v.value, 0);
+}
+
+/**
+ * Helper function to get a vtxo from a list of vtxos
+ */
+function getVtxo(
+    resultedVtxos: VirtualCoin[],
+    spentVtxos: VirtualCoin[]
+): VirtualCoin {
+    if (resultedVtxos.length === 0) {
+        return spentVtxos[0];
+    }
+    return resultedVtxos[0];
 }
 
 function removeVtxosFromList(

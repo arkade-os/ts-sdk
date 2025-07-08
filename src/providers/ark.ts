@@ -1,4 +1,4 @@
-import { TxGraphChunk } from "../tree/txGraph";
+import { TxTreeChunk } from "../tree/txTree";
 import { Outpoint } from "../wallet";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
@@ -62,7 +62,7 @@ export type TreeTxEvent = {
     id: string;
     topic: string[];
     batchIndex: number;
-    chunk: TxGraphChunk;
+    chunk: TxTreeChunk;
 };
 
 export type TreeSignatureEvent = {

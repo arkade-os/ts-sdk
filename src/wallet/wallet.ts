@@ -10,7 +10,6 @@ import {
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { selectVirtualCoins } from "../utils/coinselect";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
@@ -55,11 +54,11 @@ import {
 import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { buildOffchainTx } from "../utils/psbt";
+import { buildOffchainTx } from "../utils/arkTransaction";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
-import { TxGraph, TxGraphChunk } from "../tree/txGraph";
+import { TxTree, TxTreeChunk } from "../tree/txTree";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -578,11 +577,11 @@ export class Wallet implements IWallet {
             let roundId: string | undefined;
             let sweepTapTreeRoot: Uint8Array | undefined;
 
-            const vtxoChunks: TxGraphChunk[] = [];
-            const connectorsChunks: TxGraphChunk[] = [];
+            const vtxoChunks: TxTreeChunk[] = [];
+            const connectorsChunks: TxTreeChunk[] = [];
 
-            let vtxoGraph: TxGraph | undefined;
-            let connectorsGraph: TxGraph | undefined;
+            let vtxoGraph: TxTree | undefined;
+            let connectorsGraph: TxTree | undefined;
 
             for await (const event of settlementStream) {
                 if (eventCallback) {
@@ -680,7 +679,7 @@ export class Wallet implements IWallet {
                                 );
                             }
 
-                            vtxoGraph = TxGraph.create(vtxoChunks);
+                            vtxoGraph = TxTree.create(vtxoChunks);
 
                             await this.handleSettlementSigningEvent(
                                 event,
@@ -720,7 +719,7 @@ export class Wallet implements IWallet {
                         }
 
                         if (connectorsChunks.length > 0) {
-                            connectorsGraph = TxGraph.create(connectorsChunks);
+                            connectorsGraph = TxTree.create(connectorsChunks);
                             validateConnectorsTxGraph(
                                 event.commitmentTx,
                                 connectorsGraph
@@ -868,7 +867,7 @@ export class Wallet implements IWallet {
         event: TreeSigningStartedEvent,
         sweepTapTreeRoot: Uint8Array,
         session: SignerSession,
-        vtxoGraph: TxGraph
+        vtxoGraph: TxTree
     ) {
         // validate the unsigned vtxo tree
         const commitmentTx = Transaction.fromPSBT(
@@ -910,7 +909,7 @@ export class Wallet implements IWallet {
         event: BatchFinalizationEvent,
         inputs: SettleParams["inputs"],
         forfeitOutputScript: Bytes,
-        connectorsGraph?: TxGraph
+        connectorsGraph?: TxTree
     ) {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
@@ -1206,4 +1205,57 @@ function isValidArkAddress(address: string): boolean {
     } catch (e) {
         return false;
     }
+}
+
+/**
+ * Select virtual coins to reach a target amount, prioritizing those closer to expiry
+ * @param coins List of virtual coins to select from
+ * @param targetAmount Target amount to reach in satoshis
+ * @returns Selected coins and change amount, or null if insufficient funds
+ */
+function selectVirtualCoins(
+    coins: VirtualCoin[],
+    targetAmount: number
+): {
+    inputs: VirtualCoin[] | null;
+    changeAmount: number;
+} {
+    // Sort VTXOs by expiry (ascending) and amount (descending)
+    const sortedCoins = [...coins].sort((a, b) => {
+        // First sort by expiry if available
+        const expiryA = a.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
+        const expiryB = b.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
+        if (expiryA !== expiryB) {
+            return expiryA - expiryB; // Earlier expiry first
+        }
+
+        // Then sort by amount
+        return b.value - a.value; // Larger amount first
+    });
+
+    const selectedCoins: VirtualCoin[] = [];
+    let selectedAmount = 0;
+
+    // Select coins until we have enough
+    for (const coin of sortedCoins) {
+        selectedCoins.push(coin);
+        selectedAmount += coin.value;
+
+        if (selectedAmount >= targetAmount) {
+            break;
+        }
+    }
+
+    // Check if we have enough
+    if (selectedAmount < targetAmount) {
+        return { inputs: null, changeAmount: 0 };
+    }
+
+    // Calculate change
+    const changeAmount = selectedAmount - targetAmount;
+
+    return {
+        inputs: selectedCoins,
+        changeAmount,
+    };
 }

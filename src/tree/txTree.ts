@@ -3,7 +3,7 @@ import { base64 } from "@scure/base";
 import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 
-export type TxGraphChunk = {
+export type TxTreeChunk = {
     txid: string;
     // base64 encoded root transaction
     tx: string;
@@ -16,13 +16,13 @@ type DecodedChunk = {
     children: Record<number, string>;
 };
 
-export class TxGraph implements Iterable<TxGraph> {
+export class TxTree implements Iterable<TxTree> {
     constructor(
         readonly root: Transaction,
-        readonly children: Map<number, TxGraph> = new Map()
+        readonly children: Map<number, TxTree> = new Map()
     ) {}
 
-    static create(chunks: TxGraphChunk[]): TxGraph {
+    static create(chunks: TxTreeChunk[]): TxTree {
         if (chunks.length === 0) {
             throw new Error("empty chunks");
         }
@@ -182,7 +182,7 @@ export class TxGraph implements Iterable<TxGraph> {
         return hex.encode(sha256x2(this.root.toBytes(true)).reverse());
     }
 
-    find(txid: string): TxGraph | null {
+    find(txid: string): TxTree | null {
         if (txid === this.txid) {
             return this;
         }
@@ -216,7 +216,7 @@ export class TxGraph implements Iterable<TxGraph> {
         throw new Error(`tx not found: ${txid}`);
     }
 
-    *[Symbol.iterator](): IterableIterator<TxGraph> {
+    *[Symbol.iterator](): IterableIterator<TxTree> {
         yield this;
         for (const child of this.children.values()) {
             yield* child;
@@ -233,14 +233,14 @@ function hasChild(chunk: DecodedChunk, childTxid: string): boolean {
 function buildGraph(
     rootTxid: string,
     chunksByTxid: Map<string, DecodedChunk>
-): TxGraph | null {
+): TxTree | null {
     const chunk = chunksByTxid.get(rootTxid);
     if (!chunk) {
         return null;
     }
 
     const rootTx = chunk.tx;
-    const children = new Map<number, TxGraph>();
+    const children = new Map<number, TxTree>();
 
     // Recursively build children graphs
     for (const [outputIndexStr, childTxid] of Object.entries(chunk.children)) {
@@ -251,10 +251,10 @@ function buildGraph(
         }
     }
 
-    return new TxGraph(rootTx, children);
+    return new TxTree(rootTx, children);
 }
 
-function decodeChunk(chunk: TxGraphChunk): DecodedChunk {
+function decodeChunk(chunk: TxTreeChunk): DecodedChunk {
     const tx = Transaction.fromPSBT(base64.decode(chunk.tx));
     return { tx, children: chunk.children };
 }
