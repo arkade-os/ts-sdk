@@ -565,7 +565,8 @@ describe("Ark integration tests", () => {
 
         for await (const done of session) {
             switch (done.type) {
-                case (Unroll.StepType.WAIT, Unroll.StepType.UNROLL):
+                case Unroll.StepType.WAIT:
+                case Unroll.StepType.UNROLL:
                     execSync(
                         `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
                     );
