@@ -9,6 +9,31 @@ import { schnorr } from "@noble/curves/secp256k1";
 import { Bytes } from "@scure/btc-signer/utils";
 import { base64 } from "@scure/base";
 
+/**
+ * BIP-322 signature implementation for Bitcoin message signing.
+ *
+ * BIP-322 defines a standard for signing Bitcoin messages as well as proving
+ * ownership of coins. This namespace provides utilities for creating and
+ * validating BIP-322.
+ *
+ * @see https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki
+ *
+ * @example
+ * ```typescript
+ * // Create a BIP-322 proof
+ * const proof = BIP322.create(
+ *   "Hello Bitcoin!",
+ *   [input],
+ *   [output]
+ * );
+ *
+ * // Sign the proof
+ * const signedProof = await identity.sign(proof);
+ *
+ * // Extract the signature
+ * const signature = BIP322.signature(signedProof);
+ * ```
+ */
 export namespace BIP322 {
     // BIP0322 full proof of funds is a special invalid psbt containing the inputs to prove ownership
     // signing the proof means signing the psbt as a regular transaction
@@ -18,7 +43,18 @@ export namespace BIP322 {
     // BIP322 signatures are base64 encoded to avoid confusion with real signed transactions
     export type Signature = string;
 
-    // create builds a new BIP0322 "full" proof of funds unsigned transaction
+    /**
+     * Creates a new BIP-322 "full" proof of funds unsigned transaction.
+     *
+     * This function constructs a special transaction that can be signed to prove
+     * ownership of VTXOs and UTXOs. The proof includes the message to be
+     * signed and the inputs/outputs that demonstrate ownership.
+     *
+     * @param message - The BIP-322 message to be signed
+     * @param inputs - Array of transaction inputs to prove ownership of
+     * @param outputs - Optional array of transaction outputs
+     * @returns An unsigned BIP-322 proof transaction
+     */
     export function create(
         message: string,
         inputs: TransactionInput[],
@@ -35,8 +71,17 @@ export namespace BIP322 {
         return craftToSignTx(toSpend, inputs, outputs);
     }
 
-    // signature finalizes and extracts the FullProof transaction into a BIP322.Signature
-    // if one of the proof's inputs has special spending conditions, a custom finalizer can be provided
+    /**
+     * Finalizes and extracts the FullProof transaction into a BIP-322 signature.
+     *
+     * This function takes a signed proof transaction and converts it into a
+     * base64-encoded signature string. If the proof's inputs have special
+     * spending conditions, a custom finalizer can be provided.
+     *
+     * @param signedProof - The signed BIP-322 proof transaction
+     * @param finalizer - Optional custom finalizer function
+     * @returns Base64-encoded BIP-322 signature
+     */
     export function signature(
         signedProof: FullProof,
         finalizer = (tx: FullProof) => tx.finalize()

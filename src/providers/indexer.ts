@@ -1,6 +1,6 @@
 import { Outpoint, VirtualCoin } from "../wallet";
 
-type PaginationOptions = {
+export type PaginationOptions = {
     pageIndex?: number;
     pageSize?: number;
 };
@@ -85,6 +85,15 @@ export interface VtxoChain {
     page?: PageResponse;
 }
 
+export interface SubscriptionResponse {
+    txid?: string;
+    scripts: string[];
+    newVtxos: VirtualCoin[];
+    spentVtxos: VirtualCoin[];
+    tx?: string;
+    checkpointTxs?: Record<string, { txid: string; tx: string }>;
+}
+
 export interface IndexerProvider {
     getVtxoTree(
         batchOutpoint: Outpoint,
@@ -106,18 +115,10 @@ export interface IndexerProvider {
         txid: string,
         opts?: PaginationOptions
     ): Promise<{ txids: string[]; page?: PageResponse }>;
-    getCommitmentTxLeaves(
-        txid: string,
-        opts?: PaginationOptions
-    ): Promise<{ leaves: Outpoint[]; page?: PageResponse }>;
     getSubscription(
         subscriptionId: string,
         abortSignal: AbortSignal
-    ): AsyncIterableIterator<{
-        scripts: string[];
-        newVtxos: VirtualCoin[];
-        spentVtxos: VirtualCoin[];
-    }>;
+    ): AsyncIterableIterator<SubscriptionResponse>;
     getVirtualTxs(
         txids: string[],
         opts?: PaginationOptions
@@ -307,34 +308,6 @@ export class RestIndexerProvider implements IndexerProvider {
         return data;
     }
 
-    async getCommitmentTxLeaves(
-        txid: string,
-        opts?: PaginationOptions
-    ): Promise<{ leaves: Outpoint[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/commitmentTx/${txid}/leaves`;
-        const params = new URLSearchParams();
-        if (opts) {
-            if (opts.pageIndex !== undefined)
-                params.append("page.index", opts.pageIndex.toString());
-            if (opts.pageSize !== undefined)
-                params.append("page.size", opts.pageSize.toString());
-        }
-        if (params.toString()) {
-            url += "?" + params.toString();
-        }
-        const res = await fetch(url);
-        if (!res.ok) {
-            throw new Error(
-                `Failed to fetch commitment tx leaves: ${res.statusText}`
-            );
-        }
-        const data = await res.json();
-        if (!Response.isCommitmentTxLeavesResponse(data)) {
-            throw new Error("Invalid commitment tx leaves data received");
-        }
-        return data;
-    }
-
     async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
         const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
@@ -376,6 +349,7 @@ export class RestIndexerProvider implements IndexerProvider {
                         const data = JSON.parse(line);
                         if ("result" in data) {
                             yield {
+                                txid: data.result.txid,
                                 scripts: data.result.scripts || [],
                                 newVtxos: (data.result.newVtxos || []).map(
                                     convertVtxo
@@ -383,6 +357,8 @@ export class RestIndexerProvider implements IndexerProvider {
                                 spentVtxos: (data.result.spentVtxos || []).map(
                                     convertVtxo
                                 ),
+                                tx: data.result.tx,
+                                checkpointTxs: data.result.checkpointTxs,
                             };
                         }
                     } catch (err) {
@@ -469,15 +445,21 @@ export class RestIndexerProvider implements IndexerProvider {
 
         let url = `${this.serverUrl}/v1/vtxos`;
         const params = new URLSearchParams();
+
+        // Handle scripts with multi collection format
         if (opts?.scripts && opts.scripts.length > 0) {
-            params.append("scripts", opts.scripts.join(","));
+            opts.scripts.forEach((script) => {
+                params.append("scripts", script);
+            });
         }
+
+        // Handle outpoints with multi collection format
         if (opts?.outpoints && opts.outpoints.length > 0) {
-            const outpointStrings = opts.outpoints.map(
-                (op) => `${op.txid}:${op.vout}`
-            );
-            params.append("outpoints", outpointStrings.join(","));
+            opts.outpoints.forEach((outpoint) => {
+                params.append("outpoints", `${outpoint.txid}:${outpoint.vout}`);
+            });
         }
+
         if (opts) {
             if (opts.spendableOnly !== undefined)
                 params.append("spendableOnly", opts.spendableOnly.toString());
@@ -562,7 +544,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
             state: vtxo.isSwept
                 ? "swept"
                 : vtxo.isPreconfirmed
-                  ? "pending"
+                  ? "preconfirmed"
                   : "settled",
             commitmentTxIds: vtxo.commitmentTxids,
             batchExpiry: vtxo.expiresAt
@@ -736,17 +718,6 @@ namespace Response {
             typeof data === "object" &&
             Array.isArray(data.txids) &&
             data.txids.every(isTxid) &&
-            (!data.page || isPageResponse(data.page))
-        );
-    }
-
-    export function isCommitmentTxLeavesResponse(
-        data: any
-    ): data is { leaves: Outpoint[]; page?: PageResponse } {
-        return (
-            typeof data === "object" &&
-            Array.isArray(data.leaves) &&
-            data.leaves.every(isOutpoint) &&
             (!data.page || isPageResponse(data.page))
         );
     }

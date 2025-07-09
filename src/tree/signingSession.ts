@@ -4,7 +4,7 @@ import { hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
 import { randomPrivateKeyBytes, sha256x2 } from "@scure/btc-signer/utils";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
-import { TxGraph } from "./txGraph";
+import { TxTree } from "./txTree";
 
 export const ErrMissingVtxoGraph = new Error("missing vtxo graph");
 export const ErrMissingAggregateKey = new Error("missing aggregate key");
@@ -17,7 +17,7 @@ export type TreePartialSigs = Map<string, musig2.PartialSig>;
 // create the partial signatures for each transaction in the vtxo tree
 export interface SignerSession {
     getPublicKey(): Uint8Array;
-    init(tree: TxGraph, scriptRoot: Uint8Array, rootInputAmount: bigint): void;
+    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void;
     getNonces(): TreeNonces;
     setAggregatedNonces(nonces: TreeNonces): void;
     sign(): TreePartialSigs;
@@ -30,7 +30,7 @@ export class TreeSignerSession implements SignerSession {
 
     private myNonces: Map<string, musig2.Nonces> | null = null;
     private aggregateNonces: TreeNonces | null = null;
-    private graph: TxGraph | null = null;
+    private graph: TxTree | null = null;
     private scriptRoot: Uint8Array | null = null;
     private rootSharedOutputAmount: bigint | null = null;
 
@@ -41,7 +41,7 @@ export class TreeSignerSession implements SignerSession {
         return new TreeSignerSession(secretKey);
     }
 
-    init(tree: TxGraph, scriptRoot: Uint8Array, rootInputAmount: bigint): void {
+    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void {
         this.graph = tree;
         this.scriptRoot = scriptRoot;
         this.rootSharedOutputAmount = rootInputAmount;
@@ -101,7 +101,7 @@ export class TreeSignerSession implements SignerSession {
         return myNonces;
     }
 
-    private signPartial(g: TxGraph): musig2.PartialSig {
+    private signPartial(g: TxTree): musig2.PartialSig {
         if (!this.graph || !this.scriptRoot || !this.rootSharedOutputAmount) {
             throw TreeSignerSession.NOT_INITIALIZED;
         }
@@ -166,7 +166,7 @@ export class TreeSignerSession implements SignerSession {
 export async function validateTreeSigs(
     finalAggregatedKey: Uint8Array,
     sharedOutputAmount: bigint,
-    vtxoTree: TxGraph
+    vtxoTree: TxTree
 ): Promise<void> {
     // Iterate through each level of the tree
     for (const g of vtxoTree) {
@@ -214,7 +214,7 @@ interface PrevOutput {
 
 function getPrevOutput(
     finalKey: Uint8Array,
-    graph: TxGraph,
+    graph: TxTree,
     sharedOutputAmount: bigint,
     tx: Transaction
 ): PrevOutput {

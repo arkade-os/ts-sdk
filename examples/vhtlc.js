@@ -11,7 +11,7 @@
 // node examples/vhtlc.js unilateralRefund (alice spends the VHTLC alone)
 //
 import {
-    InMemoryKey,
+    SingleKey,
     VHTLC,
     addConditionWitness,
     RestArkProvider,
@@ -41,9 +41,9 @@ if (!action || !["claim", "refund", "unilateralRefund"].includes(action)) {
 
 // Alice is the vtxo owner, she offers the coin in exchange for the Bob's secret
 // to make the swap safe, she funds a VHTLC with Bob's public key as receiver
-const alice = InMemoryKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
+const alice = SingleKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
 // Bob is the receiver of the VHTLC, he is the one generating the secret
-const bob = InMemoryKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
+const bob = SingleKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
 
 const secret = Uint8Array.from("I'm bob secret");
 const preimageHash = hash160(secret);

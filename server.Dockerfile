@@ -4,7 +4,7 @@ FROM golang:1.23.1 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
-ARG BRANCH=next-version
+ARG BRANCH=master
 
 WORKDIR /app
 

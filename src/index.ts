@@ -1,9 +1,9 @@
-import { InMemoryKey } from "./identity/inMemoryKey";
+import { SingleKey } from "./identity/singleKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
-import { VtxoScript } from "./script/base";
+import { VtxoScript, EncodedVtxoScript, TapLeafScript } from "./script/base";
 import {
     TxType,
     IWallet,
@@ -21,17 +21,47 @@ import {
     Outpoint,
     VirtualCoin,
     TxKey,
-} from "./wallet/index";
+    GetVtxosFilter,
+    TapLeaves,
+} from "./wallet";
 import { Wallet } from "./wallet/wallet";
+import { TxTree, TxTreeNode } from "./tree/txTree";
+import {
+    SignerSession,
+    TreeNonces,
+    TreePartialSigs,
+} from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
-import { TxGraph, TxGraphChunk } from "./tree/txGraph";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
-import { ESPLORA_URL, EsploraProvider } from "./providers/onchain";
-import { RestArkProvider } from "./providers/ark";
+import {
+    ESPLORA_URL,
+    EsploraProvider,
+    OnchainProvider,
+    ExplorerTransaction,
+} from "./providers/onchain";
+import {
+    RestArkProvider,
+    ArkProvider,
+    SettlementEvent,
+    SettlementEventType,
+    ArkInfo,
+    Intent,
+    Output,
+    TxNotification,
+    BatchFinalizationEvent,
+    BatchFinalizedEvent,
+    BatchFailedEvent,
+    TreeSigningStartedEvent,
+    TreeNoncesAggregatedEvent,
+    BatchStartedEvent,
+    TreeTxEvent,
+    TreeSignatureEvent,
+    MarketHour,
+} from "./providers/ark";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -40,8 +70,14 @@ import {
     decodeTapscript,
     MultisigTapscript,
     TapscriptType,
+    ArkTapscript,
+    RelativeTimelock,
 } from "./script/tapscript";
-import { buildOffchainTx, VirtualTxInput, OffchainTx } from "./utils/psbt";
+import {
+    buildOffchainTx,
+    VirtualTxInput,
+    OffchainTx,
+} from "./utils/arkTransaction";
 import {
     VtxoTaprootTree,
     ConditionWitness,
@@ -57,8 +93,7 @@ import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
-import { networks } from "./networks";
-import { AnchorBumper, P2A } from "./utils/anchor";
+import { networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
     IndexerProvider,
@@ -69,17 +104,21 @@ import {
     ChainTx,
     CommitmentTx,
     TxHistoryRecord,
-    Vtxo,
     VtxoChain,
     Tx,
+    Vtxo,
+    PaginationOptions,
 } from "./providers/indexer";
+import { Nonces } from "./musig2/nonces";
+import { PartialSig } from "./musig2/sign";
+import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
 
 export {
-    // Classes
+    // Wallets
     Wallet,
     ServiceWorkerWallet,
-    InMemoryKey,
+    SingleKey,
     OnchainWallet,
     Ramps,
 
@@ -99,6 +138,7 @@ export {
     TxType,
     IndexerTxType,
     ChainTxType,
+    SettlementEventType,
 
     // Service Worker
     Worker,
@@ -138,15 +178,14 @@ export {
     // BIP322
     BIP322,
 
-    // TxGraph
-    TxGraph,
+    // TxTree
+    TxTree,
 
     // Anchor
     P2A,
     Unroll,
 };
 
-// Type exports
 export type {
     // Types and Interfaces
     Identity,
@@ -169,6 +208,7 @@ export type {
     VtxoRepository,
     VirtualTxInput,
     OffchainTx,
+    TapLeaves,
 
     // Indexer types
     IndexerProvider,
@@ -181,11 +221,53 @@ export type {
     VtxoChain,
     Tx,
 
+    // Provider types
+    OnchainProvider,
+    ArkProvider,
+    SettlementEvent,
+    ArkInfo,
+    Intent,
+    Output,
+    TxNotification,
+    ExplorerTransaction,
+    BatchFinalizationEvent,
+    BatchFinalizedEvent,
+    BatchFailedEvent,
+    TreeSigningStartedEvent,
+    TreeNoncesAggregatedEvent,
+    BatchStartedEvent,
+    TreeTxEvent,
+    TreeSignatureEvent,
+    MarketHour,
+    PaginationOptions,
+
+    // Network types
+    Network,
+    NetworkName,
+
+    // Script types
+    ArkTapscript,
+    RelativeTimelock,
+    EncodedVtxoScript,
+    TapLeafScript,
+
+    // Tree types
+    SignerSession,
+    TreeNonces,
+    TreePartialSigs,
+
+    // Wallet types
+    GetVtxosFilter,
+
+    // Musig2 types
+    Nonces,
+    PartialSig,
+
     // Ark PSBT fields
     ArkPsbtFieldCoder,
 
-    // TxGraph
-    TxGraphChunk,
+    // TxTree
+    TxTreeNode,
 
     // Anchor
     AnchorBumper,

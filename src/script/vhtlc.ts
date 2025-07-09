@@ -11,13 +11,33 @@ import {
 import { hex } from "@scure/base";
 import { TapLeafScript, VtxoScript } from "./base";
 
-// VHTLC is an Hashed Timelock Contract VtxoScript implementation
-// - claim (preimage + receiver)
-// - refund (sender + receiver + server)
-// - refundWithoutReceiver (at refundLocktime, sender + receiver + server)
-// - unilateralClaim (preimage + receiver after unilateralClaimDelay)
-// - unilateralRefund (sender + receiver after unilateralRefundDelay)
-// - unilateralRefundWithoutReceiver (sender after unilateralRefundWithoutReceiverDelay)
+/**
+ * Virtual Hash Time Lock Contract (VHTLC) implementation.
+ *
+ * VHTLC is a contract that enables atomic swaps and conditional payments
+ * in the Ark protocol. It provides multiple spending paths:
+ *
+ * - **claim**: Receiver can claim funds by revealing the preimage
+ * - **refund**: Sender and receiver can collaboratively refund
+ * - **refundWithoutReceiver**: Sender can refund after locktime expires
+ * - **unilateralClaim**: Receiver can claim unilaterally after delay
+ * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
+ * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
+ *
+ * @example
+ * ```typescript
+ * const vhtlc = new VHTLC.Script({
+ *   sender: alicePubKey,
+ *   receiver: bobPubKey,
+ *   server: serverPubKey,
+ *   preimageHash: hash160(secret),
+ *   refundLocktime: BigInt(chainTip + 10),
+ *   unilateralClaimDelay: { type: 'blocks', value: 100n },
+ *   unilateralRefundDelay: { type: 'blocks', value: 102n },
+ *   unilateralRefundWithoutReceiverDelay: { type: 'blocks', value: 103n }
+ * });
+ * ```
+ */
 export namespace VHTLC {
     export interface Options {
         sender: Bytes;

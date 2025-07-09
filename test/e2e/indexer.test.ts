@@ -4,16 +4,15 @@ import {
     ArkAddress,
     Outpoint,
     RestIndexerProvider,
-    TxGraph,
-    TxGraphChunk,
+    TxTree,
+    TxTreeNode,
     ChainTxType,
 } from "../../src";
 import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 
 describe("Indexer provider", () => {
-    // TODO: revert once fixed on arkd
-    it.skip("should inspect a VTXO", { timeout: 60000 }, async () => {
+    it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -52,11 +51,10 @@ describe("Indexer provider", () => {
 
         const leaves = await indexerProvider.getVtxoTreeLeaves(outpoint);
         expect(leaves).toBeDefined();
-        expect(leaves).toHaveLength(0);
+        expect(leaves.leaves).toHaveLength(0);
     });
 
-    // TODO: revert once fixed on arkd
-    it.skip("should inspect a commitment tx", { timeout: 60000 }, async () => {
+    it("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -90,11 +88,6 @@ describe("Indexer provider", () => {
             await indexerProvider.getCommitmentTxForfeitTxs(txid);
         expect(forfeitsResponse.txids).toBeDefined();
         expect(forfeitsResponse.txids.length).toBeGreaterThanOrEqual(1);
-
-        const leavesResponse =
-            await indexerProvider.getCommitmentTxLeaves(txid);
-        expect(leavesResponse.leaves).toBeDefined();
-        expect(leavesResponse.leaves.length).toBeGreaterThanOrEqual(1);
 
         const sweptsResponse = await indexerProvider.getBatchSweepTransactions({
             txid,
@@ -351,7 +344,7 @@ describe("Indexer provider", () => {
             vout: 0,
         });
 
-        const graphChunks: TxGraphChunk[] = [];
+        const chunks: TxTreeNode[] = [];
         for (const vtxoTreeTx of treeResponse.vtxoTree) {
             const virtualTxs = await indexerProvider.getVirtualTxs([
                 vtxoTreeTx.txid,
@@ -360,17 +353,17 @@ describe("Indexer provider", () => {
             expect(virtualTxs.txs.length).toBe(1);
             const virtualTx = virtualTxs.txs[0];
 
-            graphChunks.push({
+            chunks.push({
                 txid: vtxoTreeTx.txid,
                 children: vtxoTreeTx.children,
                 tx: virtualTx,
             });
         }
 
-        const txGraph = TxGraph.create(graphChunks);
-        expect(txGraph).toBeDefined();
+        const txTree = TxTree.create(chunks);
+        expect(txTree).toBeDefined();
 
-        txGraph.validate();
+        txTree.validate();
 
         const aliceVtxo = await alice.wallet.getVtxos();
         expect(aliceVtxo).toBeDefined();
@@ -379,7 +372,7 @@ describe("Indexer provider", () => {
         expect(aliceVtxoOutpoint.txid).toBeDefined();
         expect(aliceVtxoOutpoint.vout).toBeDefined();
 
-        const leaves = txGraph.leaves();
+        const leaves = txTree.leaves();
         expect(leaves).toBeDefined();
         expect(leaves.length).toBeGreaterThanOrEqual(1);
 
@@ -409,7 +402,7 @@ describe("Indexer provider", () => {
             expect(connectors.connectors).toBeDefined();
             expect(connectors.connectors.length).toBeGreaterThanOrEqual(1);
 
-            const txGraphChunks: TxGraphChunk[] = [];
+            const chunks: TxTreeNode[] = [];
             for (const connector of connectors.connectors) {
                 const virtualTxs = await indexerProvider.getVirtualTxs([
                     connector.txid,
@@ -418,19 +411,19 @@ describe("Indexer provider", () => {
                 expect(virtualTxs.txs.length).toBe(1);
                 const virtualTx = virtualTxs.txs[0];
 
-                txGraphChunks.push({
+                chunks.push({
                     txid: connector.txid,
                     children: connector.children,
                     tx: virtualTx,
                 });
             }
 
-            const txGraph = TxGraph.create(txGraphChunks);
-            expect(txGraph).toBeDefined();
+            const txTree = TxTree.create(chunks);
+            expect(txTree).toBeDefined();
 
-            txGraph.validate();
+            txTree.validate();
 
-            const leaves = txGraph.leaves();
+            const leaves = txTree.leaves();
             expect(leaves).toBeDefined();
             expect(leaves.length).toBeGreaterThanOrEqual(1);
         }

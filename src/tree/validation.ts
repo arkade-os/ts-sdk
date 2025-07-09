@@ -3,7 +3,7 @@ import { Transaction } from "@scure/btc-signer";
 import { base64 } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { aggregateKeys } from "../musig2";
-import { TxGraph } from "./txGraph";
+import { TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
@@ -30,7 +30,7 @@ const BATCH_OUTPUT_CONNECTORS_INDEX = 1;
 
 export function validateConnectorsTxGraph(
     settlementTxB64: string,
-    connectorsGraph: TxGraph
+    connectorsGraph: TxTree
 ): void {
     connectorsGraph.validate();
 
@@ -63,7 +63,7 @@ export function validateConnectorsTxGraph(
 // - every control block and taproot output scripts.
 // - input and output amounts.
 export function validateVtxoTxGraph(
-    graph: TxGraph,
+    graph: TxTree,
     roundTransaction: Transaction,
     sweepTapTreeRoot: Uint8Array
 ): void {

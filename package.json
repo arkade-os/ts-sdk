@@ -28,6 +28,8 @@
     "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
     "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
     "build:browser": "node scripts/build-browser.js",
+    "docs:build": "pnpm run build:types && pnpm typedoc",
+    "docs:open": "open ./docs/index.html",
     "test": "vitest run",
     "test:master": "ARK_ENV=master vitest run",
     "test:unit": "vitest run --exclude test/e2e",
@@ -49,8 +51,7 @@
     "prepublishOnly": "pnpm run build",
     "release": "bash scripts/release.sh",
     "release:dry-run": "bash scripts/release.sh --dry-run",
-    "release:cleanup": "bash scripts/release.sh --cleanup",
-    "precommit": "lint-staged"
+    "release:cleanup": "bash scripts/release.sh --cleanup"
   },
   "dependencies": {
     "@noble/curves": "1.9.1",
@@ -62,17 +63,13 @@
   },
   "devDependencies": {
     "rimraf": "^5.0.0",
-    "@eslint/js": "^9.17.0",
     "@types/node": "22.10.2",
-    "@typescript-eslint/eslint-plugin": "8.18.2",
-    "@typescript-eslint/parser": "8.18.2",
     "@vitest/coverage-v8": "2.1.9",
     "esbuild": "^0.20.1",
-    "eslint": "^9.17.0",
     "glob": "11.0.1",
     "husky": "9.1.7",
-    "lint-staged": "15.3.0",
     "prettier": "3.4.2",
+    "typedoc": "^0.27.1",
     "typescript": "5.7.2",
     "vitest": "2.1.9"
   },
@@ -81,7 +78,8 @@
     "wallet",
     "taproot",
     "ark",
-    "sdk"
+    "sdk",
+    "arkade"
   ],
   "author": "Ark Labs",
   "license": "MIT",

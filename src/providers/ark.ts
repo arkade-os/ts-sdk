@@ -1,7 +1,7 @@
-import { TxGraphChunk } from "../tree/txGraph";
-import { Outpoint } from "../wallet";
+import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
+import { Vtxo } from "./indexer";
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -62,7 +62,7 @@ export type TreeTxEvent = {
     id: string;
     topic: string[];
     batchIndex: number;
-    chunk: TxGraphChunk;
+    chunk: TxTreeNode;
 };
 
 export type TreeSignatureEvent = {
@@ -121,22 +121,6 @@ export interface TxNotification {
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
 }
 
-export interface Vtxo {
-    outpoint: Outpoint;
-    amount: bigint;
-    script: string;
-    createdAt: bigint;
-    expiresAt: bigint;
-    commitmentTxids: string[];
-    isPreconfirmed: boolean;
-    isSwept: boolean;
-    isUnrolled: boolean;
-    isSpent: boolean;
-    spentBy: string;
-    settledBy?: string;
-    arkTxid?: string;
-}
-
 export interface ArkProvider {
     getInfo(): Promise<ArkInfo>;
     submitTx(
@@ -175,6 +159,16 @@ export interface ArkProvider {
     }>;
 }
 
+/**
+ * REST-based Ark protocol provider implementation.
+ *
+ * @example
+ * ```typescript
+ * const provider = new RestArkProvider('https://ark.example.com');
+ * const info = await provider.getInfo();
+ * const result = await provider.submitTx(signedTx, checkpoints);
+ * ```
+ */
 export class RestArkProvider implements ArkProvider {
     constructor(public serverUrl: string) {}
 
@@ -679,10 +673,10 @@ export class RestArkProvider implements ArkProvider {
                             txid: vtxo.outpoint.txid,
                             vout: vtxo.outpoint.vout,
                         },
-                        amount: BigInt(vtxo.amount),
+                        amount: vtxo.amount,
                         script: vtxo.script,
-                        createdAt: BigInt(vtxo.createdAt),
-                        expiresAt: BigInt(vtxo.expiresAt),
+                        createdAt: vtxo.createdAt,
+                        expiresAt: vtxo.expiresAt,
                         commitmentTxids: vtxo.commitmentTxids,
                         isPreconfirmed: vtxo.isPreconfirmed,
                         isSwept: vtxo.isSwept,
@@ -698,10 +692,10 @@ export class RestArkProvider implements ArkProvider {
                                 txid: vtxo.outpoint.txid,
                                 vout: vtxo.outpoint.vout,
                             },
-                            amount: BigInt(vtxo.amount),
+                            amount: vtxo.amount,
                             script: vtxo.script,
-                            createdAt: BigInt(vtxo.createdAt),
-                            expiresAt: BigInt(vtxo.expiresAt),
+                            createdAt: vtxo.createdAt,
+                            expiresAt: vtxo.expiresAt,
                             commitmentTxids: vtxo.commitmentTxids,
                             isPreconfirmed: vtxo.isPreconfirmed,
                             isSwept: vtxo.isSwept,
@@ -727,10 +721,10 @@ export class RestArkProvider implements ArkProvider {
                             txid: vtxo.outpoint.txid,
                             vout: vtxo.outpoint.vout,
                         },
-                        amount: BigInt(vtxo.amount),
+                        amount: vtxo.amount,
                         script: vtxo.script,
-                        createdAt: BigInt(vtxo.createdAt),
-                        expiresAt: BigInt(vtxo.expiresAt),
+                        createdAt: vtxo.createdAt,
+                        expiresAt: vtxo.expiresAt,
                         commitmentTxids: vtxo.commitmentTxids,
                         isPreconfirmed: vtxo.isPreconfirmed,
                         isSwept: vtxo.isSwept,
@@ -745,10 +739,10 @@ export class RestArkProvider implements ArkProvider {
                             txid: vtxo.outpoint.txid,
                             vout: vtxo.outpoint.vout,
                         },
-                        amount: BigInt(vtxo.amount),
+                        amount: vtxo.amount,
                         script: vtxo.script,
-                        createdAt: BigInt(vtxo.createdAt),
-                        expiresAt: BigInt(vtxo.expiresAt),
+                        createdAt: vtxo.createdAt,
+                        expiresAt: vtxo.expiresAt,
                         commitmentTxids: vtxo.commitmentTxids,
                         isPreconfirmed: vtxo.isPreconfirmed,
                         isSwept: vtxo.isSwept,

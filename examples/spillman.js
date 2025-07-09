@@ -8,7 +8,7 @@
 // node examples/spillman.js
 //
 import {
-    InMemoryKey,
+    SingleKey,
     Wallet,
     RestArkProvider,
     RestIndexerProvider,
@@ -29,8 +29,8 @@ const SERVER_PUBLIC_KEY = hex.decode(
 
 const arkdExec = process.argv[2] || "docker exec -t arkd";
 
-const alice = InMemoryKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
-const bob = InMemoryKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
+const alice = SingleKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
+const bob = SingleKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
 
 console.log("Creating Spillman Channel between Alice and Bob");
 console.log("Alice's public key:", hex.encode(alice.xOnlyPublicKey()));

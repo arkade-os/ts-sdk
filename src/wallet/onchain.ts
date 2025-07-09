@@ -8,10 +8,26 @@ import {
     OnchainProvider,
 } from "../providers/onchain";
 import { Transaction } from "@scure/btc-signer";
-import { selectCoins } from "../utils/coinselect";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
+/**
+ * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
+ *
+ * This wallet handles regular Bitcoin transactions on the blockchain without
+ * using the Ark protocol. It supports P2TR (Pay-to-Taproot) addresses and
+ * provides basic Bitcoin wallet functionality.
+ *
+ * @example
+ * ```typescript
+ * const wallet = new OnchainWallet(identity, 'mainnet');
+ * const balance = await wallet.getBalance();
+ * const txid = await wallet.send({
+ *   address: 'bc1...',
+ *   amount: 50000
+ * });
+ * ```
+ */
 export class OnchainWallet implements AnchorBumper {
     static MIN_FEE_RATE = 1; // sat/vbyte
     static DUST_AMOUNT = 546; // sats
@@ -185,4 +201,67 @@ export class OnchainWallet implements AnchorBumper {
             return [parent.hex, child.hex];
         }
     }
+}
+
+/**
+ * Select coins to reach a target amount, prioritizing those closer to expiry
+ * @param coins List of coins to select from
+ * @param targetAmount Target amount to reach in satoshis
+ * @param forceChange If true, ensure the coin selection will require a change output
+ * @returns Selected coins and change amount, or null if insufficient funds
+ */
+export function selectCoins(
+    coins: Coin[],
+    targetAmount: number,
+    forceChange: boolean = false
+): {
+    inputs: Coin[];
+    changeAmount: bigint;
+} {
+    if (isNaN(targetAmount)) {
+        throw new Error("Target amount is NaN, got " + targetAmount);
+    }
+
+    if (targetAmount < 0) {
+        throw new Error("Target amount is negative, got " + targetAmount);
+    }
+
+    if (targetAmount === 0) {
+        return { inputs: [], changeAmount: 0n };
+    }
+
+    // Sort coins by amount (descending)
+    const sortedCoins = [...coins].sort((a, b) => b.value - a.value);
+
+    const selectedCoins: Coin[] = [];
+    let selectedAmount = 0;
+
+    // Select coins until we have enough
+    for (const coin of sortedCoins) {
+        selectedCoins.push(coin);
+        selectedAmount += coin.value;
+
+        if (
+            forceChange
+                ? selectedAmount > targetAmount
+                : selectedAmount >= targetAmount
+        ) {
+            break;
+        }
+    }
+
+    if (selectedAmount === targetAmount) {
+        return { inputs: selectedCoins, changeAmount: 0n };
+    }
+
+    if (selectedAmount < targetAmount) {
+        throw new Error("Insufficient funds");
+    }
+
+    const changeAmount = BigInt(selectedAmount - targetAmount);
+
+    return {
+        inputs: selectedCoins,
+        changeAmount,
+    };
 }

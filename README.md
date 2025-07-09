@@ -12,10 +12,10 @@ npm install @arkade-os/sdk
 ### Creating a Wallet
 
 ```typescript
-import { InMemoryKey, Wallet } from '@arkade-os/sdk'
+import { SingleKey, Wallet } from '@arkade-os/sdk'
 
 // Create a new in-memory key (or use an external signer)
-const identity = InMemoryKey.fromHex('your_private_key_hex')
+const identity = SingleKey.fromHex('your_private_key_hex')
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
@@ -360,12 +360,12 @@ export interface Identity {
 }
 ```
 
-The SDK provides a default implementation of the `Identity` interface: `InMemoryKey` for managing private keys in memory:
+The SDK provides a default implementation of the `Identity` interface: `SingleKey` for managing private keys in memory:
 
 ```typescript
-class InMemoryKey {
-  static fromPrivateKey(privateKey: Uint8Array): InMemoryKey;
-  static fromHex(privateKeyHex: string): InMemoryKey;
+class SingleKey {
+  static fromPrivateKey(privateKey: Uint8Array): SingleKey;
+  static fromHex(privateKeyHex: string): SingleKey;
 }
 ```
 
