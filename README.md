@@ -32,24 +32,14 @@ console.log('Ark Address:', arkAddress)
 console.log('Boarding Address:', boardingAddress)
 ```
 
-### Sending Bitcoin
+### Onboarding
+
+Onboarding allows you to swap onchain funds into VTXOs
 
 ```typescript
-// Send bitcoin via Ark
-const txid = await wallet.sendBitcoin({
-  address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
-  amount: 50000,  // in satoshis
-  feeRate: 1      // optional, in sats/vbyte
-})
+import { Ramps } from '@arkade-os/sdk'
 
-// For settling transactions
-const settleTxid = await wallet.settle({
-  inputs, // from getVtxos() or getBoardingUtxos()
-  outputs: [{
-    address: destinationAddress,
-    amount: BigInt(amount)
-  }]
-})
+const onboardTxid = await new Ramps(wallet).onboard();
 ```
 
 ### Checking Balance
@@ -71,6 +61,33 @@ const virtualCoins = await wallet.getVtxos()
 const boardingUtxos = await wallet.getBoardingUtxos()
 ```
 
+### Sending Bitcoin
+
+```typescript
+// Send bitcoin via Ark
+const txid = await wallet.sendBitcoin({
+  address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+  amount: 50000,  // in satoshis
+  feeRate: 1      // optional, in sats/vbyte
+})
+```
+
+### Batch Settlements 
+
+This can be used to move preconfirmed balances into finalized balances, to convert manually UTXOs and VTXOs.
+
+```typescript
+// For settling transactions
+const settleTxid = await wallet.settle({
+  inputs, // from getVtxos() or getBoardingUtxos()
+  outputs: [{
+    address: destinationAddress,
+    amount: BigInt(amount)
+  }]
+})
+```
+
+
 ### Transaction History
 
 ```typescript
@@ -90,6 +107,16 @@ console.log('History:', history)
   settled: true,
   createdAt: 1234567890
 }
+```
+
+### Offboarding
+
+Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an onchain address.
+
+```typescript
+import { Ramps } from '@arkade-os/sdk'
+
+const exitTxid = await new Ramps(wallet).offboard(onchainAddress);
 ```
 
 ### Unilateral Exit
@@ -145,7 +172,8 @@ Once VTXOs are fully unrolled and the unilateral exit timelock has expired, you 
 
 ```typescript
 // Complete the exit for specific VTXOs
-await wallet.completeUnroll(
+await Unroll.completeUnroll(
+  wallet,
   [vtxo.txid], // Array of VTXO transaction IDs to complete
   onchainWallet.address // Address to receive the exit amount
 );
@@ -261,9 +289,6 @@ interface IWallet {
 
   /** Get transaction history */
   getTransactionHistory(): Promise<ArkTransaction[]>;
-
-  /** Exit vtxos unilaterally */
-  exit(outpoints?: Outpoint[]): Promise<void>;
 }
 ```
 

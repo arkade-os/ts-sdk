@@ -31,6 +31,7 @@ import {
     TreeNonces,
     TreePartialSigs,
 } from "./tree/signingSession";
+import { Ramps } from "./wallet/ramps";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -119,6 +120,7 @@ export {
     ServiceWorkerWallet,
     SingleKey,
     OnchainWallet,
+    Ramps,
 
     // Providers
     ESPLORA_URL,
