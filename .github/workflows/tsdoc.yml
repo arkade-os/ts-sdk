@@ -2,9 +2,9 @@
 name: TSDoc Actions
 
 on:
-  release:
-  pull_request:
+  push:
     branches: [ master, next-version ]
+
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
@@ -57,40 +57,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Get version info
-        id: version
-        run: |
-          if [ "${{ github.event_name }}" = "release" ]; then
-            echo "version=${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-            echo "path=docs/${{ github.event.release.tag_name }}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${{ github.sha }}" >> $GITHUB_OUTPUT
-            echo "path=docs/commit/${{ github.sha }}" >> $GITHUB_OUTPUT
-          fi
-
       - name: Build TSDoc
-        run: pnpm run docs:build && mv ./docs ./docs-temp
-
-      - name: Create versioned directory structure
-        run: |
-          mkdir -p ${{ steps.version.outputs.path }}
-          cp -r ./docs-temp/* ${{ steps.version.outputs.path }}/
-          
-          # Create index.html that redirects to the latest version
-          if [ "${{ github.event_name }}" = "release" ]; then
-            cat > docs/index.html << EOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-            <meta http-equiv="refresh" content="0; url=./${{ github.event.release.tag_name }}/">
-            <title>Redirecting to ${{ github.event.release.tag_name }}</title>
-          </head>
-          <body>
-            <p>Redirecting to <a href="./${{ github.event.release.tag_name }}/">${{ github.event.release.tag_name }}</a>...</p>
-          </body>
-          </html>
-          EOF
-          fi
+        run: pnpm run docs:build
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
