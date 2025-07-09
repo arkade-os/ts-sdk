@@ -7,7 +7,6 @@ import {
     WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
-    Outpoint,
     GetVtxosFilter,
 } from "..";
 import { Request } from "./request";
@@ -386,28 +385,6 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
-        }
-    }
-
-    async completeUnroll(
-        vtxoTxids: string[],
-        outputAddress: string
-    ): Promise<void> {
-        const message: Request.CompleteUnroll = {
-            type: "COMPLETE_UNROLL",
-            vtxoTxids,
-            outputAddress,
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isCompleteUnrollSuccess(response)) {
-                return;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to complete unroll: ${error}`);
         }
     }
 

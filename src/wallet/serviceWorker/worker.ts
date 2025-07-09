@@ -11,12 +11,9 @@ import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
 import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
-import { ArkAddress } from "../../script/address";
-import { VtxoScript } from "../../script/base";
 import { base64, hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { Transaction } from "@scure/btc-signer";
-import { OnchainWallet } from "../onchain";
 
 // Worker is a class letting to interact with ServiceWorkerWallet from the client
 // it aims to be run in a service worker context
@@ -562,80 +559,6 @@ export class Worker {
         );
     }
 
-    private async handleUnroll(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isUnroll(message)) {
-            console.error("Invalid EXIT message format", message);
-            event.source?.postMessage(
-                Response.error(message.id, "Invalid EXIT message format")
-            );
-            return;
-        }
-
-        if (!this.wallet) {
-            console.error("Wallet not initialized");
-            event.source?.postMessage(
-                Response.error(message.id, "Wallet not initialized")
-            );
-            return;
-        }
-
-        try {
-            const onchainWallet = new OnchainWallet(
-                this.wallet.identity,
-                this.wallet.networkName
-            );
-            await this.wallet.unroll(onchainWallet, message.outpoints);
-            event.source?.postMessage(Response.unrollSuccess(message.id));
-        } catch (error: unknown) {
-            console.error("Error exiting:", error);
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            event.source?.postMessage(Response.error(message.id, errorMessage));
-        }
-    }
-
-    private async handleCompleteUnroll(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isCompleteUnroll(message)) {
-            console.error("Invalid COMPLETE_UNROLL message format", message);
-            event.source?.postMessage(
-                Response.error(
-                    message.id,
-                    "Invalid COMPLETE_UNROLL message format"
-                )
-            );
-            return;
-        }
-
-        if (!this.wallet) {
-            console.error("Wallet not initialized");
-            event.source?.postMessage(
-                Response.error(message.id, "Wallet not initialized")
-            );
-            return;
-        }
-
-        try {
-            await this.wallet.completeUnroll(
-                message.vtxoTxids,
-                message.outputAddress
-            );
-            event.source?.postMessage(
-                Response.completeUnrollSuccess(message.id)
-            );
-        } catch (error: unknown) {
-            console.error("Error completing unroll:", error);
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            event.source?.postMessage(Response.error(message.id, errorMessage));
-        }
-    }
-
     private async handleSign(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isSign(message)) {
@@ -724,14 +647,6 @@ export class Worker {
             }
             case "GET_STATUS": {
                 await this.handleGetStatus(event);
-                break;
-            }
-            case "UNROLL": {
-                await this.handleUnroll(event);
-                break;
-            }
-            case "COMPLETE_UNROLL": {
-                await this.handleCompleteUnroll(event);
                 break;
             }
             case "CLEAR": {

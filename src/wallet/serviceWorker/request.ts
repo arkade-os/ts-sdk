@@ -1,4 +1,4 @@
-import { SettleParams, SendBitcoinParams, Outpoint, GetVtxosFilter } from "..";
+import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
 
 export namespace Request {
     export type Type =
@@ -14,7 +14,6 @@ export namespace Request {
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
         | "CLEAR"
-        | "COMPLETE_UNROLL"
         | "SIGN";
 
     export interface Base {
@@ -151,23 +150,6 @@ export namespace Request {
 
     export interface Clear extends Base {
         type: "CLEAR";
-    }
-
-    export interface CompleteUnroll extends Base {
-        type: "COMPLETE_UNROLL";
-        vtxoTxids: string[];
-        outputAddress: string;
-    }
-
-    export function isCompleteUnroll(message: Base): message is CompleteUnroll {
-        return (
-            message.type === "COMPLETE_UNROLL" &&
-            "vtxoTxids" in message &&
-            Array.isArray(message.vtxoTxids) &&
-            message.vtxoTxids.every((txid) => typeof txid === "string") &&
-            "outputAddress" in message &&
-            typeof message.outputAddress === "string"
-        );
     }
 
     export interface Sign extends Base {

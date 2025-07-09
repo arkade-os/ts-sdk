@@ -5,7 +5,6 @@ import { SigHash, Transaction } from "@scure/btc-signer";
 import {
     TaprootControlBlock,
     TransactionInput,
-    TransactionInputUpdate,
     TransactionOutput,
 } from "@scure/btc-signer/psbt";
 import { vtxosToTxs } from "../utils/transactionHistory";
@@ -55,22 +54,12 @@ import {
 } from ".";
 import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils";
 import { VtxoScript } from "../script/base";
-import {
-    ConditionCSVMultisigTapscript,
-    CSVMultisigTapscript,
-    RelativeTimelock,
-} from "../script/tapscript";
+import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx } from "../utils/psbt";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
-import {
-    ChainTxType,
-    IndexerProvider,
-    RestIndexerProvider,
-} from "../providers/indexer";
+import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxGraph, TxGraphChunk } from "../tree/txGraph";
-import { AnchorBumper } from "../utils/anchor";
-import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
 // Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
 export class Wallet implements IWallet {
@@ -774,97 +763,6 @@ export class Wallet implements IWallet {
         throw new Error("Settlement failed");
     }
 
-    async completeUnroll(
-        vtxoTxids: string[],
-        outputAddress: string
-    ): Promise<void> {
-        const chainTip = await this.onchainProvider.getChainTip();
-
-        let vtxos = await this.getVtxos({ withUnrolled: true });
-        vtxos = vtxos.filter((vtxo) => vtxoTxids.includes(vtxo.txid));
-
-        if (vtxos.length === 0) {
-            throw new Error("No vtxos to complete unroll");
-        }
-
-        const inputs: TransactionInputUpdate[] = [];
-        let totalAmount = 0n;
-        const txWeightEstimator = TxWeightEstimator.create();
-        for (const vtxo of vtxos) {
-            if (!vtxo.isUnrolled) {
-                throw new Error(
-                    `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`
-                );
-            }
-
-            const txStatus = await this.onchainProvider.getTxStatus(vtxo.txid);
-            if (!txStatus.confirmed) {
-                throw new Error(`tx ${vtxo.txid} is not confirmed`);
-            }
-
-            const exit = availableExitPath(
-                { height: txStatus.blockHeight, time: txStatus.blockTime },
-                chainTip,
-                vtxo
-            );
-            if (!exit) {
-                throw new Error(
-                    `no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`
-                );
-            }
-
-            const spendingLeaf = VtxoScript.decode(vtxo.tapTree).findLeaf(
-                hex.encode(exit.script)
-            );
-            if (!spendingLeaf) {
-                throw new Error(
-                    `spending leaf not found for vtxo ${vtxo.txid}:${vtxo.vout}`
-                );
-            }
-
-            totalAmount += BigInt(vtxo.value);
-            inputs.push({
-                txid: vtxo.txid,
-                index: vtxo.vout,
-                tapLeafScript: [spendingLeaf],
-                sequence: 0xffffffff - 1,
-                witnessUtxo: {
-                    amount: BigInt(vtxo.value),
-                    script: VtxoScript.decode(vtxo.tapTree).pkScript,
-                },
-                sighashType: SigHash.DEFAULT,
-            });
-            txWeightEstimator.addTapscriptInput(
-                64,
-                spendingLeaf[1].length,
-                TaprootControlBlock.encode(spendingLeaf[0]).length
-            );
-        }
-
-        const tx = new Transaction({ allowUnknownInputs: true, version: 2 });
-        for (const input of inputs) {
-            tx.addInput(input);
-        }
-
-        txWeightEstimator.addP2TROutput();
-
-        let feeRate = await this.onchainProvider.getFeeRate();
-        if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
-            feeRate = Wallet.MIN_FEE_RATE;
-        }
-        const feeAmount = txWeightEstimator.vsize().fee(BigInt(feeRate));
-        if (feeAmount > totalAmount) {
-            throw new Error("fee amount is greater than the total amount");
-        }
-
-        tx.addOutputAddress(outputAddress, totalAmount - feeAmount);
-
-        const signedTx = await this.identity.sign(tx);
-        signedTx.finalize();
-
-        await this.onchainProvider.broadcastTransaction(signedTx.hex);
-    }
-
     private async handleBatchStartedEvent(
         event: BatchStartedEvent,
         intentId: string,
@@ -1261,36 +1159,4 @@ function isValidArkAddress(address: string): boolean {
     } catch (e) {
         return false;
     }
-}
-
-type BlockTime = {
-    height: number;
-    time: number;
-};
-
-function availableExitPath(
-    confirmedAt: BlockTime,
-    current: BlockTime,
-    vtxo: ExtendedVirtualCoin
-): CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type | undefined {
-    const exits = VtxoScript.decode(vtxo.tapTree).exitPaths();
-    for (const exit of exits) {
-        if (exit.params.timelock.type === "blocks") {
-            if (
-                current.height >=
-                confirmedAt.height + Number(exit.params.timelock.value)
-            ) {
-                return exit;
-            }
-        } else {
-            if (
-                current.time >=
-                confirmedAt.time + Number(exit.params.timelock.value)
-            ) {
-                return exit;
-            }
-        }
-    }
-
-    return undefined;
 }

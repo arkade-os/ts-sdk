@@ -140,5 +140,4 @@ export interface IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
-    completeUnroll(vtxoTxids: string[], outputAddress: string): Promise<void>;
 }
