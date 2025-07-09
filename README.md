@@ -1,6 +1,8 @@
 # Arkade TypeScript SDK
 The Arkade SDK is a TypeScript library for building Bitcoin wallets with support for both on-chain and off-chain transactions via the Ark protocol.
 
+[![TypeScript Documentation](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
+
 ## Installation
 
 ```bash
@@ -214,160 +216,7 @@ await wallet.init({
 })
 ```
 
-## API Reference
-
-### Wallet
-
-#### Constructor Options
-
-```typescript
-interface WalletConfig {
-  /** Identity for signing transactions */
-  identity: Identity;
-  /** Ark server URL */
-  arkServerUrl: string;
-  /** Optional Esplora API URL */
-  esploraUrl?: string;
-  /** Ark server public key (optional) */
-  arkServerPublicKey?: string;
-  /** Optional boarding timelock configuration */
-  boardingTimelock?: RelativeTimelock;
-  /** Optional exit timelock configuration */
-  exitTimelock?: RelativeTimelock;
-}
-```
-
-#### Methods
-
-```typescript
-interface IWallet {
-  /** Get offchain address */
-  getAddress(): Promise<string>;
-
-  /** Get boarding address */
-  getBoardingAddress(): Promise<string>;
-
-  /** Get wallet balance */
-  getBalance(): Promise<{
-    boarding: {
-      confirmed: number;
-      unconfirmed: number;
-      total: number;
-    };
-    settled: number;
-    preconfirmed: number;
-    available: number;
-    recoverable: number;
-    total: number;
-  }>;
-
-  /** Send bitcoin via Ark */
-  sendBitcoin(params: {
-    address: string;
-    amount: number;
-    feeRate?: number;
-    memo?: string;
-  }): Promise<string>;
-
-  /** Get virtual UTXOs */
-  getVtxos(filter?: { withSpendableInSettlement?: boolean }): Promise<ExtendedVirtualCoin[]>;
-
-  /** Get boarding UTXOs */
-  getBoardingUtxos(): Promise<ExtendedCoin[]>;
-
-  /** Settle transactions */
-  settle(
-    params?: {
-      inputs: ExtendedCoin[];
-      outputs: {
-        address: string;
-        amount: bigint;
-      }[];
-    },
-    eventCallback?: (event: SettlementEvent) => void
-  ): Promise<string>;
-
-  /** Get transaction history */
-  getTransactionHistory(): Promise<ArkTransaction[]>;
-}
-```
-
-### Types
-
-```typescript
-/** Transaction types */
-enum TxType {
-  TxSent = 'SENT',
-  TxReceived = 'RECEIVED'
-}
-
-/** Transaction history entry */
-interface ArkTransaction {
-  key: {
-    boardingTxid: string;
-    commitmentTxid: string;
-    redeemTxid: string;
-  };
-  type: TxType;
-  amount: number;
-  settled: boolean;
-  createdAt: number;
-}
-
-/** Virtual coin (off-chain UTXO) */
-interface ExtendedVirtualCoin {
-  txid: string;
-  vout: number;
-  value: number;
-  virtualStatus: {
-    state: 'pending' | 'settled' | 'swept' | 'spent';
-    commitmentTxIds?: string[];
-    batchExpiry?: number;
-  };
-  spentBy?: string;
-  createdAt: Date;
-  forfeitTapLeafScript: TapLeafScript;
-  intentTapLeafScript: TapLeafScript;
-  tapTree: string;
-  extraWitness?: Bytes[];
-}
-
-/** Boarding UTXO */
-interface ExtendedCoin {
-  txid: string;
-  vout: number;
-  value: number;
-  status: {
-    confirmed: boolean;
-    block_height?: number;
-    block_hash?: string;
-    block_time?: number;
-  };
-  forfeitTapLeafScript: TapLeafScript;
-  intentTapLeafScript: TapLeafScript;
-  tapTree: string;
-  extraWitness?: Bytes[];
-}
-```
-
-### Identity
-
-```typescript
-export interface Identity {
-    sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
-    xOnlyPublicKey(): Uint8Array;
-    signerSession(): SignerSession;
-}
-```
-
-The SDK provides a default implementation of the `Identity` interface: `SingleKey` for managing private keys in memory:
-
-```typescript
-class SingleKey {
-  static fromPrivateKey(privateKey: Uint8Array): SingleKey;
-  static fromHex(privateKeyHex: string): SingleKey;
-}
-```
+_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
 ## Development
 
@@ -420,6 +269,15 @@ pnpm test:watch
 
 # Run tests with coverage
 pnpm test:coverage
+```
+
+### Building the documentation
+
+```bash
+# Build the TS doc
+pnpm docs:build
+# open the docs in the browser
+pnpm docs:open
 ```
 
 ### Releasing
