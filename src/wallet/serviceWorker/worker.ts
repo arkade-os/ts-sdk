@@ -11,8 +11,6 @@ import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
 import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
-import { ArkAddress } from "../../script/address";
-import { VtxoScript } from "../../script/base";
 import { base64, hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { Transaction } from "@scure/btc-signer";
@@ -561,37 +559,6 @@ export class Worker {
         );
     }
 
-    private async handleExit(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isExit(message)) {
-            console.error("Invalid EXIT message format", message);
-            event.source?.postMessage(
-                Response.error(message.id, "Invalid EXIT message format")
-            );
-            return;
-        }
-
-        if (!this.wallet) {
-            console.error("Wallet not initialized");
-            event.source?.postMessage(
-                Response.error(message.id, "Wallet not initialized")
-            );
-            return;
-        }
-
-        try {
-            await this.wallet.exit(message.outpoints);
-            event.source?.postMessage(Response.exitSuccess(message.id));
-        } catch (error: unknown) {
-            console.error("Error exiting:", error);
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            event.source?.postMessage(Response.error(message.id, errorMessage));
-        }
-    }
-
     private async handleSign(event: ExtendableMessageEvent) {
         const message = event.data;
         if (!Request.isSign(message)) {
@@ -680,10 +647,6 @@ export class Worker {
             }
             case "GET_STATUS": {
                 await this.handleGetStatus(event);
-                break;
-            }
-            case "EXIT": {
-                await this.handleExit(event);
                 break;
             }
             case "CLEAR": {

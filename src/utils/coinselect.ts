@@ -8,11 +8,24 @@ import type { Coin, VirtualCoin } from "../wallet";
  */
 export function selectCoins(
     coins: Coin[],
-    targetAmount: number
+    targetAmount: number,
+    forceChange: boolean = false
 ): {
-    inputs: Coin[] | null;
-    changeAmount: number;
+    inputs: Coin[];
+    changeAmount: bigint;
 } {
+    if (isNaN(targetAmount)) {
+        throw new Error("Target amount is NaN, got " + targetAmount);
+    }
+
+    if (targetAmount < 0) {
+        throw new Error("Target amount is negative, got " + targetAmount);
+    }
+
+    if (targetAmount === 0) {
+        return { inputs: [], changeAmount: 0n };
+    }
+
     // Sort coins by amount (descending)
     const sortedCoins = [...coins].sort((a, b) => b.value - a.value);
 
@@ -24,18 +37,24 @@ export function selectCoins(
         selectedCoins.push(coin);
         selectedAmount += coin.value;
 
-        if (selectedAmount >= targetAmount) {
+        if (
+            forceChange
+                ? selectedAmount > targetAmount
+                : selectedAmount >= targetAmount
+        ) {
             break;
         }
     }
 
-    // Check if we have enough
-    if (selectedAmount < targetAmount) {
-        return { inputs: null, changeAmount: 0 };
+    if (selectedAmount === targetAmount) {
+        return { inputs: selectedCoins, changeAmount: 0n };
     }
 
-    // Calculate change
-    const changeAmount = selectedAmount - targetAmount;
+    if (selectedAmount < targetAmount) {
+        throw new Error("Insufficient funds");
+    }
+
+    const changeAmount = BigInt(selectedAmount - targetAmount);
 
     return {
         inputs: selectedCoins,
@@ -53,8 +72,8 @@ export function selectVirtualCoins(
     coins: VirtualCoin[],
     targetAmount: number
 ): {
-    inputs: VirtualCoin[] | null;
-    changeAmount: number;
+    inputs: VirtualCoin[];
+    changeAmount: bigint;
 } {
     // Sort VTXOs by expiry (ascending) and amount (descending)
     const sortedCoins = [...coins].sort((a, b) => {
@@ -82,13 +101,16 @@ export function selectVirtualCoins(
         }
     }
 
-    // Check if we have enough
-    if (selectedAmount < targetAmount) {
-        return { inputs: null, changeAmount: 0 };
+    if (selectedAmount === targetAmount) {
+        return { inputs: selectedCoins, changeAmount: 0n };
     }
 
-    // Calculate change
-    const changeAmount = selectedAmount - targetAmount;
+    // Check if we have enough
+    if (selectedAmount < targetAmount) {
+        throw new Error("Insufficient funds");
+    }
+
+    const changeAmount = BigInt(selectedAmount - targetAmount);
 
     return {
         inputs: selectedCoins,

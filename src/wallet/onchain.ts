@@ -9,13 +9,16 @@ import {
 } from "../providers/onchain";
 import { Transaction } from "@scure/btc-signer";
 import { selectCoins } from "../utils/coinselect";
+import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
+import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
-export class OnchainWallet {
-    static FEE_RATE = 1; // sats/vbyte
+export class OnchainWallet implements AnchorBumper {
+    static MIN_FEE_RATE = 1; // sat/vbyte
     static DUST_AMOUNT = 546; // sats
-    private onchainP2TR: P2TR;
-    private provider: OnchainProvider;
-    private network: Network;
+
+    readonly onchainP2TR: P2TR;
+    readonly provider: OnchainProvider;
+    readonly network: Network;
 
     constructor(
         private identity: Identity,
@@ -61,7 +64,14 @@ export class OnchainWallet {
         }
 
         const coins = await this.getCoins();
-        const feeRate = params.feeRate || OnchainWallet.FEE_RATE;
+        let feeRate = params.feeRate;
+        if (!feeRate) {
+            feeRate = await this.provider.getFeeRate();
+        }
+
+        if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) {
+            feeRate = OnchainWallet.MIN_FEE_RATE;
+        }
 
         // Ensure fee is an integer by rounding up
         const estimatedFee = Math.ceil(174 * feeRate);
@@ -69,9 +79,6 @@ export class OnchainWallet {
 
         // Select coins
         const selected = selectCoins(coins, totalNeeded);
-        if (!selected.inputs) {
-            throw new Error("Insufficient funds");
-        }
 
         // Create transaction
         let tx = new Transaction();
@@ -96,10 +103,10 @@ export class OnchainWallet {
             this.network
         );
         // Add change output if needed
-        if (selected.changeAmount > 0) {
+        if (selected.changeAmount > 0n) {
             tx.addOutputAddress(
                 this.address,
-                BigInt(selected.changeAmount),
+                selected.changeAmount,
                 this.network
             );
         }
@@ -111,5 +118,71 @@ export class OnchainWallet {
         // Broadcast
         const txid = await this.provider.broadcastTransaction(tx.hex);
         return txid;
+    }
+
+    async bumpP2A(parent: Transaction): Promise<[string, string]> {
+        const parentVsize = parent.vsize;
+
+        let child = new Transaction({
+            allowUnknownInputs: true,
+            allowLegacyWitnessUtxo: true,
+            version: 3,
+        });
+        child.addInput(findP2AOutput(parent)); // throws if not found
+
+        const childVsize = TxWeightEstimator.create()
+            .addKeySpendInput(true)
+            .addP2AInput()
+            .addP2TROutput()
+            .vsize().value;
+
+        const packageVSize = parentVsize + Number(childVsize);
+
+        let feeRate = await this.provider.getFeeRate();
+        if (!feeRate || feeRate < OnchainWallet.MIN_FEE_RATE) {
+            feeRate = OnchainWallet.MIN_FEE_RATE;
+        }
+        const fee = Math.ceil(feeRate * packageVSize);
+        if (!fee) {
+            throw new Error(
+                `invalid fee, got ${fee} with vsize ${packageVSize}, feeRate ${feeRate}`
+            );
+        }
+
+        // Select coins
+        const coins = await this.getCoins();
+        const selected = selectCoins(coins, fee, true);
+
+        for (const input of selected.inputs) {
+            child.addInput({
+                txid: input.txid,
+                index: input.vout,
+                witnessUtxo: {
+                    script: this.onchainP2TR.script,
+                    amount: BigInt(input.value),
+                },
+                tapInternalKey: this.onchainP2TR.tapInternalKey,
+            });
+        }
+
+        child.addOutputAddress(
+            this.address,
+            P2A.amount + selected.changeAmount,
+            this.network
+        );
+
+        // Sign inputs and Finalize
+        child = await this.identity.sign(child);
+        for (let i = 1; i < child.inputsLength; i++) {
+            child.finalizeIdx(i);
+        }
+
+        try {
+            await this.provider.broadcastTransaction(parent.hex, child.hex);
+        } catch (error) {
+            console.error(error);
+        } finally {
+            return [parent.hex, child.hex];
+        }
     }
 }

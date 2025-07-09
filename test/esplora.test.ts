@@ -54,11 +54,7 @@ describe("EsploraProvider", () => {
 
     describe("getFeeRate", () => {
         const mockFeeResponse = {
-            fastestFee: 100,
-            halfHourFee: 80,
-            hourFee: 60,
-            economyFee: 40,
-            minimumFee: 20,
+            "1": 80,
         };
 
         it("should fetch and return fee rate", async () => {
@@ -71,9 +67,9 @@ describe("EsploraProvider", () => {
             const feeRate = await provider.getFeeRate();
 
             expect(mockFetch).toHaveBeenCalledWith(
-                "http://localhost:3000/v1/fees/recommended"
+                "http://localhost:3000/fee-estimates"
             );
-            expect(feeRate).toBe(80); // halfHourFee
+            expect(feeRate).toBe(80);
         });
 
         it("should throw error on failed fetch", async () => {

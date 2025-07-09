@@ -12,6 +12,7 @@ export class TxWeightEstimator {
     static readonly BASE_TX_SIZE = 8 + 2; // Version + LockTime
     static readonly WITNESS_HEADER_SIZE = 2; // Flag + Marker
     static readonly WITNESS_SCALE_FACTOR = 4;
+    static readonly P2TR_OUTPUT_SIZE = 1 + 1 + 32;
 
     public hasWitness: boolean;
     public inputCount: number;
@@ -38,6 +39,12 @@ export class TxWeightEstimator {
 
     static create(): TxWeightEstimator {
         return new TxWeightEstimator(false, 0, 0, 0, 0, 0);
+    }
+
+    addP2AInput(): TxWeightEstimator {
+        this.inputCount++;
+        this.inputSize += TxWeightEstimator.INPUT_SIZE;
+        return this;
     }
 
     addKeySpendInput(isDefault: boolean = true): TxWeightEstimator {
@@ -82,6 +89,13 @@ export class TxWeightEstimator {
         this.outputCount++;
         this.outputSize +=
             TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2WKH_OUTPUT_SIZE;
+        return this;
+    }
+
+    addP2TROutput(): TxWeightEstimator {
+        this.outputCount++;
+        this.outputSize +=
+            TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2TR_OUTPUT_SIZE;
         return this;
     }
 

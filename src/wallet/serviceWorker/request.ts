@@ -1,4 +1,4 @@
-import { SettleParams, SendBitcoinParams, Outpoint, GetVtxosFilter } from "..";
+import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
 
 export namespace Request {
     export type Type =
@@ -14,7 +14,6 @@ export namespace Request {
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
         | "CLEAR"
-        | "EXIT"
         | "SIGN";
 
     export interface Base {
@@ -151,15 +150,6 @@ export namespace Request {
 
     export interface Clear extends Base {
         type: "CLEAR";
-    }
-
-    export interface Exit extends Base {
-        type: "EXIT";
-        outpoints?: Outpoint[];
-    }
-
-    export function isExit(message: Base): message is Exit {
-        return message.type === "EXIT";
     }
 
     export interface Sign extends Base {

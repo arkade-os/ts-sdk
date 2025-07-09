@@ -57,6 +57,7 @@ import { ArkNote } from "./arknote";
 import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
 import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks } from "./networks";
+import { AnchorBumper, P2A } from "./utils/anchor";
 import {
     RestIndexerProvider,
     IndexerProvider,
@@ -71,6 +72,7 @@ import {
     VtxoChain,
     Tx,
 } from "./providers/indexer";
+import { Unroll } from "./wallet/unroll";
 
 export {
     // Classes
@@ -136,6 +138,10 @@ export {
 
     // TxGraph
     TxGraph,
+
+    // Anchor
+    P2A,
+    Unroll,
 };
 
 // Type exports
@@ -178,4 +184,7 @@ export type {
 
     // TxGraph
     TxGraphChunk,
+
+    // Anchor
+    AnchorBumper,
 };

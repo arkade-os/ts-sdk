@@ -72,6 +72,7 @@ export interface VirtualCoin extends Coin {
     settledBy?: string;
     arkTxId?: string;
     createdAt: Date;
+    isUnrolled: boolean;
 }
 
 export enum TxType {
@@ -120,6 +121,7 @@ export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
 
 export type GetVtxosFilter = {
     withRecoverable?: boolean; // include the swept but unspent
+    withUnrolled?: boolean; // include the unrolled vtxos
 };
 
 export interface IWallet {
@@ -138,5 +140,4 @@ export interface IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
-    exit(outpoints?: Outpoint[]): Promise<void>;
 }

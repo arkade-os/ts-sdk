@@ -17,7 +17,6 @@ export namespace Response {
         | "WALLET_STATUS"
         | "ERROR"
         | "CLEAR_RESPONSE"
-        | "EXIT_SUCCESS"
         | "SIGN_SUCCESS";
 
     export interface Base {
@@ -297,19 +296,6 @@ export namespace Response {
         return {
             type: "CLEAR_RESPONSE",
             success,
-            id,
-        };
-    }
-
-    export interface ExitSuccess extends Base {
-        type: "EXIT_SUCCESS";
-        success: true;
-    }
-
-    export function exitSuccess(id: string): ExitSuccess {
-        return {
-            type: "EXIT_SUCCESS",
-            success: true,
             id,
         };
     }
