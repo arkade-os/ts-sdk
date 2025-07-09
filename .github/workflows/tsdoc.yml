@@ -92,6 +92,11 @@ jobs:
           EOF
           fi
 
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
