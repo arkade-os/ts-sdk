@@ -25,7 +25,7 @@ import {
     TapLeaves,
 } from "./wallet";
 import { Wallet } from "./wallet/wallet";
-import { TxTree, TxTreeChunk } from "./tree/txTree";
+import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
     SignerSession,
     TreeNonces,
@@ -259,5 +259,5 @@ export type {
     ArkPsbtFieldCoder,
 
     // TxTree
-    TxTreeChunk,
+    TxTreeNode,
 };

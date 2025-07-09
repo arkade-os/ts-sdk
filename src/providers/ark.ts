@@ -1,4 +1,4 @@
-import { TxTreeChunk } from "../tree/txTree";
+import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
@@ -62,7 +62,7 @@ export type TreeTxEvent = {
     id: string;
     topic: string[];
     batchIndex: number;
-    chunk: TxTreeChunk;
+    chunk: TxTreeNode;
 };
 
 export type TreeSignatureEvent = {

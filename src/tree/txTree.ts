@@ -3,7 +3,7 @@ import { base64 } from "@scure/base";
 import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 
-export type TxTreeChunk = {
+export type TxTreeNode = {
     txid: string;
     // base64 encoded root transaction
     tx: string;
@@ -11,7 +11,7 @@ export type TxTreeChunk = {
     children: Record<number, string>;
 };
 
-type DecodedChunk = {
+type DecodedNode = {
     tx: Transaction;
     children: Record<number, string>;
 };
@@ -22,16 +22,16 @@ export class TxTree implements Iterable<TxTree> {
         readonly children: Map<number, TxTree> = new Map()
     ) {}
 
-    static create(chunks: TxTreeChunk[]): TxTree {
+    static create(chunks: TxTreeNode[]): TxTree {
         if (chunks.length === 0) {
             throw new Error("empty chunks");
         }
 
         // Create a map to store all chunks by their txid for easy lookup
-        const chunksByTxid = new Map<string, DecodedChunk>();
+        const chunksByTxid = new Map<string, DecodedNode>();
 
         for (const chunk of chunks) {
-            const decodedChunk = decodeChunk(chunk);
+            const decodedChunk = decodeNode(chunk);
             const txid = hex.encode(
                 sha256x2(decodedChunk.tx.toBytes(true)).reverse()
             );
@@ -225,14 +225,14 @@ export class TxTree implements Iterable<TxTree> {
 }
 
 // Helper function to check if a chunk has a specific child
-function hasChild(chunk: DecodedChunk, childTxid: string): boolean {
+function hasChild(chunk: DecodedNode, childTxid: string): boolean {
     return Object.values(chunk.children).includes(childTxid);
 }
 
 // buildGraph recursively builds the TxGraph starting from the given txid
 function buildGraph(
     rootTxid: string,
-    chunksByTxid: Map<string, DecodedChunk>
+    chunksByTxid: Map<string, DecodedNode>
 ): TxTree | null {
     const chunk = chunksByTxid.get(rootTxid);
     if (!chunk) {
@@ -254,7 +254,7 @@ function buildGraph(
     return new TxTree(rootTx, children);
 }
 
-function decodeChunk(chunk: TxTreeChunk): DecodedChunk {
+function decodeNode(chunk: TxTreeNode): DecodedNode {
     const tx = Transaction.fromPSBT(base64.decode(chunk.tx));
     return { tx, children: chunk.children };
 }

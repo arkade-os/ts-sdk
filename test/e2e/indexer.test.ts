@@ -5,7 +5,7 @@ import {
     Outpoint,
     RestIndexerProvider,
     TxTree,
-    TxTreeChunk,
+    TxTreeNode,
     ChainTxType,
 } from "../../src";
 import { hex } from "@scure/base";
@@ -344,7 +344,7 @@ describe("Indexer provider", () => {
             vout: 0,
         });
 
-        const chunks: TxTreeChunk[] = [];
+        const chunks: TxTreeNode[] = [];
         for (const vtxoTreeTx of treeResponse.vtxoTree) {
             const virtualTxs = await indexerProvider.getVirtualTxs([
                 vtxoTreeTx.txid,
@@ -402,7 +402,7 @@ describe("Indexer provider", () => {
             expect(connectors.connectors).toBeDefined();
             expect(connectors.connectors.length).toBeGreaterThanOrEqual(1);
 
-            const chunks: TxTreeChunk[] = [];
+            const chunks: TxTreeNode[] = [];
             for (const connector of connectors.connectors) {
                 const virtualTxs = await indexerProvider.getVirtualTxs([
                     connector.txid,

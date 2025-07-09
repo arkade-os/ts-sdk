@@ -58,7 +58,7 @@ import { buildOffchainTx } from "../utils/arkTransaction";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
-import { TxTree, TxTreeChunk } from "../tree/txTree";
+import { TxTree, TxTreeNode } from "../tree/txTree";
 
 /**
  * Main wallet implementation for Bitcoin transactions with Ark protocol support.
@@ -601,8 +601,8 @@ export class Wallet implements IWallet {
             let roundId: string | undefined;
             let sweepTapTreeRoot: Uint8Array | undefined;
 
-            const vtxoChunks: TxTreeChunk[] = [];
-            const connectorsChunks: TxTreeChunk[] = [];
+            const vtxoChunks: TxTreeNode[] = [];
+            const connectorsChunks: TxTreeNode[] = [];
 
             let vtxoGraph: TxTree | undefined;
             let connectorsGraph: TxTree | undefined;
