@@ -1,4 +1,4 @@
-import { ArkTransaction, TxType, Outpoint, VirtualCoin } from "../wallet";
+import { Outpoint, VirtualCoin } from "../wallet";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -555,31 +555,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         settledBy: vtxo.settledBy,
         arkTxId: vtxo.arkTxid,
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
-    };
-}
-
-function convertType(type: IndexerTxType): TxType {
-    switch (type) {
-        case IndexerTxType.INDEXER_TX_TYPE_RECEIVED:
-            return TxType.TxReceived;
-        case IndexerTxType.INDEXER_TX_TYPE_SENT:
-            return TxType.TxSent;
-        default:
-            throw new Error(`Unknown transaction type: ${type}`);
-    }
-}
-
-function convertTransaction(tx: TxHistoryRecord): ArkTransaction {
-    return {
-        key: {
-            boardingTxid: "",
-            commitmentTxid: tx.commitmentTxid ?? "",
-            arkTxid: tx.virtualTxid ?? "",
-        },
-        amount: Number(tx.amount),
-        type: convertType(tx.type),
-        settled: tx.isSettled,
-        createdAt: Number(tx.createdAt) * 1000,
+        isUnrolled: vtxo.isUnrolled,
     };
 }
 

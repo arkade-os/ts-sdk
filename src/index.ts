@@ -110,6 +110,8 @@ import {
 } from "./providers/indexer";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
+import { AnchorBumper, P2A } from "./utils/anchor";
+import { Unroll } from "./wallet/unroll";
 
 export {
     // Wallets
@@ -176,6 +178,10 @@ export {
 
     // TxTree
     TxTree,
+
+    // Anchor
+    P2A,
+    Unroll,
 };
 
 export type {
@@ -260,4 +266,7 @@ export type {
 
     // TxTree
     TxTreeNode,
+
+    // Anchor
+    AnchorBumper,
 };

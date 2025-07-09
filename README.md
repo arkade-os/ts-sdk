@@ -94,13 +94,68 @@ console.log('History:', history)
 
 ### Unilateral Exit
 
-```typescript
-// Unilateral exit all vtxos
-await wallet.exit();
+Unilateral exit allows you to withdraw your funds from the Ark protocol back to the Bitcoin blockchain without requiring cooperation from the Ark server. This process involves two main steps:
 
-// Unilateral exit a specific vtxo
-await wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
+1. **Unrolling**: Broadcasting the transaction chain from off-chain back to on-chain
+2. **Completing the exit**: Spending the unrolled VTXOs after the timelock expires
+
+#### Step 1: Unrolling VTXOs
+
+```typescript
+import { Unroll, OnchainWallet } from '@arkade-os/sdk'
+
+// Create an onchain wallet to pay for P2A outputs in VTXO branches
+// OnchainWallet implements the AnchorBumper interface
+const onchainWallet = new OnchainWallet(wallet.identity, 'regtest');
+
+// Unroll a specific VTXO
+const vtxo = { txid: 'your_vtxo_txid', vout: 0 };
+const session = await Unroll.Session.create(
+  vtxo,
+  onchainWallet,
+  onchainWallet.provider,
+  wallet.indexerProvider
+);
+
+// Iterate through the unrolling steps
+for await (const step of session) {
+  switch (step.type) {
+    case Unroll.StepType.WAIT:
+      console.log(`Waiting for transaction ${step.txid} to be confirmed`);
+      break;
+    case Unroll.StepType.UNROLL:
+      console.log(`Broadcasting transaction ${step.tx.id}`);
+      break;
+    case Unroll.StepType.DONE:
+      console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
+      break;
+  }
+}
 ```
+
+The unrolling process works by:
+- Traversing the transaction chain from the root (most recent) to the leaf (oldest)
+- Broadcasting each transaction that isn't already on-chain
+- Waiting for confirmations between steps
+- Using P2A (Pay-to-Anchor) transactions to pay for fees
+
+#### Step 2: Completing the Exit
+
+Once VTXOs are fully unrolled and the unilateral exit timelock has expired, you can complete the exit:
+
+```typescript
+// Complete the exit for specific VTXOs
+await wallet.completeUnroll(
+  [vtxo.txid], // Array of VTXO transaction IDs to complete
+  onchainWallet.address // Address to receive the exit amount
+);
+```
+
+**Important Notes:**
+- Each VTXO may require multiple unroll steps depending on the transaction chain length
+- Each unroll step must be confirmed before proceeding to the next
+- The `completeUnroll` method can only be called after VTXOs are fully unrolled and the timelock has expired
+- You need sufficient on-chain funds in the `OnchainWallet` to pay for P2A transaction fees
 
 ### Running the wallet in a service worker
 
