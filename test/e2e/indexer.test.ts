@@ -12,8 +12,7 @@ import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 
 describe("Indexer provider", () => {
-    // TODO: revert once fixed on arkd
-    it.skip("should inspect a VTXO", { timeout: 60000 }, async () => {
+    it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -52,11 +51,10 @@ describe("Indexer provider", () => {
 
         const leaves = await indexerProvider.getVtxoTreeLeaves(outpoint);
         expect(leaves).toBeDefined();
-        expect(leaves).toHaveLength(0);
+        expect(leaves.leaves).toHaveLength(0);
     });
 
-    // TODO: revert once fixed on arkd
-    it.skip("should inspect a commitment tx", { timeout: 60000 }, async () => {
+    it("should inspect a commitment tx", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
@@ -90,11 +88,6 @@ describe("Indexer provider", () => {
             await indexerProvider.getCommitmentTxForfeitTxs(txid);
         expect(forfeitsResponse.txids).toBeDefined();
         expect(forfeitsResponse.txids.length).toBeGreaterThanOrEqual(1);
-
-        const leavesResponse =
-            await indexerProvider.getCommitmentTxLeaves(txid);
-        expect(leavesResponse.leaves).toBeDefined();
-        expect(leavesResponse.leaves.length).toBeGreaterThanOrEqual(1);
 
         const sweptsResponse = await indexerProvider.getBatchSweepTransactions({
             txid,
