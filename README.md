@@ -34,32 +34,12 @@ console.log('Boarding Address:', boardingAddress)
 
 ### Onboarding
 
-Onboarding allows you to swap onchain boarding UTXOs to VTXOs
+Onboarding allows you to swap onchain funds into VTXOs
 
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
 
 const onboardTxid = await new Ramps(wallet).onboard();
-```
-
-### Sending Bitcoin
-
-```typescript
-// Send bitcoin via Ark
-const txid = await wallet.sendBitcoin({
-  address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
-  amount: 50000,  // in satoshis
-  feeRate: 1      // optional, in sats/vbyte
-})
-
-// For settling transactions
-const settleTxid = await wallet.settle({
-  inputs, // from getVtxos() or getBoardingUtxos()
-  outputs: [{
-    address: destinationAddress,
-    amount: BigInt(amount)
-  }]
-})
 ```
 
 ### Checking Balance
@@ -80,6 +60,33 @@ const virtualCoins = await wallet.getVtxos()
 // Get boarding UTXOs
 const boardingUtxos = await wallet.getBoardingUtxos()
 ```
+
+### Sending Bitcoin
+
+```typescript
+// Send bitcoin via Ark
+const txid = await wallet.sendBitcoin({
+  address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+  amount: 50000,  // in satoshis
+  feeRate: 1      // optional, in sats/vbyte
+})
+```
+
+### Batch Settlements 
+
+This can be used to move preconfirmed balances into finalized balances, to convert manually UTXOs and VTXOs.
+
+```typescript
+// For settling transactions
+const settleTxid = await wallet.settle({
+  inputs, // from getVtxos() or getBoardingUtxos()
+  outputs: [{
+    address: destinationAddress,
+    amount: BigInt(amount)
+  }]
+})
+```
+
 
 ### Transaction History
 
