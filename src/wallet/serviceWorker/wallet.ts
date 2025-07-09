@@ -13,7 +13,7 @@ import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { base64, hex } from "@scure/base";
-import { InMemoryKey } from "../../identity/inMemoryKey";
+import { SingleKey } from "../../identity/singleKey";
 import { Identity } from "../../identity";
 import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
 import { Transaction } from "@scure/btc-signer";
@@ -112,7 +112,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         const privKeyBytes = hex.decode(config.privateKey);
         // cache the identity xOnlyPublicKey
         this.cachedXOnlyPublicKey =
-            InMemoryKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
+            SingleKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
     }
 
     async clear() {

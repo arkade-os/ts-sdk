@@ -68,7 +68,7 @@ import { TxTree, TxTreeNode } from "../tree/txTree";
  * ```typescript
  * // Create a wallet
  * const wallet = await Wallet.create({
- *   identity: InMemoryKey.fromHex('your_private_key'),
+ *   identity: SingleKey.fromHex('your_private_key'),
  *   arkServerUrl: 'https://ark.example.com',
  *   esploraUrl: 'https://mempool.space/api'
  * });

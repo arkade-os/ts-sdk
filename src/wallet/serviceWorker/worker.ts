@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
-import { InMemoryKey } from "../../identity/inMemoryKey";
+import { SingleKey } from "../../identity/singleKey";
 import { isSpendable, isSubdust } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
@@ -15,8 +15,10 @@ import { base64, hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { Transaction } from "@scure/btc-signer";
 
-// Worker is a class letting to interact with ServiceWorkerWallet from the client
-// it aims to be run in a service worker context
+/**
+ * Worker is a class letting to interact with ServiceWorkerWallet from the client
+ * it aims to be run in a service worker context
+ */
 export class Worker {
     private wallet: Wallet | undefined;
     private arkProvider: ArkProvider | undefined;
@@ -167,7 +169,7 @@ export class Worker {
             );
 
             this.wallet = await Wallet.create({
-                identity: InMemoryKey.fromHex(message.privateKey),
+                identity: SingleKey.fromHex(message.privateKey),
                 arkServerUrl: message.arkServerUrl,
                 arkServerPublicKey: message.arkServerPublicKey,
             });

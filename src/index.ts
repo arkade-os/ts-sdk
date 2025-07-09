@@ -1,4 +1,4 @@
-import { InMemoryKey } from "./identity/inMemoryKey";
+import { SingleKey } from "./identity/singleKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -117,7 +117,7 @@ export {
     // Wallets
     Wallet,
     ServiceWorkerWallet,
-    InMemoryKey,
+    SingleKey,
     OnchainWallet,
 
     // Providers
