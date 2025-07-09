@@ -32,6 +32,16 @@ console.log('Ark Address:', arkAddress)
 console.log('Boarding Address:', boardingAddress)
 ```
 
+### Onboarding
+
+Onboarding allows you to swap onchain boarding UTXOs to VTXOs
+
+```typescript
+import { Ramps } from '@arkade-os/sdk'
+
+const onboardTxid = await new Ramps(wallet).onboard();
+```
+
 ### Sending Bitcoin
 
 ```typescript
@@ -92,6 +102,16 @@ console.log('History:', history)
 }
 ```
 
+### Offboarding
+
+Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an onchain address.
+
+```typescript
+import { Ramps } from '@arkade-os/sdk'
+
+const exitTxid = await new Ramps(wallet).offboard(onchainAddress);
+```
+
 ### Unilateral Exit
 
 Unilateral exit allows you to withdraw your funds from the Ark protocol back to the Bitcoin blockchain without requiring cooperation from the Ark server. This process involves two main steps:
@@ -145,7 +165,8 @@ Once VTXOs are fully unrolled and the unilateral exit timelock has expired, you 
 
 ```typescript
 // Complete the exit for specific VTXOs
-await wallet.completeUnroll(
+await Unroll.completeUnroll(
+  wallet,
   [vtxo.txid], // Array of VTXO transaction IDs to complete
   onchainWallet.address // Address to receive the exit amount
 );
@@ -261,9 +282,6 @@ interface IWallet {
 
   /** Get transaction history */
   getTransactionHistory(): Promise<ArkTransaction[]>;
-
-  /** Exit vtxos unilaterally */
-  exit(outpoints?: Outpoint[]): Promise<void>;
 }
 ```
 

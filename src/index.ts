@@ -23,6 +23,7 @@ import {
     TxKey,
 } from "./wallet/index";
 import { Wallet } from "./wallet/wallet";
+import { Ramps } from "./wallet/ramps";
 import { TxGraph, TxGraphChunk } from "./tree/txGraph";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
@@ -80,6 +81,7 @@ export {
     ServiceWorkerWallet,
     InMemoryKey,
     OnchainWallet,
+    Ramps,
 
     // Providers
     ESPLORA_URL,

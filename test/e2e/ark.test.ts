@@ -15,6 +15,7 @@ import {
     setArkPsbtField,
     OnchainWallet,
     Unroll,
+    Ramps,
 } from "../../src";
 import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -44,26 +45,13 @@ describe("Ark integration tests", () => {
         const alice = await createTestArkWallet();
 
         const boardingAddress = await alice.wallet.getBoardingAddress();
-        const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
         execSync(`nigiri faucet ${boardingAddress} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
-        const boardingInputs = await alice.wallet.getBoardingUtxos();
-        expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
-
-        const settleTxid = await alice.wallet.settle({
-            inputs: boardingInputs,
-            outputs: [
-                {
-                    address: offchainAddress!,
-                    amount: BigInt(100000),
-                },
-            ],
-        });
-
+        const settleTxid = await new Ramps(alice.wallet).onboard();
         expect(settleTxid).toBeDefined();
     });
 
@@ -594,18 +582,9 @@ describe("Ark integration tests", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 2000));
 
-        const vtxos = await alice.wallet.getVtxos();
-        expect(vtxos).toHaveLength(1);
-
-        const exitTxid = await alice.wallet.settle({
-            inputs: vtxos,
-            outputs: [
-                {
-                    address: onchainAlice.wallet.address,
-                    amount: BigInt(fundAmount),
-                },
-            ],
-        });
+        const exitTxid = await new Ramps(alice.wallet).offboard(
+            onchainAlice.wallet.address
+        );
 
         expect(exitTxid).toBeDefined();
     });
