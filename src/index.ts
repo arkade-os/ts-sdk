@@ -24,7 +24,7 @@ import {
     GetVtxosFilter,
     TapLeaves,
 } from "./wallet";
-import { Wallet } from "./wallet/wallet";
+import { Wallet, waitForIncomingFunds, IncomingFunds } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
     SignerSession,
@@ -109,6 +109,7 @@ import {
     Tx,
     Vtxo,
     PaginationOptions,
+    SubscriptionResponse,
 } from "./providers/indexer";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
@@ -167,6 +168,7 @@ export {
     VtxoTaprootTree,
     ConditionWitness,
     buildOffchainTx,
+    waitForIncomingFunds,
 
     // Arknote
     ArkNote,
@@ -211,6 +213,7 @@ export type {
     VirtualTxInput,
     OffchainTx,
     TapLeaves,
+    IncomingFunds,
 
     // Indexer types
     IndexerProvider,
@@ -242,6 +245,7 @@ export type {
     TreeSignatureEvent,
     MarketHour,
     PaginationOptions,
+    SubscriptionResponse,
 
     // Network types
     Network,

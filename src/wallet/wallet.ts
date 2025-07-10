@@ -36,6 +36,7 @@ import {
 import { Identity } from "../identity";
 import {
     ArkTransaction,
+    Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
@@ -58,6 +59,16 @@ import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree, TxTreeNode } from "../tree/txTree";
+
+export type IncomingFunds =
+    | {
+          type: "utxo";
+          coins: Coin[];
+      }
+    | {
+          type: "vtxo";
+          vtxos: VirtualCoin[];
+      };
 
 /**
  * Main wallet implementation for Bitcoin transactions with Ark protocol support.
@@ -786,6 +797,95 @@ export class Wallet implements IWallet {
         throw new Error("Settlement failed");
     }
 
+    async notifyIncomingFunds(
+        eventCallback: (coins: IncomingFunds) => void
+    ): Promise<() => void> {
+        const arkAddress = await this.getAddress();
+        const boardingAddress = await this.getBoardingAddress();
+
+        let onchainStopFunc: () => void;
+        let indexerStopFunc: () => void;
+
+        if (this.onchainProvider && boardingAddress) {
+            onchainStopFunc = await this.onchainProvider.watchAddresses(
+                [boardingAddress],
+                (txs) => {
+                    const coins: Coin[] = txs
+                        .map((tx) => {
+                            const vout = tx.vout.findIndex(
+                                (v) =>
+                                    v.scriptpubkey_address === boardingAddress
+                            );
+
+                            if (vout === -1) {
+                                console.warn(
+                                    `No vout found for address ${boardingAddress} in transaction ${tx.txid}`
+                                );
+                                return null;
+                            }
+
+                            return {
+                                txid: tx.txid,
+                                vout,
+                                value: Number(tx.vout[vout].value),
+                                status: tx.status,
+                            };
+                        })
+                        .filter((coin) => coin !== null);
+                    eventCallback({
+                        type: "utxo",
+                        coins,
+                    });
+                }
+            );
+        }
+
+        if (this.indexerProvider && arkAddress) {
+            const offchainScript = this.offchainTapscript;
+
+            const subscriptionId =
+                await this.indexerProvider.subscribeForScripts([
+                    hex.encode(offchainScript.pkScript),
+                ]);
+
+            const abortController = new AbortController();
+            const subscription = this.indexerProvider.getSubscription(
+                subscriptionId,
+                abortController.signal
+            );
+
+            indexerStopFunc = async () => {
+                abortController.abort();
+                await this.indexerProvider?.unsubscribeForScripts(
+                    subscriptionId
+                );
+            };
+
+            // Handle subscription updates asynchronously without blocking
+            (async () => {
+                try {
+                    for await (const update of subscription) {
+                        if (update.newVtxos?.length > 0) {
+                            eventCallback({
+                                type: "vtxo",
+                                vtxos: update.newVtxos,
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error("Subscription error:", error);
+                }
+            })();
+        }
+
+        const stopFunc = () => {
+            onchainStopFunc?.();
+            indexerStopFunc?.();
+        };
+
+        return stopFunc;
+    }
+
     private async handleBatchStartedEvent(
         event: BatchStartedEvent,
         intentId: string,
@@ -1190,7 +1290,7 @@ function isValidArkAddress(address: string): boolean {
  * @param targetAmount Target amount to reach in satoshis
  * @returns Selected coins and change amount
  */
-export function selectVirtualCoins(
+function selectVirtualCoins(
     coins: VirtualCoin[],
     targetAmount: number
 ): {
@@ -1238,4 +1338,28 @@ export function selectVirtualCoins(
         inputs: selectedCoins,
         changeAmount,
     };
+}
+
+/**
+ * Wait for incoming funds to the wallet
+ * @param wallet - The wallet to wait for incoming funds
+ * @returns A promise that resolves the next new coins received by the wallet's address
+ */
+export async function waitForIncomingFunds(
+    wallet: Wallet
+): Promise<IncomingFunds> {
+    let stopFunc: (() => void) | undefined;
+
+    const promise = new Promise<IncomingFunds>((resolve) => {
+        wallet
+            .notifyIncomingFunds((coins: IncomingFunds) => {
+                resolve(coins);
+                if (stopFunc) stopFunc();
+            })
+            .then((stop) => {
+                stopFunc = stop;
+            });
+    });
+
+    return promise;
 }

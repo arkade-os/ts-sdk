@@ -26,12 +26,25 @@ const wallet = await Wallet.create({
   esploraUrl: 'https://mutinynet.com/api', 
   arkServerUrl: 'https://mutinynet.arkade.sh',
 })
+```
 
+### Receiving Bitcoin
+
+```typescript
 // Get wallet addresses
 const arkAddress = await wallet.getAddress()
 const boardingAddress = await wallet.getBoardingAddress()
 console.log('Ark Address:', arkAddress)
 console.log('Boarding Address:', boardingAddress)
+
+const incomingFunds = await waitForIncomingFunds(wallet)
+if (incomingFunds.type === "vtxo") {
+  // virtual coins received 
+  console.log("VTXOs: ", incomingFunds.vtxos)
+} else if (incomingFunds.type === "utxo") {
+  // boarding coins received
+  console.log("UTXOs: ", incomingFunds.coins)
+}
 ```
 
 ### Onboarding
