@@ -146,6 +146,15 @@ export interface IndexerProvider {
     ): Promise<void>;
 }
 
+/**
+ * REST-based Indexer provider implementation.
+ * @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.IndexerService
+ * @example
+ * ```typescript
+ * const provider = new RestIndexerProvider('https://ark.indexer.example.com');
+ * const commitmentTx = await provider.getCommitmentTx("6686af8f3be3517880821f62e6c3d749b9d6713736a1d8e229a55daa659446b2");
+ * ```
+ */
 export class RestIndexerProvider implements IndexerProvider {
     constructor(public serverUrl: string) {}
 

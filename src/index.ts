@@ -160,10 +160,10 @@ export {
     getArkPsbtFields,
     CosignerPublicKey,
     VtxoTreeExpiry,
-
-    // Utils
     VtxoTaprootTree,
     ConditionWitness,
+
+    // Utils
     buildOffchainTx,
 
     // Arknote
