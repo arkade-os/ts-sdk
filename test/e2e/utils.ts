@@ -1,6 +1,6 @@
 import { utils } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { IWallet, Wallet, SingleKey, OnchainWallet } from "../../src";
+import { Wallet, SingleKey, OnchainWallet } from "../../src";
 import { execSync } from "child_process";
 
 export const arkdExec =
@@ -13,7 +13,7 @@ export const ARK_SERVER_PUBKEY =
 export const X_ONLY_PUBLIC_KEY = hex.decode(ARK_SERVER_PUBKEY).slice(1);
 
 export interface TestArkWallet {
-    wallet: IWallet;
+    wallet: Wallet;
     identity: SingleKey;
 }
 
@@ -56,6 +56,11 @@ export function faucetOffchain(address: string, amount: number): void {
     execSync(
         `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
     );
+}
+
+export function faucetOnchain(address: string, amount: number): void {
+    const btc = amount > 999 ? amount / 100_000_000 : amount;
+    execSync(`nigiri faucet ${address} ${btc}`);
 }
 
 export async function createVtxo(

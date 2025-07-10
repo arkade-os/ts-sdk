@@ -31,6 +31,14 @@ export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
 }
 
+/**
+ * VtxoScript is a script that contains a list of tapleaf scripts.
+ * It is used to create vtxo scripts.
+ *
+ * @example
+ * ```typescript
+ * const vtxoScript = new VtxoScript([new Uint8Array(32), new Uint8Array(32)]);
+ */
 export class VtxoScript {
     readonly leaves: TapLeafScript[];
     readonly tweakedPublicKey: Bytes;

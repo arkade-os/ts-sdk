@@ -2,7 +2,28 @@ import { bech32m } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils";
 import { Script } from "@scure/btc-signer";
 
-// ArkAddress is a bech32m encoded address with a custom HRP (ark/tark)
+/**
+ * ArkAddress allows to create and decode bech32m encoded ark address.
+ * An ark address is composed of:
+ * - a human readable prefix (hrp)
+ * - a version byte (1 byte)
+ * - a server public key (32 bytes)
+ * - a vtxo taproot public key (32 bytes)
+ *
+ * @example
+ * ```typescript
+ * const address = new ArkAddress(
+ *     new Uint8Array(32), // server public key
+ *     new Uint8Array(32), // vtxo taproot public key
+ *     "ark"
+ * );
+ *
+ * const encoded = address.encode();
+ * console.log("address: ", encoded);
+ *
+ * const decoded = ArkAddress.decode(encoded);
+ * ```
+ */
 export class ArkAddress {
     constructor(
         readonly serverPubKey: Bytes,

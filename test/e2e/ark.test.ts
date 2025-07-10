@@ -13,11 +13,14 @@ import {
     buildOffchainTx,
     ConditionWitness,
     setArkPsbtField,
+    waitForIncomingFunds,
     OnchainWallet,
     Unroll,
     Ramps,
+    Coin,
+    VirtualCoin,
+    networks,
 } from "../../src";
-import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
 import {
     arkdExec,
@@ -25,6 +28,8 @@ import {
     createTestIdentity,
     createTestArkWallet,
     createTestOnchainWallet,
+    faucetOffchain,
+    faucetOnchain,
 } from "./utils";
 
 describe("Ark integration tests", () => {
@@ -650,6 +655,153 @@ describe("Ark integration tests", () => {
 
         expect(settleTxid).toBeDefined();
     });
+
+    it(
+        "should be notified of offchain incoming funds",
+        { timeout: 6000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+            expect(aliceAddress).toBeDefined();
+
+            let notified = false;
+            const fundAmount = 10000;
+
+            // set up the notification
+            alice.wallet.notifyIncomingFunds((notification) => {
+                const now = new Date();
+                expect(notification.type).toBe("vtxo");
+                let vtxos: VirtualCoin[] = [];
+                if (notification.type === "vtxo") {
+                    vtxos = notification.vtxos;
+                }
+                expect(vtxos).toHaveLength(1);
+                expect(vtxos[0].spentBy).toBeFalsy();
+                expect(vtxos[0].value).toBe(fundAmount);
+                expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
+                const age = now.getTime() - vtxos[0].createdAt.getTime();
+                expect(age).toBeLessThanOrEqual(4000);
+                notified = true;
+            });
+
+            // wait for the notification to be set up
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // fund the offchain address using faucet
+            faucetOffchain(aliceAddress!, fundAmount);
+
+            // wait for the transaction to be processed
+            await new Promise((resolve) => setTimeout(resolve, 4000));
+            expect(notified).toBeTruthy();
+        }
+    );
+
+    it(
+        "should be notified of onchain incoming funds",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceBoardingAddress =
+                await alice.wallet.getBoardingAddress();
+            expect(aliceBoardingAddress).toBeDefined();
+
+            let notified = false;
+            const fundAmount = 10000;
+
+            // set up the notification
+            alice.wallet.notifyIncomingFunds((notification) => {
+                const now = new Date();
+                expect(notification.type).toBe("utxo");
+                let utxos: Coin[] = [];
+                if (notification.type == "utxo") {
+                    utxos = notification.coins;
+                }
+                expect(utxos).toHaveLength(1);
+                expect(utxos[0].value).toBe(fundAmount);
+                expect(utxos[0].status.confirmed).toBeTruthy();
+                expect(utxos[0].status.block_time).toBeDefined();
+                const age = now.getTime() - utxos[0].status.block_time! * 1000;
+                expect(age).toBeLessThanOrEqual(10000);
+                notified = true;
+            });
+
+            // wait for the notification to be set up
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // fund the onchain address using faucet
+            faucetOnchain(aliceBoardingAddress!, fundAmount);
+
+            // wait for the transaction to be processed
+            await new Promise((resolve) => setTimeout(resolve, 10000));
+
+            expect(notified).toBeTruthy();
+        }
+    );
+
+    it(
+        "should wait for offchain incoming funds",
+        { timeout: 6000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+            expect(aliceAddress).toBeDefined();
+
+            const now = new Date();
+            const fundAmount = 10000;
+
+            // faucet in a few moments
+            setTimeout(() => faucetOffchain(aliceAddress!, fundAmount), 1000);
+
+            // wait for coins to arrive
+            const notification = await waitForIncomingFunds(alice.wallet);
+            let vtxos: VirtualCoin[] = [];
+            if (notification.type === "vtxo") {
+                vtxos = notification.vtxos;
+            }
+
+            // assert
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].spentBy).toBeFalsy();
+            expect(vtxos[0].value).toBe(fundAmount);
+            expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
+            const age = now.getTime() - vtxos[0].createdAt.getTime();
+            expect(age).toBeLessThanOrEqual(4000);
+        }
+    );
+
+    it(
+        "should wait for onchain incoming funds",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceBoardingAddress =
+                await alice.wallet.getBoardingAddress();
+            expect(aliceBoardingAddress).toBeDefined();
+
+            const now = new Date();
+            const fundAmount = 10000;
+
+            // faucet in a few moments
+            setTimeout(
+                () => faucetOnchain(aliceBoardingAddress!, fundAmount),
+                1000
+            );
+
+            // wait for coins to arrive
+            const notification = await waitForIncomingFunds(alice.wallet);
+            let utxos: Coin[] = [];
+            if (notification.type === "utxo") {
+                utxos = notification.coins;
+            }
+
+            // assert
+            expect(utxos).toHaveLength(1);
+            expect(utxos[0].value).toBe(fundAmount);
+            expect(utxos[0].status.block_time).toBeDefined();
+            const age = now.getTime() - utxos[0].status.block_time! * 1000;
+            expect(age).toBeLessThanOrEqual(10000);
+        }
+    );
 
     it("should send subdust amount", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();

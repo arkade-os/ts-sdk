@@ -5,6 +5,9 @@ import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
 export const ANCHOR_VALUE = 0n;
 export const ANCHOR_PKSCRIPT = new Uint8Array([0x51, 0x02, 0x4e, 0x73]);
 
+/**
+ * A zero-value anchor output.
+ */
 export const P2A = {
     script: ANCHOR_PKSCRIPT,
     amount: ANCHOR_VALUE,
@@ -12,6 +15,10 @@ export const P2A = {
 
 const hexP2Ascript = hex.encode(P2A.script);
 
+/**
+ * search for anchor in the given transaction.
+ * @throws {Error} if the anchor is not found or has the wrong amount
+ */
 export function findP2AOutput(tx: Transaction): TransactionInputUpdate {
     for (let i = 0; i < tx.outputsLength; i++) {
         const output = tx.getOutput(i);

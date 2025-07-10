@@ -3,7 +3,9 @@ import { RawWitness, ScriptNum, Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
 import { hex } from "@scure/base";
 
-// Key values for ark psbt fields
+/**
+ * ArkPsbtFieldKey is the key values for ark psbt fields.
+ */
 export enum ArkPsbtFieldKey {
     VtxoTaprootTree = "taptree",
     VtxoTreeExpiry = "expiry",
@@ -11,9 +13,16 @@ export enum ArkPsbtFieldKey {
     ConditionWitness = "condition",
 }
 
-// Every ark psbt field has key type 255
+/**
+ * ArkPsbtFieldKeyType is the type of the ark psbt field key.
+ * Every ark psbt field has key type 255.
+ */
 export const ArkPsbtFieldKeyType = 255;
 
+/**
+ * ArkPsbtFieldCoder is the coder for the ark psbt fields.
+ * each type has its own coder.
+ */
 export interface ArkPsbtFieldCoder<T> {
     key: ArkPsbtFieldKey;
     encode: (
@@ -24,7 +33,15 @@ export interface ArkPsbtFieldCoder<T> {
     ) => T | null;
 }
 
-// setArkPsbtField appends a new unknown field to the input at inputIndex
+/**
+ * setArkPsbtField appends a new unknown field to the input at inputIndex
+ *
+ * @example
+ * ```typescript
+ * setArkPsbtField(tx, 0, VtxoTaprootTree, myTaprootTree);
+ * setArkPsbtField(tx, 0, VtxoTreeExpiry, myVtxoTreeExpiry);
+ * ```
+ */
 export function setArkPsbtField<T>(
     tx: Transaction,
     inputIndex: number,
@@ -39,8 +56,15 @@ export function setArkPsbtField<T>(
     });
 }
 
-// getArkPsbtFields returns all the values of the given coder for the input at inputIndex
-// Multiple fields of the same type can exist in a single input.
+/**
+ * getArkPsbtFields returns all the values of the given coder for the input at inputIndex
+ * Multiple fields of the same type can exist in a single input.
+ *
+ * @example
+ * ```typescript
+ * const vtxoTaprootTreeFields = getArkPsbtFields(tx, 0, VtxoTaprootTree);
+ * console.log(`input has ${vtxoTaprootTreeFields.length} vtxoTaprootTree fields`);
+ */
 export function getArkPsbtFields<T>(
     tx: Transaction,
     inputIndex: number,
@@ -56,7 +80,13 @@ export function getArkPsbtFields<T>(
     return fields;
 }
 
-// VtxoTaprootTree is set to pass all spending leaves of the vtxo input
+/**
+ * VtxoTaprootTree is set to pass all spending leaves of the vtxo input
+ *
+ * @example
+ * ```typescript
+ * const vtxoTaprootTree = VtxoTaprootTree.encode(myTaprootTree);
+ */
 export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
     key: ArkPsbtFieldKey.VtxoTaprootTree,
     encode: (value) => [
@@ -74,7 +104,13 @@ export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
         }),
 };
 
-// ConditionWitness is set to pass the witness data used to finalize the conditionMultisigClosure
+/**
+ * ConditionWitness is set to pass the witness data used to finalize the conditionMultisigClosure
+ *
+ * @example
+ * ```typescript
+ * const conditionWitness = ConditionWitness.encode(myConditionWitness);
+ */
 export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
     key: ArkPsbtFieldKey.ConditionWitness,
     encode: (value) => [
@@ -92,7 +128,13 @@ export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
         }),
 };
 
-// CosignerPublicKey is set on every TxGraph transactions to identify the musig2 public keys
+/**
+ * CosignerPublicKey is set on every TxGraph transactions to identify the musig2 public keys
+ *
+ * @example
+ * ```typescript
+ * const cosignerPublicKey = CosignerPublicKey.encode(myCosignerPublicKey);
+ */
 export const CosignerPublicKey: ArkPsbtFieldCoder<{
     index: number;
     key: Uint8Array;
@@ -119,7 +161,13 @@ export const CosignerPublicKey: ArkPsbtFieldCoder<{
         }),
 };
 
-// VtxoTreeExpiry is set to pass the expiry time of the input
+/**
+ * VtxoTreeExpiry is set to pass the expiry time of the input
+ *
+ * @example
+ * ```typescript
+ * const vtxoTreeExpiry = VtxoTreeExpiry.encode(myVtxoTreeExpiry);
+ */
 export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
     type: "blocks" | "seconds";
     value: bigint;

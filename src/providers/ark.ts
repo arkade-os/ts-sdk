@@ -160,13 +160,12 @@ export interface ArkProvider {
 }
 
 /**
- * REST-based Ark protocol provider implementation.
- *
+ * REST-based Ark provider implementation.
+ * @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.ArkService
  * @example
  * ```typescript
  * const provider = new RestArkProvider('https://ark.example.com');
  * const info = await provider.getInfo();
- * const result = await provider.submitTx(signedTx, checkpoints);
  * ```
  */
 export class RestArkProvider implements ArkProvider {

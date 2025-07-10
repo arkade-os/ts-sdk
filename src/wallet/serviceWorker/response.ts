@@ -1,6 +1,9 @@
 import { WalletBalance, VirtualCoin, ArkTransaction, IWallet } from "..";
 import { SettlementEvent } from "../../providers/ark";
 
+/**
+ * Response is the namespace that contains the response types for the service worker.
+ */
 export namespace Response {
     export type Type =
         | "WALLET_INITIALIZED"
