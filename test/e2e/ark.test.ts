@@ -668,16 +668,20 @@ describe("Ark integration tests", () => {
             const fundAmount = 10000;
 
             // set up the notification
-            alice.wallet.notifyIncomingFunds((coins) => {
-                notified = true;
+            alice.wallet.notifyIncomingFunds((notification) => {
                 const now = new Date();
-                const vtxos = coins;
+                expect(notification.type).toBe("vtxo");
+                let vtxos: VirtualCoin[] = [];
+                if (notification.type === "vtxo") {
+                    vtxos = notification.vtxos;
+                }
                 expect(vtxos).toHaveLength(1);
                 expect(vtxos[0].spentBy).toBeFalsy();
                 expect(vtxos[0].value).toBe(fundAmount);
                 expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
                 const age = now.getTime() - vtxos[0].createdAt.getTime();
                 expect(age).toBeLessThanOrEqual(4000);
+                notified = true;
             });
 
             // wait for the notification to be set up
@@ -706,7 +710,6 @@ describe("Ark integration tests", () => {
 
             // set up the notification
             alice.wallet.notifyIncomingFunds((notification) => {
-                notified = true;
                 const now = new Date();
                 expect(notification.type).toBe("utxo");
                 let utxos: Coin[] = [];
@@ -719,6 +722,7 @@ describe("Ark integration tests", () => {
                 expect(utxos[0].status.block_time).toBeDefined();
                 const age = now.getTime() - utxos[0].status.block_time! * 1000;
                 expect(age).toBeLessThanOrEqual(10000);
+                notified = true;
             });
 
             // wait for the notification to be set up
