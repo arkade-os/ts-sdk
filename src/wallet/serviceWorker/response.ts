@@ -96,6 +96,14 @@ export namespace Response {
         return response.type === "ADDRESS" && response.success === true;
     }
 
+    export function isBoardingAddress(
+        response: Base
+    ): response is BoardingAddress {
+        return (
+            response.type === "BOARDING_ADDRESS" && response.success === true
+        );
+    }
+
     export function address(id: string, address: string): Address {
         return {
             type: "ADDRESS",

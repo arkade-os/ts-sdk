@@ -191,20 +191,21 @@ export class RestArkProvider implements ArkProvider {
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
-            marketHour: fromServer.marketHour
-                ? {
-                      nextStartTime: BigInt(
-                          fromServer.marketHour.nextStartTime ?? 0
-                      ),
-                      nextEndTime: BigInt(
-                          fromServer.marketHour.nextEndTime ?? 0
-                      ),
-                      period: BigInt(fromServer.marketHour.period ?? 0),
-                      roundInterval: BigInt(
-                          fromServer.marketHour.roundInterval ?? 0
-                      ),
-                  }
-                : undefined,
+            marketHour:
+                "marketHour" in fromServer && fromServer.marketHour != null
+                    ? {
+                          nextStartTime: BigInt(
+                              fromServer.marketHour.nextStartTime ?? 0
+                          ),
+                          nextEndTime: BigInt(
+                              fromServer.marketHour.nextEndTime ?? 0
+                          ),
+                          period: BigInt(fromServer.marketHour.period ?? 0),
+                          roundInterval: BigInt(
+                              fromServer.marketHour.roundInterval ?? 0
+                          ),
+                      }
+                    : undefined,
         };
     }
 

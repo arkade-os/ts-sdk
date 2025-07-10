@@ -172,7 +172,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isAddress(response)) {
+            if (Response.isBoardingAddress(response)) {
                 return response.address;
             }
             throw new UnexpectedResponseError(response);
