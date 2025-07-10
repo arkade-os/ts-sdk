@@ -7,14 +7,13 @@ import {
     WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
-    Outpoint,
     GetVtxosFilter,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { base64, hex } from "@scure/base";
-import { InMemoryKey } from "../../identity/inMemoryKey";
+import { SingleKey } from "../../identity/singleKey";
 import { Identity } from "../../identity";
 import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
 import { Transaction } from "@scure/btc-signer";
@@ -28,7 +27,28 @@ class UnexpectedResponseError extends Error {
     }
 }
 
-// ServiceWorkerWallet is a wallet that uses a service worker as "backend" to handle the wallet logic
+/**
+ * Service Worker-based wallet implementation for browser environments.
+ *
+ * This wallet uses a service worker as a backend to handle wallet logic,
+ * providing secure key storage and transaction signing in web applications.
+ * The service worker runs in a separate thread and can persist data between
+ * browser sessions.
+ *
+ * @example
+ * ```typescript
+ * // Create and initialize the service worker wallet
+ * const wallet = await ServiceWorkerWallet.create('/service-worker.js');
+ * await wallet.init({
+ *   privateKey: 'your_private_key_hex',
+ *   arkServerUrl: 'https://ark.example.com'
+ * });
+ *
+ * // Use like any other wallet
+ * const address = await wallet.getAddress();
+ * const balance = await wallet.getBalance();
+ * ```
+ */
 export class ServiceWorkerWallet implements IWallet, Identity {
     private serviceWorker?: ServiceWorker;
     private cachedXOnlyPublicKey: Uint8Array | undefined;
@@ -92,7 +112,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         const privKeyBytes = hex.decode(config.privateKey);
         // cache the identity xOnlyPublicKey
         this.cachedXOnlyPublicKey =
-            InMemoryKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
+            SingleKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
     }
 
     async clear() {
@@ -386,23 +406,6 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
-        }
-    }
-
-    async exit(outpoints?: Outpoint[]): Promise<void> {
-        const message: Request.Exit = {
-            type: "EXIT",
-            outpoints,
-            id: getRandomId(),
-        };
-        try {
-            const response = await this.sendMessage(message);
-            if (response.type === "EXIT_SUCCESS") {
-                return;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to exit: ${error}`);
         }
     }
 

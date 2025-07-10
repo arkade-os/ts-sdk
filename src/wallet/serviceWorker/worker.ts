@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 declare const self: ServiceWorkerGlobalScope;
 
-import { InMemoryKey } from "../../identity/inMemoryKey";
+import { SingleKey } from "../../identity/singleKey";
 import { isSpendable, isSubdust } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
@@ -11,14 +11,14 @@ import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
 import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
-import { ArkAddress } from "../../script/address";
-import { VtxoScript } from "../../script/base";
 import { base64, hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { Transaction } from "@scure/btc-signer";
 
-// Worker is a class letting to interact with ServiceWorkerWallet from the client
-// it aims to be run in a service worker context
+/**
+ * Worker is a class letting to interact with ServiceWorkerWallet from the client
+ * it aims to be run in a service worker context
+ */
 export class Worker {
     private wallet: Wallet | undefined;
     private arkProvider: ArkProvider | undefined;
@@ -169,7 +169,7 @@ export class Worker {
             );
 
             this.wallet = await Wallet.create({
-                identity: InMemoryKey.fromHex(message.privateKey),
+                identity: SingleKey.fromHex(message.privateKey),
                 arkServerUrl: message.arkServerUrl,
                 arkServerPublicKey: message.arkServerPublicKey,
             });
@@ -370,7 +370,7 @@ export class Worker {
             for (const vtxo of spendableVtxos) {
                 if (vtxo.virtualStatus.state === "settled") {
                     settled += vtxo.value;
-                } else if (vtxo.virtualStatus.state === "pending") {
+                } else if (vtxo.virtualStatus.state === "preconfirmed") {
                     preconfirmed += vtxo.value;
                 }
             }
@@ -512,7 +512,7 @@ export class Worker {
         }
 
         try {
-            const { boardingTxs, roundsToIgnore } =
+            const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
                 await this.wallet.getBoardingTxs();
 
             const { spendable, spent } =
@@ -559,37 +559,6 @@ export class Worker {
         event.source?.postMessage(
             Response.walletStatus(message.id, this.wallet !== undefined)
         );
-    }
-
-    private async handleExit(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isExit(message)) {
-            console.error("Invalid EXIT message format", message);
-            event.source?.postMessage(
-                Response.error(message.id, "Invalid EXIT message format")
-            );
-            return;
-        }
-
-        if (!this.wallet) {
-            console.error("Wallet not initialized");
-            event.source?.postMessage(
-                Response.error(message.id, "Wallet not initialized")
-            );
-            return;
-        }
-
-        try {
-            await this.wallet.exit(message.outpoints);
-            event.source?.postMessage(Response.exitSuccess(message.id));
-        } catch (error: unknown) {
-            console.error("Error exiting:", error);
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            event.source?.postMessage(Response.error(message.id, errorMessage));
-        }
     }
 
     private async handleSign(event: ExtendableMessageEvent) {
@@ -680,10 +649,6 @@ export class Worker {
             }
             case "GET_STATUS": {
                 await this.handleGetStatus(event);
-                break;
-            }
-            case "EXIT": {
-                await this.handleExit(event);
                 break;
             }
             case "CLEAR": {

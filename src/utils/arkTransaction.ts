@@ -27,8 +27,18 @@ export type OffchainTx = {
     checkpoints: Transaction[];
 };
 
-// buildOffchainTx creates 1 checkpoint transaction per input
-// and a virtual transaction that combines all the checkpoints, sending to the outputs
+/**
+ * Builds an offchain transaction with checkpoint transactions.
+ *
+ * Creates one checkpoint transaction per input and a virtual transaction that
+ * combines all the checkpoints, sending to the specified outputs. This is the
+ * core function for creating Ark transactions.
+ *
+ * @param inputs - Array of virtual transaction inputs
+ * @param outputs - Array of transaction outputs
+ * @param serverUnrollScript - Server unroll script for checkpoint transactions
+ * @returns Object containing the virtual transaction and checkpoint transactions
+ */
 export function buildOffchainTx(
     inputs: VirtualTxInput[],
     outputs: TransactionOutput[],

@@ -4,6 +4,14 @@ import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils";
 
+/**
+ * Configuration options for wallet initialization.
+ *
+ * Defines the parameters required to create and configure a wallet instance,
+ * including identity, server URLs, and optional timelock settings.
+ * If optional parameters are not provided, the wallet will fetch them from the
+ * Ark server.
+ */
 export interface WalletConfig {
     identity: Identity;
     arkServerUrl: string;
@@ -51,7 +59,7 @@ export interface Status {
 }
 
 export interface VirtualStatus {
-    state: "pending" | "settled" | "swept" | "spent";
+    state: "preconfirmed" | "settled" | "swept" | "spent";
     commitmentTxIds?: string[];
     batchExpiry?: number;
 }
@@ -72,6 +80,7 @@ export interface VirtualCoin extends Coin {
     settledBy?: string;
     arkTxId?: string;
     createdAt: Date;
+    isUnrolled: boolean;
 }
 
 export enum TxType {
@@ -82,7 +91,7 @@ export enum TxType {
 export interface TxKey {
     boardingTxid: string;
     commitmentTxid: string;
-    redeemTxid: string;
+    arkTxid: string;
 }
 
 export interface ArkTransaction {
@@ -94,15 +103,15 @@ export interface ArkTransaction {
 }
 
 // ExtendedCoin and ExtendedVirtualCoin contains the utxo/vtxo data along with the vtxo script locking it
-type tapLeaves = {
+export type TapLeaves = {
     forfeitTapLeafScript: TapLeafScript;
     intentTapLeafScript: TapLeafScript;
 };
 
-export type ExtendedCoin = tapLeaves &
+export type ExtendedCoin = TapLeaves &
     EncodedVtxoScript &
     Coin & { extraWitness?: Bytes[] };
-export type ExtendedVirtualCoin = tapLeaves &
+export type ExtendedVirtualCoin = TapLeaves &
     EncodedVtxoScript &
     VirtualCoin & { extraWitness?: Bytes[] };
 
@@ -120,8 +129,16 @@ export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
 
 export type GetVtxosFilter = {
     withRecoverable?: boolean; // include the swept but unspent
+    withUnrolled?: boolean; // include the unrolled vtxos
 };
 
+/**
+ * Core wallet interface for Bitcoin transactions with Ark protocol support.
+ *
+ * This interface defines the contract that all wallet implementations must follow.
+ * It provides methods for address management, balance checking, virtual UTXO
+ * operations, and transaction management including sending, settling, and unrolling.
+ */
 export interface IWallet {
     // returns the ark address
     getAddress(): Promise<string>;
@@ -138,5 +155,4 @@ export interface IWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
-    exit(outpoints?: Outpoint[]): Promise<void>;
 }

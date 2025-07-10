@@ -10,7 +10,6 @@ import {
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { selectVirtualCoins } from "../utils/coinselect";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
@@ -45,7 +44,6 @@ import {
     isSpendable,
     isSubdust,
     IWallet,
-    Outpoint,
     SendBitcoinParams,
     SettleParams,
     TxType,
@@ -56,19 +54,54 @@ import {
 import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { buildOffchainTx } from "../utils/psbt";
+import { buildOffchainTx } from "../utils/arkTransaction";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
-import { TxGraph, TxGraphChunk } from "../tree/txGraph";
+import { TxTree, TxTreeNode } from "../tree/txTree";
 
-// Wallet does not store any data and rely on the Ark and onchain providers to fetch utxos and vtxos
+export type IncomingFunds =
+    | {
+          type: "utxo";
+          coins: Coin[];
+      }
+    | {
+          type: "vtxo";
+          vtxos: VirtualCoin[];
+      };
+
+/**
+ * Main wallet implementation for Bitcoin transactions with Ark protocol support.
+ * The wallet does not store any data locally and relies on Ark and onchain
+ * providers to fetch UTXOs and VTXOs.
+ *
+ * @example
+ * ```typescript
+ * // Create a wallet
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('your_private_key'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Get addresses
+ * const arkAddress = await wallet.getAddress();
+ * const boardingAddress = await wallet.getBoardingAddress();
+ *
+ * // Send bitcoin
+ * const txid = await wallet.sendBitcoin({
+ *   address: 'tb1...',
+ *   amount: 50000
+ * });
+ * ```
+ */
 export class Wallet implements IWallet {
-    static FEE_RATE = 1; // sats/vbyte
+    static MIN_FEE_RATE = 1; // sats/vbyte
 
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
+        readonly networkName: NetworkName,
         readonly onchainProvider: OnchainProvider,
         readonly arkProvider: ArkProvider,
         readonly indexerProvider: IndexerProvider,
@@ -134,6 +167,7 @@ export class Wallet implements IWallet {
         return new Wallet(
             config.identity,
             network,
+            info.network as NetworkName,
             onchainProvider,
             arkProvider,
             indexerProvider,
@@ -186,7 +220,7 @@ export class Wallet implements IWallet {
             .filter((coin) => coin.virtualStatus.state === "settled")
             .reduce((sum, coin) => sum + coin.value, 0);
         preconfirmed = vtxos
-            .filter((coin) => coin.virtualStatus.state === "pending")
+            .filter((coin) => coin.virtualStatus.state === "preconfirmed")
             .reduce((sum, coin) => sum + coin.value, 0);
         recoverable = vtxos
             .filter(
@@ -227,7 +261,7 @@ export class Wallet implements IWallet {
     }
 
     private async getVirtualCoins(
-        filter: GetVtxosFilter = { withRecoverable: true }
+        filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
     ): Promise<VirtualCoin[]> {
         const scripts = [hex.encode(this.offchainTapscript.pkScript)];
 
@@ -245,6 +279,14 @@ export class Wallet implements IWallet {
             vtxos.push(...response.vtxos);
         }
 
+        if (filter.withUnrolled) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts,
+                spentOnly: true,
+            });
+            vtxos.push(...response.vtxos.filter((vtxo) => vtxo.isUnrolled));
+        }
+
         return vtxos;
     }
 
@@ -257,7 +299,8 @@ export class Wallet implements IWallet {
             scripts: [hex.encode(this.offchainTapscript.pkScript)],
         });
 
-        const { boardingTxs, roundsToIgnore } = await this.getBoardingTxs();
+        const { boardingTxs, commitmentsToIgnore } =
+            await this.getBoardingTxs();
 
         const spendableVtxos = [];
         const spentVtxos = [];
@@ -274,7 +317,7 @@ export class Wallet implements IWallet {
         const offchainTxs = vtxosToTxs(
             spendableVtxos,
             spentVtxos,
-            roundsToIgnore
+            commitmentsToIgnore
         );
 
         const txs = [...boardingTxs, ...offchainTxs];
@@ -294,12 +337,12 @@ export class Wallet implements IWallet {
 
     async getBoardingTxs(): Promise<{
         boardingTxs: ArkTransaction[];
-        roundsToIgnore: Set<string>;
+        commitmentsToIgnore: Set<string>;
     }> {
         const boardingAddress = await this.getBoardingAddress();
         const txs = await this.onchainProvider.getTransactions(boardingAddress);
         const utxos: VirtualCoin[] = [];
-        const roundsToIgnore = new Set<string>();
+        const commitmentsToIgnore = new Set<string>();
 
         for (const tx of txs) {
             for (let i = 0; i < tx.vout.length; i++) {
@@ -310,7 +353,7 @@ export class Wallet implements IWallet {
                     const spentStatus = spentStatuses[i];
 
                     if (spentStatus?.spent) {
-                        roundsToIgnore.add(spentStatus.txid);
+                        commitmentsToIgnore.add(spentStatus.txid);
                     }
 
                     utxos.push({
@@ -321,8 +364,9 @@ export class Wallet implements IWallet {
                             confirmed: tx.status.confirmed,
                             block_time: tx.status.block_time,
                         },
+                        isUnrolled: true,
                         virtualStatus: {
-                            state: spentStatus?.spent ? "spent" : "pending",
+                            state: spentStatus?.spent ? "spent" : "settled",
                             commitmentTxIds: spentStatus?.spent
                                 ? [spentStatus.txid]
                                 : undefined,
@@ -343,7 +387,7 @@ export class Wallet implements IWallet {
                 key: {
                     boardingTxid: utxo.txid,
                     commitmentTxid: "",
-                    redeemTxid: "",
+                    arkTxid: "",
                 },
                 amount: utxo.value,
                 type: TxType.TxReceived,
@@ -362,7 +406,7 @@ export class Wallet implements IWallet {
 
         return {
             boardingTxs: [...unconfirmedTxs, ...confirmedTxs],
-            roundsToIgnore,
+            commitmentsToIgnore,
         };
     }
 
@@ -399,10 +443,6 @@ export class Wallet implements IWallet {
 
         const selected = selectVirtualCoins(virtualCoins, params.amount);
 
-        if (!selected || !selected.inputs) {
-            throw new Error("Insufficient funds");
-        }
-
         const selectedLeaf = this.offchainTapscript.forfeit();
         if (!selectedLeaf) {
             throw new Error("Selected leaf not found");
@@ -422,9 +462,9 @@ export class Wallet implements IWallet {
         ];
 
         // add change output if needed
-        if (selected.changeAmount > 0) {
+        if (selected.changeAmount > 0n) {
             const changeOutputScript =
-                BigInt(selected.changeAmount) < this.dustAmount
+                selected.changeAmount < this.dustAmount
                     ? this.arkAddress.subdustPkScript
                     : this.arkAddress.pkScript;
 
@@ -578,11 +618,11 @@ export class Wallet implements IWallet {
             let roundId: string | undefined;
             let sweepTapTreeRoot: Uint8Array | undefined;
 
-            const vtxoChunks: TxGraphChunk[] = [];
-            const connectorsChunks: TxGraphChunk[] = [];
+            const vtxoChunks: TxTreeNode[] = [];
+            const connectorsChunks: TxTreeNode[] = [];
 
-            let vtxoGraph: TxGraph | undefined;
-            let connectorsGraph: TxGraph | undefined;
+            let vtxoGraph: TxTree | undefined;
+            let connectorsGraph: TxTree | undefined;
 
             for await (const event of settlementStream) {
                 if (eventCallback) {
@@ -680,7 +720,7 @@ export class Wallet implements IWallet {
                                 );
                             }
 
-                            vtxoGraph = TxGraph.create(vtxoChunks);
+                            vtxoGraph = TxTree.create(vtxoChunks);
 
                             await this.handleSettlementSigningEvent(
                                 event,
@@ -720,7 +760,7 @@ export class Wallet implements IWallet {
                         }
 
                         if (connectorsChunks.length > 0) {
-                            connectorsGraph = TxGraph.create(connectorsChunks);
+                            connectorsGraph = TxTree.create(connectorsChunks);
                             validateConnectorsTxGraph(
                                 event.commitmentTx,
                                 connectorsGraph
@@ -757,60 +797,8 @@ export class Wallet implements IWallet {
         throw new Error("Settlement failed");
     }
 
-    async exit(outpoints?: Outpoint[]): Promise<void> {
-        // TODO store the exit branches in repository
-        // exit should not depend on the ark provider
-        // or on the indexer provider
-        let vtxos = await this.getVtxos();
-        if (outpoints && outpoints.length > 0) {
-            vtxos = vtxos.filter((vtxo) =>
-                outpoints.some(
-                    (outpoint) =>
-                        vtxo.txid === outpoint.txid &&
-                        vtxo.vout === outpoint.vout
-                )
-            );
-        }
-
-        if (vtxos.length === 0) {
-            throw new Error("No vtxos to exit");
-        }
-
-        const transactions: string[] = [];
-
-        // for (const vtxo of vtxos) {
-        //     const batchTxid = vtxo.virtualStatus.batchTxID;
-        //     if (!batchTxid) continue;
-        //     if (!trees.has(batchTxid)) {
-        //         const round =
-        //             await this.arkProvider?.getRound(batchTxid);
-        //         trees.set(batchTxid, round?.vtxoTree);
-        //     }
-        //
-        //     const tree = trees.get(batchTxid);
-        //     if (!tree) {
-        //         throw new Error("Tree not found");
-        //     }
-        //     const exitBranch = await tree.exitBranch(
-        //         vtxo.txid,
-        //         async (txid) => {
-        //             const status = await this.onchainProvider.getTxStatus(txid);
-        //             return status.confirmed;
-        //         }
-        //     );
-        //     transactions.push(...exitBranch);
-        // }
-
-        const broadcastedTxs = new Map<string, boolean>();
-        for (const tx of transactions) {
-            if (broadcastedTxs.has(tx)) continue;
-            const txid = await this.onchainProvider.broadcastTransaction(tx);
-            broadcastedTxs.set(txid, true);
-        }
-    }
-
     async notifyIncomingFunds(
-        eventCallback: (coins: Coin[] | VirtualCoin[]) => void
+        eventCallback: (coins: IncomingFunds) => void
     ): Promise<() => void> {
         const arkAddress = await this.getAddress();
         const boardingAddress = await this.getBoardingAddress();
@@ -844,7 +832,10 @@ export class Wallet implements IWallet {
                             };
                         })
                         .filter((coin) => coin !== null);
-                    eventCallback(coins);
+                    eventCallback({
+                        type: "utxo",
+                        coins,
+                    });
                 }
             );
         }
@@ -875,7 +866,10 @@ export class Wallet implements IWallet {
                 try {
                     for await (const update of subscription) {
                         if (update.newVtxos?.length > 0) {
-                            eventCallback(update.newVtxos);
+                            eventCallback({
+                                type: "vtxo",
+                                vtxos: update.newVtxos,
+                            });
                         }
                     }
                 } catch (error) {
@@ -950,7 +944,7 @@ export class Wallet implements IWallet {
         event: TreeSigningStartedEvent,
         sweepTapTreeRoot: Uint8Array,
         session: SignerSession,
-        vtxoGraph: TxGraph
+        vtxoGraph: TxTree
     ) {
         // validate the unsigned vtxo tree
         const commitmentTx = Transaction.fromPSBT(
@@ -992,7 +986,7 @@ export class Wallet implements IWallet {
         event: BatchFinalizationEvent,
         inputs: SettleParams["inputs"],
         forfeitOutputScript: Bytes,
-        connectorsGraph?: TxGraph
+        connectorsGraph?: TxTree
     ) {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
@@ -1288,4 +1282,84 @@ function isValidArkAddress(address: string): boolean {
     } catch (e) {
         return false;
     }
+}
+
+/**
+ * Select virtual coins to reach a target amount, prioritizing those closer to expiry
+ * @param coins List of virtual coins to select from
+ * @param targetAmount Target amount to reach in satoshis
+ * @returns Selected coins and change amount
+ */
+function selectVirtualCoins(
+    coins: VirtualCoin[],
+    targetAmount: number
+): {
+    inputs: VirtualCoin[];
+    changeAmount: bigint;
+} {
+    // Sort VTXOs by expiry (ascending) and amount (descending)
+    const sortedCoins = [...coins].sort((a, b) => {
+        // First sort by expiry if available
+        const expiryA = a.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
+        const expiryB = b.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
+        if (expiryA !== expiryB) {
+            return expiryA - expiryB; // Earlier expiry first
+        }
+
+        // Then sort by amount
+        return b.value - a.value; // Larger amount first
+    });
+
+    const selectedCoins: VirtualCoin[] = [];
+    let selectedAmount = 0;
+
+    // Select coins until we have enough
+    for (const coin of sortedCoins) {
+        selectedCoins.push(coin);
+        selectedAmount += coin.value;
+
+        if (selectedAmount >= targetAmount) {
+            break;
+        }
+    }
+
+    if (selectedAmount === targetAmount) {
+        return { inputs: selectedCoins, changeAmount: 0n };
+    }
+
+    // Check if we have enough
+    if (selectedAmount < targetAmount) {
+        throw new Error("Insufficient funds");
+    }
+
+    const changeAmount = BigInt(selectedAmount - targetAmount);
+
+    return {
+        inputs: selectedCoins,
+        changeAmount,
+    };
+}
+
+/**
+ * Wait for incoming funds to the wallet
+ * @param wallet - The wallet to wait for incoming funds
+ * @returns A promise that resolves the next new coins received by the wallet's address
+ */
+export async function waitForIncomingFunds(
+    wallet: Wallet
+): Promise<IncomingFunds> {
+    let stopFunc: (() => void) | undefined;
+
+    const promise = new Promise<IncomingFunds>((resolve) => {
+        wallet
+            .notifyIncomingFunds((coins: IncomingFunds) => {
+                resolve(coins);
+                if (stopFunc) stopFunc();
+            })
+            .then((stop) => {
+                stopFunc = stop;
+            });
+    });
+
+    return promise;
 }

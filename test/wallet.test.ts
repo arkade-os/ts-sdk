@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
-import { Wallet, InMemoryKey, OnchainWallet } from "../src";
+import { Wallet, SingleKey, OnchainWallet } from "../src";
 import type { Coin } from "../src/wallet";
 
 // Mock fetch
@@ -23,7 +23,7 @@ describe("Wallet", () => {
     // X-only pubkey (without the 02/03 prefix)
     const mockServerKeyHex =
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    const mockIdentity = InMemoryKey.fromHex(mockPrivKeyHex);
+    const mockIdentity = SingleKey.fromHex(mockPrivKeyHex);
 
     beforeEach(() => {
         mockFetch.mockReset();

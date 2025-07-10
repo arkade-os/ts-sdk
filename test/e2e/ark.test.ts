@@ -1,4 +1,4 @@
-import { expect, describe, it, beforeAll, vi } from "vitest";
+import { expect, describe, it, beforeAll } from "vitest";
 import { Transaction } from "@scure/btc-signer";
 import { base64, hex } from "@scure/base";
 import { execSync } from "child_process";
@@ -14,8 +14,13 @@ import {
     ConditionWitness,
     setArkPsbtField,
     waitForIncomingFunds,
+    OnchainWallet,
+    Unroll,
+    Ramps,
+    Coin,
+    VirtualCoin,
+    networks,
 } from "../../src";
-import { networks } from "../../src/networks";
 import { hash160 } from "@scure/btc-signer/utils";
 import {
     arkdExec,
@@ -26,7 +31,6 @@ import {
     faucetOffchain,
     faucetOnchain,
 } from "./utils";
-import { Coin, VirtualCoin } from "@arklabs/wallet-sdk";
 
 describe("Ark integration tests", () => {
     beforeAll(async () => {
@@ -46,26 +50,13 @@ describe("Ark integration tests", () => {
         const alice = await createTestArkWallet();
 
         const boardingAddress = await alice.wallet.getBoardingAddress();
-        const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
         execSync(`nigiri faucet ${boardingAddress} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
-        const boardingInputs = await alice.wallet.getBoardingUtxos();
-        expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
-
-        const settleTxid = await alice.wallet.settle({
-            inputs: boardingInputs,
-            outputs: [
-                {
-                    address: offchainAddress!,
-                    amount: BigInt(100000),
-                },
-            ],
-        });
-
+        const settleTxid = await new Ramps(alice.wallet).onboard();
         expect(settleTxid).toBeDefined();
     });
 
@@ -195,12 +186,12 @@ describe("Ark integration tests", () => {
             // Check virtual coins after funding
             const virtualCoins = await alice.wallet.getVtxos();
 
-            // Verify we have a pending virtual coin
+            // Verify we have a preconfirmed virtual coin
             expect(virtualCoins).toHaveLength(1);
             const vtxo = virtualCoins[0];
             expect(vtxo.txid).toBeDefined();
             expect(vtxo.value).toBe(fundAmount);
-            expect(vtxo.virtualStatus.state).toBe("pending");
+            expect(vtxo.virtualStatus.state).toBe("preconfirmed");
 
             // Check Alice's balance after funding
             const aliceBalanceAfterFunding = await alice.wallet.getBalance();
@@ -305,8 +296,8 @@ describe("Ark integration tests", () => {
         // Check send transaction
         expect(sendTx.type).toBe(TxType.TxSent);
         expect(sendTx.amount).toBe(sendAmount);
-        expect(sendTx.key.redeemTxid.length).toBeGreaterThan(0);
-        expect(sendTx.key.redeemTxid).toBe(sendTxid);
+        expect(sendTx.key.arkTxid.length).toBeGreaterThan(0);
+        expect(sendTx.key.arkTxid).toBe(sendTxid);
 
         // Get transaction history for Bob
         const bobHistory = await bob.wallet.getTransactionHistory();
@@ -318,7 +309,7 @@ describe("Ark integration tests", () => {
         expect(bobsReceiveTx.type).toBe(TxType.TxReceived);
         expect(bobsReceiveTx.amount).toBe(sendAmount);
         expect(bobsReceiveTx.settled).toBe(false);
-        expect(bobsReceiveTx.key.redeemTxid.length).toBeGreaterThan(0);
+        expect(bobsReceiveTx.key.arkTxid.length).toBeGreaterThan(0);
 
         // Bob settles the received VTXO
         let bobInputs = await bob.wallet.getVtxos();
@@ -518,10 +509,9 @@ describe("Ark integration tests", () => {
         expect(virtualCoins[0].value).toBe(fundAmount);
     });
 
-    it.skip("should unroll", { timeout: 60000 }, async () => {
+    it("should unroll", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
 
-        const aliceAddresses = await alice.wallet.getAddress();
         const boardingAddress = await alice.wallet.getBoardingAddress();
         const offchainAddress = await alice.wallet.getAddress();
 
@@ -544,14 +534,44 @@ describe("Ark integration tests", () => {
         });
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
+        execSync(`nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`);
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
         const virtualCoins = await alice.wallet.getVtxos();
         expect(virtualCoins).toHaveLength(1);
         const vtxo = virtualCoins[0];
         expect(vtxo.txid).toBeDefined();
-        await alice.wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-        const virtualCoinsAfterExit = await alice.wallet.getVtxos();
-        expect(virtualCoinsAfterExit).toHaveLength(0);
+
+        const onchainAlice = new OnchainWallet(alice.identity, "regtest");
+
+        execSync(`nigiri faucet ${onchainAlice.address} 0.001`);
+
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        const session = await Unroll.Session.create(
+            { txid: vtxo.txid, vout: vtxo.vout },
+            onchainAlice,
+            onchainAlice.provider,
+            new RestIndexerProvider("http://localhost:7070")
+        );
+
+        for await (const done of session) {
+            switch (done.type) {
+                case Unroll.StepType.WAIT:
+                case Unroll.StepType.UNROLL:
+                    execSync(
+                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
+                    );
+                    break;
+            }
+        }
+
+        const virtualCoinsAfterExit = await alice.wallet.getVtxos({
+            withUnrolled: true,
+        });
+        expect(virtualCoinsAfterExit).toHaveLength(1);
+        expect(virtualCoinsAfterExit[0].isUnrolled).toBe(true);
     });
 
     it("should exit collaboratively", { timeout: 60000 }, async () => {
@@ -567,18 +587,9 @@ describe("Ark integration tests", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 2000));
 
-        const vtxos = await alice.wallet.getVtxos();
-        expect(vtxos).toHaveLength(1);
-
-        const exitTxid = await alice.wallet.settle({
-            inputs: vtxos,
-            outputs: [
-                {
-                    address: onchainAlice.wallet.address,
-                    amount: BigInt(fundAmount),
-                },
-            ],
-        });
+        const exitTxid = await new Ramps(alice.wallet).offboard(
+            onchainAlice.wallet.address
+        );
 
         expect(exitTxid).toBeDefined();
     });
@@ -660,7 +671,7 @@ describe("Ark integration tests", () => {
             alice.wallet.notifyIncomingFunds((coins) => {
                 notified = true;
                 const now = new Date();
-                const vtxos = coins as VirtualCoin[];
+                const vtxos = coins;
                 expect(vtxos).toHaveLength(1);
                 expect(vtxos[0].spentBy).toBeFalsy();
                 expect(vtxos[0].value).toBe(fundAmount);
@@ -695,10 +706,14 @@ describe("Ark integration tests", () => {
             const fundAmount = 10000;
 
             // set up the notification
-            alice.wallet.notifyIncomingFunds((coins) => {
+            alice.wallet.notifyIncomingFunds((notification) => {
                 notified = true;
                 const now = new Date();
-                const utxos = coins as Coin[];
+                expect(notification.type).toBe("utxo");
+                let utxos: Coin[] = [];
+                if (notification.type == "utxo") {
+                    utxos = notification.coins;
+                }
                 expect(utxos).toHaveLength(1);
                 expect(utxos[0].value).toBe(fundAmount);
                 expect(utxos[0].status.confirmed).toBeTruthy();
@@ -735,8 +750,11 @@ describe("Ark integration tests", () => {
             setTimeout(() => faucetOffchain(aliceAddress!, fundAmount), 1000);
 
             // wait for coins to arrive
-            const coins = await waitForIncomingFunds(alice.wallet);
-            const vtxos = coins as VirtualCoin[];
+            const notification = await waitForIncomingFunds(alice.wallet);
+            let vtxos: VirtualCoin[] = [];
+            if (notification.type === "vtxo") {
+                vtxos = notification.vtxos;
+            }
 
             // assert
             expect(vtxos).toHaveLength(1);
@@ -768,8 +786,11 @@ describe("Ark integration tests", () => {
             );
 
             // wait for coins to arrive
-            const coins = await waitForIncomingFunds(alice.wallet);
-            const utxos = coins as Coin[];
+            const notification = await waitForIncomingFunds(alice.wallet);
+            let utxos: Coin[] = [];
+            if (notification.type === "utxo") {
+                utxos = notification.coins;
+            }
 
             // assert
             expect(utxos).toHaveLength(1);

@@ -12,6 +12,11 @@ import {
 import { ArkAddress } from "./address";
 import { Script } from "@scure/btc-signer";
 import { hex } from "@scure/base";
+import {
+    ArkTapscript,
+    ConditionCSVMultisigTapscript,
+    CSVMultisigTapscript,
+} from "./tapscript";
 
 export type TapLeafScript = [
     {
@@ -81,6 +86,33 @@ export class VtxoScript {
             throw new Error(`leaf '${scriptHex}' not found`);
         }
         return leaf;
+    }
+
+    exitPaths(): Array<
+        CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type
+    > {
+        const paths: Array<
+            CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type
+        > = [];
+        for (const leaf of this.leaves) {
+            try {
+                const tapscript = CSVMultisigTapscript.decode(
+                    scriptFromTapLeafScript(leaf)
+                );
+                paths.push(tapscript);
+                continue;
+            } catch (e) {
+                try {
+                    const tapscript = ConditionCSVMultisigTapscript.decode(
+                        scriptFromTapLeafScript(leaf)
+                    );
+                    paths.push(tapscript);
+                } catch (e) {
+                    continue;
+                }
+            }
+        }
+        return paths;
     }
 }
 

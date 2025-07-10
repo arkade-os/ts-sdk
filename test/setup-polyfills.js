@@ -1,1 +1,1 @@
-global.WebSocket = require("ws");
+global.WebSocket = WebSocket;

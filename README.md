@@ -1,6 +1,8 @@
 # Arkade TypeScript SDK
 The Arkade SDK is a TypeScript library for building Bitcoin wallets with support for both on-chain and off-chain transactions via the Ark protocol.
 
+[![TypeScript Documentation](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
+
 ## Installation
 
 ```bash
@@ -12,10 +14,10 @@ npm install @arkade-os/sdk
 ### Creating a Wallet
 
 ```typescript
-import { InMemoryKey, Wallet } from '@arkade-os/sdk'
+import { SingleKey, Wallet } from '@arkade-os/sdk'
 
 // Create a new in-memory key (or use an external signer)
-const identity = InMemoryKey.fromHex('your_private_key_hex')
+const identity = SingleKey.fromHex('your_private_key_hex')
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
@@ -45,24 +47,14 @@ const stopFunc = await wallet.notifyIncomingFunds((coins) => {
 const coins = await waitForIncomingFunds(wallet)
 ```
 
-### Sending Bitcoin
+### Onboarding
+
+Onboarding allows you to swap onchain funds into VTXOs
 
 ```typescript
-// Send bitcoin via Ark
-const txid = await wallet.sendBitcoin({
-  address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
-  amount: 50000,  // in satoshis
-  feeRate: 1      // optional, in sats/vbyte
-})
+import { Ramps } from '@arkade-os/sdk'
 
-// For settling transactions
-const settleTxid = await wallet.settle({
-  inputs, // from getVtxos() or getBoardingUtxos()
-  outputs: [{
-    address: destinationAddress,
-    amount: BigInt(amount)
-  }]
-})
+const onboardTxid = await new Ramps(wallet).onboard();
 ```
 
 ### Checking Balance
@@ -83,6 +75,33 @@ const virtualCoins = await wallet.getVtxos()
 // Get boarding UTXOs
 const boardingUtxos = await wallet.getBoardingUtxos()
 ```
+
+### Sending Bitcoin
+
+```typescript
+// Send bitcoin via Ark
+const txid = await wallet.sendBitcoin({
+  address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
+  amount: 50000,  // in satoshis
+  feeRate: 1      // optional, in sats/vbyte
+})
+```
+
+### Batch Settlements 
+
+This can be used to move preconfirmed balances into finalized balances, to convert manually UTXOs and VTXOs.
+
+```typescript
+// For settling transactions
+const settleTxid = await wallet.settle({
+  inputs, // from getVtxos() or getBoardingUtxos()
+  outputs: [{
+    address: destinationAddress,
+    amount: BigInt(amount)
+  }]
+})
+```
+
 
 ### Transaction History
 
@@ -105,15 +124,81 @@ console.log('History:', history)
 }
 ```
 
-### Unilateral Exit
+### Offboarding
+
+Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an onchain address.
 
 ```typescript
-// Unilateral exit all vtxos
-await wallet.exit();
+import { Ramps } from '@arkade-os/sdk'
 
-// Unilateral exit a specific vtxo
-await wallet.exit([{ txid: vtxo.txid, vout: vtxo.vout }]);
+const exitTxid = await new Ramps(wallet).offboard(onchainAddress);
 ```
+
+### Unilateral Exit
+
+Unilateral exit allows you to withdraw your funds from the Ark protocol back to the Bitcoin blockchain without requiring cooperation from the Ark server. This process involves two main steps:
+
+1. **Unrolling**: Broadcasting the transaction chain from off-chain back to on-chain
+2. **Completing the exit**: Spending the unrolled VTXOs after the timelock expires
+
+#### Step 1: Unrolling VTXOs
+
+```typescript
+import { Unroll, OnchainWallet } from '@arkade-os/sdk'
+
+// Create an onchain wallet to pay for P2A outputs in VTXO branches
+// OnchainWallet implements the AnchorBumper interface
+const onchainWallet = new OnchainWallet(wallet.identity, 'regtest');
+
+// Unroll a specific VTXO
+const vtxo = { txid: 'your_vtxo_txid', vout: 0 };
+const session = await Unroll.Session.create(
+  vtxo,
+  onchainWallet,
+  onchainWallet.provider,
+  wallet.indexerProvider
+);
+
+// Iterate through the unrolling steps
+for await (const step of session) {
+  switch (step.type) {
+    case Unroll.StepType.WAIT:
+      console.log(`Waiting for transaction ${step.txid} to be confirmed`);
+      break;
+    case Unroll.StepType.UNROLL:
+      console.log(`Broadcasting transaction ${step.tx.id}`);
+      break;
+    case Unroll.StepType.DONE:
+      console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
+      break;
+  }
+}
+```
+
+The unrolling process works by:
+- Traversing the transaction chain from the root (most recent) to the leaf (oldest)
+- Broadcasting each transaction that isn't already on-chain
+- Waiting for confirmations between steps
+- Using P2A (Pay-to-Anchor) transactions to pay for fees
+
+#### Step 2: Completing the Exit
+
+Once VTXOs are fully unrolled and the unilateral exit timelock has expired, you can complete the exit:
+
+```typescript
+// Complete the exit for specific VTXOs
+await Unroll.completeUnroll(
+  wallet,
+  [vtxo.txid], // Array of VTXO transaction IDs to complete
+  onchainWallet.address // Address to receive the exit amount
+);
+```
+
+**Important Notes:**
+- Each VTXO may require multiple unroll steps depending on the transaction chain length
+- Each unroll step must be confirmed before proceeding to the next
+- The `completeUnroll` method can only be called after VTXOs are fully unrolled and the timelock has expired
+- You need sufficient on-chain funds in the `OnchainWallet` to pay for P2A transaction fees
 
 ### Running the wallet in a service worker
 
@@ -144,168 +229,7 @@ await wallet.init({
 })
 ```
 
-## API Reference
-
-### Wallet
-
-#### Constructor Options
-
-```typescript
-interface WalletConfig {
-  /** Identity for signing transactions */
-  identity: Identity;
-  /** Ark server URL */
-  arkServerUrl: string;
-  /** Optional Esplora API URL */
-  esploraUrl?: string;
-  /** Ark server public key (optional) */
-  arkServerPublicKey?: string;
-  /** Optional boarding timelock configuration */
-  boardingTimelock?: RelativeTimelock;
-  /** Optional exit timelock configuration */
-  exitTimelock?: RelativeTimelock;
-}
-```
-
-#### Methods
-
-```typescript
-interface IWallet {
-  /** Get offchain address */
-  getAddress(): Promise<string>;
-
-  /** Get boarding address */
-  getBoardingAddress(): Promise<string>;
-
-  /** Get wallet balance */
-  getBalance(): Promise<{
-    boarding: {
-      confirmed: number;
-      unconfirmed: number;
-      total: number;
-    };
-    settled: number;
-    preconfirmed: number;
-    available: number;
-    recoverable: number;
-    total: number;
-  }>;
-
-  /** Send bitcoin via Ark */
-  sendBitcoin(params: {
-    address: string;
-    amount: number;
-    feeRate?: number;
-    memo?: string;
-  }): Promise<string>;
-
-  /** Get virtual UTXOs */
-  getVtxos(filter?: { withSpendableInSettlement?: boolean }): Promise<ExtendedVirtualCoin[]>;
-
-  /** Get boarding UTXOs */
-  getBoardingUtxos(): Promise<ExtendedCoin[]>;
-
-  /** Settle transactions */
-  settle(
-    params?: {
-      inputs: ExtendedCoin[];
-      outputs: {
-        address: string;
-        amount: bigint;
-      }[];
-    },
-    eventCallback?: (event: SettlementEvent) => void
-  ): Promise<string>;
-
-  /** Get transaction history */
-  getTransactionHistory(): Promise<ArkTransaction[]>;
-
-  /** Be notified via callback */
-  notifyIncomingFunds(
-    eventCallback: (coins: Coin[] | VirtualCoin[]) => void
-  ): Promise<() => void>;
-
-  /** Exit vtxos unilaterally */
-  exit(outpoints?: Outpoint[]): Promise<void>;
-}
-```
-
-### Types
-
-```typescript
-/** Transaction types */
-enum TxType {
-  TxSent = 'SENT',
-  TxReceived = 'RECEIVED'
-}
-
-/** Transaction history entry */
-interface ArkTransaction {
-  key: {
-    boardingTxid: string;
-    commitmentTxid: string;
-    redeemTxid: string;
-  };
-  type: TxType;
-  amount: number;
-  settled: boolean;
-  createdAt: number;
-}
-
-/** Virtual coin (off-chain UTXO) */
-interface ExtendedVirtualCoin {
-  txid: string;
-  vout: number;
-  value: number;
-  virtualStatus: {
-    state: 'pending' | 'settled' | 'swept' | 'spent';
-    commitmentTxIds?: string[];
-    batchExpiry?: number;
-  };
-  spentBy?: string;
-  createdAt: Date;
-  forfeitTapLeafScript: TapLeafScript;
-  intentTapLeafScript: TapLeafScript;
-  tapTree: string;
-  extraWitness?: Bytes[];
-}
-
-/** Boarding UTXO */
-interface ExtendedCoin {
-  txid: string;
-  vout: number;
-  value: number;
-  status: {
-    confirmed: boolean;
-    block_height?: number;
-    block_hash?: string;
-    block_time?: number;
-  };
-  forfeitTapLeafScript: TapLeafScript;
-  intentTapLeafScript: TapLeafScript;
-  tapTree: string;
-  extraWitness?: Bytes[];
-}
-```
-
-### Identity
-
-```typescript
-export interface Identity {
-    sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
-    xOnlyPublicKey(): Uint8Array;
-    signerSession(): SignerSession;
-}
-```
-
-The SDK provides a default implementation of the `Identity` interface: `InMemoryKey` for managing private keys in memory:
-
-```typescript
-class InMemoryKey {
-  static fromPrivateKey(privateKey: Uint8Array): InMemoryKey;
-  static fromHex(privateKeyHex: string): InMemoryKey;
-}
-```
+_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
 ## Development
 
@@ -358,6 +282,15 @@ pnpm test:watch
 
 # Run tests with coverage
 pnpm test:coverage
+```
+
+### Building the documentation
+
+```bash
+# Build the TS doc
+pnpm docs:build
+# open the docs in the browser
+pnpm docs:open
 ```
 
 ### Releasing

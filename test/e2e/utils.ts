@@ -1,6 +1,6 @@
 import { utils } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { IWallet, Wallet, InMemoryKey, OnchainWallet } from "../../src";
+import { Wallet, SingleKey, OnchainWallet } from "../../src";
 import { execSync } from "child_process";
 
 export const arkdExec =
@@ -14,18 +14,18 @@ export const X_ONLY_PUBLIC_KEY = hex.decode(ARK_SERVER_PUBKEY).slice(1);
 
 export interface TestArkWallet {
     wallet: Wallet;
-    identity: InMemoryKey;
+    identity: SingleKey;
 }
 
 export interface TestOnchainWallet {
     wallet: OnchainWallet;
-    identity: InMemoryKey;
+    identity: SingleKey;
 }
 
-export function createTestIdentity(): InMemoryKey {
+export function createTestIdentity(): SingleKey {
     const privateKeyBytes = utils.randomPrivateKeyBytes();
     const privateKeyHex = hex.encode(privateKeyBytes);
-    return InMemoryKey.fromHex(privateKeyHex);
+    return SingleKey.fromHex(privateKeyHex);
 }
 
 export function createTestOnchainWallet(): TestOnchainWallet {
