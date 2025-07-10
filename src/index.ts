@@ -108,6 +108,7 @@ import {
     Tx,
     Vtxo,
     PaginationOptions,
+    SubscriptionResponse,
 } from "./providers/indexer";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
@@ -242,6 +243,7 @@ export type {
     TreeSignatureEvent,
     MarketHour,
     PaginationOptions,
+    SubscriptionResponse,
 
     // Network types
     Network,
