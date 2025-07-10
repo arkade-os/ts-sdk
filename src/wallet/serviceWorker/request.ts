@@ -1,5 +1,8 @@
 import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
 
+/**
+ * Request is the namespace that contains the request types for the service worker.
+ */
 export namespace Request {
     export type Type =
         | "INIT_WALLET"

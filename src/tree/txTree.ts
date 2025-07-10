@@ -3,6 +3,11 @@ import { base64 } from "@scure/base";
 import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 
+/**
+ * TxTreeNode is a node of the tree.
+ * It contains the transaction id, the transaction and the children.
+ * any TxTree can be serialized as a list of TxTreeNode.
+ */
 export type TxTreeNode = {
     txid: string;
     // base64 encoded root transaction
@@ -16,6 +21,10 @@ type DecodedNode = {
     children: Record<number, string>;
 };
 
+/**
+ * TxTree is a graph of bitcoin transactions.
+ * It is used to represent batch tree created during settlement session
+ */
 export class TxTree implements Iterable<TxTree> {
     constructor(
         readonly root: Transaction,

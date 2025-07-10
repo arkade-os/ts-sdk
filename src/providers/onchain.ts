@@ -1,6 +1,9 @@
 import type { NetworkName } from "../networks";
 import { Coin } from "../wallet";
 
+/**
+ * The default base URLs for esplora API providers.
+ */
 export const ESPLORA_URL: Record<NetworkName, string> = {
     bitcoin: "https://mempool.space/api",
     testnet: "https://mempool.space/testnet/api",
@@ -44,6 +47,15 @@ export interface OnchainProvider {
     ): Promise<() => void>;
 }
 
+/**
+ * Implementation of the onchain provider interface for esplora REST API.
+ * @see https://mempool.space/docs/api/rest
+ * @example
+ * ```typescript
+ * const provider = new EsploraProvider("https://mempool.space/api");
+ * const utxos = await provider.getCoins("bcrt1q679zsd45msawvr7782r0twvmukns3drlstjt77");
+ * ```
+ */
 export class EsploraProvider implements OnchainProvider {
     constructor(private baseUrl: string) {}
 

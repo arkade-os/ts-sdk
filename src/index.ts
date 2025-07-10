@@ -163,10 +163,10 @@ export {
     getArkPsbtFields,
     CosignerPublicKey,
     VtxoTreeExpiry,
-
-    // Utils
     VtxoTaprootTree,
     ConditionWitness,
+
+    // Utils
     buildOffchainTx,
     waitForIncomingFunds,
 
