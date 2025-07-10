@@ -4,7 +4,9 @@ FROM golang:1.23.1 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
-ARG BRANCH=master
+
+# v0.7.0 tag  
+ARG BRANCH=fcb9f21ef69836e8ddadc2d070deb0c5be139336
 
 WORKDIR /app
 
