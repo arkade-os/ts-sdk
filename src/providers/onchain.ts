@@ -215,13 +215,12 @@ export class EsploraProvider implements OnchainProvider {
 
                     if (newTxs.length > 0) {
                         // Update the tracking set instead of growing the array
-                        initialTxs.splice(0, initialTxs.length, ...currentTxs);
+                        initialTxs.push(...newTxs);
                         callback(newTxs);
                     }
                 } catch (error) {
                     console.error("Error in polling mechanism:", error);
                 }
-            }, pollingInterval);
             }, pollingInterval);
         });
 
