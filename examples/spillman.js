@@ -112,15 +112,15 @@ async function main() {
     const arkProvider = new RestArkProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
     const spendableVtxos = await indexerProvider.getVtxos({
-        addresses: [address],
+        scripts: [hex.encode(virtualSpillmanChannel.pkScript)],
         spendableOnly: true,
     });
 
-    if (spendableVtxos.length === 0) {
+    if (spendableVtxos.vtxos.length === 0) {
         throw new Error("No spendable virtual coins found");
     }
 
-    const vtxo = spendableVtxos[0];
+    const vtxo = spendableVtxos.vtxos[0];
     const input = {
         ...vtxo,
         tapLeafScript: virtualSpillmanChannel.findLeaf(

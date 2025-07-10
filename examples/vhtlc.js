@@ -13,7 +13,8 @@
 import {
     SingleKey,
     VHTLC,
-    addConditionWitness,
+    setArkPsbtField,
+    ConditionWitness,
     RestArkProvider,
     RestIndexerProvider,
     buildOffchainTx,
@@ -116,15 +117,15 @@ async function main() {
     const arkProvider = new RestArkProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
     const spendableVtxos = await indexerProvider.getVtxos({
-        addresses: [address],
+        scripts: [hex.encode(vhtlcScript.pkScript)],
         spendableOnly: true,
     });
 
-    if (spendableVtxos.length === 0) {
+    if (spendableVtxos.vtxos.length === 0) {
         throw new Error("No spendable virtual coins found");
     }
 
-    const vtxo = spendableVtxos[0];
+    const vtxo = spendableVtxos.vtxos[0];
 
     const infos = await arkProvider.getInfo();
 
@@ -145,7 +146,7 @@ async function main() {
                 sign: async (tx, inputIndexes) => {
                     const cpy = tx.clone();
                     // reveal the secret in the PSBT, thus the server can verify the claim script
-                    addConditionWitness(0, cpy, [secret]);
+                    setArkPsbtField(cpy, 0, ConditionWitness, [secret]);
                     return bob.sign(cpy, inputIndexes);
                 },
                 xOnlyPublicKey: bob.xOnlyPublicKey,
