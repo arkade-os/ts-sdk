@@ -70,8 +70,7 @@ export interface OnchainProvider {
     }>;
     watchAddresses(
         addresses: string[],
-        eventCallback: (txs: ExplorerTransaction[]) => void,
-        websocket?: WebSocket
+        eventCallback: (txs: ExplorerTransaction[]) => void
     ): Promise<() => void>;
 }
 
