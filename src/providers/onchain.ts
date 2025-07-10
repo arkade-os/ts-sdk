@@ -205,27 +205,23 @@ export class EsploraProvider implements OnchainProvider {
                     // we will compare with initialTxs to find new ones
                     const currentTxs = await getAllTxs();
 
-                    // if current transactions differ from initial, we have new transactions
-                    if (
-                        JSON.stringify(currentTxs) !==
-                        JSON.stringify(initialTxs)
-                    ) {
-                        // create a set of existing transactions to avoid duplicates
-                        const existingTxs = new Set(initialTxs.map(txKey));
+                    // create a set of existing transactions to avoid duplicates
+                    const existingTxs = new Set(initialTxs.map(txKey));
 
-                        // filter out transactions that are already in initialTxs
-                        const newTxs = currentTxs.filter(
-                            (tx) => !existingTxs.has(txKey(tx))
-                        );
+                    // filter out transactions that are already in initialTxs
+                    const newTxs = currentTxs.filter(
+                        (tx) => !existingTxs.has(txKey(tx))
+                    );
 
-                        if (newTxs.length > 0) {
-                            initialTxs.push(...newTxs);
-                            callback(newTxs);
-                        }
+                    if (newTxs.length > 0) {
+                        // Update the tracking set instead of growing the array
+                        initialTxs.splice(0, initialTxs.length, ...currentTxs);
+                        callback(newTxs);
                     }
                 } catch (error) {
                     console.error("Error in polling mechanism:", error);
                 }
+            }, pollingInterval);
             }, pollingInterval);
         });
 
