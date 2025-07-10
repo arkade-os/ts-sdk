@@ -204,7 +204,8 @@ new Worker().start()
 ```typescript
 // specify the path to the service worker file
 // this will automatically register the service worker
-const wallet = await ServiceWorkerWallet.create('/service-worker.js')
+const serviceWorker = await setupServiceWorker('/service-worker.js')
+const wallet = new ServiceWorkerWallet(serviceWorker)
 
 // Initialize the wallet
 await wallet.init({
@@ -214,6 +215,13 @@ await wallet.init({
   // OPTIONAL Ark Server connection information
   arkServerUrl: 'https://mutinynet.arkade.sh',
 })
+
+// check service worker status
+const status = await wallet.getStatus()
+console.log('Service worker status:', status.walletInitialized)
+
+// clear wallet data stored in the service worker memory
+await wallet.clear()
 ```
 
 _For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._

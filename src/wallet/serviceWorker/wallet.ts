@@ -38,7 +38,8 @@ class UnexpectedResponseError extends Error {
  * @example
  * ```typescript
  * // Create and initialize the service worker wallet
- * const wallet = await ServiceWorkerWallet.create('/service-worker.js');
+ * const serviceWorker = await setupServiceWorker("/service-worker.js");
+ * const wallet = new ServiceWorkerWallet(serviceWorker);
  * await wallet.init({
  *   privateKey: 'your_private_key_hex',
  *   arkServerUrl: 'https://ark.example.com'
@@ -50,20 +51,9 @@ class UnexpectedResponseError extends Error {
  * ```
  */
 export class ServiceWorkerWallet implements IWallet, Identity {
-    private serviceWorker?: ServiceWorker;
     private cachedXOnlyPublicKey: Uint8Array | undefined;
 
-    static async create(svcWorkerPath: string): Promise<ServiceWorkerWallet> {
-        try {
-            const wallet = new ServiceWorkerWallet();
-            await wallet.setupServiceWorker(svcWorkerPath);
-            return wallet;
-        } catch (error) {
-            throw new Error(
-                `Failed to initialize service worker wallet: ${error}`
-            );
-        }
-    }
+    constructor(public readonly serviceWorker: ServiceWorker) {}
 
     async getStatus(): Promise<Response.WalletStatus["status"]> {
         const message: Request.GetStatus = {
@@ -126,78 +116,10 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         this.cachedXOnlyPublicKey = undefined;
     }
 
-    // register the service worker
-    private async setupServiceWorker(path: string): Promise<void> {
-        // check if service workers are supported
-        if (!("serviceWorker" in navigator)) {
-            throw new Error(
-                "Service workers are not supported in this browser"
-            );
-        }
-
-        try {
-            // check for existing registration
-            const existingRegistration =
-                await navigator.serviceWorker.getRegistration(path);
-            let registration: ServiceWorkerRegistration;
-
-            if (existingRegistration) {
-                registration = existingRegistration;
-                // Force unregister and re-register to ensure we get the latest version
-                await existingRegistration.unregister();
-            }
-
-            registration = await navigator.serviceWorker.register(path);
-
-            // Handle updates
-            registration.addEventListener("updatefound", () => {
-                const newWorker = registration.installing;
-                if (!newWorker) return;
-
-                newWorker.addEventListener("statechange", () => {
-                    if (
-                        newWorker.state === "activated" &&
-                        navigator.serviceWorker.controller
-                    ) {
-                        console.info("Service worker activated, reloading...");
-                        window.location.reload();
-                    }
-                });
-            });
-
-            const sw =
-                registration.active ||
-                registration.waiting ||
-                registration.installing;
-            if (!sw) {
-                throw new Error("Failed to get service worker instance");
-            }
-            this.serviceWorker = sw;
-
-            // wait for the service worker to be ready
-            if (this.serviceWorker?.state !== "activated") {
-                await new Promise<void>((resolve) => {
-                    if (!this.serviceWorker) return resolve();
-                    this.serviceWorker.addEventListener("statechange", () => {
-                        if (this.serviceWorker?.state === "activated") {
-                            resolve();
-                        }
-                    });
-                });
-            }
-        } catch (error) {
-            throw new Error(`Failed to setup service worker: ${error}`);
-        }
-    }
-
     // send a message and wait for a response
     private async sendMessage<T extends Request.Base>(
         message: T
     ): Promise<Response.Base> {
-        if (!this.serviceWorker) {
-            throw new Error("Service worker not initialized");
-        }
-
         return new Promise((resolve, reject) => {
             const messageHandler = (event: MessageEvent) => {
                 const response = event.data as Response.Base;
@@ -221,11 +143,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
-            if (this.serviceWorker) {
-                this.serviceWorker.postMessage(message);
-            } else {
-                reject(new Error("Service worker not initialized"));
-            }
+            this.serviceWorker.postMessage(message);
         });
     }
 
@@ -381,11 +299,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
                     "message",
                     messageHandler
                 );
-                if (this.serviceWorker) {
-                    this.serviceWorker.postMessage(message);
-                } else {
-                    reject(new Error("Service worker not initialized"));
-                }
+                this.serviceWorker.postMessage(message);
             });
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);

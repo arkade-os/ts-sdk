@@ -34,6 +34,7 @@ import {
 import { Ramps } from "./wallet/ramps";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
+import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
@@ -117,7 +118,6 @@ import { Unroll } from "./wallet/unroll";
 export {
     // Wallets
     Wallet,
-    ServiceWorkerWallet,
     SingleKey,
     OnchainWallet,
     Ramps,
@@ -141,7 +141,9 @@ export {
     SettlementEventType,
 
     // Service Worker
+    setupServiceWorker,
     Worker,
+    ServiceWorkerWallet,
     Request,
     Response,
 
