@@ -675,8 +675,7 @@ describe("Ark integration tests", () => {
                 expect(vtxos).toHaveLength(1);
                 expect(vtxos[0].spentBy).toBeFalsy();
                 expect(vtxos[0].value).toBe(fundAmount);
-                // expect(vtxos[0].status.confirmed).toBeTruthy();
-                expect(vtxos[0].virtualStatus.state).toBe("pending");
+                expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
                 const age = now.getTime() - vtxos[0].createdAt.getTime();
                 expect(age).toBeLessThanOrEqual(4000);
             });
@@ -760,8 +759,7 @@ describe("Ark integration tests", () => {
             expect(vtxos).toHaveLength(1);
             expect(vtxos[0].spentBy).toBeFalsy();
             expect(vtxos[0].value).toBe(fundAmount);
-            // expect(vtxos[0].status.confirmed).toBeTruthy();
-            expect(vtxos[0].virtualStatus.state).toBe("pending");
+            expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
             const age = now.getTime() - vtxos[0].createdAt.getTime();
             expect(age).toBeLessThanOrEqual(4000);
         }
@@ -795,7 +793,6 @@ describe("Ark integration tests", () => {
             // assert
             expect(utxos).toHaveLength(1);
             expect(utxos[0].value).toBe(fundAmount);
-            // expect(utxos[0].status.confirmed).toBeTruthy();
             expect(utxos[0].status.block_time).toBeDefined();
             const age = now.getTime() - utxos[0].status.block_time! * 1000;
             expect(age).toBeLessThanOrEqual(10000);
