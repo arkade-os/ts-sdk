@@ -72,5 +72,9 @@ jobs:
           cat arkd.log
         fi
 
+    - name: Tear down arkd
+      run: pnpm run test:down-docker
+      if: always()
+
     - name: Check TypeScript compilation
       run: pnpm build 
