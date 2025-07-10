@@ -143,45 +143,8 @@ export class EsploraProvider implements OnchainProvider {
     ): Promise<() => void> {
         let intervalId: NodeJS.Timeout | null = null;
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
-        const ws = new WebSocket(wsUrl);
 
-        ws.addEventListener("open", () => {
-            // subscribe to address updates
-            const subscribeMsg: SubscribeMessage = {
-                "track-addresses": addresses,
-            };
-            ws.send(JSON.stringify(subscribeMsg));
-        });
-
-        ws.addEventListener("message", (event: MessageEvent) => {
-            try {
-                const newTxs: ExplorerTransaction[] = [];
-                const message: WebSocketMessage = JSON.parse(
-                    event.data.toString()
-                );
-                if (!message["multi-address-transactions"]) return;
-                const aux = message["multi-address-transactions"];
-
-                for (const address in aux) {
-                    for (const type of [
-                        "mempool",
-                        "confirmed",
-                        "removed",
-                    ] as const) {
-                        if (!aux[address][type]) continue;
-                        newTxs.push(
-                            ...aux[address][type].filter(isExplorerTransaction)
-                        );
-                    }
-                }
-                // callback with new transactions
-                if (newTxs.length > 0) callback(newTxs);
-            } catch (error) {
-                console.error("Failed to process WebSocket message:", error);
-            }
-        });
-
-        ws.addEventListener("error", async () => {
+        const poll = async () => {
             // websocket is not reliable, so we will fallback to polling
             const pollingInterval = 5_000; // 5 seconds
 
@@ -222,10 +185,64 @@ export class EsploraProvider implements OnchainProvider {
                     console.error("Error in polling mechanism:", error);
                 }
             }, pollingInterval);
-        });
+        };
+
+        let ws: WebSocket | null = null;
+        try {
+            ws = new WebSocket(wsUrl);
+            ws.addEventListener("open", () => {
+                // subscribe to address updates
+                const subscribeMsg: SubscribeMessage = {
+                    "track-addresses": addresses,
+                };
+                ws!.send(JSON.stringify(subscribeMsg));
+            });
+
+            ws.addEventListener("message", (event: MessageEvent) => {
+                try {
+                    const newTxs: ExplorerTransaction[] = [];
+                    const message: WebSocketMessage = JSON.parse(
+                        event.data.toString()
+                    );
+                    if (!message["multi-address-transactions"]) return;
+                    const aux = message["multi-address-transactions"];
+
+                    for (const address in aux) {
+                        for (const type of [
+                            "mempool",
+                            "confirmed",
+                            "removed",
+                        ] as const) {
+                            if (!aux[address][type]) continue;
+                            newTxs.push(
+                                ...aux[address][type].filter(
+                                    isExplorerTransaction
+                                )
+                            );
+                        }
+                    }
+                    // callback with new transactions
+                    if (newTxs.length > 0) callback(newTxs);
+                } catch (error) {
+                    console.error(
+                        "Failed to process WebSocket message:",
+                        error
+                    );
+                }
+            });
+
+            ws.addEventListener("error", async () => {
+                // if websocket is not available, fallback to polling
+                await poll();
+            });
+        } catch {
+            if (intervalId) clearInterval(intervalId);
+            // if websocket is not available, fallback to polling
+            await poll();
+        }
 
         const stopFunc = () => {
-            if (ws.readyState === WebSocket.OPEN) ws.close();
+            if (ws && ws.readyState === WebSocket.OPEN) ws.close();
             if (intervalId) clearInterval(intervalId);
         };
 
