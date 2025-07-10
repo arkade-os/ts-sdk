@@ -1,31 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EsploraProvider, Coin } from "../src";
 
-// Mock WebSocket
-class MockWebSocket {
-    url: string;
-    listeners: Map<string, (event: any) => void> = new Map();
-    send = vi.fn();
-    close = vi.fn();
-
-    constructor(url: string) {
-        this.url = url;
-    }
-
-    addEventListener(event: string, callback: (event: any) => void) {
-        this.listeners.set(event, callback);
-    }
-
-    // Simulate WebSocket events
-    simulateEvent(event: string, data: any) {
-        const callback = this.listeners.get(event);
-        if (callback) callback(data);
-    }
-}
-
-// Define a type for the mock to satisfy TypeScript
-type MockWebSocketInstance = InstanceType<typeof MockWebSocket>;
-
 // Mock fetch
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
