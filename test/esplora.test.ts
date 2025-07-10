@@ -1,10 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EsploraProvider, Coin } from "../src";
-import {
-    ExplorerTransaction,
-    SubscribeMessage,
-    WebSocketMessage,
-} from "../src/providers/onchain";
 
 // Mock WebSocket
 class MockWebSocket {

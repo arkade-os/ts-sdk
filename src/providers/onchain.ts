@@ -21,36 +21,6 @@ export type ExplorerTransaction = {
     };
 };
 
-const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
-    return (
-        typeof tx.txid === "string" &&
-        Array.isArray(tx.vout) &&
-        tx.vout.every(
-            (vout: any) =>
-                typeof vout.scriptpubkey_address === "string" &&
-                typeof vout.value === "string"
-        ) &&
-        typeof tx.status === "object" &&
-        typeof tx.status.confirmed === "boolean" &&
-        typeof tx.status.block_time === "number"
-    );
-};
-
-export interface SubscribeMessage {
-    "track-addresses": string[];
-}
-
-export interface WebSocketMessage {
-    "multi-address-transactions"?: Record<
-        string,
-        {
-            mempool: ExplorerTransaction[];
-            confirmed: ExplorerTransaction[];
-            removed: ExplorerTransaction[];
-        }
-    >;
-}
-
 export interface OnchainProvider {
     getCoins(address: string): Promise<Coin[]>;
     getFeeRate(): Promise<number | undefined>;
@@ -348,4 +318,34 @@ function isValidBlocksTip(
                 t.mediantime > 0;
         })
     );
+}
+
+const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
+    return (
+        typeof tx.txid === "string" &&
+        Array.isArray(tx.vout) &&
+        tx.vout.every(
+            (vout: any) =>
+                typeof vout.scriptpubkey_address === "string" &&
+                typeof vout.value === "string"
+        ) &&
+        typeof tx.status === "object" &&
+        typeof tx.status.confirmed === "boolean" &&
+        typeof tx.status.block_time === "number"
+    );
+};
+
+interface SubscribeMessage {
+    "track-addresses": string[];
+}
+
+interface WebSocketMessage {
+    "multi-address-transactions"?: Record<
+        string,
+        {
+            mempool: ExplorerTransaction[];
+            confirmed: ExplorerTransaction[];
+            removed: ExplorerTransaction[];
+        }
+    >;
 }
