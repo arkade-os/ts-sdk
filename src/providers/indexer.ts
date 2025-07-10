@@ -1,4 +1,5 @@
 import { Outpoint, VirtualCoin } from "../wallet";
+import { isFetchTimeoutError } from "./ark";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -312,40 +313,40 @@ export class RestIndexerProvider implements IndexerProvider {
         const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
-            const res = await fetch(url, {
-                headers: {
-                    Accept: "application/json",
-                },
-            });
+            try {
+                const res = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                    },
+                });
 
-            if (!res.ok) {
-                throw new Error(
-                    `Unexpected status ${res.status} when subscribing to address updates`
-                );
-            }
-
-            if (!res.body) {
-                throw new Error("Response body is null");
-            }
-
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
-            let buffer = "";
-
-            while (!abortSignal.aborted) {
-                const { done, value } = await reader.read();
-                if (done) {
-                    break;
+                if (!res.ok) {
+                    throw new Error(
+                        `Unexpected status ${res.status} when subscribing to address updates`
+                    );
                 }
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split("\n");
+                if (!res.body) {
+                    throw new Error("Response body is null");
+                }
 
-                for (let i = 0; i < lines.length - 1; i++) {
-                    const line = lines[i].trim();
-                    if (!line) continue;
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
 
-                    try {
+                while (!abortSignal.aborted) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n");
+
+                    for (let i = 0; i < lines.length - 1; i++) {
+                        const line = lines[i].trim();
+                        if (!line) continue;
+
                         const data = JSON.parse(line);
                         if ("result" in data) {
                             yield {
@@ -361,12 +362,24 @@ export class RestIndexerProvider implements IndexerProvider {
                                 checkpointTxs: data.result.checkpointTxs,
                             };
                         }
-                    } catch (err) {
-                        throw err;
                     }
+
+                    buffer = lines[lines.length - 1];
+                }
+            } catch (error) {
+                if (error instanceof Error && error.name === "AbortError") {
+                    break;
                 }
 
-                buffer = lines[lines.length - 1];
+                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                // these timeouts are set by builtin fetch function
+                if (isFetchTimeoutError(error)) {
+                    console.debug("Timeout error ignored");
+                    continue;
+                }
+
+                console.error("Subscription error:", error);
+                throw error;
             }
         }
     }

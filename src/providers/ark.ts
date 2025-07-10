@@ -481,6 +481,14 @@ export class RestArkProvider implements ArkProvider {
                 if (error instanceof Error && error.name === "AbortError") {
                     break;
                 }
+
+                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                // these timeouts are set by builtin fetch function
+                if (isFetchTimeoutError(error)) {
+                    console.debug("Timeout error ignored");
+                    continue;
+                }
+
                 console.error("Event stream error:", error);
                 throw error;
             }
@@ -531,19 +539,11 @@ export class RestArkProvider implements ArkProvider {
                         const line = lines[i].trim();
                         if (!line) continue;
 
-                        try {
-                            const data = JSON.parse(line);
-                            const txNotification =
-                                this.parseTransactionNotification(data.result);
-                            if (txNotification) {
-                                yield txNotification;
-                            }
-                        } catch (err) {
-                            console.error(
-                                "Failed to parse transaction notification:",
-                                err
-                            );
-                            throw err;
+                        const data = JSON.parse(line);
+                        const txNotification =
+                            this.parseTransactionNotification(data.result);
+                        if (txNotification) {
+                            yield txNotification;
                         }
                     }
 
@@ -897,7 +897,7 @@ namespace ProtoTypes {
     }
 }
 
-function isFetchTimeoutError(err: any): boolean {
+export function isFetchTimeoutError(err: any): boolean {
     const checkError = (error: any) => {
         return (
             error instanceof Error &&
