@@ -170,12 +170,11 @@ export class EsploraProvider implements OnchainProvider {
 
     async watchAddresses(
         addresses: string[],
-        callback: (txs: ExplorerTransaction[]) => void,
-        websocket?: WebSocket // for testing purposes
+        callback: (txs: ExplorerTransaction[]) => void
     ): Promise<() => void> {
         let intervalId: NodeJS.Timeout | null = null;
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
-        const ws = websocket ?? new WebSocket(wsUrl);
+        const ws = new WebSocket(wsUrl);
 
         ws.addEventListener("open", () => {
             // subscribe to address updates
