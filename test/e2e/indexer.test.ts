@@ -290,6 +290,9 @@ describe("Indexer provider", () => {
             amount: fundAmount,
         });
 
+        // wait for the ark tx to be processed by the ark server
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
         const aliceVtxosAfterArkTx = await alice.wallet.getVtxos();
         expect(aliceVtxosAfterArkTx).toBeDefined();
         expect(aliceVtxosAfterArkTx).toHaveLength(1);
