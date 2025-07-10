@@ -485,7 +485,7 @@ export class Wallet implements IWallet {
             this.serverUnrollScript
         );
 
-        const signedVirtualTx = await this.identity.sign(offchainTx.virtualTx);
+        const signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
 
         const { arkTxid, signedCheckpointTxs } =
             await this.arkProvider.submitTx(

@@ -76,7 +76,7 @@ import {
 } from "./script/tapscript";
 import {
     buildOffchainTx,
-    VirtualTxInput,
+    ArkTxInput,
     OffchainTx,
 } from "./utils/arkTransaction";
 import {
@@ -210,7 +210,7 @@ export type {
     TxKey,
     TapscriptType,
     VtxoRepository,
-    VirtualTxInput,
+    ArkTxInput,
     OffchainTx,
     TapLeaves,
     IncomingFunds,

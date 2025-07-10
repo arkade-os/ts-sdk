@@ -134,11 +134,11 @@ async function main() {
 
     // Bob's receiving address
     const bobAddress = await bobWallet.getAddress();
-    console.log("\nBob's receiving address:", bobAddress.offchain);
+    console.log("\nBob's receiving address:", bobAddress);
 
     // Alice's receiving address
     const aliceAddress = await aliceWallet.getAddress();
-    console.log("\nAlice's receiving address:", aliceAddress.offchain);
+    console.log("\nAlice's receiving address:", aliceAddress);
 
     // Bob has to keep track of the channel states
     // it means he has to store the list of virtual txs signed by Alice
@@ -158,7 +158,7 @@ async function main() {
     console.log("\nStarting channel updates...");
     // Alice sends 1000 to bob
     console.log("Alice sends 1000 sats to Bob");
-    const { virtualTx: tx1, checkpoints } = buildOffchainTx(
+    const { arkTx: tx1, checkpoints } = buildOffchainTx(
         [input],
         [
             {
@@ -184,7 +184,7 @@ async function main() {
 
     // Alice updates the state, sending 500 sats more to Bob
     console.log("\nAlice sends 500 more sats to Bob");
-    const { virtualTx: tx2 } = buildOffchainTx(
+    const { arkTx: tx2 } = buildOffchainTx(
         [input],
         [
             {
@@ -256,7 +256,7 @@ async function main() {
 
         console.log("\nRefunding channel...");
         // after 10 blocks, Alice can spend without Bob's signature
-        const { virtualTx, checkpoints } = buildOffchainTx(
+        const { arkTx, checkpoints } = buildOffchainTx(
             [
                 {
                     ...input,
@@ -273,7 +273,7 @@ async function main() {
             ],
             serverUnrollScript
         );
-        const signedTx = await alice.sign(virtualTx);
+        const signedTx = await alice.sign(arkTx);
         console.log("Alice signed the refund transaction");
 
         const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(

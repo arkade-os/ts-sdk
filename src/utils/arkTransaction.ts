@@ -14,7 +14,7 @@ import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { Bytes, sha256x2 } from "@scure/btc-signer/utils";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 
-export type VirtualTxInput = {
+export type ArkTxInput = {
     // the script used to spend the vtxo
     tapLeafScript: TapLeafScript;
     // the script used to spend the checkpoint vtxo, if not provided, fallback to tapLeafScript
@@ -23,7 +23,7 @@ export type VirtualTxInput = {
     Pick<VirtualCoin, "txid" | "vout" | "value">;
 
 export type OffchainTx = {
-    virtualTx: Transaction;
+    arkTx: Transaction;
     checkpoints: Transaction[];
 };
 
@@ -40,7 +40,7 @@ export type OffchainTx = {
  * @returns Object containing the virtual transaction and checkpoint transactions
  */
 export function buildOffchainTx(
-    inputs: VirtualTxInput[],
+    inputs: ArkTxInput[],
     outputs: TransactionOutput[],
     serverUnrollScript: CSVMultisigTapscript.Type
 ): OffchainTx {
@@ -48,21 +48,18 @@ export function buildOffchainTx(
         buildCheckpointTx(input, serverUnrollScript)
     );
 
-    const virtualTx = buildVirtualTx(
+    const arkTx = buildVirtualTx(
         checkpoints.map((c) => c.input),
         outputs
     );
 
     return {
-        virtualTx,
+        arkTx,
         checkpoints: checkpoints.map((c) => c.tx),
     };
 }
 
-function buildVirtualTx(
-    inputs: VirtualTxInput[],
-    outputs: TransactionOutput[]
-) {
+function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
     let lockTime = 0n;
     for (const input of inputs) {
         const tapscript = decodeTapscript(
@@ -118,9 +115,9 @@ function buildVirtualTx(
 }
 
 function buildCheckpointTx(
-    vtxo: VirtualTxInput,
+    vtxo: ArkTxInput,
     serverUnrollScript: CSVMultisigTapscript.Type
-): { tx: Transaction; input: VirtualTxInput } {
+): { tx: Transaction; input: ArkTxInput } {
     // create the checkpoint vtxo script from collaborative closure
     const collaborativeClosure = decodeTapscript(
         vtxo.checkpointTapLeafScript ??

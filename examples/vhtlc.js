@@ -153,7 +153,7 @@ async function main() {
                 signerSession: bob.signerSession,
             };
 
-            const { virtualTx, checkpoints } = buildOffchainTx(
+            const { arkTx, checkpoints } = buildOffchainTx(
                 [
                     {
                         ...vtxo,
@@ -170,9 +170,9 @@ async function main() {
                 serverUnrollScript
             );
 
-            const signedVirtualTx = await bobVHTLCIdentity.sign(virtualTx);
+            const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
             const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
-                base64.encode(signedVirtualTx.toPSBT()),
+                base64.encode(signedArkTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
 
@@ -199,7 +199,7 @@ async function main() {
         }
         case "refund": {
             // Create and sign the refund transaction
-            const { virtualTx, checkpoints } = buildOffchainTx(
+            const { arkTx, checkpoints } = buildOffchainTx(
                 [
                     {
                         ...vtxo,
@@ -217,12 +217,12 @@ async function main() {
             );
 
             // Alice signs the transaction
-            let signedVirtualTx = await alice.sign(virtualTx);
+            let signedArkTx = await alice.sign(arkTx);
             // Bob signs the transaction
-            signedVirtualTx = await bob.sign(signedVirtualTx);
+            signedArkTx = await bob.sign(signedArkTx);
 
             const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
-                base64.encode(signedVirtualTx.toPSBT()),
+                base64.encode(signedArkTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
 
@@ -253,7 +253,7 @@ async function main() {
             );
 
             // Create and sign the unilateral refund transaction
-            const { virtualTx, checkpoints } = buildOffchainTx(
+            const { arkTx, checkpoints } = buildOffchainTx(
                 [
                     {
                         ...vtxo,
@@ -271,10 +271,10 @@ async function main() {
             );
 
             // Alice signs the transaction alone
-            const signedVirtualTx = await alice.sign(virtualTx);
+            const signedArkTx = await alice.sign(arkTx);
 
             const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
-                base64.encode(signedVirtualTx.toPSBT()),
+                base64.encode(signedArkTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
 

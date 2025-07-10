@@ -436,7 +436,7 @@ describe("Ark integration tests", () => {
 
         const vtxo = spendableVtxosResponse.vtxos[0];
 
-        const { virtualTx, checkpoints } = buildOffchainTx(
+        const { arkTx, checkpoints } = buildOffchainTx(
             [
                 {
                     ...vtxo,
@@ -453,10 +453,10 @@ describe("Ark integration tests", () => {
             serverUnrollScript
         );
 
-        const signedVirtualTx = await bobVHTLCIdentity.sign(virtualTx);
+        const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
         const { arkTxid, finalArkTx, signedCheckpointTxs } =
             await arkProvider.submitTx(
-                base64.encode(signedVirtualTx.toPSBT()),
+                base64.encode(signedArkTx.toPSBT()),
                 checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
 
