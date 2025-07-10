@@ -676,44 +676,9 @@ export class RestArkProvider implements ArkProvider {
                 commitmentTx: {
                     txid: data.commitmentTx.txid,
                     tx: data.commitmentTx.tx,
-                    spentVtxos: data.commitmentTx.spentVtxos.map((vtxo) => ({
-                        outpoint: {
-                            txid: vtxo.outpoint.txid,
-                            vout: vtxo.outpoint.vout,
-                        },
-                        amount: vtxo.amount,
-                        script: vtxo.script,
-                        createdAt: vtxo.createdAt,
-                        expiresAt: vtxo.expiresAt,
-                        commitmentTxids: vtxo.commitmentTxids,
-                        isPreconfirmed: vtxo.isPreconfirmed,
-                        isSwept: vtxo.isSwept,
-                        isUnrolled: vtxo.isUnrolled,
-                        isSpent: vtxo.isSpent,
-                        spentBy: vtxo.spentBy,
-                        settledBy: vtxo.settledBy,
-                        arkTxid: vtxo.arkTxid,
-                    })),
-                    spendableVtxos: data.commitmentTx.spendableVtxos.map(
-                        (vtxo) => ({
-                            outpoint: {
-                                txid: vtxo.outpoint.txid,
-                                vout: vtxo.outpoint.vout,
-                            },
-                            amount: vtxo.amount,
-                            script: vtxo.script,
-                            createdAt: vtxo.createdAt,
-                            expiresAt: vtxo.expiresAt,
-                            commitmentTxids: vtxo.commitmentTxids,
-                            isPreconfirmed: vtxo.isPreconfirmed,
-                            isSwept: vtxo.isSwept,
-                            isUnrolled: vtxo.isUnrolled,
-                            isSpent: vtxo.isSpent,
-                            spentBy: vtxo.spentBy,
-                            settledBy: vtxo.settledBy,
-                            arkTxid: vtxo.arkTxid,
-                        })
-                    ),
+                    spentVtxos: data.commitmentTx.spentVtxos.map(mapVtxo),
+                    spendableVtxos:
+                        data.commitmentTx.spendableVtxos.map(mapVtxo),
                     checkpointTxs: data.commitmentTx.checkpointTxs,
                 },
             };
@@ -724,42 +689,8 @@ export class RestArkProvider implements ArkProvider {
                 arkTx: {
                     txid: data.arkTx.txid,
                     tx: data.arkTx.tx,
-                    spentVtxos: data.arkTx.spentVtxos.map((vtxo) => ({
-                        outpoint: {
-                            txid: vtxo.outpoint.txid,
-                            vout: vtxo.outpoint.vout,
-                        },
-                        amount: vtxo.amount,
-                        script: vtxo.script,
-                        createdAt: vtxo.createdAt,
-                        expiresAt: vtxo.expiresAt,
-                        commitmentTxids: vtxo.commitmentTxids,
-                        isPreconfirmed: vtxo.isPreconfirmed,
-                        isSwept: vtxo.isSwept,
-                        isUnrolled: vtxo.isUnrolled,
-                        isSpent: vtxo.isSpent,
-                        spentBy: vtxo.spentBy,
-                        settledBy: vtxo.settledBy,
-                        arkTxid: vtxo.arkTxid,
-                    })),
-                    spendableVtxos: data.arkTx.spendableVtxos.map((vtxo) => ({
-                        outpoint: {
-                            txid: vtxo.outpoint.txid,
-                            vout: vtxo.outpoint.vout,
-                        },
-                        amount: vtxo.amount,
-                        script: vtxo.script,
-                        createdAt: vtxo.createdAt,
-                        expiresAt: vtxo.expiresAt,
-                        commitmentTxids: vtxo.commitmentTxids,
-                        isPreconfirmed: vtxo.isPreconfirmed,
-                        isSwept: vtxo.isSwept,
-                        isUnrolled: vtxo.isUnrolled,
-                        isSpent: vtxo.isSpent,
-                        spentBy: vtxo.spentBy,
-                        settledBy: vtxo.settledBy,
-                        arkTxid: vtxo.arkTxid,
-                    })),
+                    spentVtxos: data.arkTx.spentVtxos.map(mapVtxo),
+                    spendableVtxos: data.arkTx.spendableVtxos.map(mapVtxo),
                     checkpointTxs: data.arkTx.checkpointTxs,
                 },
             };
@@ -849,7 +780,7 @@ namespace ProtoTypes {
         signature: string;
     }
 
-    interface VtxoData {
+    export interface VtxoData {
         outpoint: {
             txid: string;
             vout: number;
@@ -909,4 +840,25 @@ export function isFetchTimeoutError(err: any): boolean {
     };
 
     return checkError(err) || checkError((err as any).cause);
+}
+
+function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {
+    return {
+        outpoint: {
+            txid: vtxo.outpoint.txid,
+            vout: vtxo.outpoint.vout,
+        },
+        amount: vtxo.amount,
+        script: vtxo.script,
+        createdAt: vtxo.createdAt,
+        expiresAt: vtxo.expiresAt,
+        commitmentTxids: vtxo.commitmentTxids,
+        isPreconfirmed: vtxo.isPreconfirmed,
+        isSwept: vtxo.isSwept,
+        isUnrolled: vtxo.isUnrolled,
+        isSpent: vtxo.isSpent,
+        spentBy: vtxo.spentBy,
+        settledBy: vtxo.settledBy,
+        arkTxid: vtxo.arkTxid,
+    };
 }
