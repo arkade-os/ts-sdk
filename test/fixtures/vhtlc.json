@@ -1,0 +1,46 @@
+{
+    "valid": [
+        {
+            "description": "valid address with no values < 17",
+            "preimageHash": "4d487dd3753a89bc9fe98401d1196523058251fc",
+            "receiver": "021e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b",
+            "sender": "030192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4",
+            "server": "03aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88",
+            "refundLocktime": 265,
+            "unilateralClaimDelay": {
+                "type": "blocks",
+                "value": 17
+            },
+            "unilateralRefundDelay": {
+                "type": "blocks",
+                "value": 144
+            },
+            "unilateralRefundWithoutReceiverDelay": {
+                "type": "blocks",
+                "value": 144
+            },
+            "expected": "tark1qz4d2t2czchfaml2l3ad3gwde2qxpd0srhc7wkpnvtg99cnxyz8c3pnvvhnhumhwhqthmlxmdryakwx99s6508y8dunj9sty2p5mr7unh5re63"
+        },
+        {
+            "description": "valid address with some values < 17",
+            "preimageHash": "4d487dd3753a89bc9fe98401d1196523058251fc",
+            "receiver": "021e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b",
+            "sender": "030192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4",
+            "server": "03aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88",
+            "refundLocktime": 265,
+            "unilateralClaimDelay": {
+                "type": "blocks",
+                "value": 16
+            },
+            "unilateralRefundDelay": {
+                "type": "blocks",
+                "value": 144
+            },
+            "unilateralRefundWithoutReceiverDelay": {
+                "type": "blocks",
+                "value": 144
+            },
+            "expected": "tark1qz4d2t2czchfaml2l3ad3gwde2qxpd0srhc7wkpnvtg99cnxyz8c3vyn9exe9gjwcjp5ez0wfhhawvvg0xfenzztjmgp3ddrvkwhw04eztqjn6"
+        }
+    ]
+}
