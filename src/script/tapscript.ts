@@ -4,6 +4,8 @@ import { Script, ScriptNum, ScriptType } from "@scure/btc-signer/script";
 import { p2tr_ms } from "@scure/btc-signer/payment";
 import { hex } from "@scure/base";
 
+const MinimalScriptNum = ScriptNum(undefined, true);
+
 /**
  * RelativeTimelock lets to create timelocked with CHECKSEQUENCEVERIFY script.
  *
@@ -317,7 +319,7 @@ export namespace CSVMultisigTapscript {
             }
         }
 
-        const sequence = ScriptNum().encode(
+        const sequence = MinimalScriptNum.encode(
             BigInt(
                 bip68.encode(
                     params.timelock.type === "blocks"
@@ -327,7 +329,11 @@ export namespace CSVMultisigTapscript {
             )
         );
 
-        const asm: ScriptType = [sequence, "CHECKSEQUENCEVERIFY", "DROP"];
+        const asm: ScriptType = [
+            sequence.length === 1 ? sequence[0] : sequence,
+            "CHECKSEQUENCEVERIFY",
+            "DROP",
+        ];
         const multisigScript = MultisigTapscript.encode(params);
         const script = new Uint8Array([
             ...Script.encode(asm),
@@ -374,7 +380,7 @@ export namespace CSVMultisigTapscript {
             );
         }
 
-        const sequenceNum = Number(ScriptNum().decode(sequence));
+        const sequenceNum = Number(MinimalScriptNum.decode(sequence));
         const decodedTimelock = bip68.decode(sequenceNum);
 
         const timelock: RelativeTimelock =
@@ -622,8 +628,12 @@ export namespace CLTVMultisigTapscript {
     } & MultisigTapscript.Params;
 
     export function encode(params: Params): Type {
-        const locktime = ScriptNum().encode(params.absoluteTimelock);
-        const asm: ScriptType = [locktime, "CHECKLOCKTIMEVERIFY", "DROP"];
+        const locktime = MinimalScriptNum.encode(params.absoluteTimelock);
+        const asm: ScriptType = [
+            locktime.length === 1 ? locktime[0] : locktime,
+            "CHECKLOCKTIMEVERIFY",
+            "DROP",
+        ];
         const timelockedScript = Script.encode(asm);
 
         const script = new Uint8Array([
@@ -671,7 +681,7 @@ export namespace CLTVMultisigTapscript {
             );
         }
 
-        const absoluteTimelock = ScriptNum().decode(locktime);
+        const absoluteTimelock = MinimalScriptNum.decode(locktime);
 
         const reconstructed = encode({
             absoluteTimelock,
