@@ -1,3 +1,4 @@
+import { Transaction } from "@scure/btc-signer";
 import { SingleKey } from "./identity/singleKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
@@ -188,6 +189,7 @@ export {
     // Anchor
     P2A,
     Unroll,
+    Transaction,
 };
 
 export type {

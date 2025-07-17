@@ -1,8 +1,8 @@
 // serve.js is a simple HTTP server that serves the test.html file and the dist folder
 // It is used to test the ServiceWorkerWallet implementation in test.html
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
+import http from "http";
+import fs from "fs";
+import path from "path";
 
 const MIME_TYPES = {
     ".html": "text/html",
@@ -40,15 +40,18 @@ const server = http.createServer((req, res) => {
 
     // Serve test.html for root
     if (req.url === "/") {
-        fs.readFile(path.join(__dirname, "./test.html"), (err, data) => {
-            if (err) {
-                res.writeHead(500);
-                res.end("Error loading test.html");
-            } else {
-                res.writeHead(200, { "Content-Type": "text/html" });
-                res.end(data);
+        fs.readFile(
+            path.join(import.meta.dirname, "./test.html"),
+            (err, data) => {
+                if (err) {
+                    res.writeHead(500);
+                    res.end("Error loading test.html");
+                } else {
+                    res.writeHead(200, { "Content-Type": "text/html" });
+                    res.end(data);
+                }
             }
-        });
+        );
         return;
     }
 
@@ -56,10 +59,14 @@ const server = http.createServer((req, res) => {
     let filePath;
     if (req.url.startsWith("/dist/")) {
         // Direct request to dist folder
-        filePath = path.join(__dirname, "../..", req.url);
+        filePath = path.join(import.meta.dirname, "../..", req.url);
     } else {
         // Try dist/browser for other module requests
-        filePath = path.join(__dirname, "../../dist/browser", req.url);
+        filePath = path.join(
+            import.meta.dirname,
+            "../../dist/browser",
+            req.url
+        );
     }
 
     // Add .js extension if no extension exists

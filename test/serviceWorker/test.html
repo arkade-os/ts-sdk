@@ -290,7 +290,6 @@
                         >
                             <button id="getAddress">Get Address</button>
                             <button id="getBalance">Get Balance</button>
-                            <button id="getCoins">Get Coins</button>
                             <button id="getVtxos">Get VTXOs</button>
                             <button id="getBoardingUtxos">
                                 Get Boarding UTXOs
@@ -298,6 +297,32 @@
                             <button id="getHistory">Get History</button>
                         </div>
                         <div id="operationStatus" class="status"></div>
+                    </div>
+
+                    <div class="card">
+                        <h2>Signing</h2>
+                        <div>
+                            <label for="psbtInput">PSBT (Base64):</label>
+                            <textarea
+                                id="psbtInput"
+                                placeholder="Enter PSBT in base64 format"
+                                rows="4"
+                                style="width: 100%; font-family: monospace"
+                            ></textarea>
+                        </div>
+                        <div>
+                            <label for="inputIndexes"
+                                >Input Indexes (comma-separated,
+                                optional):</label
+                            >
+                            <input
+                                type="text"
+                                id="inputIndexes"
+                                placeholder="e.g., 0,1,2"
+                            />
+                        </div>
+                        <button id="signTx">Sign Transaction</button>
+                        <div id="signStatus" class="status"></div>
                     </div>
 
                     <div class="card">
@@ -315,7 +340,11 @@
         </div>
 
         <script type="module">
-            import { ServiceWorkerWallet } from "/dist/browser/index.js";
+            import {
+                ServiceWorkerWallet,
+                setupServiceWorker,
+                Transaction,
+            } from "/dist/browser/index.js";
 
             let wallet;
 
@@ -332,7 +361,10 @@
             async function initialize() {
                 setLoading(true);
                 try {
-                    wallet = await ServiceWorkerWallet.create("/sw.js");
+                    console.log("setupServiceWorker");
+                    const serviceWorker = await setupServiceWorker("/sw.js");
+                    console.log("serviceWorker", serviceWorker);
+                    wallet = new ServiceWorkerWallet(serviceWorker);
                     appendLog("Service worker wallet created successfully");
                 } catch (error) {
                     console.error("Error creating wallet:", error);
@@ -357,6 +389,7 @@
             const initStatus = document.getElementById("initStatus");
             const operationStatus = document.getElementById("operationStatus");
             const settleStatus = document.getElementById("settleStatus");
+            const signStatus = document.getElementById("signStatus");
 
             function appendLog(message) {
                 const entry = document.createElement("div");
@@ -509,36 +542,6 @@
                     }
                 });
 
-            // Get Coins
-            document
-                .getElementById("getCoins")
-                .addEventListener("click", async () => {
-                    if (!checkWalletState()) return;
-
-                    try {
-                        const coins = await wallet.getCoins();
-                        const resultDiv = document.createElement("div");
-                        resultDiv.className = "operation-result";
-                        resultDiv.innerHTML = `
-                    <div class="label">Wallet Coins</div>
-                    <pre>${JSON.stringify(coins, null, 2)}</pre>
-                `;
-                        operationStatus.innerHTML = "";
-                        operationStatus.appendChild(resultDiv);
-                        appendLog("Successfully retrieved wallet coins");
-                    } catch (error) {
-                        const resultDiv = document.createElement("div");
-                        resultDiv.className = "operation-result error";
-                        resultDiv.innerHTML = `
-                    <div class="label">Error Getting Coins</div>
-                    <pre>${error.message}</pre>
-                `;
-                        operationStatus.innerHTML = "";
-                        operationStatus.appendChild(resultDiv);
-                        appendLog(`Error getting coins: ${error.message}`);
-                    }
-                });
-
             // Get VTXOs
             document
                 .getElementById("getVtxos")
@@ -629,6 +632,75 @@
                         operationStatus.appendChild(resultDiv);
                         appendLog(
                             `Error getting transaction history: ${error.message}`
+                        );
+                    }
+                });
+
+            // Sign Transaction
+            document
+                .getElementById("signTx")
+                .addEventListener("click", async () => {
+                    if (!checkWalletState()) return;
+
+                    const psbtBase64 = document
+                        .getElementById("psbtInput")
+                        .value.trim();
+                    const inputIndexesStr = document
+                        .getElementById("inputIndexes")
+                        .value.trim();
+
+                    if (!psbtBase64) {
+                        updateStatus(
+                            signStatus,
+                            "Error: Please enter a PSBT in base64 format",
+                            true
+                        );
+                        return;
+                    }
+
+                    try {
+                        // Parse input indexes if provided
+                        let inputIndexes = undefined;
+                        if (inputIndexesStr) {
+                            inputIndexes = inputIndexesStr
+                                .split(",")
+                                .map((idx) => parseInt(idx.trim()));
+                        }
+
+                        // Create transaction from base64 PSBT
+                        const psbtBytes = new Uint8Array(
+                            atob(psbtBase64)
+                                .split("")
+                                .map((char) => char.charCodeAt(0))
+                        );
+                        const tx = Transaction.fromPSBT(psbtBytes);
+
+                        appendLog(
+                            `Signing transaction with ${inputIndexes ? inputIndexes.length : "all"} input(s)`
+                        );
+
+                        const signedTx = await wallet.sign(tx, inputIndexes);
+
+                        const resultDiv = document.createElement("div");
+                        resultDiv.className = "operation-result";
+                        resultDiv.innerHTML = `
+                    <div class="label">Signed Transaction (Base64 PSBT)</div>
+                    <pre>${btoa(String.fromCharCode(...signedTx.toPSBT()))}</pre>
+                `;
+                        signStatus.innerHTML = "";
+                        signStatus.appendChild(resultDiv);
+                        appendLog("Successfully signed transaction");
+                    } catch (error) {
+                        const resultDiv = document.createElement("div");
+                        resultDiv.className = "operation-result error";
+                        resultDiv.innerHTML = `
+                    <div class="label">Error Signing Transaction</div>
+                    <pre>${error.message}</pre>
+                `;
+                        signStatus.innerHTML = "";
+                        signStatus.appendChild(resultDiv);
+                        appendLog(
+                            `Error signing transaction: ${error.message}`
                         );
                     }
                 });
