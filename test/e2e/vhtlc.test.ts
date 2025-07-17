@@ -18,7 +18,9 @@ import {
 import {
     arkdExec,
     beforeEachFaucet,
+    createTestArkWallet,
     createTestIdentity,
+    faucetOffchain,
     X_ONLY_PUBLIC_KEY,
 } from "./utils";
 import { hash160 } from "@scure/btc-signer/utils";
@@ -140,7 +142,12 @@ describe("vhtlc", () => {
     });
 
     it("should unilaterally claim", { timeout: 300_000 }, async () => {
-        const alice = createTestIdentity();
+        const alice = await createTestArkWallet();
+        const amount = 5000;
+        faucetOffchain(await alice.wallet.getAddress(), amount);
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
         const bob = createTestIdentity();
 
         const preimage = new TextEncoder().encode("preimage");
@@ -148,7 +155,7 @@ describe("vhtlc", () => {
 
         const vhtlcScript = new VHTLC.Script({
             preimageHash,
-            sender: alice.xOnlyPublicKey(),
+            sender: alice.identity.xOnlyPublicKey(),
             receiver: bob.xOnlyPublicKey(),
             server: X_ONLY_PUBLIC_KEY,
             refundLocktime: BigInt(1000),
@@ -170,11 +177,16 @@ describe("vhtlc", () => {
             .address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY)
             .encode();
 
-        // fund the vhtlc address
-        const fundAmount = 20000;
-        execSync(
-            `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`
-        );
+        // fund the vhtlc address with settle in order to reduce the chain size
+        await alice.wallet.settle({
+            inputs: await alice.wallet.getVtxos(),
+            outputs: [
+                {
+                    address,
+                    amount: BigInt(amount),
+                },
+            ],
+        });
 
         const indexerProvider = new RestIndexerProvider(
             "http://localhost:7070"
