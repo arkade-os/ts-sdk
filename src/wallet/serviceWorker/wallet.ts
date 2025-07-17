@@ -344,7 +344,10 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         try {
             const response = await this.sendMessage(message);
             if (Response.isSignSuccess(response)) {
-                return Transaction.fromPSBT(base64.decode(response.tx));
+                return Transaction.fromPSBT(base64.decode(response.tx), {
+                    allowUnknown: true,
+                    allowUnknownInputs: true,
+                });
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {

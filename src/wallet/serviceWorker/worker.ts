@@ -580,7 +580,10 @@ export class Worker {
         }
 
         try {
-            const tx = Transaction.fromPSBT(base64.decode(message.tx));
+            const tx = Transaction.fromPSBT(base64.decode(message.tx), {
+                allowUnknown: true,
+                allowUnknownInputs: true,
+            });
             const signedTx = await this.wallet.identity.sign(
                 tx,
                 message.inputIndexes
