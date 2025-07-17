@@ -209,6 +209,10 @@ describe("vhtlc", () => {
                     execSync(
                         `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
                     );
+                    await new Promise((resolve) => setTimeout(resolve, 2000)); // give time for the checkpoint to be created
+                    execSync(
+                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
+                    );
                     break;
             }
         }
