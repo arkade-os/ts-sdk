@@ -11,16 +11,17 @@ describe("VHTLC address", () => {
             const serverXOnly = f.server.slice(2);
             const refundLocktime = BigInt(f.refundLocktime);
             const unilateralClaimDelay: RelativeTimelock = {
-                type: f.unilateralRefundWithoutReceiverDelay.type as
+                type: f.unilateralClaimDelay.type as
                     | "blocks"
                     | "seconds",
                 value: BigInt(f.unilateralClaimDelay.value),
             };
             const unilateralRefundDelay: RelativeTimelock = {
-                type: f.unilateralRefundWithoutReceiverDelay.type as
+                type: f.unilateralRefundDelay.type as
                     | "blocks"
                     | "seconds",
                 value: BigInt(f.unilateralRefundDelay.value),
+            };
             };
             const unilateralRefundWithoutReceiverDelay: RelativeTimelock = {
                 type: f.unilateralRefundWithoutReceiverDelay.type as
