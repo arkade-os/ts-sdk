@@ -1,5 +1,10 @@
-import { expect, describe, it } from "vitest";
-import { faucetOffchain, createTestArkWallet, createVtxo } from "./utils";
+import { expect, describe, it, beforeEach } from "vitest";
+import {
+    faucetOffchain,
+    createTestArkWallet,
+    createVtxo,
+    beforeEachFaucet,
+} from "./utils";
 import {
     ArkAddress,
     Outpoint,
@@ -12,6 +17,8 @@ import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 
 describe("Indexer provider", () => {
+    beforeEach(beforeEachFaucet);
+
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();

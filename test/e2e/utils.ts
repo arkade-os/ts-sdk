@@ -92,3 +92,21 @@ export async function createVtxo(
 
     return settleTxid;
 }
+
+// before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
+// if not, fund it with 2 * 20_000
+export function beforeEachFaucet(): void {
+    const balanceOutput = execSync(`${arkdExec} ark balance`).toString();
+    const balance = JSON.parse(balanceOutput);
+    const offchainBalance = balance.offchain_balance.total;
+
+    if (offchainBalance <= 20_000) {
+        for (let i = 0; i < 2; i++) {
+            const note = execSync(`${arkdExec} arkd note --amount 20_000`);
+            const noteStr = note.toString().trim();
+            execSync(
+                `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
+            );
+        }
+    }
+}

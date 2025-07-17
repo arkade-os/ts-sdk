@@ -94,9 +94,10 @@ async function setupArkServer() {
             .toString()
             .trim();
         console.log("Funding arkd address:", arkdAddress);
-        await execCommand(`nigiri faucet ${arkdAddress}`);
-        await execCommand(`nigiri faucet ${arkdAddress}`);
-        await execCommand(`nigiri faucet ${arkdAddress}`);
+
+        for (let i = 0; i < 10; i++) {
+            await execCommand(`nigiri faucet ${arkdAddress}`);
+        }
 
         // Wait for transaction to be confirmed
         await sleep(5000);
@@ -106,19 +107,14 @@ async function setupArkServer() {
             `${arkdExec} ark init --server-url http://localhost:7070 --explorer http://chopsticks:3000 --password secret --network regtest`
         );
 
-        // Get ark boarding address and fund it
-        const arkReceiveOutput = (
-            await execCommand(`${arkdExec} ark receive`)
-        ).toString();
-        const boardingAddress = JSON.parse(arkReceiveOutput).boarding_address;
-        console.log("Funding boarding address:", boardingAddress);
-        await execCommand(`nigiri faucet ${boardingAddress}`);
-
-        // Wait for transaction to be confirmed
-        await sleep(5000);
+        // fund the ark-cli with 1 vtxo worth of 20_000
+        const note = await execCommand(`${arkdExec} arkd note --amount 20_000`);
+        const noteStr = note.toString().trim();
+        const cmd = `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`;
+        await execCommand(cmd);
 
         // Settle the funds and wait for completion
-        await execCommand(`${arkdExec} ark settle --password secret`);
+
         console.log("Settlement completed successfully");
 
         console.log("Ark server and client setup completed successfully");

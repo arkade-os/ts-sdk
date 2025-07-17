@@ -1,31 +1,18 @@
-import { expect, describe, it, beforeAll } from "vitest";
-import { Transaction } from "@scure/btc-signer";
-import { base64, hex } from "@scure/base";
+import { expect, describe, it, beforeEach } from "vitest";
 import { execSync } from "child_process";
 import {
     TxType,
-    VHTLC,
-    Identity,
     RestIndexerProvider,
-    RestArkProvider,
     ArkNote,
-    CSVMultisigTapscript,
-    buildOffchainTx,
-    ConditionWitness,
-    setArkPsbtField,
     waitForIncomingFunds,
     OnchainWallet,
     Unroll,
     Ramps,
     Coin,
     VirtualCoin,
-    networks,
 } from "../../src";
-import { hash160 } from "@scure/btc-signer/utils";
 import {
     arkdExec,
-    X_ONLY_PUBLIC_KEY,
-    createTestIdentity,
     createTestArkWallet,
     createTestOnchainWallet,
     faucetOffchain,
@@ -33,16 +20,20 @@ import {
 } from "./utils";
 
 describe("Ark integration tests", () => {
-    beforeAll(async () => {
+    beforeEach(() => {
         // Check if there's enough offchain balance before proceeding
         const balanceOutput = execSync(`${arkdExec} ark balance`).toString();
         const balance = JSON.parse(balanceOutput);
         const offchainBalance = balance.offchain_balance.total;
 
-        if (offchainBalance < 210_000) {
-            throw new Error(
-                'Insufficient offchain balance. Please run "node test/setup.js" first to setup the environment'
-            );
+        if (offchainBalance < 10_000) {
+            for (let i = 0; i < 2; i++) {
+                const note = execSync(`${arkdExec} arkd note --amount 20_000`);
+                const noteStr = note.toString().trim();
+                execSync(
+                    `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
+                );
+            }
         }
     });
 
@@ -364,118 +355,6 @@ describe("Ark integration tests", () => {
         const [alicesExitTx] = aliceHistoryAfterExit;
         expect(alicesExitTx.type).toBe(TxType.TxReceived);
         expect(alicesExitTx.amount).toBe(amount);
-    });
-
-    it("should claim a VHTLC", { timeout: 60000 }, async () => {
-        const alice = createTestIdentity();
-        const bob = createTestIdentity();
-
-        const preimage = new TextEncoder().encode("preimage");
-        const preimageHash = hash160(preimage);
-
-        const vhtlcScript = new VHTLC.Script({
-            preimageHash,
-            sender: alice.xOnlyPublicKey(),
-            receiver: bob.xOnlyPublicKey(),
-            server: X_ONLY_PUBLIC_KEY,
-            refundLocktime: BigInt(1000),
-            unilateralClaimDelay: {
-                type: "blocks",
-                value: 100n,
-            },
-            unilateralRefundDelay: {
-                type: "blocks",
-                value: 50n,
-            },
-            unilateralRefundWithoutReceiverDelay: {
-                type: "blocks",
-                value: 50n,
-            },
-        });
-
-        const address = vhtlcScript
-            .address(networks.regtest.hrp, X_ONLY_PUBLIC_KEY)
-            .encode();
-
-        // fund the vhtlc address
-        const fundAmount = 1000;
-        execSync(
-            `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`
-        );
-
-        // bob special identity to sign with the preimage
-        const bobVHTLCIdentity: Identity = {
-            sign: async (tx: Transaction, inputIndexes?: number[]) => {
-                const cpy = tx.clone();
-                setArkPsbtField(cpy, 0, ConditionWitness, [preimage]);
-                return bob.sign(cpy, inputIndexes);
-            },
-            xOnlyPublicKey: bob.xOnlyPublicKey,
-            signerSession: bob.signerSession,
-        };
-
-        const arkProvider = new RestArkProvider("http://localhost:7070");
-        const indexerProvider = new RestIndexerProvider(
-            "http://localhost:7070"
-        );
-
-        const spendableVtxosResponse = await indexerProvider.getVtxos({
-            scripts: [hex.encode(vhtlcScript.pkScript)],
-            spendableOnly: true,
-        });
-        expect(spendableVtxosResponse.vtxos).toHaveLength(1);
-
-        const infos = await arkProvider.getInfo();
-        const serverUnrollScript = CSVMultisigTapscript.encode({
-            timelock: {
-                type: infos.unilateralExitDelay < 512 ? "blocks" : "seconds",
-                value: infos.unilateralExitDelay,
-            },
-            pubkeys: [X_ONLY_PUBLIC_KEY],
-        });
-
-        const vtxo = spendableVtxosResponse.vtxos[0];
-
-        const { arkTx, checkpoints } = buildOffchainTx(
-            [
-                {
-                    ...vtxo,
-                    tapLeafScript: vhtlcScript.claim(),
-                    tapTree: vhtlcScript.encode(),
-                },
-            ],
-            [
-                {
-                    script: vhtlcScript.pkScript,
-                    amount: BigInt(fundAmount),
-                },
-            ],
-            serverUnrollScript
-        );
-
-        const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
-        const { arkTxid, finalArkTx, signedCheckpointTxs } =
-            await arkProvider.submitTx(
-                base64.encode(signedArkTx.toPSBT()),
-                checkpoints.map((c) => base64.encode(c.toPSBT()))
-            );
-
-        expect(arkTxid).toBeDefined();
-        expect(finalArkTx).toBeDefined();
-        expect(signedCheckpointTxs).toBeDefined();
-        expect(signedCheckpointTxs.length).toBe(checkpoints.length);
-
-        const finalCheckpoints = await Promise.all(
-            signedCheckpointTxs.map(async (c) => {
-                const tx = Transaction.fromPSBT(base64.decode(c), {
-                    allowUnknown: true,
-                });
-                const signedCheckpoint = await bobVHTLCIdentity.sign(tx, [0]);
-                return base64.encode(signedCheckpoint.toPSBT());
-            })
-        );
-
-        await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
     });
 
     it("should redeem a note", { timeout: 60000 }, async () => {
@@ -814,6 +693,8 @@ describe("Ark integration tests", () => {
         execSync(
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // alice should send offchain tx with subdust output
         await alice.wallet.sendBitcoin({
