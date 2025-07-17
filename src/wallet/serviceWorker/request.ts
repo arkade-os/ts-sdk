@@ -166,7 +166,7 @@ export namespace Request {
             message.type === "SIGN" &&
             "tx" in message &&
             typeof message.tx === "string" &&
-            ("inputIndexes" in message && message.inputIndexes !== undefined
+            ("inputIndexes" in message && message.inputIndexes != undefined
                 ? Array.isArray(message.inputIndexes) &&
                   message.inputIndexes.every(
                       (index) => typeof index === "number"
