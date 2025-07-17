@@ -59,6 +59,8 @@ export namespace VHTLC {
         readonly unilateralRefundWithoutReceiverScript: string;
 
         constructor(readonly options: Options) {
+            validateOptions(options);
+
             const {
                 sender,
                 receiver,
@@ -146,6 +148,94 @@ export namespace VHTLC {
 
         unilateralRefundWithoutReceiver(): TapLeafScript {
             return this.findLeaf(this.unilateralRefundWithoutReceiverScript);
+        }
+    }
+
+    function validateOptions(options: Options): void {
+        const {
+            sender,
+            receiver,
+            server,
+            preimageHash,
+            refundLocktime,
+            unilateralClaimDelay,
+            unilateralRefundDelay,
+            unilateralRefundWithoutReceiverDelay,
+        } = options;
+
+        if (!preimageHash || preimageHash.length !== 20) {
+            throw new Error("preimage hash must be 20 bytes");
+        }
+        if (!receiver || receiver.length !== 32) {
+            throw new Error("Invalid public key length (receiver)");
+        }
+        if (!sender || sender.length !== 32) {
+            throw new Error("Invalid public key length (sender)");
+        }
+        if (!server || server.length !== 32) {
+            throw new Error("Invalid public key length (server)");
+        }
+        if (typeof refundLocktime !== "bigint" || refundLocktime <= 0n) {
+            throw new Error("refund locktime must be greater than 0");
+        }
+        if (
+            !unilateralClaimDelay ||
+            typeof unilateralClaimDelay.value !== "bigint" ||
+            unilateralClaimDelay.value <= 0n
+        ) {
+            throw new Error("unilateral claim delay must greater than 0");
+        }
+        if (
+            unilateralClaimDelay.type === "seconds" &&
+            unilateralClaimDelay.value % 512n !== 0n
+        ) {
+            throw new Error("seconds timelock must be multiple of 512");
+        }
+        if (
+            unilateralClaimDelay.type === "seconds" &&
+            unilateralClaimDelay.value < 512n
+        ) {
+            throw new Error("seconds timelock must be greater or equal to 512");
+        }
+        if (
+            !unilateralRefundDelay ||
+            typeof unilateralRefundDelay.value !== "bigint" ||
+            unilateralRefundDelay.value <= 0n
+        ) {
+            throw new Error("unilateral refund delay must greater than 0");
+        }
+        if (
+            unilateralRefundDelay.type === "seconds" &&
+            unilateralRefundDelay.value % 512n !== 0n
+        ) {
+            throw new Error("seconds timelock must be multiple of 512");
+        }
+        if (
+            unilateralRefundDelay.type === "seconds" &&
+            unilateralRefundDelay.value < 512n
+        ) {
+            throw new Error("seconds timelock must be greater or equal to 512");
+        }
+        if (
+            !unilateralRefundWithoutReceiverDelay ||
+            typeof unilateralRefundWithoutReceiverDelay.value !== "bigint" ||
+            unilateralRefundWithoutReceiverDelay.value <= 0n
+        ) {
+            throw new Error(
+                "unilateral refund without receiver delay must greater than 0"
+            );
+        }
+        if (
+            unilateralRefundWithoutReceiverDelay.type === "seconds" &&
+            unilateralRefundWithoutReceiverDelay.value % 512n !== 0n
+        ) {
+            throw new Error("seconds timelock must be multiple of 512");
+        }
+        if (
+            unilateralRefundWithoutReceiverDelay.type === "seconds" &&
+            unilateralRefundWithoutReceiverDelay.value < 512n
+        ) {
+            throw new Error("seconds timelock must be greater or equal to 512");
         }
     }
 }
