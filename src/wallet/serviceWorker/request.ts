@@ -6,6 +6,7 @@ import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
 export namespace Request {
     export type Type =
         | "INIT_WALLET"
+        | "RELOAD_WALLET"
         | "SETTLE"
         | "GET_ADDRESS"
         | "GET_BOARDING_ADDRESS"
@@ -173,5 +174,12 @@ export namespace Request {
                   )
                 : true)
         );
+    }
+    export interface ReloadWallet extends Base {
+        type: "RELOAD_WALLET";
+    }
+
+    export function isReloadWallet(message: Base): message is ReloadWallet {
+        return message.type === "RELOAD_WALLET";
     }
 }

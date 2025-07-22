@@ -354,6 +354,18 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             throw new Error(`Failed to sign: ${error}`);
         }
     }
+
+    async reload(): Promise<boolean> {
+        const message: Request.ReloadWallet = {
+            type: "RELOAD_WALLET",
+            id: getRandomId(),
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isClearResponse(response)) {
+            return response.success;
+        }
+        throw new UnexpectedResponseError(response);
+    }
 }
 
 function getRandomId(): string {
