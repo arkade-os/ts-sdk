@@ -830,12 +830,18 @@ namespace ProtoTypes {
 
 export function isFetchTimeoutError(err: any): boolean {
     const checkError = (error: any) => {
+        if (!(error instanceof Error)) return false;
+
+        // TODO: get something more robust than this
+        const isCloudflare524 =
+            error.name === "TypeError" && error.message === "Failed to fetch";
+
         return (
-            error instanceof Error &&
-            (error.name === "HeadersTimeoutError" ||
-                error.name === "BodyTimeoutError" ||
-                (error as any).code === "UND_ERR_HEADERS_TIMEOUT" ||
-                (error as any).code === "UND_ERR_BODY_TIMEOUT")
+            isCloudflare524 ||
+            error.name === "HeadersTimeoutError" ||
+            error.name === "BodyTimeoutError" ||
+            (error as any).code === "UND_ERR_HEADERS_TIMEOUT" ||
+            (error as any).code === "UND_ERR_BODY_TIMEOUT"
         );
     };
 
