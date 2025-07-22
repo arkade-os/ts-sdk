@@ -834,6 +834,7 @@ export function isFetchTimeoutError(err: any): boolean {
             error instanceof Error &&
             (error.name === "HeadersTimeoutError" ||
                 error.name === "BodyTimeoutError" ||
+                error.name === "TypeError" ||
                 (error as any).code === "UND_ERR_HEADERS_TIMEOUT" ||
                 (error as any).code === "UND_ERR_BODY_TIMEOUT")
         );
