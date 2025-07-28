@@ -662,10 +662,46 @@ export class Worker {
                 await this.handleSign(event);
                 break;
             }
+            case "RELOAD_WALLET": {
+                await this.handleReloadWallet(event);
+                break;
+            }
             default:
                 event.source?.postMessage(
                     Response.error(message.id, "Unknown message type")
                 );
+        }
+    }
+
+    private async handleReloadWallet(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isReloadWallet(message)) {
+            console.error("Invalid RELOAD_WALLET message format", message);
+            event.source?.postMessage(
+                Response.error(
+                    message.id,
+                    "Invalid RELOAD_WALLET message format"
+                )
+            );
+            return;
+        }
+
+        if (!this.wallet) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.clearResponse(message.id, false)
+            );
+            return;
+        }
+
+        try {
+            await this.onWalletInitialized();
+            event.source?.postMessage(Response.clearResponse(message.id, true));
+        } catch (error: unknown) {
+            console.error("Error reloading wallet:", error);
+            event.source?.postMessage(
+                Response.clearResponse(message.id, false)
+            );
         }
     }
 }
