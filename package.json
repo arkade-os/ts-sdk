@@ -62,13 +62,14 @@
     "bip68": "1.0.4"
   },
   "devDependencies": {
-    "rimraf": "^5.0.0",
     "@types/node": "22.10.2",
     "@vitest/coverage-v8": "2.1.9",
     "esbuild": "^0.20.1",
+    "eventsource": "4.0.0",
     "glob": "11.0.1",
     "husky": "9.1.7",
     "prettier": "3.4.2",
+    "rimraf": "^5.0.0",
     "typedoc": "^0.27.1",
     "typescript": "5.7.2",
     "vitest": "2.1.9"
