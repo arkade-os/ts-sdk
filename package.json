@@ -59,13 +59,13 @@
     "@noble/secp256k1": "2.2.3",
     "@scure/base": "1.2.6",
     "@scure/btc-signer": "1.8.1",
-    "bip68": "1.0.4",
-    "eventsource": "4.0.0"
+    "bip68": "1.0.4"
   },
   "devDependencies": {
     "@types/node": "22.10.2",
     "@vitest/coverage-v8": "2.1.9",
     "esbuild": "^0.20.1",
+    "eventsource": "4.0.0",
     "glob": "11.0.1",
     "husky": "9.1.7",
     "prettier": "3.4.2",

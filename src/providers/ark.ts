@@ -1,4 +1,3 @@
-import { EventSource } from "eventsource";
 import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";

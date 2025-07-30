@@ -5,6 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     fileParallelism: false,
+    setupFiles: ['./test/polyfill.js'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html'],
