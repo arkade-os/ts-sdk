@@ -24,10 +24,29 @@ export async function setupServiceWorker(path: string): Promise<ServiceWorker> {
         throw new Error("Failed to get service worker instance");
     }
     // wait for the service worker to be ready
-    return new Promise<ServiceWorker>((resolve) => {
+    return new Promise<ServiceWorker>((resolve, reject) => {
         if (serviceWorker.state === "activated") return resolve(serviceWorker);
-        serviceWorker.addEventListener("activate", () =>
-            resolve(serviceWorker)
-        );
+
+        const onActivate = () => {
+            cleanup();
+            resolve(serviceWorker);
+        };
+        const onError = (event: Event) => {
+            cleanup();
+            reject(new Error("Service worker failed to activate"));
+        };
+        const timeout = setTimeout(() => {
+            cleanup();
+            reject(new Error("Service worker activation timed out"));
+        }, 10000); // 10 seconds timeout
+
+        function cleanup() {
+            serviceWorker.removeEventListener("activate", onActivate);
+            serviceWorker.removeEventListener("error", onError);
+            clearTimeout(timeout);
+        }
+
+        serviceWorker.addEventListener("activate", onActivate);
+        serviceWorker.addEventListener("error", onError);
     });
 }
