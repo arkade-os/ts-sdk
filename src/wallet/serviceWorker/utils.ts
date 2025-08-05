@@ -24,11 +24,10 @@ export async function setupServiceWorker(path: string): Promise<ServiceWorker> {
         throw new Error("Failed to get service worker instance");
     }
     // wait for the service worker to be ready
-    if (serviceWorker.state !== "activated") {
-        await new Promise<void>((resolve) => {
-            if (!serviceWorker) return resolve();
-            serviceWorker.addEventListener("activate", () => resolve());
-        });
-    }
-    return serviceWorker;
+    return new Promise<ServiceWorker>((resolve) => {
+        if (serviceWorker.state === "activated") return resolve(serviceWorker);
+        serviceWorker.addEventListener("activate", () =>
+            resolve(serviceWorker)
+        );
+    });
 }
