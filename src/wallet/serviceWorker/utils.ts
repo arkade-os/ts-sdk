@@ -31,22 +31,24 @@ export async function setupServiceWorker(path: string): Promise<ServiceWorker> {
             cleanup();
             resolve(serviceWorker);
         };
-        const onError = (event: Event) => {
+
+        const onError = () => {
             cleanup();
             reject(new Error("Service worker failed to activate"));
         };
+
         const timeout = setTimeout(() => {
             cleanup();
             reject(new Error("Service worker activation timed out"));
-        }, 10000); // 10 seconds timeout
+        }, 10000);
 
-        function cleanup() {
-            serviceWorker.removeEventListener("activate", onActivate);
-            serviceWorker.removeEventListener("error", onError);
+        const cleanup = () => {
+            serviceWorker!.removeEventListener("activate", onActivate);
+            serviceWorker!.removeEventListener("error", onError);
             clearTimeout(timeout);
-        }
+        };
 
-        serviceWorker.addEventListener("activate", onActivate);
-        serviceWorker.addEventListener("error", onError);
+        serviceWorker!.addEventListener("activate", onActivate);
+        serviceWorker!.addEventListener("error", onError);
     });
 }
