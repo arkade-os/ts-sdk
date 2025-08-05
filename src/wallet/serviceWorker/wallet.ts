@@ -62,10 +62,9 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         };
         const response = await this.sendMessage(message);
         if (Response.isWalletStatus(response)) {
-            const { status } = response;
-            status.walletInitialized &&=
-                this.cachedXOnlyPublicKey !== undefined;
-            return status;
+            const { walletInitialized, xOnlyPublicKey } = response.status;
+            if (walletInitialized) this.cachedXOnlyPublicKey = xOnlyPublicKey;
+            return response.status;
         }
         throw new UnexpectedResponseError(response);
     }
@@ -83,12 +82,13 @@ export class ServiceWorkerWallet implements IWallet, Identity {
 
         if (
             Response.isWalletStatus(response) &&
-            response.status.walletInitialized &&
-            this.cachedXOnlyPublicKey !== undefined
+            response.status.walletInitialized
         ) {
             if (failIfInitialized) {
                 throw new Error("Wallet already initialized");
             }
+
+            this.cachedXOnlyPublicKey = this.xOnlyPublicKey();
             return;
         }
 

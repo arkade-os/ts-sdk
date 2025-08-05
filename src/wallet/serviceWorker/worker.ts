@@ -557,7 +557,11 @@ export class Worker {
         }
 
         event.source?.postMessage(
-            Response.walletStatus(message.id, this.wallet !== undefined)
+            Response.walletStatus(
+                message.id,
+                this.wallet !== undefined,
+                this.wallet?.identity.xOnlyPublicKey()
+            )
         );
     }
 
