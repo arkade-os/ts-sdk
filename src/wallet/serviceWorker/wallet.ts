@@ -88,7 +88,7 @@ export class ServiceWorkerWallet implements IWallet, Identity {
                 throw new Error("Wallet already initialized");
             }
 
-            this.cachedXOnlyPublicKey = this.xOnlyPublicKey();
+            this.cachedXOnlyPublicKey = response.status.xOnlyPublicKey;
             return;
         }
 
