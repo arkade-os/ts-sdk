@@ -26,9 +26,9 @@ describe("Ark integration tests", () => {
         const balance = JSON.parse(balanceOutput);
         const offchainBalance = balance.offchain_balance.total;
 
-        if (offchainBalance < 10_000) {
+        if (offchainBalance < 20_000) {
             for (let i = 0; i < 2; i++) {
-                const note = execSync(`${arkdExec} arkd note --amount 20_000`);
+                const note = execSync(`${arkdExec} arkd note --amount 30_000`);
                 const noteStr = note.toString().trim();
                 execSync(
                     `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
