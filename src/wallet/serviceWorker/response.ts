@@ -274,6 +274,7 @@ export namespace Response {
         success: true;
         status: {
             walletInitialized: boolean;
+            xOnlyPublicKey: Uint8Array | undefined;
         };
     }
 
@@ -283,13 +284,15 @@ export namespace Response {
 
     export function walletStatus(
         id: string,
-        walletInitialized: boolean
+        walletInitialized: boolean,
+        xOnlyPublicKey: Uint8Array | undefined
     ): WalletStatus {
         return {
             type: "WALLET_STATUS",
             success: true,
             status: {
                 walletInitialized,
+                xOnlyPublicKey,
             },
             id,
         };
