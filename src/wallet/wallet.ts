@@ -1126,7 +1126,7 @@ export class Wallet implements IWallet {
             input_tap_trees: inputTapTrees,
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: nowSeconds,
-            expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
+            expire_at: 0, // no expiry
             cosigners_public_keys: cosignerPubKeys,
         };
 
@@ -1147,12 +1147,11 @@ export class Wallet implements IWallet {
     private async makeDeleteIntentSignature(
         bip322Inputs: ExtendedCoin[]
     ): Promise<{ signature: BIP322.Signature; message: string }> {
-        const nowSeconds = Math.floor(Date.now() / 1000);
         const { inputs, finalizer } = this.prepareBIP322Inputs(bip322Inputs);
 
         const message = {
             type: "delete",
-            expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
+            expire_at: 0, // no expiry
         };
 
         const encodedMessage = JSON.stringify(message, null, 0);
