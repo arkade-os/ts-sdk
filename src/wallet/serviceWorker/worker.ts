@@ -63,6 +63,11 @@ export class Worker {
         this.vtxoSubscription = undefined;
     }
 
+    async reload() {
+        if (this.vtxoSubscription) this.vtxoSubscription.abort();
+        await this.onWalletInitialized();
+    }
+
     private async onWalletInitialized() {
         if (
             !this.wallet ||
