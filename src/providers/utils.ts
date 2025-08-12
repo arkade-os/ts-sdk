@@ -1,16 +1,15 @@
-export function eventSourceIterator(
+export async function* eventSourceIterator(
     eventSource: EventSource
-): AsyncIterableIterator<MessageEvent> {
+): AsyncGenerator<MessageEvent, void, unknown> {
     const messageQueue: MessageEvent[] = [];
     const errorQueue: Error[] = [];
-    let messageResolve: ((value: IteratorResult<MessageEvent>) => void) | null =
-        null;
-    let errorResolve: ((value: IteratorResult<MessageEvent>) => void) | null =
-        null;
+    let messageResolve: ((value: MessageEvent) => void) | null = null;
+    let errorResolve: ((error: Error) => void) | null = null;
+    let isClosed = false;
 
     const messageHandler = (event: MessageEvent) => {
         if (messageResolve) {
-            messageResolve({ value: event, done: false });
+            messageResolve(event);
             messageResolve = null;
         } else {
             messageQueue.push(event);
@@ -21,25 +20,41 @@ export function eventSourceIterator(
         const error = new Error("EventSource error");
 
         if (errorResolve) {
-            errorResolve({ value: error as any, done: false });
+            errorResolve(error);
             errorResolve = null;
         } else {
             errorQueue.push(error);
         }
     };
 
+    const closeHandler = () => {
+        isClosed = true;
+        // Resolve any pending promises to unblock the loop
+        if (messageResolve) {
+            messageResolve(new MessageEvent("close"));
+            messageResolve = null;
+        }
+        if (errorResolve) {
+            errorResolve(new Error("EventSource closed"));
+            errorResolve = null;
+        }
+    };
+
     eventSource.addEventListener("message", messageHandler);
     eventSource.addEventListener("error", errorHandler);
+    eventSource.addEventListener("close", closeHandler);
 
-    return {
-        [Symbol.asyncIterator]() {
-            return this;
-        },
-        async next(): Promise<IteratorResult<MessageEvent>> {
-            // if we have queued messages, return the first one, remove it from the queue
+    // Check if EventSource is already closed
+    if (eventSource.readyState === EventSource.CLOSED) {
+        isClosed = true;
+    }
+
+    try {
+        while (!isClosed) {
+            // if we have queued messages, yield the first one, remove it from the queue
             if (messageQueue.length > 0) {
-                const event = messageQueue.shift()!;
-                return { value: event, done: false };
+                yield messageQueue.shift()!;
+                continue;
             }
 
             // if we have queued errors, throw the first one, remove it from the queue
@@ -48,20 +63,29 @@ export function eventSourceIterator(
                 throw error;
             }
 
+            // Check if EventSource is closed before waiting
+            if (eventSource.readyState === EventSource.CLOSED) {
+                isClosed = true;
+                break;
+            }
+
             // wait for the next message or error
-            return new Promise((resolve, reject) => {
-                messageResolve = resolve;
-                errorResolve = reject;
-            }).finally(() => {
+            const result = await new Promise<MessageEvent>(
+                (resolve, reject) => {
+                    messageResolve = resolve;
+                    errorResolve = reject;
+                }
+            ).finally(() => {
                 messageResolve = null;
                 errorResolve = null;
-            }) as Promise<IteratorResult<MessageEvent>>;
-        },
-        return() {
-            // clean up
-            eventSource.removeEventListener("message", messageHandler);
-            eventSource.removeEventListener("error", errorHandler);
-            return Promise.resolve({ value: undefined, done: true });
-        },
-    };
+            });
+
+            yield result;
+        }
+    } finally {
+        // clean up
+        eventSource.removeEventListener("message", messageHandler);
+        eventSource.removeEventListener("error", errorHandler);
+        eventSource.removeEventListener("close", closeHandler);
+    }
 }
