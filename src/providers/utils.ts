@@ -29,12 +29,8 @@ export async function* eventSourceIterator(
     eventSource.addEventListener("message", messageHandler);
     eventSource.addEventListener("error", errorHandler);
 
-    if (eventSource.readyState === EventSource.CLOSED) {
-        throw new Error("EventSource is closed");
-    }
-
     try {
-        while (eventSource.readyState !== EventSource.CLOSED) {
+        while (true) {
             // if we have queued messages, yield the first one, remove it from the queue
             if (messageQueue.length > 0) {
                 yield messageQueue.shift()!;
