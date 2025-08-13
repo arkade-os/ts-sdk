@@ -116,7 +116,7 @@ export function validateVtxoTxGraph(
     graph.validate();
 
     // iterates over all the nodes of the graph to verify that cosigners public keys are corresponding to the parent output
-    for (const g of graph) {
+    for (const g of graph.iterator()) {
         for (const [childIndex, child] of g.children) {
             const parentOutput = g.root.getOutput(childIndex);
             if (!parentOutput?.script) {
