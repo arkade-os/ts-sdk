@@ -1,90 +1,90 @@
 {
-  "name": "@arkade-os/sdk",
-  "version": "0.2.2",
-  "description": "Bitcoin wallet SDK with Taproot and Ark integration",
-  "type": "module",
-  "main": "./dist/cjs/index.js",
-  "module": "./dist/esm/index.js",
-  "types": "./dist/types/index.d.ts",
-  "sideEffects": false,
-  "exports": {
-    ".": {
-      "types": "./dist/types/index.d.ts",
-      "import": "./dist/esm/index.js",
-      "require": "./dist/cjs/index.js",
-      "default": "./dist/esm/index.js"
+    "name": "@arkade-os/sdk",
+    "version": "0.2.3",
+    "description": "Bitcoin wallet SDK with Taproot and Ark integration",
+    "type": "module",
+    "main": "./dist/cjs/index.js",
+    "module": "./dist/esm/index.js",
+    "types": "./dist/types/index.d.ts",
+    "sideEffects": false,
+    "exports": {
+        ".": {
+            "types": "./dist/types/index.d.ts",
+            "import": "./dist/esm/index.js",
+            "require": "./dist/cjs/index.js",
+            "default": "./dist/esm/index.js"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "scripts": {
+        "build": "rimraf dist && pnpm run build:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:types && node scripts/generate-package-files.js",
+        "build:esm": "tsc -p tsconfig.esm.json --outDir dist/esm",
+        "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
+        "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
+        "build:browser": "node scripts/build-browser.js",
+        "docs:build": "pnpm run build:types && pnpm typedoc",
+        "docs:open": "open ./docs/index.html",
+        "test": "vitest run",
+        "test:master": "ARK_ENV=master vitest run",
+        "test:unit": "vitest run --exclude test/e2e",
+        "test:setup": "node test/setup.js",
+        "test:setup-docker": "node test/setup.js docker",
+        "test:build-docker": "docker compose -f docker-compose.yml build --no-cache",
+        "test:up-docker": "docker compose -f docker-compose.yml up -d",
+        "test:down-docker": "docker compose -f docker-compose.yml down",
+        "test:integration": "vitest run test/e2e/**",
+        "test:integration-docker": "ARK_ENV=docker vitest run test/e2e/**",
+        "test:watch": "vitest",
+        "test:coverage": "vitest run --coverage",
+        "test:sw": "pnpm run build:browser && node test/serviceWorker/serve.js",
+        "format": "prettier --write src test examples",
+        "lint": "prettier --check src test examples",
+        "audit": "pnpm audit",
+        "preinstall": "npx only-allow pnpm",
+        "prepare": "husky",
+        "prepublishOnly": "pnpm run build",
+        "release": "bash scripts/release.sh",
+        "release:dry-run": "bash scripts/release.sh --dry-run",
+        "release:cleanup": "bash scripts/release.sh --cleanup"
+    },
+    "dependencies": {
+        "@noble/curves": "1.9.1",
+        "@noble/hashes": "1.8.0",
+        "@noble/secp256k1": "2.2.3",
+        "@scure/base": "1.2.6",
+        "@scure/btc-signer": "1.8.1",
+        "bip68": "1.0.4"
+    },
+    "devDependencies": {
+        "rimraf": "^5.0.0",
+        "@types/node": "22.10.2",
+        "@vitest/coverage-v8": "2.1.9",
+        "esbuild": "^0.20.1",
+        "glob": "11.0.1",
+        "husky": "9.1.7",
+        "prettier": "3.4.2",
+        "typedoc": "^0.27.1",
+        "typescript": "5.7.2",
+        "vitest": "2.1.9"
+    },
+    "keywords": [
+        "bitcoin",
+        "wallet",
+        "taproot",
+        "ark",
+        "sdk",
+        "arkade"
+    ],
+    "author": "Ark Labs",
+    "license": "MIT",
+    "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
+    "engines": {
+        "node": "^14.17.0 || ^16.13.0 || >=18.0.0"
     }
-  },
-  "files": [
-    "dist"
-  ],
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  },
-  "scripts": {
-    "build": "rimraf dist && pnpm run build:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:types && node scripts/generate-package-files.js",
-    "build:esm": "tsc -p tsconfig.esm.json --outDir dist/esm",
-    "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
-    "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
-    "build:browser": "node scripts/build-browser.js",
-    "docs:build": "pnpm run build:types && pnpm typedoc",
-    "docs:open": "open ./docs/index.html",
-    "test": "vitest run",
-    "test:master": "ARK_ENV=master vitest run",
-    "test:unit": "vitest run --exclude test/e2e",
-    "test:setup": "node test/setup.js",
-    "test:setup-docker": "node test/setup.js docker",
-    "test:build-docker": "docker compose -f docker-compose.yml build --no-cache",
-    "test:up-docker": "docker compose -f docker-compose.yml up -d",
-    "test:down-docker": "docker compose -f docker-compose.yml down",
-    "test:integration": "vitest run test/e2e/**",
-    "test:integration-docker": "ARK_ENV=docker vitest run test/e2e/**",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "test:sw": "pnpm run build:browser && node test/serviceWorker/serve.js",
-    "format": "prettier --write src test examples",
-    "lint": "prettier --check src test examples",
-    "audit": "pnpm audit",
-    "preinstall": "npx only-allow pnpm",
-    "prepare": "husky",
-    "prepublishOnly": "pnpm run build",
-    "release": "bash scripts/release.sh",
-    "release:dry-run": "bash scripts/release.sh --dry-run",
-    "release:cleanup": "bash scripts/release.sh --cleanup"
-  },
-  "dependencies": {
-    "@noble/curves": "1.9.1",
-    "@noble/hashes": "1.8.0",
-    "@noble/secp256k1": "2.2.3",
-    "@scure/base": "1.2.6",
-    "@scure/btc-signer": "1.8.1",
-    "bip68": "1.0.4"
-  },
-  "devDependencies": {
-    "rimraf": "^5.0.0",
-    "@types/node": "22.10.2",
-    "@vitest/coverage-v8": "2.1.9",
-    "esbuild": "^0.20.1",
-    "glob": "11.0.1",
-    "husky": "9.1.7",
-    "prettier": "3.4.2",
-    "typedoc": "^0.27.1",
-    "typescript": "5.7.2",
-    "vitest": "2.1.9"
-  },
-  "keywords": [
-    "bitcoin",
-    "wallet",
-    "taproot",
-    "ark",
-    "sdk",
-    "arkade"
-  ],
-  "author": "Ark Labs",
-  "license": "MIT",
-  "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
-  "engines": {
-    "node": "^14.17.0 || ^16.13.0 || >=18.0.0"
-  }
 }
