@@ -1,150 +1,191 @@
-# ARK Xverse Wallet - React App
+# ARK SDK Xverse Wallet Integration Example
 
-A simplified React application for connecting to Xverse wallet and creating ARK cooperative transactions.
+This example demonstrates how to integrate the ARK SDK with Xverse wallet using sats-connect for external wallet signing.
 
 ## Overview
 
-This React app demonstrates how to:
-- Connect to Xverse Bitcoin wallet using `sats-connect`
-- Create ARK multisig addresses using external wallet signing
-- Sign cooperative transactions for the ARK protocol with proper wallet integration
-- Handle wallet interactions in a modern React interface
+This React app shows how to:
 
-## Key Features
-
-### 🔐 **Proper Wallet Integration**
-- **SatsConnectIdentity** - Custom identity provider that uses wallet's `signPsbt` method
-- **No private key exposure** - all signing happens in the user's wallet
-- **Secure transaction signing** - leverages browser extension security model
-
-### 🎯 **Simplified Architecture**
-- **Single wallet class** (`ArkWallet.js`) handles all wallet operations
-- **Clean React hooks** for state management
-- **External wallet identity** (`SatsConnectIdentity.js`) for proper signing
-
-### 🧹 **Cleaner Code**
-- **No more DOM manipulation** - pure React components
-- **Declarative UI** - state drives the interface
-- **Better error handling** with consistent status messages
-- **Type-safe interactions** with proper validation
-
-### 🚀 **Better User Experience**
-- **Real-time status updates** with loading states
-- **Form validation** prevents invalid transactions
-- **Responsive design** works on mobile and desktop
-- **Clear visual hierarchy** with modern styling
-
-### 🔧 **Simplified Dependencies**
-- Only core libraries: `react`, `sats-connect`, `@scure/base`, `@scure/btc-signer`
-- No additional utility classes or complex file structure
-- Modern Vite build system for fast development
+- Connect to Xverse browser extension wallet
+- Use external wallet signing instead of in-memory private keys
+- Send Bitcoin transactions through ARK's collaborative transaction protocol
+- Handle wallet connection states and errors
 
 ## Architecture
 
+The example implements a custom `SatsConnectIdentity` class that:
+
+- Implements the ARK SDK's `Identity` interface
+- Uses sats-connect's `signPsbt` method for transaction signing
+- Converts ARK transactions to PSBT format for wallet compatibility
+- Handles wallet responses and error states
+
+## Prerequisites
+
+### 1. Install Xverse Wallet
+
+- Install [Xverse browser extension](https://chrome.google.com/webstore/detail/xverse-wallet/idnnbdplmphpflfnlkomgpfbpcgelopg)
+- Create a wallet or import an existing one
+- Switch to **Bitcoin Signet** network (Settings → Network → Signet)
+
+### 2. Get Signet Bitcoin
+
+- Use a signet faucet to get test Bitcoin
+- Send some sats to your Xverse wallet's payment address
+
+### 3. Setup Development Environment
+
+```bash
+# Navigate to the example directory
+cd examples/xverse-react-app
+
+# Install dependencies
+npm install
+
+# Start the development server
+npm run dev
 ```
-src/
-├── main.jsx               # React entry point
-├── App.jsx                # Main application component
-├── ArkWallet.js           # Simplified wallet provider
-├── SatsConnectIdentity.js # External wallet identity implementation
-└── index.css              # Styling
+
+## Testing Instructions
+
+### 1. Connect Wallet
+
+1. Open the app in your browser (usually `http://localhost:5173`)
+2. Click "Connect Xverse Wallet"
+3. Approve the connection request in the Xverse popup
+4. You should see your wallet address and balance displayed
+
+### 2. Send Bitcoin via ARK
+
+1. Enter a recipient Bitcoin address (Signet network)
+2. Enter an amount (make sure you have enough balance + fees)
+3. Click "Send Bitcoin via ARK"
+4. **First time**: Xverse will prompt to sign the funding transaction
+5. **Second prompt**: Xverse will prompt to sign the ARK round transaction
+6. Check the console for detailed transaction logs
+
+### 3. Expected Flow
+
+```md
+1. App connects to Xverse wallet ✅
+2. App creates ARK wallet instance ✅
+3. User initiates Bitcoin send ✅
+4. ARK SDK creates funding transaction ✅
+5. Xverse signs funding transaction ✅
+6. ARK SDK submits to server ✅
+7. ARK server creates collaborative round ✅
+8. ARK SDK receives round transaction ✅
+9. Xverse signs round transaction ✅
+10. Transaction is broadcast ✅
 ```
 
-## Key Components
+## Key Files
 
-### SatsConnectIdentity Class
-A custom identity provider that implements the ARK SDK's Identity interface using sats-connect's `signPsbt` method:
+### `SatsConnectIdentity.js`
 
-- **Proper wallet integration** - uses the browser extension's signing capabilities
-- **No private key handling** - public key only approach
-- **Compatible with ARK SDK** - implements the required Identity interface
+Custom identity provider that integrates with Xverse wallet:
 
-### ArkWallet Class
-- **`connect()`** - Connect to Xverse and create ARK address using SatsConnectIdentity
-- **`signTransaction()`** - Create and sign cooperative transactions
-- **`getDebugInfo()`** - Wallet detection and debugging
+```javascript
+// Implements ARK SDK Identity interface
+class SatsConnectIdentity {
+  async sign(tx, inputIndexes) {
+    // Converts transaction to PSBT
+    // Uses sats-connect to request wallet signature
+    // Returns signed transaction
+  }
+}
+```
 
-### React App Component
-- **Wallet connection** with loading states
-- **Transaction creation** with form validation
-- **Status logging** for user feedback
-- **Debug information** for troubleshooting
+### `ArkWallet.js`
 
-## Usage
+Wrapper that combines ARK SDK with Xverse wallet:
 
-1. **Install dependencies:**
-   ```bash
-   pnpm install
-   ```
+```javascript
+// Creates ARK wallet with external signer
+const arkWallet = new Wallet({
+  identity: new SatsConnectIdentity(address, publicKey, request),
+  // ... other config
+});
+```
 
-2. **Start development server:**
-   ```bash
-   pnpm dev
-   ```
+## Network Configuration
 
-3. **Connect Xverse wallet:**
-   - Install Xverse browser extension
-   - Click "Connect Xverse Wallet"
-   - Approve connection in Xverse popup
+The example is configured for **Bitcoin Signet**:
 
-4. **Create transactions:**
-   - Enter recipient address (Bitcoin or ARK format)
-   - Enter amount in satoshis
-   - Click "Sign Cooperative Transaction"
-   - Copy resulting PSBT for ARK server submission
+- ARK Server: Points to Signet ARK coordinator
+- Wallet Connection: Requests Signet network
+- All transactions use Signet Bitcoin
 
-## Technical Details
+To change networks, update:
 
-### ARK Address Generation
-- Creates 2-of-2 multisig with user + ARK server public keys
-- Uses Taproot with script tree for efficient transactions
-- Encodes with 'tark' prefix for signet testnet
-
-### Transaction Signing
-- Creates demo transaction with mock UTXO
-- Uses `sats-connect` for Xverse integration
-- Returns PSBT in base64 format for server submission
-
-### Supported Address Formats
-- **Bitcoin addresses** (P2PKH, P2SH, P2WPKH, P2WSH, P2TR)
-- **ARK addresses** (tark/ark bech32m format)
+1. `ArkWallet.js` - ARK server URL
+2. `ArkWallet.js` - sats-connect network parameter
+3. Switch your Xverse wallet to the same network
 
 ## Development
 
-### Build for production:
+### Debug Mode
+
+The app includes comprehensive logging. Check browser console for:
+
+- Wallet connection status
+- Transaction details
+- PSBT data
+- ARK server responses
+- Signing attempts
+
+### Testing Different Scenarios
+
+1. **Disconnect wallet**: Refresh page and try operations
+2. **Insufficient funds**: Try sending more than balance
+3. **Invalid address**: Use mainnet address on signet
+4. **Cancel signing**: Click cancel in Xverse popup
+
+## Code Structure
+
 ```bash
-pnpm build
+src/
+├── App.jsx              # Main React component
+├── ArkWallet.js         # ARK + Xverse integration
+├── SatsConnectIdentity.js # External wallet identity
+└── SatsConnectDebugger.js # Debugging utilities
 ```
 
-### Preview production build:
-```bash
-pnpm preview
-```
+## Integration with Your App
 
-### Lint code:
-```bash
-pnpm lint
-```
+To integrate this pattern into your own app:
 
-## Comparison with Original
+1. **Copy the identity provider**:
 
-| Aspect | Original (Vanilla JS) | New (React) |
-|--------|----------------------|-------------|
-| **Lines of code** | ~400 lines across 4 files | ~250 lines across 3 files |
-| **State management** | Manual DOM updates | React hooks |
-| **Error handling** | Try/catch + DOM updates | Unified status system |
-| **UI updates** | Direct DOM manipulation | Declarative React |
-| **Code organization** | Multiple utility classes | Single wallet class |
-| **Type safety** | None | Better validation |
-| **Development** | Manual refresh | Hot reload |
-| **Build** | No build step | Optimized Vite build |
+   ```bash
+   cp src/SatsConnectIdentity.js your-app/src/
+   ```
 
-## Dependencies
+2. **Install dependencies**:
 
-- **React 18** - Modern React with hooks
-- **sats-connect 3.x** - Xverse wallet integration
-- **@scure/btc-signer** - Bitcoin transaction creation
-- **@scure/base** - Encoding utilities
-- **Vite** - Fast build tool and dev server
+   ```bash
+   npm install sats-connect @arkosdao/ts-sdk
+   ```
 
-The React version is significantly cleaner, more maintainable, and provides a better developer and user experience while maintaining all the core functionality of the original implementation.
+3. **Use the pattern**:
+
+```javascript
+   import { SatsConnectIdentity } from './SatsConnectIdentity';
+   import { Wallet } from '@arkosdao/ts-sdk';
+   
+   // Connect wallet
+   const response = await request('wallet_connect', {
+     addresses: ['payment', 'ordinals'],
+     network: 'Signet'
+   });
+   
+   // Create identity
+   const identity = new SatsConnectIdentity(
+     paymentAddress,
+     publicKey,
+     request
+   );
+   
+   // Create ARK wallet
+   const arkWallet = new Wallet({ identity });
+   ```
