@@ -34,6 +34,8 @@ const wallet = await Wallet.create({
 ### Receiving Bitcoin
 
 ```typescript
+import { waitForIncomingFunds } from '@arkade-os/sdk'
+
 // Get wallet addresses
 const arkAddress = await wallet.getAddress()
 const boardingAddress = await wallet.getBoardingAddress()
@@ -147,11 +149,14 @@ Unilateral exit allows you to withdraw your funds from the Ark protocol back to 
 #### Step 1: Unrolling VTXOs
 
 ```typescript
-import { Unroll, OnchainWallet } from '@arkade-os/sdk'
+import { Unroll, OnchainWallet, SingleKey } from '@arkade-os/sdk'
+
+// Create an identity for the onchain wallet
+const onchainIdentity = SingleKey.fromHex('your_onchain_private_key_hex');
 
 // Create an onchain wallet to pay for P2A outputs in VTXO branches
 // OnchainWallet implements the AnchorBumper interface
-const onchainWallet = new OnchainWallet(wallet.identity, 'regtest');
+const onchainWallet = await OnchainWallet.create(onchainIdentity, 'regtest');
 
 // Unroll a specific VTXO
 const vtxo = { txid: 'your_vtxo_txid', vout: 0 };
@@ -285,11 +290,13 @@ The SDK supports different identity implementations for various environments:
 
 ```typescript
 import { SingleKey, ServiceWorkerIdentity } from '@arkade-os/sdk'
+import { randomPrivateKeyBytes } from '@scure/btc-signer/utils'
+import { hex } from '@scure/base'
 
 // Standard single-key identity (most common)
 const identity = SingleKey.fromHex('your_private_key_hex')
 // Generate random key
-const randomIdentity = SingleKey.random()
+const randomIdentity = SingleKey.fromHex(hex.encode(randomPrivateKeyBytes()))
 
 // Service worker identity for background operations
 const serviceWorker = await navigator.serviceWorker.register('/worker.js')
@@ -297,7 +304,7 @@ const swIdentity = new ServiceWorkerIdentity(serviceWorker.active!)
 
 // All identity methods are now async
 const pubKey = await identity.xOnlyPublicKey()
-const signature = await identity.signTransaction(psbt)
+const signedTx = await identity.sign(transaction)
 ```
 
 ### Repository Pattern
@@ -337,12 +344,13 @@ const wallet = await Wallet.create({
   arkServerUrl: 'https://ark.example.com',
   storage: new InMemoryStorageAdapter() // explicit storage choice
 })
-const pubKey = await wallet.identity.xOnlyPublicKey() // async
+const pubKey = await identity.xOnlyPublicKey() // async
 ```
 
 **Breaking Changes:**
+
 - Replace `new Wallet()` + `init()` with `Wallet.create()`
-- Identity methods are now async (`await wallet.identity.xOnlyPublicKey()`)
+- Identity methods are now async (`await identity.xOnlyPublicKey()`)
 - Storage adapters must be explicitly chosen (defaults to `InMemoryStorageAdapter`)
 - Access repositories via `wallet.walletRepository` and `wallet.contractRepository`
 
