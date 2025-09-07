@@ -17,7 +17,9 @@ export namespace Request {
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
         | "CLEAR"
-        | "SIGN";
+        | "SIGN"
+        | "GET_XONLY_PUBLIC_KEY"
+        | "SIGN_TRANSACTION";
 
     export interface Base {
         type: Type;
@@ -166,6 +168,39 @@ export namespace Request {
             message.type === "SIGN" &&
             "tx" in message &&
             typeof message.tx === "string" &&
+            ("inputIndexes" in message && message.inputIndexes != undefined
+                ? Array.isArray(message.inputIndexes) &&
+                  message.inputIndexes.every(
+                      (index) => typeof index === "number"
+                  )
+                : true)
+        );
+    }
+
+    export interface GetXOnlyPublicKey extends Base {
+        type: "GET_XONLY_PUBLIC_KEY";
+    }
+
+    export function isGetXOnlyPublicKey(
+        message: Base
+    ): message is GetXOnlyPublicKey {
+        return message.type === "GET_XONLY_PUBLIC_KEY";
+    }
+
+    export interface SignTransaction extends Base {
+        type: "SIGN_TRANSACTION";
+        transaction: number[]; // Serialized PSBT as number array
+        inputIndexes?: number[];
+    }
+
+    export function isSignTransaction(
+        message: Base
+    ): message is SignTransaction {
+        return (
+            message.type === "SIGN_TRANSACTION" &&
+            "transaction" in message &&
+            Array.isArray(message.transaction) &&
+            message.transaction.every((byte) => typeof byte === "number") &&
             ("inputIndexes" in message && message.inputIndexes != undefined
                 ? Array.isArray(message.inputIndexes) &&
                   message.inputIndexes.every(

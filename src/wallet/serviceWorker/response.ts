@@ -20,7 +20,9 @@ export namespace Response {
         | "WALLET_STATUS"
         | "ERROR"
         | "CLEAR_RESPONSE"
-        | "SIGN_SUCCESS";
+        | "SIGN_SUCCESS"
+        | "XONLY_PUBLIC_KEY"
+        | "TRANSACTION_SIGNED";
 
     export interface Base {
         type: Type;
@@ -331,5 +333,57 @@ export namespace Response {
 
     export function isSignSuccess(response: Base): response is SignSuccess {
         return response.type === "SIGN_SUCCESS" && response.success === true;
+    }
+
+    export interface XOnlyPublicKey extends Base {
+        type: "XONLY_PUBLIC_KEY";
+        success: true;
+        publicKey: number[]; // Uint8Array as number array
+    }
+
+    export function xOnlyPublicKey(
+        id: string,
+        publicKey: Uint8Array
+    ): XOnlyPublicKey {
+        return {
+            type: "XONLY_PUBLIC_KEY",
+            success: true,
+            id,
+            publicKey: Array.from(publicKey),
+        };
+    }
+
+    export function isXOnlyPublicKey(
+        response: Base
+    ): response is XOnlyPublicKey {
+        return (
+            response.type === "XONLY_PUBLIC_KEY" && response.success === true
+        );
+    }
+
+    export interface TransactionSigned extends Base {
+        type: "TRANSACTION_SIGNED";
+        success: true;
+        transaction: number[]; // Serialized signed PSBT as number array
+    }
+
+    export function transactionSigned(
+        id: string,
+        transaction: Uint8Array
+    ): TransactionSigned {
+        return {
+            type: "TRANSACTION_SIGNED",
+            success: true,
+            id,
+            transaction: Array.from(transaction),
+        };
+    }
+
+    export function isTransactionSigned(
+        response: Base
+    ): response is TransactionSigned {
+        return (
+            response.type === "TRANSACTION_SIGNED" && response.success === true
+        );
     }
 }

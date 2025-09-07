@@ -3,6 +3,7 @@ import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils";
+import { StorageAdapter } from "../storage";
 
 /**
  * Configuration options for wallet initialization.
@@ -19,6 +20,7 @@ export interface WalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
+    storage?: StorageAdapter;
 }
 
 export interface WalletBalance {

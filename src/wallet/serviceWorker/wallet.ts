@@ -4,7 +4,6 @@ import {
     SendBitcoinParams,
     SettleParams,
     ArkTransaction,
-    WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
@@ -12,11 +11,14 @@ import {
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
-import { base64, hex } from "@scure/base";
-import { SingleKey } from "../../identity/singleKey";
+import { hex } from "@scure/base";
 import { Identity } from "../../identity";
-import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
-import { Transaction } from "@scure/btc-signer";
+import { StorageAdapter } from "../../storage";
+import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
+import { WalletRepository } from "../../repositories/walletRepository";
+import { WalletRepositoryImpl } from "../../repositories/walletRepository";
+import { ContractRepository } from "../../repositories/contractRepository";
+import { ContractRepositoryImpl } from "../../repositories/contractRepository";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -37,11 +39,12 @@ class UnexpectedResponseError extends Error {
  *
  * @example
  * ```typescript
- * // Create and initialize the service worker wallet
+ * // Create the service worker wallet with identity
  * const serviceWorker = await setupServiceWorker("/service-worker.js");
- * const wallet = new ServiceWorkerWallet(serviceWorker);
- * await wallet.init({
- *   privateKey: 'your_private_key_hex',
+ * const identity = new ServiceWorkerIdentity(serviceWorker);
+ * const wallet = await ServiceWorkerWallet.create({
+ *   serviceWorker,
+ *   identity,
  *   arkServerUrl: 'https://ark.example.com'
  * });
  *
@@ -50,74 +53,62 @@ class UnexpectedResponseError extends Error {
  * const balance = await wallet.getBalance();
  * ```
  */
-export class ServiceWorkerWallet implements IWallet, Identity {
-    private cachedXOnlyPublicKey: Uint8Array | undefined;
+export interface ServiceWorkerWalletCreateOptions {
+    serviceWorker: ServiceWorker;
+    identity: Identity;
+    arkServerUrl: string;
+    esploraUrl?: string;
+    arkServerPublicKey?: string;
+    storage?: StorageAdapter;
+}
 
-    constructor(public readonly serviceWorker: ServiceWorker) {}
+export class ServiceWorkerWallet implements IWallet {
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+    public readonly identity: Identity;
 
-    async getStatus(): Promise<Response.WalletStatus["status"]> {
-        const message: Request.GetStatus = {
-            type: "GET_STATUS",
-            id: getRandomId(),
-        };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletStatus(response)) {
-            const { walletInitialized, xOnlyPublicKey } = response.status;
-            if (walletInitialized) this.cachedXOnlyPublicKey = xOnlyPublicKey;
-            return response.status;
-        }
-        throw new UnexpectedResponseError(response);
+    private constructor(
+        public readonly serviceWorker: ServiceWorker,
+        identity: Identity,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository
+    ) {
+        this.identity = identity;
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
     }
 
-    async init(
-        config: Omit<WalletConfig, "identity"> & { privateKey: string },
-        failIfInitialized = false
-    ): Promise<void> {
-        // Check if wallet is already initialized
-        const statusMessage: Request.GetStatus = {
-            type: "GET_STATUS",
-            id: getRandomId(),
-        };
-        const response = await this.sendMessage(statusMessage);
+    static async create(
+        options: ServiceWorkerWalletCreateOptions
+    ): Promise<ServiceWorkerWallet> {
+        // Default to IndexedDB for service worker context
+        const storage =
+            options.storage || new IndexedDBStorageAdapter("wallet-db");
 
-        if (
-            Response.isWalletStatus(response) &&
-            response.status.walletInitialized
-        ) {
-            if (failIfInitialized) {
-                throw new Error("Wallet already initialized");
-            }
+        // Create repositories
+        const walletRepo = new WalletRepositoryImpl(storage);
+        const contractRepo = new ContractRepositoryImpl(storage);
 
-            this.cachedXOnlyPublicKey = response.status.xOnlyPublicKey;
-            return;
-        }
-
-        // If not initialized, proceed with initialization
-        const message: Request.InitWallet = {
+        // Initialize the service worker with the config
+        const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
-            privateKey: config.privateKey,
-            arkServerUrl: config.arkServerUrl,
-            arkServerPublicKey: config.arkServerPublicKey,
+            privateKey: "dummy", // We'll handle identity separately now
+            arkServerUrl: options.arkServerUrl,
+            arkServerPublicKey: options.arkServerPublicKey,
         };
 
-        await this.sendMessage(message);
+        const wallet = new ServiceWorkerWallet(
+            options.serviceWorker,
+            options.identity,
+            walletRepo,
+            contractRepo
+        );
 
-        const privKeyBytes = hex.decode(config.privateKey);
-        // cache the identity xOnlyPublicKey
-        this.cachedXOnlyPublicKey =
-            SingleKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
-    }
+        // Initialize the service worker
+        await wallet.sendMessage(initMessage);
 
-    async clear() {
-        const message: Request.Clear = {
-            type: "CLEAR",
-            id: getRandomId(),
-        };
-        await this.sendMessage(message);
-
-        // clear the cached xOnlyPublicKey
-        this.cachedXOnlyPublicKey = undefined;
+        return wallet;
     }
 
     // send a message and wait for a response
@@ -324,38 +315,6 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
-        }
-    }
-
-    xOnlyPublicKey(): Uint8Array {
-        if (!this.cachedXOnlyPublicKey) {
-            throw new Error("Wallet not initialized");
-        }
-        return this.cachedXOnlyPublicKey;
-    }
-
-    signerSession(): SignerSession {
-        return TreeSignerSession.random();
-    }
-
-    async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
-        const message: Request.Sign = {
-            type: "SIGN",
-            tx: base64.encode(tx.toPSBT()),
-            inputIndexes,
-            id: getRandomId(),
-        };
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isSignSuccess(response)) {
-                return Transaction.fromPSBT(base64.decode(response.tx), {
-                    allowUnknown: true,
-                    allowUnknownInputs: true,
-                });
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to sign: ${error}`);
         }
     }
 }

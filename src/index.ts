@@ -116,6 +116,14 @@ import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
+import { InMemoryStorageAdapter } from "./storage/inMemory";
+import { LocalStorageAdapter } from "./storage/localStorage";
+import { FileSystemStorageAdapter } from "./storage/fileSystem";
+import { IndexedDBStorageAdapter } from "./storage/indexedDB";
+import { AsyncStorageAdapter } from "./storage/asyncStorage";
+import { WalletRepositoryImpl } from "./repositories/walletRepository";
+import { ContractRepositoryImpl } from "./repositories/contractRepository";
+import { ServiceWorkerIdentity } from "./identity";
 
 export {
     // Wallets
@@ -179,6 +187,20 @@ export {
 
     // Database
     IndexedDBVtxoRepository,
+
+    // Storage Adapters
+    InMemoryStorageAdapter,
+    LocalStorageAdapter,
+    FileSystemStorageAdapter,
+    IndexedDBStorageAdapter,
+    AsyncStorageAdapter,
+
+    // Repositories
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
+
+    // Identity
+    ServiceWorkerIdentity,
 
     // BIP322
     BIP322,

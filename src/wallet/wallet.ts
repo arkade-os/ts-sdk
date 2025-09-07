@@ -59,6 +59,16 @@ import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree, TxTreeNode } from "../tree/txTree";
+import { StorageAdapter } from "../storage";
+import { InMemoryStorageAdapter } from "../storage/inMemory";
+import {
+    WalletRepository,
+    WalletRepositoryImpl,
+} from "../repositories/walletRepository";
+import {
+    ContractRepository,
+    ContractRepositoryImpl,
+} from "../repositories/contractRepository";
 
 export type IncomingFunds =
     | {
@@ -98,6 +108,9 @@ export type IncomingFunds =
 export class Wallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
@@ -110,11 +123,16 @@ export class Wallet implements IWallet {
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
-        readonly dustAmount: bigint
-    ) {}
+        readonly dustAmount: bigint,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository
+    ) {
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
+    }
 
     static async create(config: WalletConfig): Promise<Wallet> {
-        const pubkey = config.identity.xOnlyPublicKey();
+        const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
         }
@@ -164,6 +182,11 @@ export class Wallet implements IWallet {
         const forfeitAddress = Address(network).decode(info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
+        // Set up storage and repositories
+        const storage = config.storage || new InMemoryStorageAdapter();
+        const walletRepository = new WalletRepositoryImpl(storage);
+        const contractRepository = new ContractRepositoryImpl(storage);
+
         return new Wallet(
             config.identity,
             network,
@@ -176,7 +199,9 @@ export class Wallet implements IWallet {
             boardingTapscript,
             serverUnrollScript,
             forfeitOutputScript,
-            info.dust
+            info.dust,
+            walletRepository,
+            contractRepository
         );
     }
 
@@ -247,17 +272,29 @@ export class Wallet implements IWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
+        const address = await this.getAddress();
+
+        // Try to get from cache first
+        const cachedVtxos = await this.walletRepository.getVtxos(address);
+
+        // For now, always fetch fresh data from provider and update cache
+        // In future, we can add cache invalidation logic based on timestamps
         const spendableVtxos = await this.getVirtualCoins(filter);
         const encodedOffchainTapscript = this.offchainTapscript.encode();
         const forfeit = this.offchainTapscript.forfeit();
         const exit = this.offchainTapscript.exit();
 
-        return spendableVtxos.map((vtxo) => ({
+        const extendedVtxos = spendableVtxos.map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: forfeit,
             intentTapLeafScript: exit,
             tapTree: encodedOffchainTapscript,
         }));
+
+        // Update cache with fresh data
+        await this.walletRepository.saveVtxos(address, extendedVtxos);
+
+        return extendedVtxos;
     }
 
     private async getVirtualCoins(

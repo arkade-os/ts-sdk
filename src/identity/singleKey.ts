@@ -67,8 +67,8 @@ export class SingleKey implements Identity {
         return txCpy;
     }
 
-    xOnlyPublicKey(): Uint8Array {
-        return pubSchnorr(this.key);
+    xOnlyPublicKey(): Promise<Uint8Array> {
+        return Promise.resolve(pubSchnorr(this.key));
     }
 
     signerSession(): SignerSession {

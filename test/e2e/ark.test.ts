@@ -422,7 +422,10 @@ describe("Ark integration tests", () => {
         const vtxo = virtualCoins[0];
         expect(vtxo.txid).toBeDefined();
 
-        const onchainAlice = new OnchainWallet(alice.identity, "regtest");
+        const onchainAlice = await OnchainWallet.create(
+            alice.identity,
+            "regtest"
+        );
 
         execSync(`nigiri faucet ${onchainAlice.address} 0.001`);
 
@@ -455,7 +458,7 @@ describe("Ark integration tests", () => {
 
     it("should exit collaboratively", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
-        const onchainAlice = createTestOnchainWallet();
+        const onchainAlice = await createTestOnchainWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
 
         // faucet offchain address

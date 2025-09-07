@@ -561,12 +561,11 @@ export class Worker {
             return;
         }
 
+        const pubKey = this.wallet
+            ? await this.wallet.identity.xOnlyPublicKey()
+            : undefined;
         event.source?.postMessage(
-            Response.walletStatus(
-                message.id,
-                this.wallet !== undefined,
-                this.wallet?.identity.xOnlyPublicKey()
-            )
+            Response.walletStatus(message.id, this.wallet !== undefined, pubKey)
         );
     }
 

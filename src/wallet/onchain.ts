@@ -36,19 +36,38 @@ export class OnchainWallet implements AnchorBumper {
     readonly provider: OnchainProvider;
     readonly network: Network;
 
-    constructor(
+    private constructor(
         private identity: Identity,
-        network: NetworkName,
-        provider?: OnchainProvider
+        network: Network,
+        onchainP2TR: P2TR,
+        provider: OnchainProvider
     ) {
-        const pubkey = identity.xOnlyPublicKey();
+        this.network = network;
+        this.onchainP2TR = onchainP2TR;
+        this.provider = provider;
+    }
+
+    static async create(
+        identity: Identity,
+        networkName: NetworkName,
+        provider?: OnchainProvider
+    ): Promise<OnchainWallet> {
+        const pubkey = await identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
         }
 
-        this.provider = provider || new EsploraProvider(ESPLORA_URL[network]);
-        this.network = getNetwork(network);
-        this.onchainP2TR = p2tr(pubkey, undefined, this.network);
+        const network = getNetwork(networkName);
+        const onchainProvider =
+            provider || new EsploraProvider(ESPLORA_URL[networkName]);
+        const onchainP2TR = p2tr(pubkey, undefined, network);
+
+        return new OnchainWallet(
+            identity,
+            network,
+            onchainP2TR,
+            onchainProvider
+        );
     }
 
     get address(): string {

@@ -28,9 +28,9 @@ export function createTestIdentity(): SingleKey {
     return SingleKey.fromHex(privateKeyHex);
 }
 
-export function createTestOnchainWallet(): TestOnchainWallet {
+export async function createTestOnchainWallet(): Promise<TestOnchainWallet> {
     const identity = createTestIdentity();
-    const wallet = new OnchainWallet(identity, "regtest");
+    const wallet = await OnchainWallet.create(identity, "regtest");
     return {
         wallet,
         identity,
