@@ -34,7 +34,7 @@ export namespace Request {
 
     export interface InitWallet extends Base {
         type: "INIT_WALLET";
-        privateKey: string;
+        privateKey: string | null; // If null, service worker will load existing identity or generate a new persistent one
         arkServerUrl: string;
         arkServerPublicKey?: string;
     }

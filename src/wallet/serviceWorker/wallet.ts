@@ -90,10 +90,12 @@ export class ServiceWorkerWallet implements IWallet {
         const contractRepo = new ContractRepositoryImpl(storage);
 
         // Initialize the service worker with the config
+        // Note: Service worker manages its own persistent identity stored in IndexedDB
+        // When privateKey is null, the service worker will load existing identity or generate a new one
         const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
-            privateKey: "dummy", // We'll handle identity separately now
+            privateKey: null, // Service worker will manage its own persistent identity
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
         };

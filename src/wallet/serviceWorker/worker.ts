@@ -12,6 +12,7 @@ import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { base64, hex } from "@scure/base";
+import { randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { DefaultVtxo } from "../../script/default";
 import { Transaction } from "@scure/btc-signer";
 
@@ -150,11 +151,164 @@ export class Worker {
 
     private async handleClear(event: ExtendableMessageEvent) {
         this.clear();
+        // Also clear the stored identity
+        await this.clearStoredIdentity();
         if (Request.isBase(event.data)) {
             event.source?.postMessage(
                 Response.clearResponse(event.data.id, true)
             );
         }
+    }
+
+    /**
+     * Load existing identity from IndexedDB or create a new one if none exists.
+     * The service worker maintains its own persistent identity for cryptographic operations.
+     */
+    private async loadOrCreateIdentity(): Promise<SingleKey> {
+        const IDENTITY_KEY = "service-worker-private-key";
+
+        try {
+            // Try to load existing private key hex from storage
+            const storedPrivateKeyHex = await this.getStoredItem(IDENTITY_KEY);
+
+            if (storedPrivateKeyHex) {
+                // Load existing private key
+                return SingleKey.fromHex(storedPrivateKeyHex);
+            } else {
+                // Generate new private key and store it
+                const privateKeyBytes = randomPrivateKeyBytes();
+                const privateKeyHex = hex.encode(privateKeyBytes);
+
+                try {
+                    await this.storeItem(IDENTITY_KEY, privateKeyHex);
+                } catch (error) {
+                    console.warn("Failed to store new private key:", error);
+                    // Continue with the identity even if storage failed
+                }
+
+                return SingleKey.fromHex(privateKeyHex);
+            }
+        } catch (error) {
+            console.warn("Failed to load stored private key:", error);
+            // Fallback to generating a new random identity (won't persist)
+            return SingleKey.fromRandomBytes();
+        }
+    }
+
+    /**
+     * Store a key-value pair in IndexedDB for service worker persistence
+     */
+    private async storeItem(key: string, value: string): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open("ServiceWorkerStorage", 1);
+
+            request.onerror = () => reject(request.error);
+
+            request.onupgradeneeded = (event) => {
+                const db = (event.target as IDBOpenDBRequest).result;
+                if (!db.objectStoreNames.contains("keyvalue")) {
+                    db.createObjectStore("keyvalue");
+                }
+            };
+
+            request.onsuccess = () => {
+                const db = request.result;
+                const transaction = db.transaction(["keyvalue"], "readwrite");
+                const store = transaction.objectStore("keyvalue");
+
+                const putRequest = store.put(value, key);
+                putRequest.onsuccess = () => {
+                    db.close();
+                    resolve();
+                };
+                putRequest.onerror = () => {
+                    db.close();
+                    reject(putRequest.error);
+                };
+            };
+        });
+    }
+
+    /**
+     * Retrieve a value from IndexedDB storage
+     */
+    private async getStoredItem(key: string): Promise<string | null> {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open("ServiceWorkerStorage", 1);
+
+            request.onerror = () => reject(request.error);
+
+            request.onupgradeneeded = (event) => {
+                const db = (event.target as IDBOpenDBRequest).result;
+                if (!db.objectStoreNames.contains("keyvalue")) {
+                    db.createObjectStore("keyvalue");
+                }
+            };
+
+            request.onsuccess = () => {
+                const db = request.result;
+                const transaction = db.transaction(["keyvalue"], "readonly");
+                const store = transaction.objectStore("keyvalue");
+
+                const getRequest = store.get(key);
+                getRequest.onsuccess = () => {
+                    db.close();
+                    resolve(getRequest.result || null);
+                };
+                getRequest.onerror = () => {
+                    db.close();
+                    reject(getRequest.error);
+                };
+            };
+        });
+    }
+
+    /**
+     * Clear stored identity from IndexedDB storage (useful for testing or logout)
+     */
+    private async clearStoredIdentity(): Promise<void> {
+        const IDENTITY_KEY = "service-worker-private-key";
+        try {
+            await this.removeStoredItem(IDENTITY_KEY);
+            console.log("Cleared stored service worker identity");
+        } catch (error) {
+            console.warn("Failed to clear stored identity:", error);
+            // Don't fail the clear operation
+        }
+    }
+
+    /**
+     * Remove a key from IndexedDB storage
+     */
+    private async removeStoredItem(key: string): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open("ServiceWorkerStorage", 1);
+
+            request.onerror = () => reject(request.error);
+
+            request.onupgradeneeded = (event) => {
+                const db = (event.target as IDBOpenDBRequest).result;
+                if (!db.objectStoreNames.contains("keyvalue")) {
+                    db.createObjectStore("keyvalue");
+                }
+            };
+
+            request.onsuccess = () => {
+                const db = request.result;
+                const transaction = db.transaction(["keyvalue"], "readwrite");
+                const store = transaction.objectStore("keyvalue");
+
+                const deleteRequest = store.delete(key);
+                deleteRequest.onsuccess = () => {
+                    db.close();
+                    resolve();
+                };
+                deleteRequest.onerror = () => {
+                    db.close();
+                    reject(deleteRequest.error);
+                };
+            };
+        });
     }
 
     private async handleInitWallet(event: ExtendableMessageEvent) {
@@ -168,13 +322,23 @@ export class Worker {
         }
 
         try {
+            let identity: SingleKey;
+
+            if (message.privateKey === null) {
+                // Service worker manages its own persistent identity
+                identity = await this.loadOrCreateIdentity();
+            } else {
+                // Use provided private key (for explicit key setting or migration)
+                identity = SingleKey.fromHex(message.privateKey);
+            }
+
             this.arkProvider = new RestArkProvider(message.arkServerUrl);
             this.indexerProvider = new RestIndexerProvider(
                 message.arkServerUrl
             );
 
             this.wallet = await Wallet.create({
-                identity: SingleKey.fromHex(message.privateKey),
+                identity,
                 arkServerUrl: message.arkServerUrl,
                 arkServerPublicKey: message.arkServerPublicKey,
             });
