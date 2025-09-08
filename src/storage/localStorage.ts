@@ -6,39 +6,57 @@ export interface StorageAdapter {
 }
 
 export class LocalStorageAdapter implements StorageAdapter {
+    private getSafeLocalStorage(): Storage | null {
+        try {
+            if (typeof window === "undefined" || !window.localStorage) {
+                return null;
+            }
+            // Test access to ensure localStorage is actually available
+            window.localStorage.length;
+            return window.localStorage;
+        } catch {
+            // localStorage may throw in some environments (e.g., private browsing, disabled storage)
+            return null;
+        }
+    }
+
     async getItem(key: string): Promise<string | null> {
-        if (typeof window === "undefined" || !window.localStorage) {
+        const localStorage = this.getSafeLocalStorage();
+        if (!localStorage) {
             throw new Error(
                 "localStorage is not available in this environment"
             );
         }
-        return window.localStorage.getItem(key);
+        return localStorage.getItem(key);
     }
 
     async setItem(key: string, value: string): Promise<void> {
-        if (typeof window === "undefined" || !window.localStorage) {
+        const localStorage = this.getSafeLocalStorage();
+        if (!localStorage) {
             throw new Error(
                 "localStorage is not available in this environment"
             );
         }
-        window.localStorage.setItem(key, value);
+        localStorage.setItem(key, value);
     }
 
     async removeItem(key: string): Promise<void> {
-        if (typeof window === "undefined" || !window.localStorage) {
+        const localStorage = this.getSafeLocalStorage();
+        if (!localStorage) {
             throw new Error(
                 "localStorage is not available in this environment"
             );
         }
-        window.localStorage.removeItem(key);
+        localStorage.removeItem(key);
     }
 
     async clear(): Promise<void> {
-        if (typeof window === "undefined" || !window.localStorage) {
+        const localStorage = this.getSafeLocalStorage();
+        if (!localStorage) {
             throw new Error(
                 "localStorage is not available in this environment"
             );
         }
-        window.localStorage.clear();
+        localStorage.clear();
     }
 }
