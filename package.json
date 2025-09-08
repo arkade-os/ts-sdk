@@ -46,7 +46,6 @@
         "format": "prettier --write src test examples",
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
-        "security-check": "node scripts/security-check.js",
         "preinstall": "npx only-allow pnpm",
         "prepare": "husky",
         "prepublishOnly": "pnpm run build",
