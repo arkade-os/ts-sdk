@@ -225,16 +225,18 @@ new Worker().start()
 ```typescript
 import { ServiceWorkerWallet, ServiceWorkerIdentity } from '@arkade-os/sdk'
 
-// Register the service worker
-const serviceWorker = await navigator.serviceWorker.register('/service-worker.js')
-await serviceWorker.ready
+// Register and wait until the SW is active
+const registration = await navigator.serviceWorker.register('/service-worker.js')
+await navigator.serviceWorker.ready
 
 // Create identity for service worker communication
-const identity = new ServiceWorkerIdentity(serviceWorker.active!)
+const identity = new ServiceWorkerIdentity(
+  registration.active ?? (await navigator.serviceWorker.ready).active!
+)
 
 // Create the wallet using the new async pattern
 const wallet = await ServiceWorkerWallet.create({
-  serviceWorker: serviceWorker.active!,
+  serviceWorker: registration.active!,
   identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
   esploraUrl: 'https://mutinynet.com/api'
