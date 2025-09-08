@@ -111,9 +111,13 @@ export class FileSystemStorageAdapter implements StorageAdapter {
 
     async clear(): Promise<void> {
         try {
-            const files = await fs.readdir(this.basePath);
+            const entries = await fs.readdir(this.basePath);
             await Promise.all(
-                files.map((file) => fs.unlink(path.join(this.basePath, file)))
+                entries.map(async (entry) => {
+                    const entryPath = path.join(this.basePath, entry);
+                    // Use fs.rm with recursive option to handle both files and directories
+                    await fs.rm(entryPath, { recursive: true, force: true });
+                })
             );
         } catch (error) {
             console.error("Failed to clear storage directory:", error);
