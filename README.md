@@ -315,20 +315,22 @@ Access low-level data management through repositories:
 
 ```typescript
 // VTXO management (automatically cached for performance)
-const vtxos = await wallet.walletRepository.getVtxos()
-await wallet.walletRepository.setVtxos(vtxos)
+// VTXO management (automatically cached for performance)
+const addr = await wallet.getAddress()
+const vtxos = await wallet.walletRepository.getVtxos(addr)
+await wallet.walletRepository.saveVtxos(addr, vtxos)
 
 // Contract data for SDK integrations
 await wallet.contractRepository.setContractData('my-contract', 'status', 'active')
 const status = await wallet.contractRepository.getContractData('my-contract', 'status')
 
 // Collection management for related data
-await wallet.contractRepository.saveToContractCollection('swaps', 
-  { id: 'swap-1', amount: 50000, type: 'reverse' }, 
+await wallet.contractRepository.saveToContractCollection(
+  'swaps',
+  { id: 'swap-1', amount: 50000, type: 'reverse' },
   'id' // key field
 )
 const swaps = await wallet.contractRepository.getContractCollection('swaps')
-```
 
 ### Migration from v0.2.x
 
