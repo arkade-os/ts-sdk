@@ -22,12 +22,7 @@ export class AsyncStorageAdapter implements StorageAdapter {
     }
 
     async getItem(key: string): Promise<string | null> {
-        try {
-            return await this.AsyncStorage.getItem(key);
-        } catch (error) {
-            console.error(`Failed to get item for key ${key}:`, error);
-            return null;
-        }
+        return await this.AsyncStorage.getItem(key);
     }
 
     async setItem(key: string, value: string): Promise<void> {
@@ -44,6 +39,7 @@ export class AsyncStorageAdapter implements StorageAdapter {
             await this.AsyncStorage.removeItem(key);
         } catch (error) {
             console.error(`Failed to remove item for key ${key}:`, error);
+            throw error;
         }
     }
 
@@ -52,6 +48,7 @@ export class AsyncStorageAdapter implements StorageAdapter {
             await this.AsyncStorage.clear();
         } catch (error) {
             console.error("Failed to clear AsyncStorage:", error);
+            throw error;
         }
     }
 }
