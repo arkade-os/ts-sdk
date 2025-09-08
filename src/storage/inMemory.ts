@@ -9,7 +9,7 @@ export class InMemoryStorageAdapter implements StorageAdapter {
     private store: Map<string, string> = new Map();
 
     async getItem(key: string): Promise<string | null> {
-        return this.store.get(key) || null;
+        return this.store.get(key) ?? null;
     }
 
     async setItem(key: string, value: string): Promise<void> {
