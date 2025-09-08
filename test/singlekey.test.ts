@@ -6,12 +6,18 @@ describe("SingleKey", () => {
         const key1 = SingleKey.fromRandomBytes();
         const key2 = SingleKey.fromRandomBytes();
 
-        // Keys should be different
-        expect(key1).not.toBe(key2);
+        // Get x-only public keys from both keys
+        const pubKey1 = await key1.xOnlyPublicKey();
+        const pubKey2 = await key2.xOnlyPublicKey();
 
-        // Both should be able to generate public keys
-        await expect(key1.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
-        await expect(key2.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
+        // Both should be Uint8Array instances of correct length (32 bytes)
+        expect(pubKey1).toBeInstanceOf(Uint8Array);
+        expect(pubKey1).toHaveLength(32);
+        expect(pubKey2).toBeInstanceOf(Uint8Array);
+        expect(pubKey2).toHaveLength(32);
+
+        // Public key byte arrays should be different (not equal bytewise)
+        expect(Array.from(pubKey1)).not.toEqual(Array.from(pubKey2));
     });
 
     it("should create keys from hex", async () => {
