@@ -1,6 +1,5 @@
 import { Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
-import { eventSourceIterator } from "./utils";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -164,7 +163,7 @@ export class RestIndexerProvider implements IndexerProvider {
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<{ vtxoTree: Tx[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
+        let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -199,7 +198,7 @@ export class RestIndexerProvider implements IndexerProvider {
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<{ leaves: Outpoint[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
+        let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -226,7 +225,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getBatchSweepTransactions(
         batchOutpoint: Outpoint
     ): Promise<{ sweptBy: string[] }> {
-        const url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
+        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(
@@ -241,7 +240,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getCommitmentTx(txid: string): Promise<CommitmentTx> {
-        const url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}`;
+        const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx: ${res.statusText}`);
@@ -258,7 +257,7 @@ export class RestIndexerProvider implements IndexerProvider {
         txid: string,
         opts?: PaginationOptions
     ): Promise<{ connectors: Tx[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}/connectors`;
+        let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -295,7 +294,7 @@ export class RestIndexerProvider implements IndexerProvider {
         txid: string,
         opts?: PaginationOptions
     ): Promise<{ txids: string[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}/forfeitTxs`;
+        let url = `${this.serverUrl}/v1/commitmentTx/${txid}/forfeitTxs`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -320,51 +319,61 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
-        const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
+        const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
 
-        while (!abortSignal?.aborted) {
+        while (!abortSignal.aborted) {
             try {
-                const eventSource = new EventSource(url);
+                const res = await fetch(url, {
+                    headers: {
+                        Accept: "application/json",
+                    },
+                });
 
-                // Set up abort handling
-                const abortHandler = () => {
-                    eventSource.close();
-                };
-                abortSignal?.addEventListener("abort", abortHandler);
+                if (!res.ok) {
+                    throw new Error(
+                        `Unexpected status ${res.status} when subscribing to address updates`
+                    );
+                }
 
-                try {
-                    for await (const event of eventSourceIterator(
-                        eventSource
-                    )) {
-                        if (abortSignal?.aborted) break;
+                if (!res.body) {
+                    throw new Error("Response body is null");
+                }
 
-                        try {
-                            const data = JSON.parse(event.data);
-                            if (data.event) {
-                                yield {
-                                    txid: data.event.txid,
-                                    scripts: data.event.scripts || [],
-                                    newVtxos: (data.event.newVtxos || []).map(
-                                        convertVtxo
-                                    ),
-                                    spentVtxos: (
-                                        data.event.spentVtxos || []
-                                    ).map(convertVtxo),
-                                    tx: data.event.tx,
-                                    checkpointTxs: data.event.checkpointTxs,
-                                };
-                            }
-                        } catch (err) {
-                            console.error(
-                                "Failed to parse subscription event:",
-                                err
-                            );
-                            throw err;
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = "";
+
+                while (!abortSignal.aborted) {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                        break;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split("\n");
+
+                    for (let i = 0; i < lines.length - 1; i++) {
+                        const line = lines[i].trim();
+                        if (!line) continue;
+
+                        const data = JSON.parse(line);
+                        if ("result" in data) {
+                            yield {
+                                txid: data.result.txid,
+                                scripts: data.result.scripts || [],
+                                newVtxos: (data.result.newVtxos || []).map(
+                                    convertVtxo
+                                ),
+                                spentVtxos: (data.result.spentVtxos || []).map(
+                                    convertVtxo
+                                ),
+                                tx: data.result.tx,
+                                checkpointTxs: data.result.checkpointTxs,
+                            };
                         }
                     }
-                } finally {
-                    abortSignal?.removeEventListener("abort", abortHandler);
-                    eventSource.close();
+
+                    buffer = lines[lines.length - 1];
                 }
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
@@ -372,6 +381,7 @@ export class RestIndexerProvider implements IndexerProvider {
                 }
 
                 // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                // these timeouts are set by builtin fetch function
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
@@ -387,7 +397,7 @@ export class RestIndexerProvider implements IndexerProvider {
         txids: string[],
         opts?: PaginationOptions
     ): Promise<{ txs: string[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/indexer/virtualTx/${txids.join(",")}`;
+        let url = `${this.serverUrl}/v1/virtualTx/${txids.join(",")}`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -413,7 +423,7 @@ export class RestIndexerProvider implements IndexerProvider {
         vtxoOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<VtxoChain> {
-        let url = `${this.serverUrl}/v1/indexer/vtxo/${vtxoOutpoint.txid}/${vtxoOutpoint.vout}/chain`;
+        let url = `${this.serverUrl}/v1/vtxo/${vtxoOutpoint.txid}/${vtxoOutpoint.vout}/chain`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -455,7 +465,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error("Either scripts or outpoints must be provided");
         }
 
-        let url = `${this.serverUrl}/v1/indexer/vtxos`;
+        let url = `${this.serverUrl}/v1/vtxos`;
         const params = new URLSearchParams();
 
         // Handle scripts with multi collection format
@@ -508,7 +518,7 @@ export class RestIndexerProvider implements IndexerProvider {
         scripts: string[],
         subscriptionId?: string
     ): Promise<string> {
-        const url = `${this.serverUrl}/v1/indexer/script/subscribe`;
+        const url = `${this.serverUrl}/v1/script/subscribe`;
         const res = await fetch(url, {
             headers: {
                 "Content-Type": "application/json",
@@ -529,7 +539,7 @@ export class RestIndexerProvider implements IndexerProvider {
         subscriptionId: string,
         scripts?: string[]
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/indexer/script/unsubscribe`;
+        const url = `${this.serverUrl}/v1/script/unsubscribe`;
         const res = await fetch(url, {
             headers: {
                 "Content-Type": "application/json",
@@ -666,7 +676,7 @@ namespace Response {
             typeof data === "object" &&
             isOutpoint(data.outpoint) &&
             typeof data.createdAt === "string" &&
-            (data.expiresAt === null || typeof data.expiresAt === "string") &&
+            typeof data.expiresAt === "string" &&
             typeof data.amount === "string" &&
             typeof data.script === "string" &&
             typeof data.isPreconfirmed === "boolean" &&

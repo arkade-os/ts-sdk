@@ -25,7 +25,7 @@ type DecodedNode = {
  * TxTree is a graph of bitcoin transactions.
  * It is used to represent batch tree created during settlement session
  */
-export class TxTree {
+export class TxTree implements Iterable<TxTree> {
     constructor(
         readonly root: Transaction,
         readonly children: Map<number, TxTree> = new Map()
@@ -225,11 +225,11 @@ export class TxTree {
         throw new Error(`tx not found: ${txid}`);
     }
 
-    *iterator(): Generator<TxTree, void, unknown> {
-        for (const child of this.children.values()) {
-            yield* child.iterator();
-        }
+    *[Symbol.iterator](): IterableIterator<TxTree> {
         yield this;
+        for (const child of this.children.values()) {
+            yield* child;
+        }
     }
 }
 
