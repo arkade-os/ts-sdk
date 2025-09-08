@@ -21,12 +21,24 @@ export class ServiceWorkerIdentity implements Identity {
     private async sendMessage<T extends Response.Base>(
         message: Request.Base
     ): Promise<T> {
+        // Ensure service worker is active
+        if (this.serviceWorker.state !== "activated") {
+            throw new Error(
+                `Service Worker is not active. Current state: ${this.serviceWorker.state}`
+            );
+        }
+
         return new Promise((resolve, reject) => {
+            let timeoutId: NodeJS.Timeout;
+
             const handleMessage = (event: Event) => {
                 const messageEvent = event as MessageEvent;
                 const response = messageEvent.data as Response.Base;
 
                 if (response.id === message.id) {
+                    // Clear the timeout since we received a response
+                    clearTimeout(timeoutId);
+
                     this.serviceWorker.removeEventListener(
                         "message",
                         handleMessage
@@ -44,7 +56,7 @@ export class ServiceWorkerIdentity implements Identity {
             this.serviceWorker.postMessage(message);
 
             // Timeout after 10 seconds
-            setTimeout(() => {
+            timeoutId = setTimeout(() => {
                 this.serviceWorker.removeEventListener(
                     "message",
                     handleMessage
