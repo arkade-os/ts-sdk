@@ -1,4 +1,3 @@
-import { utils } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { Wallet, SingleKey, OnchainWallet } from "../../src";
 import { execSync } from "child_process";
@@ -23,9 +22,7 @@ export interface TestOnchainWallet {
 }
 
 export function createTestIdentity(): SingleKey {
-    const privateKeyBytes = utils.randomPrivateKeyBytes();
-    const privateKeyHex = hex.encode(privateKeyBytes);
-    return SingleKey.fromHex(privateKeyHex);
+    return SingleKey.fromRandomBytes();
 }
 
 export async function createTestOnchainWallet(): Promise<TestOnchainWallet> {

@@ -297,8 +297,8 @@ import { hex } from '@scure/base'
 
 // Standard single-key identity (most common)
 const identity = SingleKey.fromHex('your_private_key_hex')
-// Generate random key
-const randomIdentity = SingleKey.fromHex(hex.encode(randomPrivateKeyBytes()))
+// ...or generate a random key
+// const randomIdentity = SingleKey.fromRandomBytes();
 
 // Service worker identity for background operations
 const serviceWorker = await navigator.serviceWorker.register('/worker.js')

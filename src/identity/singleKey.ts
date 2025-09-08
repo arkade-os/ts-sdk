@@ -18,6 +18,9 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
  * // Create from raw bytes
  * const key = SingleKey.fromPrivateKey(privateKeyBytes);
  *
+ * // Create random key
+ * const randomKey = SingleKey.fromRandomBytes();
+ *
  * // Sign a transaction
  * const signedTx = await key.sign(transaction);
  * ```
@@ -35,6 +38,10 @@ export class SingleKey implements Identity {
 
     static fromHex(privateKeyHex: string): SingleKey {
         return new SingleKey(hex.decode(privateKeyHex));
+    }
+
+    static fromRandomBytes(): SingleKey {
+        return new SingleKey(randomPrivateKeyBytes());
     }
 
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
