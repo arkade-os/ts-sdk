@@ -13,6 +13,30 @@
             "import": "./dist/esm/index.js",
             "require": "./dist/cjs/index.js",
             "default": "./dist/esm/index.js"
+        },
+        "./adapters/localStorage": {
+            "types": "./dist/types/adapters/localStorage.d.ts",
+            "import": "./dist/esm/adapters/localStorage.js",
+            "require": "./dist/cjs/adapters/localStorage.js",
+            "default": "./dist/esm/adapters/localStorage.js"
+        },
+        "./adapters/fileSystem": {
+            "types": "./dist/types/adapters/fileSystem.d.ts",
+            "import": "./dist/esm/adapters/fileSystem.js",
+            "require": "./dist/cjs/adapters/fileSystem.js",
+            "default": "./dist/esm/adapters/fileSystem.js"
+        },
+        "./adapters/indexedDB": {
+            "types": "./dist/types/adapters/indexedDB.d.ts",
+            "import": "./dist/esm/adapters/indexedDB.js",
+            "require": "./dist/cjs/adapters/indexedDB.js",
+            "default": "./dist/esm/adapters/indexedDB.js"
+        },
+        "./adapters/asyncStorage": {
+            "types": "./dist/types/adapters/asyncStorage.d.ts",
+            "import": "./dist/esm/adapters/asyncStorage.js",
+            "require": "./dist/cjs/adapters/asyncStorage.js",
+            "default": "./dist/esm/adapters/asyncStorage.js"
         }
     },
     "files": [

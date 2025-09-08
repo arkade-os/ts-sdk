@@ -5,7 +5,4 @@ export interface StorageAdapter {
     clear(): Promise<void>;
 }
 
-export * from "./localStorage";
-export * from "./fileSystem";
-export * from "./indexedDB";
-export * from "./asyncStorage";
+export * from "./inMemory";
