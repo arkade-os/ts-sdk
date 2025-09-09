@@ -1,9 +1,4 @@
-export interface StorageAdapter {
-    getItem(key: string): Promise<string | null>;
-    setItem(key: string, value: string): Promise<void>;
-    removeItem(key: string): Promise<void>;
-    clear(): Promise<void>;
-}
+import type { StorageAdapter } from "./index";
 
 // Note: This requires @react-native-async-storage/async-storage to be installed
 export class AsyncStorageAdapter implements StorageAdapter {
