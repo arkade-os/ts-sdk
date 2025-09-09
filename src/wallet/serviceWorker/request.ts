@@ -200,11 +200,13 @@ export namespace Request {
             message.type === "SIGN_TRANSACTION" &&
             "transaction" in message &&
             Array.isArray(message.transaction) &&
-            message.transaction.every((byte) => typeof byte === "number") &&
+            message.transaction.every(
+                (byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255
+            ) &&
             ("inputIndexes" in message && message.inputIndexes != undefined
                 ? Array.isArray(message.inputIndexes) &&
                   message.inputIndexes.every(
-                      (index) => typeof index === "number"
+                      (index) => Number.isInteger(index) && index >= 0
                   )
                 : true)
         );
