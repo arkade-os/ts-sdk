@@ -150,7 +150,7 @@ export class Worker {
     }
 
     private async handleClear(event: ExtendableMessageEvent) {
-        this.clear();
+        await this.clear();
         // Also clear the stored identity
         await this.clearStoredIdentity();
         if (Request.isBase(event.data)) {
