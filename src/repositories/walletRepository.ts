@@ -66,7 +66,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         try {
             const vtxos = JSON.parse(stored) as ExtendedVirtualCoin[];
             this.cache.vtxos.set(address, vtxos);
-            return vtxos;
+            return vtxos.slice();
         } catch (error) {
             console.error(
                 `Failed to parse VTXOs for address ${address}:`,
@@ -136,7 +136,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         try {
             const transactions = JSON.parse(stored) as Transaction[];
             this.cache.transactions.set(address, transactions);
-            return transactions;
+            return transactions.slice();
         } catch (error) {
             console.error(
                 `Failed to parse transactions for address ${address}:`,
