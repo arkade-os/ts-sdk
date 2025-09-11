@@ -107,6 +107,7 @@ export interface ArkInfo {
     vtxoMinAmount: bigint;
     vtxoMaxAmount: bigint; // -1 means no limit (default)
     boardingExitDelay: bigint;
+    checkpointExitClosure: string;
 }
 
 export interface Intent {
@@ -192,6 +193,7 @@ export class RestArkProvider implements ArkProvider {
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
+            checkpointExitClosure: fromServer.checkpointTapscript ?? "",
             marketHour:
                 "marketHour" in fromServer && fromServer.marketHour != null
                     ? {

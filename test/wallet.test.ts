@@ -93,6 +93,8 @@ describe("Wallet", () => {
                             network: "mutinynet",
                             forfeitAddress:
                                 "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                            checkpointTapscript:
+                                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
                         }),
                 })
                 .mockResolvedValueOnce({
@@ -197,6 +199,8 @@ describe("Wallet", () => {
                 start: 0,
                 end: 24,
             },
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
         };
 
         it("should initialize with ark provider when configured", async () => {
