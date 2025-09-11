@@ -21,13 +21,16 @@ import {
     createTestArkWallet,
     createTestIdentity,
     faucetOffchain,
-    X_ONLY_PUBLIC_KEY,
 } from "./utils";
 import { hash160 } from "@scure/btc-signer/utils";
 import { execSync } from "child_process";
 
 describe("vhtlc", () => {
     beforeEach(beforeEachFaucet);
+
+    const aspInfo = execSync("curl -s http://localhost:7070/v1/info");
+    const signerPubkey = JSON.parse(aspInfo.toString()).signerPubkey;
+    const X_ONLY_PUBLIC_KEY = hex.decode(signerPubkey).slice(1);
 
     it("should claim", { timeout: 60000 }, async () => {
         const alice = createTestIdentity();
@@ -218,13 +221,9 @@ describe("vhtlc", () => {
             switch (done.type) {
                 case Unroll.StepType.WAIT:
                 case Unroll.StepType.UNROLL:
-                    execSync(
-                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
-                    );
+                    execSync(`nigiri rpc --generate 1`);
                     await new Promise((resolve) => setTimeout(resolve, 2000)); // give time for the checkpoint to be created
-                    execSync(
-                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
-                    );
+                    execSync(`nigiri rpc --generate 1`);
                     break;
             }
         }
@@ -263,7 +262,7 @@ describe("vhtlc", () => {
         ).rejects.toThrow();
 
         // generate 10 blocks to make the exit path available
-        execSync(`nigiri rpc generatetoaddress 10 $(nigiri rpc getnewaddress)`);
+        execSync(`nigiri rpc --generate 10`);
 
         const txid = await onchainBob.provider.broadcastTransaction(
             signedTx.hex

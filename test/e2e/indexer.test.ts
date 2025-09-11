@@ -15,6 +15,7 @@ import {
 } from "../../src";
 import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
+import { vi } from "vitest";
 
 describe("Indexer provider", () => {
     beforeEach(beforeEachFaucet);
@@ -75,7 +76,8 @@ describe("Indexer provider", () => {
         const txid = await createVtxo(alice, fundAmount);
         expect(txid).toBeDefined();
         const fundAmountStr = fundAmount.toString();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        await new Promise((resolve) => setTimeout(resolve, 2_000));
 
         const commitmentTx = await indexerProvider.getCommitmentTx(txid);
         expect(commitmentTx).toBeDefined();
@@ -101,7 +103,7 @@ describe("Indexer provider", () => {
             vout: 0,
         });
         expect(sweptsResponse.sweptBy).toBeDefined();
-        expect(sweptsResponse.sweptBy.length).toBeGreaterThanOrEqual(0);
+        expect(sweptsResponse.sweptBy.length).toEqual(0);
 
         const batchTreeResponse = await indexerProvider.getVtxoTree({
             txid,
@@ -117,6 +119,7 @@ describe("Indexer provider", () => {
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {
+        vi.spyOn(console, "error").mockImplementation(() => {});
         const start = Date.now();
         const fundAmount = 1000;
         const delayMilliseconds = 2100;

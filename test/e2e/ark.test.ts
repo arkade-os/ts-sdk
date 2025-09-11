@@ -20,23 +20,6 @@ import {
 } from "./utils";
 
 describe("Ark integration tests", () => {
-    beforeEach(() => {
-        // Check if there's enough offchain balance before proceeding
-        const balanceOutput = execSync(`${arkdExec} ark balance`).toString();
-        const balance = JSON.parse(balanceOutput);
-        const offchainBalance = balance.offchain_balance.total;
-
-        if (offchainBalance < 10_000) {
-            for (let i = 0; i < 2; i++) {
-                const note = execSync(`${arkdExec} arkd note --amount 20_000`);
-                const noteStr = note.toString().trim();
-                execSync(
-                    `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
-                );
-            }
-        }
-    });
-
     it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
 
@@ -241,7 +224,7 @@ describe("Ark integration tests", () => {
         });
 
         // Wait for the transaction to be processed
-        execSync("nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)");
+        execSync("nigiri rpc --generate 1");
         await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // Check history before sending to bob
@@ -314,6 +297,9 @@ describe("Ark integration tests", () => {
             ],
         });
 
+        // Wait for the transaction to be processed
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
         // Verify Bob's history
         const bobHistoryAfterSettling =
             await bob.wallet.getTransactionHistory();
@@ -338,6 +324,9 @@ describe("Ark integration tests", () => {
         });
 
         expect(bobExitTxid).toBeDefined();
+
+        // Wait for the transaction to be processed
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Check bob's history
         const bobHistoryAfterExit = await bob.wallet.getTransactionHistory();
@@ -381,7 +370,7 @@ describe("Ark integration tests", () => {
 
         expect(settleTxid).toBeDefined();
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const virtualCoins = await alice.wallet.getVtxos();
         expect(virtualCoins).toHaveLength(1);
@@ -411,11 +400,9 @@ describe("Ark integration tests", () => {
                 },
             ],
         });
-        await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        execSync(`nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`);
-
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        execSync(`nigiri rpc --generate 1`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const virtualCoins = await alice.wallet.getVtxos();
         expect(virtualCoins).toHaveLength(1);
@@ -439,9 +426,7 @@ describe("Ark integration tests", () => {
             switch (done.type) {
                 case Unroll.StepType.WAIT:
                 case Unroll.StepType.UNROLL:
-                    execSync(
-                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
-                    );
+                    execSync(`nigiri rpc --generate 1`);
                     break;
             }
         }
@@ -509,9 +494,9 @@ describe("Ark integration tests", () => {
         expect(vtxo.virtualStatus.state).toBe("settled");
 
         // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
-        execSync(`nigiri rpc generatetoaddress 25 $(nigiri rpc getnewaddress)`);
+        execSync(`nigiri rpc --generate 25`);
 
-        await new Promise((resolve) => setTimeout(resolve, 20_000));
+        await new Promise((resolve) => setTimeout(resolve, 20000));
 
         const vtxosAfterSweep = await alice.wallet.getVtxos({
             withRecoverable: true,
@@ -611,7 +596,7 @@ describe("Ark integration tests", () => {
             faucetOnchain(aliceBoardingAddress!, fundAmount);
 
             // wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 10000));
+            await new Promise((resolve) => setTimeout(resolve, 5000));
 
             expect(notified).toBeTruthy();
         }
@@ -702,7 +687,7 @@ describe("Ark integration tests", () => {
             amount: 1,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // bob should have 1 sat in offchain balance
         const bobBalance = await bob.wallet.getBalance();
