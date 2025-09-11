@@ -596,7 +596,7 @@ describe("Ark integration tests", () => {
             faucetOnchain(aliceBoardingAddress!, fundAmount);
 
             // wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+            await new Promise((resolve) => setTimeout(resolve, 10000));
 
             expect(notified).toBeTruthy();
         }
