@@ -16,9 +16,11 @@ import {
 import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { vi } from "vitest";
+import { afterEach } from "vitest";
 
 describe("Indexer provider", () => {
     beforeEach(beforeEachFaucet);
+    afterEach(() => vi.restoreAllMocks());
 
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
@@ -119,7 +121,9 @@ describe("Indexer provider", () => {
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {
-        vi.spyOn(console, "error").mockImplementation(() => {});
+        const errorSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
         const start = Date.now();
         const fundAmount = 1000;
         const delayMilliseconds = 2100;
