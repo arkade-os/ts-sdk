@@ -4,6 +4,7 @@ import {
     createTestArkWallet,
     createVtxo,
     beforeEachFaucet,
+    waitFor,
 } from "./utils";
 import {
     ArkAddress,
@@ -17,18 +18,6 @@ import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
 import { vi } from "vitest";
 import { afterEach } from "vitest";
-
-const waitFor = async (
-    fn: () => Promise<boolean>,
-    { timeout = 15_000, interval = 250 } = {}
-) => {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        if (await fn()) return;
-        await new Promise((r) => setTimeout(r, interval));
-    }
-    throw new Error("timeout waiting for commitment tx");
-};
 
 describe("Indexer provider", () => {
     beforeEach(beforeEachFaucet);

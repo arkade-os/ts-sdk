@@ -100,3 +100,15 @@ export function beforeEachFaucet(): void {
         }
     }
 }
+
+export async function waitFor(
+    fn: () => Promise<boolean>,
+    { timeout = 15_000, interval = 250 } = {}
+): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        if (await fn()) return;
+        await new Promise((r) => setTimeout(r, interval));
+    }
+    throw new Error("timeout waiting for commitment tx");
+}
