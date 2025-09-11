@@ -71,44 +71,50 @@ async function setupArkServer() {
         // Wait for ARK server to be ready first
         await waitForArkServer();
 
-        // Create and unlock arkd wallet with deterministic mnemonic
-        const mnemonic = "abandon ".repeat(23) + "abandon";
-        await execCommand(
-            `${arkdExec} arkd wallet create --password secret --mnemonic "${mnemonic}"`
-        );
-        await execCommand(`${arkdExec} arkd wallet unlock --password secret`);
+        if (arg === "docker") {
+            // nigiri already initializes arkd
+            // Create and unlock arkd wallet
+            await execCommand(
+                `${arkdExec} arkd wallet create --password secret`
+            );
+            await execCommand(
+                `${arkdExec} arkd wallet unlock --password secret`
+            );
 
-        // Wait for wallet to be ready and synced
-        await waitForWalletReady();
+            // Wait for wallet to be ready and synced
+            await waitForWalletReady();
 
-        // Get and log the server info
-        const serverInfo = JSON.parse(
-            execSync("curl -s http://localhost:7070/v1/info").toString()
-        );
-        console.log("Ark Server Public Key:", serverInfo.signerPubkey);
+            // Get and log the server info
+            const serverInfo = JSON.parse(
+                execSync("curl -s http://localhost:7070/v1/info").toString()
+            );
+            console.log("Ark Server Public Key:", serverInfo.signerPubkey);
 
-        // Get arkd address and fund it with nigiri faucet
-        const arkdAddress = (
-            await execCommand(`${arkdExec} arkd wallet address`)
-        )
-            .toString()
-            .trim();
-        console.log("Funding arkd address:", arkdAddress);
+            // Get arkd address and fund it with nigiri faucet
+            const arkdAddress = (
+                await execCommand(`${arkdExec} arkd wallet address`)
+            )
+                .toString()
+                .trim();
+            console.log("Funding arkd address:", arkdAddress);
 
-        for (let i = 0; i < 10; i++) {
-            await execCommand(`nigiri faucet ${arkdAddress}`);
+            for (let i = 0; i < 10; i++) {
+                await execCommand(`nigiri faucet ${arkdAddress}`);
+            }
+
+            // Wait for transaction to be confirmed
+            await sleep(5000);
+
+            // Initialize ark client
+            await execCommand(
+                `${arkdExec} ark init --server-url http://localhost:7070 --explorer http://chopsticks:3000 --password secret --network regtest`
+            );
         }
 
-        // Wait for transaction to be confirmed
-        await sleep(5000);
-
-        // Initialize ark client
-        await execCommand(
-            `${arkdExec} ark init --server-url http://localhost:7070 --explorer http://chopsticks:3000 --password secret --network regtest`
+        // fund the ark-cli with 1 vtxo worth of 2_000_000
+        const note = await execCommand(
+            `${arkdExec} arkd note --amount 2_000_000`
         );
-
-        // fund the ark-cli with 1 vtxo worth of 20_000
-        const note = await execCommand(`${arkdExec} arkd note --amount 20_000`);
         const noteStr = note.toString().trim();
         const cmd = `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`;
         await execCommand(cmd);

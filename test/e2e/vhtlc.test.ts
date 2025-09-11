@@ -21,13 +21,22 @@ import {
     createTestArkWallet,
     createTestIdentity,
     faucetOffchain,
-    X_ONLY_PUBLIC_KEY,
 } from "./utils";
 import { hash160 } from "@scure/btc-signer/utils";
 import { execSync } from "child_process";
+import { beforeAll } from "vitest";
 
 describe("vhtlc", () => {
     beforeEach(beforeEachFaucet);
+
+    let X_ONLY_PUBLIC_KEY: Uint8Array;
+    beforeAll(() => {
+        const info = execSync(
+            "curl -fsS --max-time 5 http://localhost:7070/v1/info"
+        );
+        const signerPubkey = JSON.parse(info.toString()).signerPubkey;
+        X_ONLY_PUBLIC_KEY = hex.decode(signerPubkey).slice(1);
+    });
 
     it("should claim", { timeout: 60000 }, async () => {
         const alice = createTestIdentity();
@@ -192,7 +201,7 @@ describe("vhtlc", () => {
             "http://localhost:7070"
         );
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const spendableVtxosResponse = await indexerProvider.getVtxos({
             scripts: [hex.encode(vhtlcScript.pkScript)],
@@ -218,13 +227,9 @@ describe("vhtlc", () => {
             switch (done.type) {
                 case Unroll.StepType.WAIT:
                 case Unroll.StepType.UNROLL:
-                    execSync(
-                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
-                    );
+                    execSync(`nigiri rpc --generate 1`);
                     await new Promise((resolve) => setTimeout(resolve, 2000)); // give time for the checkpoint to be created
-                    execSync(
-                        `nigiri rpc generatetoaddress 1 $(nigiri rpc getnewaddress)`
-                    );
+                    execSync(`nigiri rpc --generate 1`);
                     break;
             }
         }
@@ -263,7 +268,7 @@ describe("vhtlc", () => {
         ).rejects.toThrow();
 
         // generate 10 blocks to make the exit path available
-        execSync(`nigiri rpc generatetoaddress 10 $(nigiri rpc getnewaddress)`);
+        execSync(`nigiri rpc --generate 10`);
 
         const txid = await onchainBob.provider.broadcastTransaction(
             signedTx.hex
