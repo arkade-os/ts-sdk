@@ -24,13 +24,19 @@ import {
 } from "./utils";
 import { hash160 } from "@scure/btc-signer/utils";
 import { execSync } from "child_process";
+import { beforeAll } from "vitest";
 
 describe("vhtlc", () => {
     beforeEach(beforeEachFaucet);
 
-    const aspInfo = execSync("curl -s http://localhost:7070/v1/info");
-    const signerPubkey = JSON.parse(aspInfo.toString()).signerPubkey;
-    const X_ONLY_PUBLIC_KEY = hex.decode(signerPubkey).slice(1);
+    let X_ONLY_PUBLIC_KEY: Uint8Array;
+    beforeAll(() => {
+        const info = execSync(
+            "curl -fsS --max-time 5 http://localhost:7070/v1/info"
+        );
+        const signerPubkey = JSON.parse(info.toString()).signerPubkey;
+        X_ONLY_PUBLIC_KEY = hex.decode(signerPubkey).slice(1);
+    });
 
     it("should claim", { timeout: 60000 }, async () => {
         const alice = createTestIdentity();
