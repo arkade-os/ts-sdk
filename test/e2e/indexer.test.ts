@@ -77,7 +77,7 @@ describe("Indexer provider", () => {
         expect(txid).toBeDefined();
         const fundAmountStr = fundAmount.toString();
 
-        await new Promise((resolve) => setTimeout(resolve, 2_000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const commitmentTx = await indexerProvider.getCommitmentTx(txid);
         expect(commitmentTx).toBeDefined();
@@ -301,7 +301,7 @@ describe("Indexer provider", () => {
         });
 
         // wait for the ark tx to be processed by the ark server
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
         const aliceVtxosAfterArkTx = await alice.wallet.getVtxos();
         expect(aliceVtxosAfterArkTx).toBeDefined();

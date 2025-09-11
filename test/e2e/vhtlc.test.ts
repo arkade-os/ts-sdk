@@ -195,7 +195,7 @@ describe("vhtlc", () => {
             "http://localhost:7070"
         );
 
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         const spendableVtxosResponse = await indexerProvider.getVtxos({
             scripts: [hex.encode(vhtlcScript.pkScript)],

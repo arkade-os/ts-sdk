@@ -225,7 +225,7 @@ describe("Ark integration tests", () => {
 
         // Wait for the transaction to be processed
         execSync("nigiri rpc --generate 1");
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Check history before sending to bob
         let aliceHistory = await alice.wallet.getTransactionHistory();
@@ -449,7 +449,7 @@ describe("Ark integration tests", () => {
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
         const exitTxid = await new Ramps(alice.wallet).offboard(
             onchainAlice.wallet.address
@@ -555,7 +555,7 @@ describe("Ark integration tests", () => {
             faucetOffchain(aliceAddress!, fundAmount);
 
             // wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 4000));
+            await new Promise((resolve) => setTimeout(resolve, 5000));
             expect(notified).toBeTruthy();
         }
     );
@@ -687,7 +687,7 @@ describe("Ark integration tests", () => {
             amount: 1,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // bob should have 1 sat in offchain balance
         const bobBalance = await bob.wallet.getBalance();
@@ -709,7 +709,7 @@ describe("Ark integration tests", () => {
             amount: fundAmount - 1,
         });
 
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // now bob should be able to settle
         await bob.wallet.settle();
