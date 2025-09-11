@@ -250,9 +250,7 @@ async function main() {
         console.log("Final amount sent to Bob:", 1500, "sats");
         console.log("Number of state updates:", bobChannelStates.length);
     } else {
-        execSync(
-            `nigiri rpc generatetoaddress 200 $(nigiri rpc getnewaddress)`
-        );
+        execSync(`nigiri rpc --generate 200`);
 
         console.log("\nRefunding channel...");
         // after 10 blocks, Alice can spend without Bob's signature

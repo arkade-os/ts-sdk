@@ -15,9 +15,24 @@ import {
 } from "../../src";
 import { hex } from "@scure/base";
 import { sha256x2 } from "@scure/btc-signer/utils";
+import { vi } from "vitest";
+import { afterEach } from "vitest";
+
+const waitFor = async (
+    fn: () => Promise<boolean>,
+    { timeout = 15_000, interval = 250 } = {}
+) => {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        if (await fn()) return;
+        await new Promise((r) => setTimeout(r, interval));
+    }
+    throw new Error("timeout waiting for commitment tx");
+};
 
 describe("Indexer provider", () => {
     beforeEach(beforeEachFaucet);
+    afterEach(() => vi.restoreAllMocks());
 
     it("should inspect a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
@@ -75,7 +90,12 @@ describe("Indexer provider", () => {
         const txid = await createVtxo(alice, fundAmount);
         expect(txid).toBeDefined();
         const fundAmountStr = fundAmount.toString();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Wait until indexer reflects the batch totals instead of sleeping.
+        await waitFor(async () => {
+            const c = await indexerProvider.getCommitmentTx(txid);
+            return c?.batches?.["0"]?.totalOutputAmount === fundAmountStr;
+        });
 
         const commitmentTx = await indexerProvider.getCommitmentTx(txid);
         expect(commitmentTx).toBeDefined();
@@ -101,7 +121,7 @@ describe("Indexer provider", () => {
             vout: 0,
         });
         expect(sweptsResponse.sweptBy).toBeDefined();
-        expect(sweptsResponse.sweptBy.length).toBeGreaterThanOrEqual(0);
+        expect(sweptsResponse.sweptBy).toHaveLength(0);
 
         const batchTreeResponse = await indexerProvider.getVtxoTree({
             txid,
@@ -117,6 +137,9 @@ describe("Indexer provider", () => {
     });
 
     it("should subscribe to scripts", { timeout: 60000 }, async () => {
+        const errorSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {});
         const start = Date.now();
         const fundAmount = 1000;
         const delayMilliseconds = 2100;
@@ -298,7 +321,15 @@ describe("Indexer provider", () => {
         });
 
         // wait for the ark tx to be processed by the ark server
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        // replace sleep with:
+        await waitFor(
+            async () => {
+                const vtxos = await alice.wallet.getVtxos();
+                const updated = await indexerProvider.getVtxoChain(vtxos[0]);
+                return updated.chain.length > chainResponse.chain.length;
+            },
+            { timeout: 15_000, interval: 250 }
+        );
 
         const aliceVtxosAfterArkTx = await alice.wallet.getVtxos();
         expect(aliceVtxosAfterArkTx).toBeDefined();
