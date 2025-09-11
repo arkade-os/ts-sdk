@@ -248,9 +248,7 @@ async function main() {
         }
         case "unilateralRefund": {
             // Generate 200 blocks to ensure the locktime period has passed
-            execSync(
-                `nigiri rpc generatetoaddress 200 $(nigiri rpc getnewaddress)`
-            );
+            execSync(`nigiri rpc --generate 200`);
 
             // Create and sign the unilateral refund transaction
             const { arkTx, checkpoints } = buildOffchainTx(

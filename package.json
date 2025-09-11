@@ -86,16 +86,16 @@
         "bip68": "1.0.4"
     },
     "devDependencies": {
-        "rimraf": "^5.0.0",
-        "@types/node": "22.10.2",
-        "@vitest/coverage-v8": "2.1.9",
-        "esbuild": "^0.20.1",
-        "glob": "11.0.1",
+        "@types/node": "24.3.1",
+        "@vitest/coverage-v8": "3.2.4",
+        "esbuild": "^0.25.9",
+        "glob": "11.0.3",
         "husky": "9.1.7",
         "prettier": "3.4.2",
-        "typedoc": "^0.27.1",
+        "rimraf": "^5.0.0",
+        "typedoc": "^0.28.12",
         "typescript": "5.7.2",
-        "vitest": "2.1.9"
+        "vitest": "3.2.4"
     },
     "keywords": [
         "bitcoin",
@@ -110,5 +110,11 @@
     "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
     "engines": {
         "node": "^14.17.0 || ^16.13.0 || >=18.0.0"
+    },
+    "pnpm": {
+        "overrides": {
+            "esbuild": ">=0.25.0",
+            "brace-expansion": ">=2.0.2"
+        }
     }
 }

@@ -5,12 +5,6 @@ import { execSync } from "child_process";
 export const arkdExec =
     process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
 
-// Deterministic server public key from mnemonic "abandon" x24
-export const ARK_SERVER_PUBKEY =
-    "038a9bbb1fb2aa92b9557dd0b39a85f31d204f58b41c62ea112d6ad148a9881285";
-
-export const X_ONLY_PUBLIC_KEY = hex.decode(ARK_SERVER_PUBKEY).slice(1);
-
 export interface TestArkWallet {
     wallet: Wallet;
     identity: SingleKey;
@@ -40,7 +34,6 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
-        arkServerPublicKey: ARK_SERVER_PUBKEY,
     });
 
     return {
