@@ -555,7 +555,7 @@ describe("Ark integration tests", () => {
             faucetOffchain(aliceAddress!, fundAmount);
 
             // wait for the transaction to be processed
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+            await new Promise((resolve) => setTimeout(resolve, 4000));
             expect(notified).toBeTruthy();
         }
     );
