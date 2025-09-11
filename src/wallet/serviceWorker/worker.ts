@@ -63,6 +63,11 @@ export class Worker {
         this.vtxoSubscription = undefined;
     }
 
+    async reload() {
+        if (this.vtxoSubscription) this.vtxoSubscription.abort();
+        await this.onWalletInitialized();
+    }
+
     private async onWalletInitialized() {
         if (
             !this.wallet ||
@@ -557,7 +562,11 @@ export class Worker {
         }
 
         event.source?.postMessage(
-            Response.walletStatus(message.id, this.wallet !== undefined)
+            Response.walletStatus(
+                message.id,
+                this.wallet !== undefined,
+                this.wallet?.identity.xOnlyPublicKey()
+            )
         );
     }
 
