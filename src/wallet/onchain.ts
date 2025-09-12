@@ -20,7 +20,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
  *
  * @example
  * ```typescript
- * const wallet = new OnchainWallet(identity, 'mainnet');
+ * const wallet = await OnchainWallet.create(identity, 'mainnet');
  * const balance = await wallet.getBalance();
  * const txid = await wallet.send({
  *   address: 'bc1...',
