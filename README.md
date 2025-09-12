@@ -223,27 +223,24 @@ new Worker().start()
 2. Create a ServiceWorkerWallet
 
 ```typescript
-import { ServiceWorkerWallet, ServiceWorkerIdentity } from '@arkade-os/sdk'
+import { ServiceWorkerWallet, ServiceWorkerIdentity, setupServiceWorker, SingleKey } from '@arkade-os/sdk'
 
 // Register and wait until the SW is active
-const registration = await navigator.serviceWorker.register('/service-worker.js')
-await navigator.serviceWorker.ready
+const serviceWorker = await setupServiceWorker('/service-worker.js')
 
 // Create identity for service worker communication
-const identity = new ServiceWorkerIdentity(
-  registration.active ?? (await navigator.serviceWorker.ready).active!
-)
+const identity = new SingleKey.fromHex('your_private_key_hex')
 
 // Create the wallet using the new async pattern
-const wallet = await ServiceWorkerWallet.create({
-  serviceWorker: registration.active!,
+const swWallet = await ServiceWorkerWallet.create({
   identity,
+  serviceWorker,
   arkServerUrl: 'https://mutinynet.arkade.sh',
   esploraUrl: 'https://mutinynet.com/api'
 })
 
 // The wallet is ready to use - no separate init() needed
-const balance = await wallet.getBalance()
+const balance = await swWallet.getBalance()
 console.log('Wallet balance:', balance.total)
 ```
 
@@ -302,18 +299,18 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 
 // setup and create service worker wallet
 const serviceWorker = await setupServiceWorker('/worker.js')
-const wallet = await ServiceWorkerWallet.create({
-  serviceWorker,
+const swWallet = await ServiceWorkerWallet.create({
   identity,
+  serviceWorker,
   arkServerUrl: 'https://ark.example.com'
 });
 
 // Service worker identity for background operations
-const swIdentity = new ServiceWorkerIdentity(serviceWorker.active!)
+const swIdentity = new ServiceWorkerIdentity(serviceWorker)
 
 // All identity methods are now async
-const pubKey = await identity.xOnlyPublicKey()
-const signedTx = await identity.sign(transaction)
+const pubKey = await swIdentity.xOnlyPublicKey()
+const signedTx = await swIdentity.sign(transaction)
 ```
 
 ### Repository Pattern
