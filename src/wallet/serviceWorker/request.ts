@@ -42,10 +42,12 @@ export namespace Request {
     export function isInitWallet(message: Base): message is InitWallet {
         return (
             message.type === "INIT_WALLET" &&
-            "privateKey" in message &&
-            typeof message.privateKey === "string" &&
             "arkServerUrl" in message &&
             typeof message.arkServerUrl === "string" &&
+            ("privateKey" in message
+                ? message.privateKey === null ||
+                  typeof message.privateKey === "string"
+                : true) &&
             ("arkServerPublicKey" in message
                 ? typeof message.arkServerPublicKey === "string" ||
                   message.arkServerPublicKey === undefined
