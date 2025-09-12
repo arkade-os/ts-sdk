@@ -97,14 +97,13 @@ describe("vhtlc", () => {
         });
         expect(spendableVtxosResponse.vtxos).toHaveLength(1);
 
-        const infos = await arkProvider.getInfo();
-        const serverUnrollScript = CSVMultisigTapscript.encode({
-            timelock: {
-                type: infos.unilateralExitDelay < 512 ? "blocks" : "seconds",
-                value: infos.unilateralExitDelay,
-            },
-            pubkeys: [X_ONLY_PUBLIC_KEY],
-        });
+        const info = await arkProvider.getInfo();
+        const rawCheckpointUnrollClosure = hex.decode(
+            info.checkpointExitClosure
+        );
+        const checkpointUnrollClosure = CSVMultisigTapscript.decode(
+            rawCheckpointUnrollClosure
+        );
 
         const vtxo = spendableVtxosResponse.vtxos[0];
 
@@ -122,7 +121,7 @@ describe("vhtlc", () => {
                     amount: BigInt(fundAmount),
                 },
             ],
-            serverUnrollScript
+            checkpointUnrollClosure
         );
 
         const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
