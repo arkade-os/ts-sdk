@@ -60,6 +60,7 @@ export interface ServiceWorkerWalletCreateOptions {
     esploraUrl?: string;
     arkServerPublicKey?: string;
     storage?: StorageAdapter;
+    privateKey?: string; // Optional private key for initial identity setup
 }
 
 export class ServiceWorkerWallet implements IWallet {
@@ -95,7 +96,7 @@ export class ServiceWorkerWallet implements IWallet {
         const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
-            privateKey: null, // Service worker will manage its own persistent identity
+            privateKey: options.privateKey,
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
         };

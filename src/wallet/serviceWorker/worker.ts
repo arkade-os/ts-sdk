@@ -324,7 +324,7 @@ export class Worker {
         try {
             let identity: SingleKey;
 
-            if (message.privateKey === null) {
+            if (message.privateKey === undefined) {
                 // Service worker manages its own persistent identity
                 identity = await this.loadOrCreateIdentity();
             } else {

@@ -343,13 +343,13 @@ export namespace Response {
 
     export function xOnlyPublicKey(
         id: string,
-        publicKey: Uint8Array
+        publicKey: Uint8Array | undefined
     ): XOnlyPublicKey {
         return {
             type: "XONLY_PUBLIC_KEY",
             success: true,
             id,
-            publicKey: Array.from(publicKey),
+            publicKey: Array.from(publicKey ?? new Uint8Array()),
         };
     }
 
