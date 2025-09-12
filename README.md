@@ -223,23 +223,27 @@ new Worker().start()
 2. Create a ServiceWorkerWallet
 
 ```typescript
-import { ServiceWorkerWallet, ServiceWorkerIdentity, setupServiceWorker, SingleKey } from '@arkade-os/sdk'
+import { ServiceWorkerWallet, ServiceWorkerIdentity, setupServiceWorker } from '@arkade-os/sdk'
 
 // Register and wait until the SW is active
 const serviceWorker = await setupServiceWorker('/service-worker.js')
 
 // Create identity for service worker communication
-const identity = SingleKey.fromHex('your_private_key_hex')
-// Create the wallet using the new async pattern
-const swWallet = await ServiceWorkerWallet.create({
+const identity = new ServiceWorkerIdentity(serviceWorker)
+
+// Create the service worker wallet
+// Note: Service worker manages its own persistent identity stored in IndexedDB
+// When privateKey is undefined, the service worker will load existing identity or generate a new one
+const wallet = await ServiceWorkerWallet.create({
   identity,
   serviceWorker,
+  esploraUrl: 'https://mutinynet.com/api',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  esploraUrl: 'https://mutinynet.com/api'
+  privateKey, // Optional private key for initial identity setup
 })
 
-// The wallet is ready to use - no separate init() needed
-const balance = await swWallet.getBalance()
+// The wallet is ready to use
+const balance = await wallet.getBalance()
 console.log('Wallet balance:', balance.total)
 ```
 
@@ -296,20 +300,26 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 // ...or generate a random key
 // const randomIdentity = SingleKey.fromRandomBytes();
 
-// setup and create service worker wallet
+// Setup service worker
 const serviceWorker = await setupServiceWorker('/worker.js')
-const swWallet = await ServiceWorkerWallet.create({
-  identity,
-  serviceWorker,
-  arkServerUrl: 'https://ark.example.com'
-});
 
 // Service worker identity for background operations
-const swIdentity = new ServiceWorkerIdentity(serviceWorker)
+const identity = new ServiceWorkerIdentity(serviceWorker)
+
+// Create service worker wallet
+// Note: Service worker manages its own persistent identity stored in IndexedDB
+// When privateKey is undefined, the service worker will load existing identity or generate a new one
+const wallet = await ServiceWorkerWallet.create({
+  identity,
+  serviceWorker,
+  arkServerUrl: 'https://ark.example.com',
+  privateKey, // Optional private key for initial identity setup
+});
+
 
 // All identity methods are now async
-const pubKey = await swIdentity.xOnlyPublicKey()
-const signedTx = await swIdentity.sign(transaction)
+const pubKey = await identity.xOnlyPublicKey()
+const signedTx = await identity.sign(transaction)
 ```
 
 ### Repository Pattern
@@ -317,7 +327,6 @@ const signedTx = await swIdentity.sign(transaction)
 Access low-level data management through repositories:
 
 ```typescript
-// VTXO management (automatically cached for performance)
 // VTXO management (automatically cached for performance)
 const addr = await wallet.getAddress()
 const vtxos = await wallet.walletRepository.getVtxos(addr)
