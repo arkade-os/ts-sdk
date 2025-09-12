@@ -229,8 +229,7 @@ import { ServiceWorkerWallet, ServiceWorkerIdentity, setupServiceWorker, SingleK
 const serviceWorker = await setupServiceWorker('/service-worker.js')
 
 // Create identity for service worker communication
-const identity = new SingleKey.fromHex('your_private_key_hex')
-
+const identity = SingleKey.fromHex('your_private_key_hex')
 // Create the wallet using the new async pattern
 const swWallet = await ServiceWorkerWallet.create({
   identity,
