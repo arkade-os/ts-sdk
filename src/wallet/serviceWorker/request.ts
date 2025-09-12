@@ -34,7 +34,7 @@ export namespace Request {
 
     export interface InitWallet extends Base {
         type: "INIT_WALLET";
-        privateKey: string | null; // If null, service worker will load existing identity or generate a new persistent one
+        privateKey: string | undefined; // If undefined, service worker will load existing identity or generate a new persistent one
         arkServerUrl: string;
         arkServerPublicKey?: string;
     }
@@ -45,12 +45,12 @@ export namespace Request {
             "arkServerUrl" in message &&
             typeof message.arkServerUrl === "string" &&
             ("privateKey" in message
-                ? message.privateKey === null ||
+                ? message.privateKey === undefined ||
                   typeof message.privateKey === "string"
                 : true) &&
             ("arkServerPublicKey" in message
-                ? typeof message.arkServerPublicKey === "string" ||
-                  message.arkServerPublicKey === undefined
+                ? message.arkServerPublicKey === undefined ||
+                  typeof message.arkServerPublicKey === "string"
                 : true)
         );
     }
