@@ -300,8 +300,15 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 // ...or generate a random key
 // const randomIdentity = SingleKey.fromRandomBytes();
 
+// setup and create service worker wallet
+const serviceWorker = await setupServiceWorker('/worker.js')
+const wallet = await ServiceWorkerWallet.create({
+  serviceWorker,
+  identity,
+  arkServerUrl: 'https://ark.example.com'
+});
+
 // Service worker identity for background operations
-const serviceWorker = await navigator.serviceWorker.register('/worker.js')
 const swIdentity = new ServiceWorkerIdentity(serviceWorker.active!)
 
 // All identity methods are now async
