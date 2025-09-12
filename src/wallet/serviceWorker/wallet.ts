@@ -144,6 +144,14 @@ export class ServiceWorkerWallet implements IWallet {
         });
     }
 
+    async clear() {
+        const message: Request.Clear = {
+            type: "CLEAR",
+            id: getRandomId(),
+        };
+        await this.sendMessage(message);
+    }
+
     async getAddress(): Promise<string> {
         const message: Request.GetAddress = {
             type: "GET_ADDRESS",
@@ -195,6 +203,52 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
+    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const message: Request.GetBoardingUtxos = {
+            type: "GET_BOARDING_UTXOS",
+            id: getRandomId(),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isBoardingUtxos(response)) {
+                return response.boardingUtxos;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to get boarding UTXOs: ${error}`);
+        }
+    }
+
+    async getStatus(): Promise<Response.WalletStatus["status"]> {
+        const message: Request.GetStatus = {
+            type: "GET_STATUS",
+            id: getRandomId(),
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isWalletStatus(response)) {
+            return response.status;
+        }
+        throw new UnexpectedResponseError(response);
+    }
+
+    async getTransactionHistory(): Promise<ArkTransaction[]> {
+        const message: Request.GetTransactionHistory = {
+            type: "GET_TRANSACTION_HISTORY",
+            id: getRandomId(),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isTransactionHistory(response)) {
+                return response.transactions;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to get transaction history: ${error}`);
+        }
+    }
+
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
@@ -210,23 +264,6 @@ export class ServiceWorkerWallet implements IWallet {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get vtxos: ${error}`);
-        }
-    }
-
-    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const message: Request.GetBoardingUtxos = {
-            type: "GET_BOARDING_UTXOS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isBoardingUtxos(response)) {
-                return response.boardingUtxos;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get boarding UTXOs: ${error}`);
         }
     }
 
@@ -300,23 +337,6 @@ export class ServiceWorkerWallet implements IWallet {
             });
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
-        }
-    }
-
-    async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const message: Request.GetTransactionHistory = {
-            type: "GET_TRANSACTION_HISTORY",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isTransactionHistory(response)) {
-                return response.transactions;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get transaction history: ${error}`);
         }
     }
 }
