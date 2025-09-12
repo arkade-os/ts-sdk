@@ -59,7 +59,6 @@ import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree, TxTreeNode } from "../tree/txTree";
-import { StorageAdapter } from "../storage";
 import { InMemoryStorageAdapter } from "../storage/inMemory";
 import {
     WalletRepository,
