@@ -52,7 +52,7 @@ export class ServiceWorkerIdentity implements Identity {
                 }
             };
 
-            this.serviceWorker.addEventListener("message", handleMessage);
+            navigator.serviceWorker.addEventListener("message", handleMessage);
             this.serviceWorker.postMessage(message);
 
             // Timeout after 10 seconds
