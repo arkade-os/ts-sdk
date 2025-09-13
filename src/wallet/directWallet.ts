@@ -1324,12 +1324,26 @@ function finalizeWithExtraWitnesses(
             const finalScriptWitness = tx.getInput(i).finalScriptWitness;
             if (!finalScriptWitness) throw new Error("input not finalized");
 
-            // input 0 and 1 spend the same pkscript
-            const extra = inputExtraWitnesses[i === 0 ? 0 : i - 1];
-            if (extra && extra.length > 0) {
-                tx.updateInput(i, {
-                    finalScriptWitness: [...extra, ...finalScriptWitness],
-                });
+            // Compute extra witness index: inputs 0 and 1 both use witness index 0,
+            // subsequent inputs use witness index i-1 (shifted down by 1)
+            const computeExtraWitnessIndex = (inputIndex: number): number => {
+                return inputIndex === 0 ? 0 : inputIndex - 1;
+            };
+
+            const extraWitnessIndex = computeExtraWitnessIndex(i);
+
+            // Bounds check and validate extra witnesses array
+            if (
+                extraWitnessIndex >= 0 &&
+                extraWitnessIndex < inputExtraWitnesses.length &&
+                Array.isArray(inputExtraWitnesses[extraWitnessIndex])
+            ) {
+                const extra = inputExtraWitnesses[extraWitnessIndex];
+                if (extra.length > 0) {
+                    tx.updateInput(i, {
+                        finalScriptWitness: [...extra, ...finalScriptWitness],
+                    });
+                }
             }
         }
     };
