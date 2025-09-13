@@ -1429,15 +1429,28 @@ export async function waitForIncomingFunds(
     wallet: Wallet
 ): Promise<IncomingFunds> {
     let stopFunc: (() => void) | undefined;
+    let receivedCoins: IncomingFunds | undefined;
 
     const promise = new Promise<IncomingFunds>((resolve) => {
         wallet
             .notifyIncomingFunds((coins: IncomingFunds) => {
-                resolve(coins);
-                if (stopFunc) stopFunc();
+                receivedCoins = coins;
+
+                // If stopFunc is already set, resolve immediately
+                if (stopFunc) {
+                    resolve(coins);
+                    stopFunc();
+                }
+                // Otherwise, coins will be resolved when stopFunc is assigned
             })
             .then((stop) => {
                 stopFunc = stop;
+
+                // If coins were already received, resolve now
+                if (receivedCoins) {
+                    resolve(receivedCoins);
+                    stopFunc();
+                }
             });
     });
 
