@@ -4,7 +4,7 @@ import {
     detectExecutionContext,
     needsServiceWorker,
 } from "./context";
-import { ServiceWorkerProxy } from "../implementations/serviceWorkerProxy";
+import { ServiceWorkerProxy } from "./serviceWorker/serviceWorkerProxy";
 import { Wallet as DirectWallet } from "./directWallet";
 import { setupServiceWorkerWithConfig } from "./serviceWorkerInit";
 import { SingleKey } from "../identity/singleKey";

@@ -33,7 +33,6 @@ import {
     TreePartialSigs,
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
-import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -119,7 +118,6 @@ import { Unroll } from "./wallet/unroll";
 import { InMemoryStorageAdapter } from "./storage/inMemory";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
-import { ServiceWorkerIdentity } from "./identity";
 
 export {
     // Wallets
@@ -149,7 +147,6 @@ export {
     // Service Worker
     setupServiceWorker,
     Worker,
-    ServiceWorkerWallet,
     Request,
     Response,
 
@@ -190,9 +187,6 @@ export {
     // Repositories
     WalletRepositoryImpl,
     ContractRepositoryImpl,
-
-    // Identity
-    ServiceWorkerIdentity,
 
     // BIP322
     BIP322,

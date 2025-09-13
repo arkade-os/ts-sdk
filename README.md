@@ -1,4 +1,5 @@
 # Arkade TypeScript SDK
+
 The Arkade SDK is a TypeScript library for building Bitcoin wallets with support for both on-chain and off-chain transactions via the Ark protocol.
 
 [![TypeScript Documentation](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
@@ -92,7 +93,7 @@ const txid = await wallet.sendBitcoin({
 })
 ```
 
-### Batch Settlements 
+### Batch Settlements
 
 This can be used to move preconfirmed balances into finalized balances, to convert manually UTXOs and VTXOs.
 
@@ -184,6 +185,7 @@ for await (const step of session) {
 ```
 
 The unrolling process works by:
+
 - Traversing the transaction chain from the root (most recent) to the leaf (oldest)
 - Broadcasting each transaction that isn't already on-chain
 - Waiting for confirmations between steps
@@ -203,6 +205,7 @@ await Unroll.completeUnroll(
 ```
 
 **Important Notes:**
+
 - Each VTXO may require multiple unroll steps depending on the transaction chain length
 - Each unroll step must be confirmed before proceeding to the next
 - The `completeUnroll` method can only be called after VTXOs are fully unrolled and the timelock has expired
@@ -239,8 +242,6 @@ The Wallet class automatically:
 - Sets up secure communication when needed
 - Manages persistent identity storage
 - Falls back to direct execution in Node.js environments
-
-_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
 _For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 

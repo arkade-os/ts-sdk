@@ -8,18 +8,18 @@ import {
     ExtendedVirtualCoin,
     GetVtxosFilter,
     WalletConfig,
-} from "../wallet";
-import { Request } from "../wallet/serviceWorker/request";
-import { Response } from "../wallet/serviceWorker/response";
-import { SettlementEvent } from "../providers/ark";
+} from "../../wallet";
+import { Request } from "./request";
+import { Response } from "./response";
+import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity } from "../identity";
-import { ProxyIdentity } from "../identity/proxyIdentity";
-import { WalletRepository } from "../repositories/walletRepository";
-import { ContractRepository } from "../repositories/contractRepository";
-import { WalletRepositoryImpl } from "../repositories/walletRepository";
-import { ContractRepositoryImpl } from "../repositories/contractRepository";
-import { IndexedDBStorageAdapter } from "../storage/indexedDB";
+import { Identity } from "../../identity";
+import { ProxyIdentity } from "../../identity/proxyIdentity";
+import { WalletRepository } from "../../repositories/walletRepository";
+import { ContractRepository } from "../../repositories/contractRepository";
+import { WalletRepositoryImpl } from "../../repositories/walletRepository";
+import { ContractRepositoryImpl } from "../../repositories/contractRepository";
+import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {

@@ -1,8 +1,8 @@
 import { Transaction } from "@scure/btc-signer";
-import { Identity } from "../identity";
 import { SignerSession } from "../tree/signingSession";
 import { Request } from "../wallet/serviceWorker/request";
 import { Response } from "../wallet/serviceWorker/response";
+import { Identity } from "./index";
 
 /**
  * ProxyIdentity forwards identity operations to a service worker.
