@@ -210,9 +210,7 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-The SDK now automatically detects when it's running in a service worker context and handles setup transparently. No manual service worker setup is required!
-
-#### Simple Approach (Recommended)
+The SDK automatically detects when it's running in a service worker context and handles setup transparently.
 
 ```typescript
 // service-worker.ts
@@ -235,46 +233,14 @@ self.addEventListener('message', async (event) => {
 });
 ```
 
-#### Advanced Service Worker Setup (Legacy)
+The Wallet class automatically:
 
-For advanced use cases, you can still use the legacy approach:
+- Detects if running in a service worker context
+- Sets up secure communication when needed
+- Manages persistent identity storage
+- Falls back to direct execution in Node.js environments
 
-```typescript
-// service-worker.ts
-import { Worker } from '@arkade-os/sdk'
-
-// Worker handles communication between the main thread and service worker
-new Worker().start()
-```
-
-Then in your main thread:
-
-```typescript
-import { ServiceWorkerWallet, ServiceWorkerIdentity, setupServiceWorker } from '@arkade-os/sdk'
-
-// Register and wait until the SW is active
-const serviceWorker = await setupServiceWorker('/service-worker.js')
-
-// Create identity for service worker communication
-const identity = new ServiceWorkerIdentity(serviceWorker)
-
-// Create the service worker wallet
-// Note: Service worker manages its own persistent identity stored in IndexedDB
-// When privateKey is undefined, the service worker will load existing identity or generate a new one
-const wallet = await ServiceWorkerWallet.create({
-  identity,
-  serviceWorker,
-  esploraUrl: 'https://mutinynet.com/api',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  privateKey, // Optional private key for initial identity setup
-})
-
-// The wallet is ready to use
-const balance = await wallet.getBalance()
-console.log('Wallet balance:', balance.total)
-```
-
-**Migration Note:** The `ServiceWorkerWallet` and `ServiceWorkerIdentity` classes are deprecated. The new `Wallet` class automatically detects execution context and uses service workers when appropriate, making manual setup unnecessary.
+_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
 _For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
@@ -342,29 +308,12 @@ const pubKey = await identity.xOnlyPublicKey()
 const signedTx = await identity.sign(transaction)
 ```
 
-**Automatic Context Detection:**
+**Execution Context Support:**
 
-- **Node.js/Direct execution**: Uses identity directly
-- **Browser main thread**: Automatically sets up service worker proxy if needed
-- **Service worker context**: Uses identity directly with persistent storage
-- **Worker client**: Uses service worker proxy for secure operations
-
-**Legacy Service Worker Identity (Deprecated):**
-
-```typescript
-// Legacy approach - no longer needed with automatic detection
-import { ServiceWorkerIdentity, setupServiceWorker } from '@arkade-os/sdk'
-
-const serviceWorker = await setupServiceWorker('/worker.js')
-const identity = new ServiceWorkerIdentity(serviceWorker) // Deprecated
-
-// Modern approach - automatic detection
-const wallet = await Wallet.create({
-  identity: SingleKey.fromHex('your_key'),
-  arkServerUrl: 'https://ark.example.com'
-  // Service worker setup is automatic when needed
-});
-```
+- **Node.js/Direct execution**: Uses identity directly for optimal performance
+- **Browser main thread**: Automatically sets up service worker proxy when beneficial
+- **Service worker context**: Uses identity directly with automatic persistent storage
+- **Worker client**: Uses secure service worker proxy for cryptographic operations
 
 ### Repository Pattern
 
@@ -387,46 +336,7 @@ await wallet.contractRepository.saveToContractCollection(
   'id' // key field
 )
 const swaps = await wallet.contractRepository.getContractCollection('swaps')
-
-### Migration from v0.2.x
-
-If you're upgrading from previous versions:
-
-```typescript
-// OLD (v0.2.x and earlier)
-const wallet = new Wallet(identity, options)
-await wallet.init()
-const pubKey = identity.xOnlyPublicKey() // sync
-
-// OLD Service Worker approach
-const serviceWorker = await setupServiceWorker('/worker.js')
-const identity = new ServiceWorkerIdentity(serviceWorker)
-const wallet = await ServiceWorkerWallet.create({ identity, serviceWorker, ... })
-
-// NEW (v0.3.x and later) - Unified approach
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://ark.example.com',
-  storage: new InMemoryStorageAdapter() // explicit storage choice
-})
-const pubKey = await identity.xOnlyPublicKey() // async
 ```
-
-**Breaking Changes:**
-
-- Replace `new Wallet()` + `init()` with `Wallet.create()`
-- Replace `ServiceWorkerWallet` and `ServiceWorkerIdentity` with unified `Wallet` class
-- Identity methods are now async (`await identity.xOnlyPublicKey()`)
-- Storage adapters must be explicitly chosen (defaults to `InMemoryStorageAdapter`)
-- Access repositories via `wallet.walletRepository` and `wallet.contractRepository`
-- Service worker setup is now automatic - no manual registration needed
-
-**Migration Benefits:**
-
-- **Automatic context detection**: No need to choose between `Wallet` and `ServiceWorkerWallet`
-- **Simplified API**: Single `Wallet.create()` works in all environments
-- **Better security**: Service worker operations are automatically proxied when needed
-- **Persistent identity**: Service workers automatically manage identity storage
 
 ## Development
 
