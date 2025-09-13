@@ -8,5 +8,3 @@ export interface Identity {
     // TODO deterministic signer session
     signerSession(): SignerSession;
 }
-
-export * from "./singleKey";
