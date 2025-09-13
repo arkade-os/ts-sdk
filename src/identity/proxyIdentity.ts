@@ -77,7 +77,7 @@ export class ProxyIdentity implements Identity {
     async xOnlyPublicKey(): Promise<Uint8Array> {
         // Return cached value if available
         if (this.publicKeyCache) {
-            return this.publicKeyCache;
+            return new Uint8Array(this.publicKeyCache);
         }
 
         const message: Request.GetXOnlyPublicKey = {
@@ -88,7 +88,7 @@ export class ProxyIdentity implements Identity {
         const response =
             await this.sendMessage<Response.XOnlyPublicKey>(message);
         this.publicKeyCache = new Uint8Array(response.publicKey);
-        return this.publicKeyCache;
+        return new Uint8Array(this.publicKeyCache);
     }
 
     /**
