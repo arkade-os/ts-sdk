@@ -69,6 +69,9 @@ import {
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
 
+// Maximum amount for transactions to prevent overflow
+const MAX_AMOUNT = Number.MAX_SAFE_INTEGER;
+
 export type IncomingFunds =
     | {
           type: "utxo";
@@ -464,8 +467,10 @@ export class Wallet implements IWallet {
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        if (params.amount <= 0) {
-            throw new Error("Amount must be positive");
+        if (params.amount <= 0 || params.amount > MAX_AMOUNT) {
+            throw new Error(
+                `Amount must be positive and not exceed ${MAX_AMOUNT}. Received: ${params.amount}`
+            );
         }
 
         if (!isValidArkAddress(params.address)) {

@@ -193,7 +193,35 @@ describe("Wallet", () => {
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
                     amount: -1000,
                 })
-            ).rejects.toThrow("Amount must be positive");
+            ).rejects.toThrow("Amount must be positive and not exceed");
+        });
+
+        it("should throw error when amount exceeds maximum safe integer", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: Number.MAX_SAFE_INTEGER + 1,
+                })
+            ).rejects.toThrow("Amount must be positive and not exceed");
+        });
+
+        it("should throw error when amount is zero", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 0,
+                })
+            ).rejects.toThrow("Amount must be positive and not exceed");
         });
     });
 

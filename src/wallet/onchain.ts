@@ -11,6 +11,9 @@ import { Transaction } from "@scure/btc-signer";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
+// Maximum amount for transactions to prevent overflow
+const MAX_AMOUNT = Number.MAX_SAFE_INTEGER;
+
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
  *
@@ -91,8 +94,10 @@ export class OnchainWallet implements AnchorBumper {
     }
 
     async send(params: SendBitcoinParams): Promise<string> {
-        if (params.amount <= 0) {
-            throw new Error("Amount must be positive");
+        if (params.amount <= 0 || params.amount > MAX_AMOUNT) {
+            throw new Error(
+                `Amount must be positive and not exceed ${MAX_AMOUNT}. Received: ${params.amount}`
+            );
         }
         if (params.amount < OnchainWallet.DUST_AMOUNT) {
             throw new Error("Amount is below dust limit");
