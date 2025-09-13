@@ -39,16 +39,27 @@ async function build(options = {}) {
             outfile: 'dist/browser/sw.js',
         });
 
+        // Build new unified wallet service worker
+        const unifiedSwCtx = await esbuild.context({
+            ...commonConfig,
+            entryPoints: ['src/wallet/worker.bundle.ts'],
+            outfile: 'dist/browser/wallet-service-worker.js',
+            target: ['es2020'],
+            platform: 'browser', // Service worker runs in browser context
+        });
+
         if (watch) {
             console.log('Watching for changes...');
             await Promise.all([
                 mainCtx.watch(),
-                swCtx.watch()
+                swCtx.watch(),
+                unifiedSwCtx.watch()
             ]);
         } else {
-            const [mainResult, swResult] = await Promise.all([
+            const [mainResult, swResult, unifiedSwResult] = await Promise.all([
                 mainCtx.rebuild(),
-                swCtx.rebuild()
+                swCtx.rebuild(),
+                unifiedSwCtx.rebuild()
             ]);
             
             console.log('Browser bundles built successfully');
@@ -63,10 +74,16 @@ async function build(options = {}) {
                 console.log('\nService worker bundle analysis:');
                 console.log(await esbuild.analyzeMetafile(swResult.metafile));
             }
+
+            if (unifiedSwResult.metafile) {
+                console.log('\nUnified wallet service worker bundle analysis:');
+                console.log(await esbuild.analyzeMetafile(unifiedSwResult.metafile));
+            }
             
             await Promise.all([
                 mainCtx.dispose(),
-                swCtx.dispose()
+                swCtx.dispose(),
+                unifiedSwCtx.dispose()
             ]);
         }
     } catch (error) {

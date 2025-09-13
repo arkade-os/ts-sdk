@@ -210,7 +210,34 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-1. Create a service worker file
+The SDK now automatically detects when it's running in a service worker context and handles setup transparently. No manual service worker setup is required!
+
+#### Simple Approach (Recommended)
+
+```typescript
+// service-worker.ts
+import { Wallet, SingleKey } from '@arkade-os/sdk'
+
+// The Wallet automatically detects service worker context and handles communication
+self.addEventListener('message', async (event) => {
+  if (event.data.type === 'INIT_WALLET') {
+    // Wallet automatically manages persistent identity in service worker
+    const wallet = await Wallet.create({
+      identity: SingleKey.fromHex(event.data.privateKey), // or let it auto-generate
+      arkServerUrl: event.data.arkServerUrl,
+      arkServerPublicKey: event.data.arkServerPublicKey
+    });
+    
+    // Wallet is ready to use - it automatically handles service worker communication
+    const balance = await wallet.getBalance();
+    console.log('Service worker wallet balance:', balance.total);
+  }
+});
+```
+
+#### Advanced Service Worker Setup (Legacy)
+
+For advanced use cases, you can still use the legacy approach:
 
 ```typescript
 // service-worker.ts
@@ -220,7 +247,7 @@ import { Worker } from '@arkade-os/sdk'
 new Worker().start()
 ```
 
-2. Create a ServiceWorkerWallet
+Then in your main thread:
 
 ```typescript
 import { ServiceWorkerWallet, ServiceWorkerIdentity, setupServiceWorker } from '@arkade-os/sdk'
@@ -246,6 +273,8 @@ const wallet = await ServiceWorkerWallet.create({
 const balance = await wallet.getBalance()
 console.log('Wallet balance:', balance.total)
 ```
+
+**Migration Note:** The `ServiceWorkerWallet` and `ServiceWorkerIdentity` classes are deprecated. The new `Wallet` class automatically detects execution context and uses service workers when appropriate, making manual setup unnecessary.
 
 _For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
@@ -288,38 +317,53 @@ const wallet = await Wallet.create({
 
 ### Identity Management
 
-The SDK supports different identity implementations for various environments:
+The SDK supports different identity implementations and automatically handles service worker contexts:
 
 ```typescript
-import { SingleKey, ServiceWorkerIdentity } from '@arkade-os/sdk'
+import { SingleKey, Wallet } from '@arkade-os/sdk'
 import { randomPrivateKeyBytes } from '@scure/btc-signer/utils'
 import { hex } from '@scure/base'
 
-// Standard single-key identity (most common)
+// Standard single-key identity (works everywhere - Node.js, browser, service worker)
 const identity = SingleKey.fromHex('your_private_key_hex')
-// ...or generate a random key
-// const randomIdentity = SingleKey.fromRandomBytes();
 
-// Setup service worker
-const serviceWorker = await setupServiceWorker('/worker.js')
+// Generate a random key
+const randomBytes = randomPrivateKeyBytes()
+const randomIdentity = SingleKey.fromHex(hex.encode(randomBytes))
 
-// Service worker identity for background operations
-const identity = new ServiceWorkerIdentity(serviceWorker)
-
-// Create service worker wallet
-// Note: Service worker manages its own persistent identity stored in IndexedDB
-// When privateKey is undefined, the service worker will load existing identity or generate a new one
-const wallet = await ServiceWorkerWallet.create({
+// Create wallet - automatically detects context and uses service workers when needed
+const wallet = await Wallet.create({
   identity,
-  serviceWorker,
-  arkServerUrl: 'https://ark.example.com',
-  privateKey, // Optional private key for initial identity setup
+  arkServerUrl: 'https://ark.example.com'
 });
 
-
-// All identity methods are now async
+// All identity methods are async
 const pubKey = await identity.xOnlyPublicKey()
 const signedTx = await identity.sign(transaction)
+```
+
+**Automatic Context Detection:**
+
+- **Node.js/Direct execution**: Uses identity directly
+- **Browser main thread**: Automatically sets up service worker proxy if needed
+- **Service worker context**: Uses identity directly with persistent storage
+- **Worker client**: Uses service worker proxy for secure operations
+
+**Legacy Service Worker Identity (Deprecated):**
+
+```typescript
+// Legacy approach - no longer needed with automatic detection
+import { ServiceWorkerIdentity, setupServiceWorker } from '@arkade-os/sdk'
+
+const serviceWorker = await setupServiceWorker('/worker.js')
+const identity = new ServiceWorkerIdentity(serviceWorker) // Deprecated
+
+// Modern approach - automatic detection
+const wallet = await Wallet.create({
+  identity: SingleKey.fromHex('your_key'),
+  arkServerUrl: 'https://ark.example.com'
+  // Service worker setup is automatic when needed
+});
 ```
 
 ### Repository Pattern
@@ -354,7 +398,12 @@ const wallet = new Wallet(identity, options)
 await wallet.init()
 const pubKey = identity.xOnlyPublicKey() // sync
 
-// NEW (v0.3.x and later)
+// OLD Service Worker approach
+const serviceWorker = await setupServiceWorker('/worker.js')
+const identity = new ServiceWorkerIdentity(serviceWorker)
+const wallet = await ServiceWorkerWallet.create({ identity, serviceWorker, ... })
+
+// NEW (v0.3.x and later) - Unified approach
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://ark.example.com',
@@ -366,9 +415,18 @@ const pubKey = await identity.xOnlyPublicKey() // async
 **Breaking Changes:**
 
 - Replace `new Wallet()` + `init()` with `Wallet.create()`
+- Replace `ServiceWorkerWallet` and `ServiceWorkerIdentity` with unified `Wallet` class
 - Identity methods are now async (`await identity.xOnlyPublicKey()`)
 - Storage adapters must be explicitly chosen (defaults to `InMemoryStorageAdapter`)
 - Access repositories via `wallet.walletRepository` and `wallet.contractRepository`
+- Service worker setup is now automatic - no manual registration needed
+
+**Migration Benefits:**
+
+- **Automatic context detection**: No need to choose between `Wallet` and `ServiceWorkerWallet`
+- **Simplified API**: Single `Wallet.create()` works in all environments
+- **Better security**: Service worker operations are automatically proxied when needed
+- **Persistent identity**: Service workers automatically manage identity storage
 
 ## Development
 
@@ -387,7 +445,7 @@ pnpm format
 pnpm lint
 ```
 
-2. Install nigiri for integration tests:
+1. Install nigiri for integration tests:
 
 ```bash
 curl https://getnigiri.vulpem.com | bash

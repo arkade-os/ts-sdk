@@ -1,46 +1,26 @@
-import { Identity } from "./index";
-import { SignerSession } from "../tree/signingSession";
 import { Transaction } from "@scure/btc-signer";
+import { Identity } from "../identity";
+import { SignerSession } from "../tree/signingSession";
 import { Request } from "../wallet/serviceWorker/request";
 import { Response } from "../wallet/serviceWorker/response";
 
-function getRandomId(): string {
-    return (
-        Math.random().toString(36).substring(2, 15) +
-        Math.random().toString(36).substring(2, 15)
-    );
-}
-
 /**
- * @deprecated Use UnifiedWallet with any Identity implementation instead.
- * This class will be removed in a future version.
+ * ProxyIdentity forwards identity operations to a service worker.
  *
- * The UnifiedWallet automatically handles service worker communication when needed,
- * eliminating the need for this specialized identity class.
- *
- * Migration guide:
- * ```typescript
- * // Old approach
- * const serviceWorker = await setupServiceWorker("/service-worker.js");
- * const identity = new ServiceWorkerIdentity(serviceWorker);
- *
- * // New approach
- * import { UnifiedWallet, SingleKey } from '@arkade-os/sdk';
- * const identity = SingleKey.fromHex('your_key'); // or any Identity implementation
- * const wallet = await UnifiedWallet.create({
- *   identity,
- *   arkServerUrl: 'https://ark.example.com'
- * });
- * // Service worker communication is handled automatically by UnifiedWallet
- * ```
+ * This class implements the Identity interface by proxying calls to a service worker,
+ * enabling secure key operations in a separate context while maintaining the same API.
  */
-export class ServiceWorkerIdentity implements Identity {
+export class ProxyIdentity implements Identity {
     private serviceWorker: ServiceWorker;
+    private publicKeyCache?: Uint8Array;
 
     constructor(serviceWorker: ServiceWorker) {
         this.serviceWorker = serviceWorker;
     }
 
+    /**
+     * Sends a message to the service worker and waits for a response.
+     */
     private async sendMessage<T extends Response.Base>(
         message: Request.Base
     ): Promise<T> {
@@ -91,21 +71,34 @@ export class ServiceWorkerIdentity implements Identity {
         });
     }
 
+    /**
+     * Gets the x-only public key, caching it after the first fetch.
+     */
     async xOnlyPublicKey(): Promise<Uint8Array> {
+        // Return cached value if available
+        if (this.publicKeyCache) {
+            return this.publicKeyCache;
+        }
+
         const message: Request.GetXOnlyPublicKey = {
             type: "GET_XONLY_PUBLIC_KEY",
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         const response =
             await this.sendMessage<Response.XOnlyPublicKey>(message);
-        return new Uint8Array(response.publicKey);
+        this.publicKeyCache = new Uint8Array(response.publicKey);
+        return this.publicKeyCache;
     }
 
+    /**
+     * Signs a transaction using the service worker.
+     * No caching for security - each signing request goes to the service worker.
+     */
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
         const message: Request.SignTransaction = {
             type: "SIGN_TRANSACTION",
-            id: getRandomId(),
+            id: this.generateId(),
             transaction: Array.from(tx.toPSBT()),
             inputIndexes,
         };
@@ -115,9 +108,29 @@ export class ServiceWorkerIdentity implements Identity {
         return Transaction.fromPSBT(new Uint8Array(response.transaction));
     }
 
+    /**
+     * SignerSession is not supported in proxy context as it requires direct access to private keys.
+     */
     signerSession(): SignerSession {
         throw new Error(
-            "SignerSession not supported in ServiceWorker context. Use async methods instead."
+            "SignerSession not supported in ServiceWorker proxy context. Use async methods instead."
         );
+    }
+
+    /**
+     * Generates a random ID for message correlation.
+     */
+    private generateId(): string {
+        return (
+            Math.random().toString(36).substring(2, 15) +
+            Math.random().toString(36).substring(2, 15)
+        );
+    }
+
+    /**
+     * Clears the cached public key. Useful when the identity might change.
+     */
+    clearCache(): void {
+        this.publicKeyCache = undefined;
     }
 }

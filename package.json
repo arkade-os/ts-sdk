@@ -37,6 +37,11 @@
             "import": "./dist/esm/adapters/asyncStorage.js",
             "require": "./dist/cjs/adapters/asyncStorage.js",
             "default": "./dist/esm/adapters/asyncStorage.js"
+        },
+        "./service-worker": {
+            "types": "./dist/types/wallet/worker.bundle.d.ts",
+            "import": "./dist/browser/wallet-service-worker.js",
+            "default": "./dist/browser/wallet-service-worker.js"
         }
     },
     "files": [

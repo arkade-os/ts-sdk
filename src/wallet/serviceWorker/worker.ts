@@ -3,7 +3,7 @@ declare const self: ServiceWorkerGlobalScope;
 
 import { SingleKey } from "../../identity/singleKey";
 import { isSpendable, isSubdust } from "..";
-import { Wallet } from "../wallet";
+import { Wallet } from "../directWallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";

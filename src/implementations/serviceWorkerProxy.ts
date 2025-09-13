@@ -7,18 +7,19 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
-} from "..";
-import { Request } from "./request";
-import { Response } from "./response";
-import { SettlementEvent } from "../../providers/ark";
+    WalletConfig,
+} from "../wallet";
+import { Request } from "../wallet/serviceWorker/request";
+import { Response } from "../wallet/serviceWorker/response";
+import { SettlementEvent } from "../providers/ark";
 import { hex } from "@scure/base";
-import { Identity } from "../../identity";
-import { StorageAdapter } from "../../storage";
-import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
-import { WalletRepository } from "../../repositories/walletRepository";
-import { WalletRepositoryImpl } from "../../repositories/walletRepository";
-import { ContractRepository } from "../../repositories/contractRepository";
-import { ContractRepositoryImpl } from "../../repositories/contractRepository";
+import { Identity } from "../identity";
+import { ProxyIdentity } from "../identity/proxyIdentity";
+import { WalletRepository } from "../repositories/walletRepository";
+import { ContractRepository } from "../repositories/contractRepository";
+import { WalletRepositoryImpl } from "../repositories/walletRepository";
+import { ContractRepositoryImpl } from "../repositories/contractRepository";
+import { IndexedDBStorageAdapter } from "../storage/indexedDB";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -30,120 +31,31 @@ class UnexpectedResponseError extends Error {
 }
 
 /**
- * Service Worker-based wallet implementation for browser environments.
- *
- * @deprecated Use Wallet instead. This class will be removed in a future version.
- * The new Wallet class automatically detects execution context and handles service worker
- * initialization transparently, eliminating the need for manual service worker setup.
- *
- * Migration guide:
- * ```typescript
- * // Old approach - manual service worker setup
- * const serviceWorker = await setupServiceWorker("/service-worker.js");
- * const identity = new ServiceWorkerIdentity(serviceWorker);
- * const wallet = await ServiceWorkerWallet.create({
- *   serviceWorker,
- *   identity,
- *   arkServerUrl: 'https://ark.example.com'
- * });
- *
- * // New approach - automatic context detection
- * import { Wallet, SingleKey } from '@arkade-os/sdk';
- * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('your_key'), // or any Identity implementation
- *   arkServerUrl: 'https://ark.example.com'
- * });
- * ```
- *
- * The new Wallet class automatically:
- * - Detects if running in a service worker context
- * - Sets up service worker communication when needed
- * - Falls back to direct execution in Node.js or when service workers aren't available
- * - Manages persistent identity storage in service worker environments
- *
- * This legacy wallet uses a service worker as a backend to handle wallet logic,
- * providing secure key storage and transaction signing in web applications.
- * The service worker runs in a separate thread and can persist data between
- * browser sessions.
- *
- * @example
- * ```typescript
- * // Legacy approach (deprecated)
- * const serviceWorker = await setupServiceWorker("/service-worker.js");
- * const identity = new ServiceWorkerIdentity(serviceWorker);
- * const wallet = await ServiceWorkerWallet.create({
- *   serviceWorker,
- *   identity,
- *   arkServerUrl: 'https://ark.example.com'
- * });
- *
- * // Use like any other wallet
- * const address = await wallet.getAddress();
- * const balance = await wallet.getBalance();
- * ```
+ * ServiceWorkerProxy implements the IWallet interface by forwarding all operations
+ * to a service worker. This enables secure wallet operations in a separate context
+ * while maintaining the same API as the direct wallet implementation.
  */
-export interface ServiceWorkerWalletCreateOptions {
-    serviceWorker: ServiceWorker;
-    identity: Identity;
-    arkServerUrl: string;
-    esploraUrl?: string;
-    arkServerPublicKey?: string;
-    storage?: StorageAdapter;
-    privateKey?: string; // Optional private key for initial identity setup
-}
-
-export class ServiceWorkerWallet implements IWallet {
+export class ServiceWorkerProxy implements IWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
 
-    private constructor(
-        public readonly serviceWorker: ServiceWorker,
-        identity: Identity,
-        walletRepository: WalletRepository,
-        contractRepository: ContractRepository
-    ) {
-        this.identity = identity;
-        this.walletRepository = walletRepository;
-        this.contractRepository = contractRepository;
-    }
+    private serviceWorker: ServiceWorker;
 
-    static async create(
-        options: ServiceWorkerWalletCreateOptions
-    ): Promise<ServiceWorkerWallet> {
-        // Default to IndexedDB for service worker context
+    constructor(serviceWorker: ServiceWorker, config: WalletConfig) {
+        this.serviceWorker = serviceWorker;
+        this.identity = new ProxyIdentity(serviceWorker);
+
+        // Set up repositories with IndexedDB for service worker context
         const storage =
-            options.storage || new IndexedDBStorageAdapter("wallet-db");
-
-        // Create repositories
-        const walletRepo = new WalletRepositoryImpl(storage);
-        const contractRepo = new ContractRepositoryImpl(storage);
-
-        // Initialize the service worker with the config
-        // Note: Service worker manages its own persistent identity stored in IndexedDB
-        // When privateKey is null, the service worker will load existing identity or generate a new one
-        const initMessage: Request.InitWallet = {
-            type: "INIT_WALLET",
-            id: getRandomId(),
-            privateKey: options.privateKey,
-            arkServerUrl: options.arkServerUrl,
-            arkServerPublicKey: options.arkServerPublicKey,
-        };
-
-        const wallet = new ServiceWorkerWallet(
-            options.serviceWorker,
-            options.identity,
-            walletRepo,
-            contractRepo
-        );
-
-        // Initialize the service worker
-        await wallet.sendMessage(initMessage);
-
-        return wallet;
+            config.storage || new IndexedDBStorageAdapter("wallet-db");
+        this.walletRepository = new WalletRepositoryImpl(storage);
+        this.contractRepository = new ContractRepositoryImpl(storage);
     }
 
-    // send a message and wait for a response
+    /**
+     * Sends a message to the service worker and waits for a response.
+     */
     private async sendMessage<T extends Request.Base>(
         message: T
     ): Promise<Response.Base> {
@@ -174,10 +86,10 @@ export class ServiceWorkerWallet implements IWallet {
         });
     }
 
-    async clear() {
+    async clear(): Promise<void> {
         const message: Request.Clear = {
             type: "CLEAR",
-            id: getRandomId(),
+            id: this.generateId(),
         };
         await this.sendMessage(message);
     }
@@ -185,7 +97,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getAddress(): Promise<string> {
         const message: Request.GetAddress = {
             type: "GET_ADDRESS",
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         try {
@@ -202,7 +114,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getBoardingAddress(): Promise<string> {
         const message: Request.GetBoardingAddress = {
             type: "GET_BOARDING_ADDRESS",
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         try {
@@ -219,7 +131,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getBalance(): Promise<WalletBalance> {
         const message: Request.GetBalance = {
             type: "GET_BALANCE",
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         try {
@@ -236,7 +148,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
         const message: Request.GetBoardingUtxos = {
             type: "GET_BOARDING_UTXOS",
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         try {
@@ -253,7 +165,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getStatus(): Promise<Response.WalletStatus["status"]> {
         const message: Request.GetStatus = {
             type: "GET_STATUS",
-            id: getRandomId(),
+            id: this.generateId(),
         };
         const response = await this.sendMessage(message);
         if (Response.isWalletStatus(response)) {
@@ -265,7 +177,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getTransactionHistory(): Promise<ArkTransaction[]> {
         const message: Request.GetTransactionHistory = {
             type: "GET_TRANSACTION_HISTORY",
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         try {
@@ -282,7 +194,7 @@ export class ServiceWorkerWallet implements IWallet {
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
-            id: getRandomId(),
+            id: this.generateId(),
             filter,
         };
 
@@ -301,7 +213,7 @@ export class ServiceWorkerWallet implements IWallet {
         const message: Request.SendBitcoin = {
             type: "SEND_BITCOIN",
             params,
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         try {
@@ -322,7 +234,7 @@ export class ServiceWorkerWallet implements IWallet {
         const message: Request.Settle = {
             type: "SETTLE",
             params,
-            id: getRandomId(),
+            id: this.generateId(),
         };
 
         try {
@@ -369,9 +281,12 @@ export class ServiceWorkerWallet implements IWallet {
             throw new Error(`Settlement failed: ${error}`);
         }
     }
-}
 
-function getRandomId(): string {
-    const randomValue = crypto.getRandomValues(new Uint8Array(16));
-    return hex.encode(randomValue);
+    /**
+     * Generates a random ID for message correlation.
+     */
+    private generateId(): string {
+        const randomValue = crypto.getRandomValues(new Uint8Array(16));
+        return hex.encode(randomValue);
+    }
 }
