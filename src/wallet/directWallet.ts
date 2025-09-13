@@ -828,10 +828,20 @@ export class Wallet implements IWallet {
         } catch (error) {
             // close the stream
             abortController.abort();
+
+            // Attempt to clean up intent, but preserve the original error
             try {
-                // delete the intent to not be stuck in the queue
                 await this.arkProvider.deleteIntent(deleteIntent);
-            } catch {}
+            } catch (deleteError) {
+                // Log the deletion failure with context, but don't let it mask the original error
+                console.warn(
+                    `Failed to delete intent during error cleanup. Intent ID: ${intentId}. ` +
+                        `Delete error: ${deleteError instanceof Error ? deleteError.message : String(deleteError)}. ` +
+                        `Original error will be preserved.`
+                );
+            }
+
+            // Always re-throw the original error to preserve the primary failure
             throw error;
         }
 
