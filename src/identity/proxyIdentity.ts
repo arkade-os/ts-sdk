@@ -32,7 +32,7 @@ export class ProxyIdentity implements Identity {
         }
 
         return new Promise((resolve, reject) => {
-            let timeoutId: NodeJS.Timeout;
+            let timeoutId: ReturnType<typeof setTimeout>;
 
             const handleMessage = (event: Event) => {
                 const messageEvent = event as MessageEvent;
