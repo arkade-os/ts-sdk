@@ -117,6 +117,22 @@ export class ContractRepositoryImpl implements ContractRepository {
         }
     }
 
+    /**
+     * Saves an item to a contract collection, either adding it as new or replacing an existing item.
+     * 
+     * @warning **NOT THREAD-SAFE**: This method uses a read-modify-write pattern that can cause 
+     * lost updates under concurrent access. If multiple operations modify the same collection 
+     * simultaneously, some updates may be lost. For concurrent environments, consider implementing 
+     * proper synchronization or optimistic locking mechanisms.
+     * 
+     * @template T - The type of items in the collection
+     * @template K - The key type used to identify items
+     * @param contractType - The type/name of the contract collection
+     * @param item - The item to save (must include the id field)
+     * @param idField - The field name used as unique identifier for items
+     * @throws {Error} If the item is missing the required id field
+     * @throws {Error} If storage persistence fails
+     */
     async saveToContractCollection<T, K extends keyof T>(
         contractType: string,
         item: T,
@@ -170,6 +186,22 @@ export class ContractRepositoryImpl implements ContractRepository {
         }
     }
 
+    /**
+     * Removes an item from a contract collection by its identifier.
+     * 
+     * @warning **NOT THREAD-SAFE**: This method uses a read-modify-write pattern that can cause 
+     * lost updates under concurrent access. If multiple operations modify the same collection 
+     * simultaneously, some updates may be lost. For concurrent environments, consider implementing 
+     * proper synchronization or optimistic locking mechanisms.
+     * 
+     * @template T - The type of items in the collection
+     * @template K - The key type used to identify items
+     * @param contractType - The type/name of the contract collection
+     * @param id - The identifier of the item to remove
+     * @param idField - The field name used as unique identifier for items
+     * @throws {Error} If the id parameter is undefined or null
+     * @throws {Error} If storage persistence fails
+     */
     async removeFromContractCollection<T, K extends keyof T>(
         contractType: string,
         id: T[K],
