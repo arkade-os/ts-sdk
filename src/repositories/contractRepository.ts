@@ -119,12 +119,12 @@ export class ContractRepositoryImpl implements ContractRepository {
 
     /**
      * Saves an item to a contract collection, either adding it as new or replacing an existing item.
-     * 
-     * @warning **NOT THREAD-SAFE**: This method uses a read-modify-write pattern that can cause 
-     * lost updates under concurrent access. If multiple operations modify the same collection 
-     * simultaneously, some updates may be lost. For concurrent environments, consider implementing 
+     *
+     * @warning **NOT THREAD-SAFE**: This method uses a read-modify-write pattern that can cause
+     * lost updates under concurrent access. If multiple operations modify the same collection
+     * simultaneously, some updates may be lost. For concurrent environments, consider implementing
      * proper synchronization or optimistic locking mechanisms.
-     * 
+     *
      * @template T - The type of items in the collection
      * @template K - The key type used to identify items
      * @param contractType - The type/name of the contract collection
@@ -188,12 +188,12 @@ export class ContractRepositoryImpl implements ContractRepository {
 
     /**
      * Removes an item from a contract collection by its identifier.
-     * 
-     * @warning **NOT THREAD-SAFE**: This method uses a read-modify-write pattern that can cause 
-     * lost updates under concurrent access. If multiple operations modify the same collection 
-     * simultaneously, some updates may be lost. For concurrent environments, consider implementing 
+     *
+     * @warning **NOT THREAD-SAFE**: This method uses a read-modify-write pattern that can cause
+     * lost updates under concurrent access. If multiple operations modify the same collection
+     * simultaneously, some updates may be lost. For concurrent environments, consider implementing
      * proper synchronization or optimistic locking mechanisms.
-     * 
+     *
      * @template T - The type of items in the collection
      * @template K - The key type used to identify items
      * @param contractType - The type/name of the contract collection
