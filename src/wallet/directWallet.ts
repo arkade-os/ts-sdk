@@ -275,28 +275,53 @@ export class Wallet implements IWallet {
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const address = await this.getAddress();
+        const CACHE_TTL_MS = 30000; // 30 seconds cache TTL
 
-        // Try to get from cache first
+        // Get existing cached data and metadata
         const cachedVtxos = await this.walletRepository.getVtxos(address);
+        const walletState = await this.walletRepository.getWalletState();
+        const lastFetched = walletState?.lastSyncTime || 0;
+        const now = Date.now();
 
-        // For now, always fetch fresh data from provider and update cache
-        // In future, we can add cache invalidation logic based on timestamps
-        const spendableVtxos = await this.getVirtualCoins(filter);
+        // Determine if cache is stale or missing
+        const cacheIsStale = now - lastFetched > CACHE_TTL_MS;
+        const cacheIsEmpty = cachedVtxos.length === 0;
+        const shouldFetch = cacheIsStale || cacheIsEmpty;
+
+        if (!shouldFetch) {
+            // Return cached data without modification
+            return cachedVtxos;
+        }
+
+        // Fetch fresh data from provider
+        const freshVtxos = await this.getVirtualCoins(filter);
+
+        // Prepare extended vtxos with tapscript data
         const encodedOffchainTapscript = this.offchainTapscript.encode();
         const forfeit = this.offchainTapscript.forfeit();
         const exit = this.offchainTapscript.exit();
 
-        const extendedVtxos = spendableVtxos.map((vtxo) => ({
+        const extendedFreshVtxos = freshVtxos.map((vtxo) => ({
             ...vtxo,
             forfeitTapLeafScript: forfeit,
             intentTapLeafScript: exit,
             tapTree: encodedOffchainTapscript,
         }));
 
-        // Update cache with fresh data
-        await this.walletRepository.saveVtxos(address, extendedVtxos);
+        // Merge strategy: replace all cached data with fresh data
+        // TODO: Implement smarter merging based on VTXO IDs if needed
+        const finalVtxos = extendedFreshVtxos;
 
-        return extendedVtxos;
+        // Update cache with fresh data and metadata
+        await Promise.all([
+            this.walletRepository.saveVtxos(address, finalVtxos),
+            this.walletRepository.saveWalletState({
+                ...walletState,
+                lastSyncTime: now,
+            }),
+        ]);
+
+        return finalVtxos;
     }
 
     private async getVirtualCoins(
