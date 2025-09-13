@@ -42,7 +42,7 @@ export class ProxyIdentity implements Identity {
                     // Clear the timeout since we received a response
                     clearTimeout(timeoutId);
 
-                    this.serviceWorker.removeEventListener(
+                    navigator.serviceWorker.removeEventListener(
                         "message",
                         handleMessage
                     );
@@ -60,7 +60,7 @@ export class ProxyIdentity implements Identity {
 
             // Timeout after 10 seconds
             timeoutId = setTimeout(() => {
-                this.serviceWorker.removeEventListener(
+                navigator.serviceWorker.removeEventListener(
                     "message",
                     handleMessage
                 );
