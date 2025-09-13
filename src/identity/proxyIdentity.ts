@@ -35,6 +35,21 @@ export class ProxyIdentity implements Identity {
             let timeoutId: ReturnType<typeof setTimeout>;
 
             const handleMessage = (event: Event) => {
+                // Early return if not a MessageEvent
+                if (!(event instanceof MessageEvent)) {
+                    return;
+                }
+
+                // Early return if event has no data or no id
+                if (!event.data || event.data.id === undefined) {
+                    return;
+                }
+
+                // Early return if message did not originate from this worker
+                if (event.source !== this.serviceWorker) {
+                    return;
+                }
+
                 const messageEvent = event as MessageEvent;
                 const response = messageEvent.data as Response.Base;
 
