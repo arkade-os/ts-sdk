@@ -895,17 +895,35 @@ export class Wallet implements IWallet {
                 abortController.signal
             );
 
+            // Store the subscription task promise for proper cleanup
+            let subscriptionTask: Promise<void> | undefined;
+
             indexerStopFunc = async () => {
                 abortController.abort();
+
+                // Wait for the subscription task to complete if it's running
+                if (subscriptionTask) {
+                    try {
+                        await subscriptionTask;
+                    } catch (error) {
+                        // Task was cancelled or errored, which is expected during cleanup
+                    }
+                }
+
                 await this.indexerProvider?.unsubscribeForScripts(
                     subscriptionId
                 );
             };
 
-            // Handle subscription updates asynchronously without blocking
-            (async () => {
+            // Handle subscription updates with proper cleanup
+            subscriptionTask = (async () => {
                 try {
                     for await (const update of subscription) {
+                        // Check if we've been aborted before processing
+                        if (abortController.signal.aborted) {
+                            break;
+                        }
+
                         if (update.newVtxos?.length > 0) {
                             eventCallback({
                                 type: "vtxo",
@@ -914,7 +932,28 @@ export class Wallet implements IWallet {
                         }
                     }
                 } catch (error) {
-                    console.error("Subscription error:", error);
+                    // Only log non-abort errors
+                    if (!abortController.signal.aborted) {
+                        throw new Error(
+                            `Subscription error: ${error instanceof Error ? error.message : String(error)}`
+                        );
+                    }
+                } finally {
+                    // Ensure subscription cleanup
+                    try {
+                        if (
+                            subscription &&
+                            typeof subscription.return === "function"
+                        ) {
+                            await subscription.return();
+                        }
+                    } catch (cleanupError) {
+                        // Log cleanup errors but don't throw
+                        console.warn(
+                            "Subscription cleanup error:",
+                            cleanupError
+                        );
+                    }
                 }
             })();
         }
