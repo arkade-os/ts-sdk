@@ -33,8 +33,9 @@ export class ContractRepositoryImpl implements ContractRepository {
         key: string
     ): Promise<T | null> {
         const storageKey = `contract:${contractId}:${key}`;
-        const cached = this.cache.get(storageKey);
-        if (cached !== undefined) return cached;
+        if (this.cache.has(storageKey)) {
+            return this.cache.get(storageKey);
+        }
 
         const stored = await this.storage.getItem(storageKey);
         if (!stored) return null;
@@ -94,8 +95,9 @@ export class ContractRepositoryImpl implements ContractRepository {
         contractType: string
     ): Promise<ReadonlyArray<T>> {
         const storageKey = `collection:${contractType}`;
-        const cached = this.cache.get(storageKey);
-        if (cached !== undefined) return cached;
+        if (this.cache.has(storageKey)) {
+            return this.cache.get(storageKey);
+        }
 
         const stored = await this.storage.getItem(storageKey);
         if (!stored) {
