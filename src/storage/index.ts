@@ -6,3 +6,5 @@ export interface StorageAdapter {
 }
 
 export * from "./inMemory";
+export * from "./indexedDB";
+export * from "./vtxoRepository";

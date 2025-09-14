@@ -7,8 +7,10 @@ import { Wallet } from "../directWallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
-import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
-import { VtxoRepository } from "./db/vtxo";
+import {
+    VtxoRepository,
+    IndexedDBVtxoRepository,
+} from "../../storage/vtxoRepository";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { base64, hex } from "@scure/base";

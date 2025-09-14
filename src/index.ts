@@ -92,8 +92,10 @@ import {
 } from "./utils/unknownFields";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
-import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
-import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
+import {
+    IndexedDBVtxoRepository,
+    VtxoRepository,
+} from "./storage/vtxoRepository";
 import { networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,

@@ -1,5 +1,18 @@
-import { VtxoRepository } from ".";
-import { ExtendedVirtualCoin } from "../../..";
+import { ExtendedVirtualCoin } from "../wallet";
+
+export interface VtxoRepository {
+    addOrUpdate(vtxos: ExtendedVirtualCoin[]): Promise<void>;
+    deleteAll(): Promise<void>;
+    getSpendableVtxos(): Promise<ExtendedVirtualCoin[]>;
+    getSweptVtxos(): Promise<ExtendedVirtualCoin[]>;
+    getSpentVtxos(): Promise<ExtendedVirtualCoin[]>;
+    getAllVtxos(): Promise<{
+        spendable: ExtendedVirtualCoin[];
+        spent: ExtendedVirtualCoin[];
+    }>;
+    close(): Promise<void>;
+    open(): Promise<void>;
+}
 
 export class IndexedDBVtxoRepository implements VtxoRepository {
     static readonly DB_NAME = "wallet-db";
