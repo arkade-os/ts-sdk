@@ -278,23 +278,6 @@ const wallet = await Wallet.create({
 })
 ```
 
-### Universal Example
-
-The **exact same code** works in all environments:
-
-```typescript
-// This code works in Node.js, browser, PWA, and service worker contexts
-const identity = SingleKey.fromHex('your_private_key_hex')
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
-})
-
-const address = await wallet.getAddress()
-const balance = await wallet.getBalance()
-```
-
-
 ### Repository Pattern
 
 Access low-level data management through repositories:
@@ -316,7 +299,7 @@ await wallet.contractRepository.saveToContractCollection(
   'id' // key field
 )
 const swaps = await wallet.contractRepository.getContractCollection('swaps')
-
+```
 
 ## Development
 
