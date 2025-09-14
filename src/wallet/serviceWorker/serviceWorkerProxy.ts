@@ -46,9 +46,9 @@ export class ServiceWorkerProxy implements IWallet {
         this.serviceWorker = serviceWorker;
         this.identity = new ProxyIdentity(serviceWorker);
 
-        // Set up repositories with IndexedDB for service worker context
-        const storage =
-            config.storage || new IndexedDBStorageAdapter("wallet-db");
+        // Standardize to always use IndexedDB adapter for service worker context
+        // This ensures consistency with the service worker's internal storage requirements
+        const storage = new IndexedDBStorageAdapter("wallet-db");
         this.walletRepository = new WalletRepositoryImpl(storage);
         this.contractRepository = new ContractRepositoryImpl(storage);
     }
