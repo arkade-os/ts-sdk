@@ -7,14 +7,17 @@ import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
-import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
-import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { base64, hex } from "@scure/base";
 import { randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { DefaultVtxo } from "../../script/default";
 import { Transaction } from "@scure/btc-signer";
+import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
+import {
+    WalletRepository,
+    WalletRepositoryImpl,
+} from "../../repositories/walletRepository";
 
 /**
  * Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -25,13 +28,53 @@ export class Worker {
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private vtxoSubscription: AbortController | undefined;
+    private walletRepository: WalletRepository;
+    private storage: IndexedDBStorageAdapter;
 
     constructor(
-        private readonly vtxoRepository: VtxoRepository = new IndexedDBVtxoRepository(),
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
-    ) {}
+    ) {
+        this.storage = new IndexedDBStorageAdapter("arkade-service-worker", 1);
+        this.walletRepository = new WalletRepositoryImpl(this.storage);
+    }
+
+    /**
+     * Get spendable vtxos for the current wallet address
+     */
+    private async getSpendableVtxos() {
+        if (!this.wallet) return [];
+        const address = await this.wallet.getAddress();
+        const allVtxos = await this.walletRepository.getVtxos(address);
+        return allVtxos.filter(isSpendable);
+    }
+
+    /**
+     * Get swept vtxos for the current wallet address
+     */
+    private async getSweptVtxos() {
+        if (!this.wallet) return [];
+        const address = await this.wallet.getAddress();
+        const allVtxos = await this.walletRepository.getVtxos(address);
+        return allVtxos.filter(
+            (vtxo) => vtxo.virtualStatus.state === "swept" && isSpendable(vtxo)
+        );
+    }
+
+    /**
+     * Get all vtxos categorized by type
+     */
+    private async getAllVtxos() {
+        if (!this.wallet) return { spendable: [], spent: [] };
+        const address = await this.wallet.getAddress();
+        const allVtxos = await this.walletRepository.getVtxos(address);
+
+        return {
+            spendable: allVtxos.filter(isSpendable),
+            spent: allVtxos.filter((vtxo) => !isSpendable(vtxo)),
+        };
+    }
 
     async start(withServiceWorkerUpdate = true) {
         self.addEventListener(
@@ -57,7 +100,9 @@ export class Worker {
             this.vtxoSubscription.abort();
         }
 
-        await this.vtxoRepository.close();
+        // Clear storage - this replaces vtxoRepository.close()
+        await this.storage.clear();
+
         this.wallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
@@ -79,8 +124,6 @@ export class Worker {
         ) {
             return;
         }
-        // subscribe to address updates
-        await this.vtxoRepository.open();
 
         const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
         const forfeit = this.wallet.offchainTapscript.forfeit();
@@ -98,7 +141,9 @@ export class Worker {
             tapTree: encodedOffchainTapscript,
         }));
 
-        await this.vtxoRepository.addOrUpdate(vtxos);
+        // Get wallet address and save vtxos using unified repository
+        const address = await this.wallet.getAddress();
+        await this.walletRepository.saveVtxos(address, vtxos);
 
         this.processVtxoSubscription({
             script,
@@ -142,7 +187,9 @@ export class Worker {
                     tapTree,
                 }));
 
-                await this.vtxoRepository.addOrUpdate(extendedVtxos);
+                // Get wallet address and save vtxos using unified repository
+                const address = await this.wallet!.getAddress();
+                await this.walletRepository.saveVtxos(address, extendedVtxos);
             }
         } catch (error) {
             console.error("Error processing address updates:", error);
@@ -161,72 +208,33 @@ export class Worker {
     }
 
     /**
-     * Load existing identity from IndexedDB or create a new one if none exists.
-     * The service worker maintains its own persistent identity for cryptographic operations.
+     * Load existing identity from storage or require the client to provide one.
+     * The service worker no longer auto-generates keys - the client must provide the private key.
      */
-    private async loadOrCreateIdentity(): Promise<SingleKey> {
+    private async loadOrCreateIdentity(
+        providedPrivateKey?: string
+    ): Promise<SingleKey> {
         const IDENTITY_KEY = "service-worker-private-key";
 
         try {
-            // Try to load existing private key hex from storage
-            const storedPrivateKeyHex = await this.getStoredItem(IDENTITY_KEY);
-
-            if (storedPrivateKeyHex) {
-                // Load existing private key
-                return SingleKey.fromHex(storedPrivateKeyHex);
-            } else {
-                // Generate new private key and store it
-                const privateKeyBytes = randomPrivateKeyBytes();
-                const privateKeyHex = hex.encode(privateKeyBytes);
-
-                try {
-                    await this.storeItem(IDENTITY_KEY, privateKeyHex);
-                } catch (error) {
-                    console.warn("Failed to store new private key:", error);
-                    // Continue with the identity even if storage failed
-                }
-
-                return SingleKey.fromHex(privateKeyHex);
+            if (providedPrivateKey) {
+                // Store the provided private key for future use
+                await this.storage.setItem(IDENTITY_KEY, providedPrivateKey);
+                return SingleKey.fromHex(providedPrivateKey);
             }
+
+            // Try to load existing identity using simple storage pattern
+            const privateKeyHex = await this.storage.getItem(IDENTITY_KEY);
+            if (!privateKeyHex) {
+                throw new Error("No private key found in storage");
+            }
+            return SingleKey.fromHex(privateKeyHex);
         } catch (error) {
-            console.warn("Failed to load stored private key:", error);
-            // Fallback to generating a new random identity (won't persist)
-            return SingleKey.fromRandomBytes();
+            // No stored identity and no provided key
+            throw new Error(
+                "No private key available. Client must provide a private key when initializing the service worker wallet."
+            );
         }
-    }
-
-    /**
-     * Store a key-value pair in IndexedDB for service worker persistence
-     */
-    private async storeItem(key: string, value: string): Promise<void> {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open("ServiceWorkerStorage", 1);
-
-            request.onerror = () => reject(request.error);
-
-            request.onupgradeneeded = (event) => {
-                const db = (event.target as IDBOpenDBRequest).result;
-                if (!db.objectStoreNames.contains("keyvalue")) {
-                    db.createObjectStore("keyvalue");
-                }
-            };
-
-            request.onsuccess = () => {
-                const db = request.result;
-                const transaction = db.transaction(["keyvalue"], "readwrite");
-                const store = transaction.objectStore("keyvalue");
-
-                const putRequest = store.put(value, key);
-                putRequest.onsuccess = () => {
-                    db.close();
-                    resolve();
-                };
-                putRequest.onerror = () => {
-                    db.close();
-                    reject(putRequest.error);
-                };
-            };
-        });
     }
 
     /**
@@ -264,12 +272,12 @@ export class Worker {
     }
 
     /**
-     * Clear stored identity from IndexedDB storage (useful for testing or logout)
+     * Clear stored identity from storage (useful for testing or logout)
      */
     private async clearStoredIdentity(): Promise<void> {
         const IDENTITY_KEY = "service-worker-private-key";
         try {
-            await this.removeStoredItem(IDENTITY_KEY);
+            await this.storage.removeItem(IDENTITY_KEY);
             console.log("Cleared stored service worker identity");
         } catch (error) {
             console.warn("Failed to clear stored identity:", error);
@@ -324,12 +332,12 @@ export class Worker {
         try {
             let identity: SingleKey;
 
-            if (message.privateKey === undefined) {
-                // Service worker manages its own persistent identity
-                identity = await this.loadOrCreateIdentity();
+            if (message.privateKey !== undefined) {
+                // Client provided a private key - store it and use it
+                identity = await this.loadOrCreateIdentity(message.privateKey);
             } else {
-                // Use provided private key (for explicit key setting or migration)
-                identity = SingleKey.fromHex(message.privateKey);
+                // Try to load existing identity from storage
+                identity = await this.loadOrCreateIdentity();
             }
 
             this.arkProvider = new RestArkProvider(message.arkServerUrl);
@@ -341,6 +349,7 @@ export class Worker {
                 identity,
                 arkServerUrl: message.arkServerUrl,
                 arkServerPublicKey: message.arkServerPublicKey,
+                storage: this.storage, // Use unified storage for wallet too
             });
 
             event.source?.postMessage(Response.walletInitialized(message.id));
@@ -517,8 +526,8 @@ export class Worker {
             const [boardingUtxos, spendableVtxos, sweptVtxos] =
                 await Promise.all([
                     this.wallet.getBoardingUtxos(),
-                    this.vtxoRepository.getSpendableVtxos(),
-                    this.vtxoRepository.getSweptVtxos(),
+                    this.getSpendableVtxos(),
+                    this.getSweptVtxos(),
                 ]);
 
             // boarding
@@ -595,18 +604,18 @@ export class Worker {
         }
 
         try {
-            let vtxos = await this.vtxoRepository.getSpendableVtxos();
+            let vtxos = await this.getSpendableVtxos();
             if (!message.filter?.withRecoverable) {
                 if (!this.wallet) throw new Error("Wallet not initialized");
                 // exclude subdust is we don't want recoverable
                 vtxos = vtxos.filter(
-                    (v) => !isSubdust(v, this.wallet!.dustAmount!)
+                    (v: any) => !isSubdust(v, this.wallet!.dustAmount!)
                 );
             }
 
             if (message.filter?.withRecoverable) {
                 // get also swept and spendable vtxos
-                const sweptVtxos = await this.vtxoRepository.getSweptVtxos();
+                const sweptVtxos = await this.getSweptVtxos();
                 vtxos.push(...sweptVtxos.filter(isSpendable));
             }
             event.source?.postMessage(Response.vtxos(message.id, vtxos));
@@ -684,8 +693,7 @@ export class Worker {
             const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
                 await this.wallet.getBoardingTxs();
 
-            const { spendable, spent } =
-                await this.vtxoRepository.getAllVtxos();
+            const { spendable, spent } = await this.getAllVtxos();
 
             // convert VTXOs to offchain transactions
             const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);

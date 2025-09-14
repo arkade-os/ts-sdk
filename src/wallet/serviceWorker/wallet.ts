@@ -13,12 +13,15 @@ import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
 import { Identity } from "../../identity";
+import { ServiceWorkerIdentity } from "../../identity/serviceWorker";
+import { SingleKey } from "../../identity/singleKey";
 import { StorageAdapter } from "../../storage";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
+import { setupServiceWorker } from "./utils";
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -39,13 +42,21 @@ class UnexpectedResponseError extends Error {
  *
  * @example
  * ```typescript
- * // Create the service worker wallet with identity
+ * // SIMPLE: Recommended approach
+ * const identity = SingleKey.fromHex('your_private_key_hex');
+ * const wallet = await ServiceWorkerWallet.setup({
+ *   serviceWorkerPath: '/service-worker.js',
+ *   arkServerUrl: 'https://mutinynet.arkade.sh',
+ *   identity
+ * });
+ *
+ * // ADVANCED: Manual setup with service worker control
  * const serviceWorker = await setupServiceWorker("/service-worker.js");
- * const identity = new ServiceWorkerIdentity(serviceWorker);
+ * const identity = SingleKey.fromHex('your_private_key_hex');
  * const wallet = await ServiceWorkerWallet.create({
  *   serviceWorker,
  *   identity,
- *   arkServerUrl: 'https://ark.example.com'
+ *   arkServerUrl: 'https://mutinynet.arkade.sh'
  * });
  *
  * // Use like any other wallet
@@ -60,7 +71,15 @@ export interface ServiceWorkerWalletCreateOptions {
     esploraUrl?: string;
     arkServerPublicKey?: string;
     storage?: StorageAdapter;
-    privateKey?: string; // Optional private key for initial identity setup
+}
+
+export interface ServiceWorkerWalletSetupOptions {
+    serviceWorkerPath: string;
+    arkServerUrl: string;
+    esploraUrl?: string;
+    arkServerPublicKey?: string;
+    storage?: StorageAdapter;
+    identity: Identity;
 }
 
 export class ServiceWorkerWallet implements IWallet {
@@ -90,13 +109,19 @@ export class ServiceWorkerWallet implements IWallet {
         const walletRepo = new WalletRepositoryImpl(storage);
         const contractRepo = new ContractRepositoryImpl(storage);
 
+        // Extract private key for service worker initialization
+        let privateKey: string | undefined;
+        if (options.identity instanceof SingleKey) {
+            privateKey = options.identity.toHex();
+        }
+
         // Initialize the service worker with the config
-        // Note: Service worker manages its own persistent identity stored in IndexedDB
-        // When privateKey is null, the service worker will load existing identity or generate a new one
+        // Note: When privateKey is provided (from SingleKey), the service worker uses it
+        // When privateKey is undefined (ServiceWorkerIdentity), the service worker manages its own persistent identity
         const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
-            privateKey: options.privateKey,
+            privateKey,
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
         };
@@ -112,6 +137,58 @@ export class ServiceWorkerWallet implements IWallet {
         await wallet.sendMessage(initMessage);
 
         return wallet;
+    }
+
+    /**
+     * Simplified setup method that handles service worker registration,
+     * identity creation, and wallet initialization automatically.
+     *
+     * @example
+     * ```typescript
+     * // One-liner setup - handles everything automatically!
+     * const wallet = await ServiceWorkerWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServerUrl: 'https://mutinynet.arkade.sh'
+     * });
+     *
+     * // With custom identity
+     * const identity = SingleKey.fromHex('your_private_key_hex');
+     * const wallet = await ServiceWorkerWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServerUrl: 'https://mutinynet.arkade.sh',
+     *   identity
+     * });
+     * ```
+     */
+    static async setup(
+        options: ServiceWorkerWalletSetupOptions
+    ): Promise<ServiceWorkerWallet> {
+        // Step 1: Register and setup the service worker
+        const serviceWorker = await setupServiceWorker(
+            options.serviceWorkerPath
+        );
+
+        // Step 2: Determine identity and private key
+        let identity: Identity;
+        let privateKey: string | undefined;
+
+        // Use provided identity - only SingleKey can expose private key
+        if (!(options.identity instanceof SingleKey)) {
+            throw new Error(
+                "ServiceWorkerWallet.setup() requires a SingleKey identity that can expose its private key"
+            );
+        }
+        identity = options.identity;
+        privateKey = options.identity.toHex();
+
+        // Step 3: Use the existing create method
+        return await ServiceWorkerWallet.create({
+            serviceWorker,
+            identity,
+            arkServerUrl: options.arkServerUrl,
+            esploraUrl: options.esploraUrl,
+            storage: options.storage,
+        });
     }
 
     // send a message and wait for a response

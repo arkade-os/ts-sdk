@@ -4,5 +4,3 @@ export interface StorageAdapter {
     removeItem(key: string): Promise<void>;
     clear(): Promise<void>;
 }
-
-export * from "./inMemory";

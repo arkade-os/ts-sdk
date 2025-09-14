@@ -44,6 +44,15 @@ export class SingleKey implements Identity {
         return new SingleKey(randomPrivateKeyBytes());
     }
 
+    /**
+     * Export the private key as a hex string.
+     *
+     * @returns The private key as a hex string
+     */
+    toHex(): string {
+        return hex.encode(this.key);
+    }
+
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
         const txCpy = tx.clone();
 

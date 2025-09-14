@@ -93,8 +93,6 @@ import {
 } from "./utils/unknownFields";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
-import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
-import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
@@ -116,7 +114,6 @@ import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
-import { InMemoryStorageAdapter } from "./storage/inMemory";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ServiceWorkerIdentity } from "./identity";
@@ -181,12 +178,6 @@ export {
     // Network
     networks,
 
-    // Database
-    IndexedDBVtxoRepository,
-
-    // Storage Adapters
-    InMemoryStorageAdapter,
-
     // Repositories
     WalletRepositoryImpl,
     ContractRepositoryImpl,
@@ -225,7 +216,6 @@ export type {
     VirtualCoin,
     TxKey,
     TapscriptType,
-    VtxoRepository,
     ArkTxInput,
     OffchainTx,
     TapLeaves,

@@ -210,48 +210,91 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-1. Create a service worker file
+**NEW: Ultra-simplified setup!** We handle all the complex service worker registration and identity management for you:
 
 ```typescript
-// service-worker.ts
-import { Worker } from '@arkade-os/sdk'
+// SIMPLE SETUP with identity! 🎉
+import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk';
 
-// Worker handles communication between the main thread and service worker
-new Worker().start()
+// Create your identity
+const identity = SingleKey.fromHex('your_private_key_hex');
+// Or generate a new one:
+// const identity = SingleKey.fromRandomBytes();
+
+const wallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity
+});
+
+// That's it! Ready to use immediately:
+const address = await wallet.getAddress();
+const balance = await wallet.getBalance();
 ```
 
-2. Create a ServiceWorkerWallet
+### Storage Adapters
+
+Choose the appropriate storage adapter for your environment:
 
 ```typescript
-import { ServiceWorkerWallet, ServiceWorkerIdentity, setupServiceWorker } from '@arkade-os/sdk'
+import { 
+  SingleKey,
+  Wallet,
+  InMemoryStorageAdapter,     // Works everywhere, data lost on restart
+} from '@arkade-os/sdk'
 
-// Register and wait until the SW is active
-const serviceWorker = await setupServiceWorker('/service-worker.js')
+// Import additional storage adapters as needed:
+import { LocalStorageAdapter } from '@arkade-os/sdk/adapters/localStorage'        // Browser/PWA persistent storage  
+import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'    // Browser/PWA/Service Worker advanced storage
+import { AsyncStorageAdapter } from '@arkade-os/sdk/adapters/asyncStorage'        // React Native persistent storage
+import { FileSystemStorageAdapter } from '@arkade-os/sdk/adapters/fileSystem'   // Node.js file-based storage
 
-// Create identity for service worker communication
-const identity = new ServiceWorkerIdentity(serviceWorker)
+// Node.js
+const storage = new FileSystemStorageAdapter('./wallet-data')
 
-// Create the service worker wallet
-// Note: Service worker manages its own persistent identity stored in IndexedDB
-// When privateKey is undefined, the service worker will load existing identity or generate a new one
-const wallet = await ServiceWorkerWallet.create({
+// Browser/PWA
+const storage = new LocalStorageAdapter()
+// or for advanced features:
+const storage = new IndexedDBStorageAdapter('my-app', 1)
+
+// React Native  
+const storage = new AsyncStorageAdapter()
+
+// Service Worker
+const storage = new IndexedDBStorageAdapter('service-worker-wallet', 1)
+
+// Load identity from storage (simple pattern everywhere)
+const privateKeyHex = await storage.getItem('private-key')
+const identity = SingleKey.fromHex(privateKeyHex)
+
+// Create wallet (same API everywhere)
+const wallet = await Wallet.create({
   identity,
-  serviceWorker,
-  esploraUrl: 'https://mutinynet.com/api',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  privateKey, // Optional private key for initial identity setup
+  storage // optional
+})
+```
+
+### Cross-Environment Example
+
+The **exact same code** works in all environments:
+
+```typescript
+// This code works in Node.js, browser, PWA, and service worker contexts
+const identity = SingleKey.fromHex('your_private_key_hex')
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
 })
 
-// The wallet is ready to use
+const address = await wallet.getAddress()
 const balance = await wallet.getBalance()
-console.log('Wallet balance:', balance.total)
 ```
 
-_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
 ## Advanced Configuration
 
-### Storage Adapters
+### Storage Configuration
 
 By default, wallets use in-memory storage (no persistence). Choose the appropriate storage adapter for your environment:
 
@@ -291,7 +334,7 @@ const wallet = await Wallet.create({
 The SDK supports different identity implementations for various environments:
 
 ```typescript
-import { SingleKey, ServiceWorkerIdentity } from '@arkade-os/sdk'
+import { SingleKey, ServiceWorkerWallet } from '@arkade-os/sdk'
 import { randomPrivateKeyBytes } from '@scure/btc-signer/utils'
 import { hex } from '@scure/base'
 
@@ -300,26 +343,16 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 // ...or generate a random key
 // const randomIdentity = SingleKey.fromRandomBytes();
 
-// Setup service worker
-const serviceWorker = await setupServiceWorker('/worker.js')
-
-// Service worker identity for background operations
-const identity = new ServiceWorkerIdentity(serviceWorker)
-
-// Create service worker wallet
-// Note: Service worker manages its own persistent identity stored in IndexedDB
-// When privateKey is undefined, the service worker will load existing identity or generate a new one
-const wallet = await ServiceWorkerWallet.create({
-  identity,
-  serviceWorker,
-  arkServerUrl: 'https://ark.example.com',
-  privateKey, // Optional private key for initial identity setup
+// Service worker wallet - ultra-simplified setup with identity!
+const serviceWorkerWallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity
 });
 
-
-// All identity methods are now async
-const pubKey = await identity.xOnlyPublicKey()
-const signedTx = await identity.sign(transaction)
+// All wallet methods work as expected
+const address = await serviceWorkerWallet.getAddress()
+const balance = await serviceWorkerWallet.getBalance()
 ```
 
 ### Repository Pattern
@@ -344,31 +377,6 @@ await wallet.contractRepository.saveToContractCollection(
 )
 const swaps = await wallet.contractRepository.getContractCollection('swaps')
 
-### Migration from v0.2.x
-
-If you're upgrading from previous versions:
-
-```typescript
-// OLD (v0.2.x and earlier)
-const wallet = new Wallet(identity, options)
-await wallet.init()
-const pubKey = identity.xOnlyPublicKey() // sync
-
-// NEW (v0.3.x and later)
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://ark.example.com',
-  storage: new InMemoryStorageAdapter() // explicit storage choice
-})
-const pubKey = await identity.xOnlyPublicKey() // async
-```
-
-**Breaking Changes:**
-
-- Replace `new Wallet()` + `init()` with `Wallet.create()`
-- Identity methods are now async (`await identity.xOnlyPublicKey()`)
-- Storage adapters must be explicitly chosen (defaults to `InMemoryStorageAdapter`)
-- Access repositories via `wallet.walletRepository` and `wallet.contractRepository`
 
 ## Development
 
@@ -381,17 +389,17 @@ const pubKey = await identity.xOnlyPublicKey() // async
 
 1. Install dependencies:
 
-```bash
-pnpm install
-pnpm format
-pnpm lint
-```
+   ```bash
+   pnpm install
+   pnpm format
+   pnpm lint
+   ```
 
 2. Install nigiri for integration tests:
 
-```bash
-curl https://getnigiri.vulpem.com | bash
-```
+   ```bash
+   curl https://getnigiri.vulpem.com | bash
+   ```
 
 ### Running Tests
 
