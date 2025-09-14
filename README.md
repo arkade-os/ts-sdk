@@ -1,8 +1,9 @@
 # Arkade TypeScript SDK
+
 The Arkade SDK is a TypeScript library for building Bitcoin wallets with support for both on-chain and off-chain transactions via the Ark protocol.
 
 [![TypeScript Documentation](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/arkade-os/ts-sdk)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ark-ts-sdk)
 
 ## Installation
 
@@ -23,7 +24,7 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
   identity: identity,
-  // Esplora API, can be left empty mempool.space API will be used
+  // Esplora API, can be left empty - mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   arkServerUrl: 'https://mutinynet.arkade.sh',
   // Optional: specify storage adapter (defaults to InMemoryStorageAdapter)
@@ -44,17 +45,17 @@ console.log('Boarding Address:', boardingAddress)
 
 const incomingFunds = await waitForIncomingFunds(wallet)
 if (incomingFunds.type === "vtxo") {
-  // virtual coins received 
+  // Virtual coins received 
   console.log("VTXOs: ", incomingFunds.vtxos)
 } else if (incomingFunds.type === "utxo") {
-  // boarding coins received
+  // Boarding coins received
   console.log("UTXOs: ", incomingFunds.coins)
 }
 ```
 
 ### Onboarding
 
-Onboarding allows you to swap onchain funds into VTXOs
+Onboarding allows you to swap on-chain funds into VTXOs:
 
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
@@ -92,9 +93,9 @@ const txid = await wallet.sendBitcoin({
 })
 ```
 
-### Batch Settlements 
+### Batch Settlements
 
-This can be used to move preconfirmed balances into finalized balances, to convert manually UTXOs and VTXOs.
+This can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs and VTXOs.
 
 ```typescript
 // For settling transactions
@@ -131,7 +132,7 @@ console.log('History:', history)
 
 ### Offboarding
 
-Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an onchain address.
+Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an on-chain address:
 
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
@@ -184,6 +185,7 @@ for await (const step of session) {
 ```
 
 The unrolling process works by:
+
 - Traversing the transaction chain from the root (most recent) to the leaf (oldest)
 - Broadcasting each transaction that isn't already on-chain
 - Waiting for confirmations between steps
@@ -203,6 +205,7 @@ await Unroll.completeUnroll(
 ```
 
 **Important Notes:**
+
 - Each VTXO may require multiple unroll steps depending on the transaction chain length
 - Each unroll step must be confirmed before proceeding to the next
 - The `completeUnroll` method can only be called after VTXOs are fully unrolled and the timelock has expired
@@ -245,8 +248,8 @@ import {
 
 // Import additional storage adapters as needed:
 import { LocalStorageAdapter } from '@arkade-os/sdk/adapters/localStorage'        // Browser/PWA persistent storage  
-import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'    // Browser/PWA/Service Worker advanced storage
-import { AsyncStorageAdapter } from '@arkade-os/sdk/adapters/asyncStorage'        // React Native persistent storage
+import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'      // Browser/PWA/Service Worker advanced storage
+import { AsyncStorageAdapter } from '@arkade-os/sdk/adapters/asyncStorage'      // React Native persistent storage
 import { FileSystemStorageAdapter } from '@arkade-os/sdk/adapters/fileSystem'   // Node.js file-based storage
 
 // Node.js
@@ -275,7 +278,7 @@ const wallet = await Wallet.create({
 })
 ```
 
-### Cross-Environment Example
+### Universal Example
 
 The **exact same code** works in all environments:
 
@@ -291,69 +294,6 @@ const address = await wallet.getAddress()
 const balance = await wallet.getBalance()
 ```
 
-
-## Advanced Configuration
-
-### Storage Configuration
-
-By default, wallets use in-memory storage (no persistence). Choose the appropriate storage adapter for your environment:
-
-```typescript
-import {
-  InMemoryStorageAdapter,    // No persistence (default)
-  LocalStorageAdapter,       // Browser localStorage
-  FileSystemStorageAdapter,  // Node.js file system
-  IndexedDBStorageAdapter,   // Browser IndexedDB
-  AsyncStorageAdapter        // React Native AsyncStorage
-} from '@arkade-os/sdk'
-
-// Browser with localStorage persistence
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  storage: new LocalStorageAdapter()
-})
-
-// Node.js with file system persistence
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  storage: new FileSystemStorageAdapter('./wallet-data')
-})
-
-// React Native with AsyncStorage
-const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  storage: new AsyncStorageAdapter()
-})
-```
-
-### Identity Management
-
-The SDK supports different identity implementations for various environments:
-
-```typescript
-import { SingleKey, ServiceWorkerWallet } from '@arkade-os/sdk'
-import { randomPrivateKeyBytes } from '@scure/btc-signer/utils'
-import { hex } from '@scure/base'
-
-// Standard single-key identity (most common)
-const identity = SingleKey.fromHex('your_private_key_hex')
-// ...or generate a random key
-// const randomIdentity = SingleKey.fromRandomBytes();
-
-// Service worker wallet - ultra-simplified setup with identity!
-const serviceWorkerWallet = await ServiceWorkerWallet.setup({
-  serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity
-});
-
-// All wallet methods work as expected
-const address = await serviceWorkerWallet.getAddress()
-const balance = await serviceWorkerWallet.getBalance()
-```
 
 ### Repository Pattern
 
@@ -395,7 +335,7 @@ const swaps = await wallet.contractRepository.getContractCollection('swaps')
    pnpm lint
    ```
 
-2. Install nigiri for integration tests:
+1. Install nigiri for integration tests:
 
    ```bash
    curl https://getnigiri.vulpem.com | bash
@@ -434,9 +374,9 @@ pnpm test:coverage
 ### Building the documentation
 
 ```bash
-# Build the TS doc
+# Build the TypeScript documentation
 pnpm docs:build
-# open the docs in the browser
+# Open the docs in the browser
 pnpm docs:open
 ```
 
