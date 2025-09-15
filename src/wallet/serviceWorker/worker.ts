@@ -810,7 +810,7 @@ export class Worker {
     }
 
     private async handleMessage(event: ExtendableMessageEvent) {
-        this.messageCallback(event);
+        // this.messageCallback(event); // TODO fix this
         const message = event.data;
         if (!Request.isBase(message)) {
             console.warn("Invalid message format", JSON.stringify(message));

@@ -13,12 +13,17 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
     private async getDB(): Promise<IDBDatabase> {
         if (this.db) return this.db;
 
-        if (typeof window === "undefined" || !window.indexedDB) {
+        const globalObject = typeof window === "undefined" ? self : window;
+
+        if (!(globalObject && "indexedDB" in globalObject)) {
             throw new Error("IndexedDB is not available in this environment");
         }
 
         return new Promise((resolve, reject) => {
-            const request = window.indexedDB.open(this.dbName, this.version);
+            const request = globalObject.indexedDB.open(
+                this.dbName,
+                this.version
+            );
 
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
