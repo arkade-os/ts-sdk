@@ -97,8 +97,22 @@ export class WalletRepositoryImpl implements WalletRepository {
         address: string,
         vtxos: ExtendedVirtualCoin[]
     ): Promise<void> {
-        this.cache.vtxos.set(address, vtxos);
-        await this.storage.setItem(`vtxos:${address}`, JSON.stringify(vtxos));
+        const storedVtxos = await this.getVtxos(address);
+        for (const vtxo of vtxos) {
+            const existing = storedVtxos.findIndex(
+                (v) => v.txid === vtxo.txid && v.vout === vtxo.vout
+            );
+            if (existing !== -1) {
+                storedVtxos[existing] = vtxo;
+            } else {
+                storedVtxos.push(vtxo);
+            }
+        }
+        this.cache.vtxos.set(address, storedVtxos);
+        await this.storage.setItem(
+            `vtxos:${address}`,
+            JSON.stringify(storedVtxos)
+        );
     }
 
     async removeVtxo(address: string, vtxoId: string): Promise<void> {
