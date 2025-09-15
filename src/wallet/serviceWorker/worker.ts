@@ -190,6 +190,8 @@ export class Worker {
                 // Get wallet address and save vtxos using unified repository
                 const address = await this.wallet!.getAddress();
                 await this.walletRepository.saveVtxos(address, extendedVtxos);
+                // Notify all clients about the vtxo update
+                this.sendMessageToAllClients("VTXO_UPDATE", "");
             }
         } catch (error) {
             console.error("Error processing address updates:", error);
@@ -810,7 +812,7 @@ export class Worker {
     }
 
     private async handleMessage(event: ExtendableMessageEvent) {
-        // this.messageCallback(event); // TODO fix this
+        this.messageCallback(event);
         const message = event.data;
         if (!Request.isBase(message)) {
             console.warn("Invalid message format", JSON.stringify(message));
@@ -876,5 +878,18 @@ export class Worker {
                     Response.error(message.id, "Unknown message type")
                 );
         }
+    }
+
+    private async sendMessageToAllClients(type: string, message: any) {
+        self.clients
+            .matchAll({ includeUncontrolled: true, type: "window" })
+            .then((clients) => {
+                clients.forEach((client) => {
+                    client.postMessage({
+                        type,
+                        message,
+                    });
+                });
+            });
     }
 }
