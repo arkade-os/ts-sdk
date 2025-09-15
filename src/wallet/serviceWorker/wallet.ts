@@ -115,6 +115,14 @@ export class ServiceWorkerWallet implements IWallet {
             privateKey = options.identity.toHex();
         }
 
+        // Create the wallet instance
+        const wallet = new ServiceWorkerWallet(
+            options.serviceWorker,
+            options.identity,
+            walletRepo,
+            contractRepo
+        );
+
         // Initialize the service worker with the config
         // Note: When privateKey is provided (from SingleKey), the service worker uses it
         // When privateKey is undefined (ServiceWorkerIdentity), the service worker manages its own persistent identity
@@ -125,13 +133,6 @@ export class ServiceWorkerWallet implements IWallet {
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
         };
-
-        const wallet = new ServiceWorkerWallet(
-            options.serviceWorker,
-            options.identity,
-            walletRepo,
-            contractRepo
-        );
 
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
@@ -169,22 +170,17 @@ export class ServiceWorkerWallet implements IWallet {
         );
 
         // Step 2: Determine identity and private key
-        let identity: Identity;
-        let privateKey: string | undefined;
-
         // Use provided identity - only SingleKey can expose private key
         if (!(options.identity instanceof SingleKey)) {
             throw new Error(
                 "ServiceWorkerWallet.setup() requires a SingleKey identity that can expose its private key"
             );
         }
-        identity = options.identity;
-        privateKey = options.identity.toHex();
 
         // Step 3: Use the existing create method
         return await ServiceWorkerWallet.create({
             serviceWorker,
-            identity,
+            identity: options.identity,
             arkServerUrl: options.arkServerUrl,
             esploraUrl: options.esploraUrl,
             storage: options.storage,
