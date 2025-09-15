@@ -116,7 +116,6 @@ import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
-import { ServiceWorkerIdentity } from "./identity";
 
 export {
     // Wallets
@@ -181,9 +180,6 @@ export {
     // Repositories
     WalletRepositoryImpl,
     ContractRepositoryImpl,
-
-    // Identity
-    ServiceWorkerIdentity,
 
     // BIP322
     BIP322,

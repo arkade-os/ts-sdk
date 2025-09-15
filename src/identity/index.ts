@@ -9,4 +9,3 @@ export interface Identity {
 }
 
 export * from "./singleKey";
-export * from "./serviceWorker";

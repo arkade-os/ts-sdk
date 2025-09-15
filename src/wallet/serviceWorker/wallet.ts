@@ -13,7 +13,6 @@ import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
 import { Identity } from "../../identity";
-import { ServiceWorkerIdentity } from "../../identity/serviceWorker";
 import { SingleKey } from "../../identity/singleKey";
 import { StorageAdapter } from "../../storage";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
@@ -125,7 +124,6 @@ export class ServiceWorkerWallet implements IWallet {
 
         // Initialize the service worker with the config
         // Note: When privateKey is provided (from SingleKey), the service worker uses it
-        // When privateKey is undefined (ServiceWorkerIdentity), the service worker manages its own persistent identity
         const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
