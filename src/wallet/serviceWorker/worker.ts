@@ -200,125 +200,11 @@ export class Worker {
 
     private async handleClear(event: ExtendableMessageEvent) {
         await this.clear();
-        // Also clear the stored identity
-        await this.clearStoredIdentity();
         if (Request.isBase(event.data)) {
             event.source?.postMessage(
                 Response.clearResponse(event.data.id, true)
             );
         }
-    }
-
-    /**
-     * Load existing identity from storage or require the client to provide one.
-     * The service worker no longer auto-generates keys - the client must provide the private key.
-     */
-    private async loadOrCreateIdentity(
-        providedPrivateKey?: string
-    ): Promise<SingleKey> {
-        const IDENTITY_KEY = "service-worker-private-key";
-
-        try {
-            if (providedPrivateKey) {
-                // Store the provided private key for future use
-                await this.storage.setItem(IDENTITY_KEY, providedPrivateKey);
-                return SingleKey.fromHex(providedPrivateKey);
-            }
-
-            // Try to load existing identity using simple storage pattern
-            const privateKeyHex = await this.storage.getItem(IDENTITY_KEY);
-            if (!privateKeyHex) {
-                throw new Error("No private key found in storage");
-            }
-            return SingleKey.fromHex(privateKeyHex);
-        } catch (error) {
-            // No stored identity and no provided key
-            throw new Error(
-                "No private key available. Client must provide a private key when initializing the service worker wallet."
-            );
-        }
-    }
-
-    /**
-     * Retrieve a value from IndexedDB storage
-     */
-    private async getStoredItem(key: string): Promise<string | null> {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open("ServiceWorkerStorage", 1);
-
-            request.onerror = () => reject(request.error);
-
-            request.onupgradeneeded = (event) => {
-                const db = (event.target as IDBOpenDBRequest).result;
-                if (!db.objectStoreNames.contains("keyvalue")) {
-                    db.createObjectStore("keyvalue");
-                }
-            };
-
-            request.onsuccess = () => {
-                const db = request.result;
-                const transaction = db.transaction(["keyvalue"], "readonly");
-                const store = transaction.objectStore("keyvalue");
-
-                const getRequest = store.get(key);
-                getRequest.onsuccess = () => {
-                    db.close();
-                    resolve(getRequest.result || null);
-                };
-                getRequest.onerror = () => {
-                    db.close();
-                    reject(getRequest.error);
-                };
-            };
-        });
-    }
-
-    /**
-     * Clear stored identity from storage (useful for testing or logout)
-     */
-    private async clearStoredIdentity(): Promise<void> {
-        const IDENTITY_KEY = "service-worker-private-key";
-        try {
-            await this.storage.removeItem(IDENTITY_KEY);
-            console.log("Cleared stored service worker identity");
-        } catch (error) {
-            console.warn("Failed to clear stored identity:", error);
-            // Don't fail the clear operation
-        }
-    }
-
-    /**
-     * Remove a key from IndexedDB storage
-     */
-    private async removeStoredItem(key: string): Promise<void> {
-        return new Promise((resolve, reject) => {
-            const request = indexedDB.open("ServiceWorkerStorage", 1);
-
-            request.onerror = () => reject(request.error);
-
-            request.onupgradeneeded = (event) => {
-                const db = (event.target as IDBOpenDBRequest).result;
-                if (!db.objectStoreNames.contains("keyvalue")) {
-                    db.createObjectStore("keyvalue");
-                }
-            };
-
-            request.onsuccess = () => {
-                const db = request.result;
-                const transaction = db.transaction(["keyvalue"], "readwrite");
-                const store = transaction.objectStore("keyvalue");
-
-                const deleteRequest = store.delete(key);
-                deleteRequest.onsuccess = () => {
-                    db.close();
-                    resolve();
-                };
-                deleteRequest.onerror = () => {
-                    db.close();
-                    reject(deleteRequest.error);
-                };
-            };
-        });
     }
 
     private async handleInitWallet(event: ExtendableMessageEvent) {
@@ -331,26 +217,23 @@ export class Worker {
             return;
         }
 
+        if (!message.privateKey) {
+            const err = "Missing privateKey";
+            event.source?.postMessage(Response.error(message.id, err));
+            console.error(err);
+            return;
+        }
+
         try {
-            let identity: SingleKey;
-
-            if (message.privateKey !== undefined) {
-                // Client provided a private key - store it and use it
-                identity = await this.loadOrCreateIdentity(message.privateKey);
-            } else {
-                // Try to load existing identity from storage
-                identity = await this.loadOrCreateIdentity();
-            }
-
-            this.arkProvider = new RestArkProvider(message.arkServerUrl);
-            this.indexerProvider = new RestIndexerProvider(
-                message.arkServerUrl
-            );
+            const { arkServerPublicKey, arkServerUrl, privateKey } = message;
+            const identity = SingleKey.fromHex(privateKey);
+            this.arkProvider = new RestArkProvider(arkServerUrl);
+            this.indexerProvider = new RestIndexerProvider(arkServerUrl);
 
             this.wallet = await Wallet.create({
                 identity,
-                arkServerUrl: message.arkServerUrl,
-                arkServerPublicKey: message.arkServerPublicKey,
+                arkServerUrl,
+                arkServerPublicKey,
                 storage: this.storage, // Use unified storage for wallet too
             });
 

@@ -123,7 +123,6 @@ export class ServiceWorkerWallet implements IWallet {
         );
 
         // Initialize the service worker with the config
-        // Note: When privateKey is provided (from SingleKey), the service worker uses it
         const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
