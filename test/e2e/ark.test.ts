@@ -511,10 +511,10 @@ describe("Ark integration tests", () => {
 
         // wait until indexer reflects the swept instead of sleeping.
         await waitFor(async () => {
-            const v = await alice.wallet.getVtxos({
-                withRecoverable: true,
-            });
-            return v[0].virtualStatus.state === "swept";
+            const v = await alice.wallet.getVtxos({ withRecoverable: true });
+            return v.some(
+                (c) => c.txid === vtxo.txid && c.virtualStatus.state === "swept"
+            );
         });
 
         // get vtxos including the recoverable ones
