@@ -109,10 +109,11 @@ export class ServiceWorkerWallet implements IWallet {
         const contractRepo = new ContractRepositoryImpl(storage);
 
         // Extract private key for service worker initialization
-        let privateKey: string | undefined;
+        let privateKey: string | undefined = undefined;
         if (options.identity instanceof SingleKey) {
             privateKey = options.identity.toHex();
         }
+        if (!privateKey) throw new Error("Identity must be a SingleKey.");
 
         // Create the wallet instance
         const wallet = new ServiceWorkerWallet(
