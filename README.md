@@ -23,7 +23,7 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
-  identity: identity,
+  identity,
   // Esplora API, can be left empty - mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   arkServerUrl: 'https://mutinynet.arkade.sh',
