@@ -75,23 +75,20 @@ class UnexpectedResponseError extends Error {
  * const balance = await wallet.getBalance();
  * ```
  */
-export interface ServiceWorkerWalletCreateOptions {
+interface ServiceWorkerWalletOptions {
+    arkServerPublicKey?: string;
+    arkServerUrl: string;
+    esploraUrl?: string;
+    identity: PrivateKeyIdentity;
+    storage?: StorageAdapter;
+}
+export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
-    identity: PrivateKeyIdentity;
-    arkServerUrl: string;
-    esploraUrl?: string;
-    arkServerPublicKey?: string;
-    storage?: StorageAdapter;
-}
+};
 
-export interface ServiceWorkerWalletSetupOptions {
+export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
-    arkServerUrl: string;
-    esploraUrl?: string;
-    arkServerPublicKey?: string;
-    storage?: StorageAdapter;
-    identity: PrivateKeyIdentity;
-}
+};
 
 export class ServiceWorkerWallet implements IWallet {
     public readonly walletRepository: WalletRepository;
@@ -187,10 +184,11 @@ export class ServiceWorkerWallet implements IWallet {
 
         // Use the existing create method
         return await ServiceWorkerWallet.create({
-            serviceWorker,
-            identity: options.identity,
+            arkServerPublicKey: options.arkServerPublicKey,
             arkServerUrl: options.arkServerUrl,
             esploraUrl: options.esploraUrl,
+            identity: options.identity,
+            serviceWorker,
             storage: options.storage,
         });
     }
