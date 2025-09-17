@@ -219,6 +219,14 @@ export class ServiceWorkerWallet implements IWallet {
             type: "CLEAR",
             id: getRandomId(),
         };
+        // Clear page-side storage to maintain parity with SW
+        try {
+            const address = await this.getAddress();
+            await this.walletRepository.clearVtxos(address);
+        } catch (_) {
+            console.warn("Failed to clear vtxos from wallet repository");
+        }
+
         await this.sendMessage(message);
     }
 
