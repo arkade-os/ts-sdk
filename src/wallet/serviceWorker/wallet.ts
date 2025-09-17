@@ -21,6 +21,19 @@ import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "./utils";
 
+export type PrivateKeyIdentity = Identity & { toHex(): string };
+
+const isPrivateKeyIdentity = (
+    identity: Identity
+): identity is PrivateKeyIdentity => {
+    return (
+        (identity as PrivateKeyIdentity).toHex !== undefined &&
+        typeof (identity as PrivateKeyIdentity).toHex === "function" &&
+        typeof (identity as PrivateKeyIdentity).toHex() === "string" &&
+        (identity as PrivateKeyIdentity).toHex().length > 0
+    );
+};
+
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
         super(
@@ -64,7 +77,7 @@ class UnexpectedResponseError extends Error {
  */
 export interface ServiceWorkerWalletCreateOptions {
     serviceWorker: ServiceWorker;
-    identity: Identity;
+    identity: PrivateKeyIdentity;
     arkServerUrl: string;
     esploraUrl?: string;
     arkServerPublicKey?: string;
@@ -77,7 +90,7 @@ export interface ServiceWorkerWalletSetupOptions {
     esploraUrl?: string;
     arkServerPublicKey?: string;
     storage?: StorageAdapter;
-    identity: Identity;
+    identity: PrivateKeyIdentity;
 }
 
 export class ServiceWorkerWallet implements IWallet {
@@ -87,7 +100,7 @@ export class ServiceWorkerWallet implements IWallet {
 
     private constructor(
         public readonly serviceWorker: ServiceWorker,
-        identity: Identity,
+        identity: PrivateKeyIdentity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository
     ) {
@@ -107,24 +120,23 @@ export class ServiceWorkerWallet implements IWallet {
         const walletRepo = new WalletRepositoryImpl(storage);
         const contractRepo = new ContractRepositoryImpl(storage);
 
-        // Extract private key for service worker initialization
-        const privateKey =
-            "identity" in options &&
-            "toHex" in options.identity &&
-            typeof options.identity.toHex === "function"
-                ? options.identity.toHex()
-                : null;
-
-        if (!privateKey) {
+        // Extract identity and check if it can expose private key
+        const identity = isPrivateKeyIdentity(options.identity)
+            ? options.identity
+            : null;
+        if (!identity) {
             throw new Error(
                 "ServiceWorkerWallet.create() requires a Identity that can expose its private key"
             );
         }
 
+        // Extract private key for service worker initialization
+        const privateKey = identity.toHex();
+
         // Create the wallet instance
         const wallet = new ServiceWorkerWallet(
             options.serviceWorker,
-            options.identity,
+            identity,
             walletRepo,
             contractRepo
         );
