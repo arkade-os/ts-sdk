@@ -13,7 +13,6 @@ import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
 import { Identity } from "../../identity";
-import { SingleKey } from "../../identity/singleKey";
 import { StorageAdapter } from "../../storage";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
@@ -109,11 +108,18 @@ export class ServiceWorkerWallet implements IWallet {
         const contractRepo = new ContractRepositoryImpl(storage);
 
         // Extract private key for service worker initialization
-        let privateKey: string | undefined = undefined;
-        if (options.identity instanceof SingleKey) {
-            privateKey = options.identity.toHex();
+        const privateKey =
+            "identity" in options &&
+            "toHex" in options.identity &&
+            typeof options.identity.toHex === "function"
+                ? options.identity.toHex()
+                : null;
+
+        if (!privateKey) {
+            throw new Error(
+                "ServiceWorkerWallet.create() requires a Identity that can expose its private key"
+            );
         }
-        if (!privateKey) throw new Error("Identity must be a SingleKey.");
 
         // Create the wallet instance
         const wallet = new ServiceWorkerWallet(
@@ -162,20 +168,12 @@ export class ServiceWorkerWallet implements IWallet {
     static async setup(
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerWallet> {
-        // Step 1: Register and setup the service worker
+        // Register and setup the service worker
         const serviceWorker = await setupServiceWorker(
             options.serviceWorkerPath
         );
 
-        // Step 2: Determine identity and private key
-        // Use provided identity - only SingleKey can expose private key
-        if (!(options.identity instanceof SingleKey)) {
-            throw new Error(
-                "ServiceWorkerWallet.setup() requires a SingleKey identity that can expose its private key"
-            );
-        }
-
-        // Step 3: Use the existing create method
+        // Use the existing create method
         return await ServiceWorkerWallet.create({
             serviceWorker,
             identity: options.identity,
