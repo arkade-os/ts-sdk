@@ -509,11 +509,20 @@ describe("Ark integration tests", () => {
         // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
         execSync(`nigiri rpc --generate 25`);
 
-        await new Promise((resolve) => setTimeout(resolve, 20000));
+        // wait until indexer reflects the swept instead of sleeping.
+        await waitFor(async () => {
+            const v = await alice.wallet.getVtxos({
+                withRecoverable: true,
+            });
+            return v[0].virtualStatus.state === "swept";
+        });
 
+        // get vtxos including the recoverable ones
         const vtxosAfterSweep = await alice.wallet.getVtxos({
             withRecoverable: true,
         });
+
+        // assert
         expect(vtxosAfterSweep).toHaveLength(1);
         const vtxoAfterSweep = vtxosAfterSweep[0];
         expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
