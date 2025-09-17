@@ -669,31 +669,6 @@ export class Worker {
         }
     }
 
-    private async handleGetXOnlyPublicKey(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isGetXOnlyPublicKey(message)) {
-            console.error(
-                "Invalid GET_XONLY_PUBLIC_KEY message format",
-                message
-            );
-            event.source?.postMessage(
-                Response.error(
-                    message.id,
-                    "Invalid GET_XONLY_PUBLIC_KEY message format"
-                )
-            );
-            return;
-        }
-
-        const xOnlyPublicKey = this.wallet
-            ? await this.wallet.identity.xOnlyPublicKey()
-            : undefined;
-
-        event.source?.postMessage(
-            Response.xOnlyPublicKey(message.id, xOnlyPublicKey)
-        );
-    }
-
     private async handleMessage(event: ExtendableMessageEvent) {
         this.messageCallback(event);
         const message = event.data;
@@ -750,10 +725,6 @@ export class Worker {
             }
             case "SIGN": {
                 await this.handleSign(event);
-                break;
-            }
-            case "GET_XONLY_PUBLIC_KEY": {
-                await this.handleGetXOnlyPublicKey(event);
                 break;
             }
             default:

@@ -21,7 +21,6 @@ export namespace Response {
         | "ERROR"
         | "CLEAR_RESPONSE"
         | "SIGN_SUCCESS"
-        | "XONLY_PUBLIC_KEY"
         | "TRANSACTION_SIGNED";
 
     export interface Base {
@@ -333,32 +332,6 @@ export namespace Response {
 
     export function isSignSuccess(response: Base): response is SignSuccess {
         return response.type === "SIGN_SUCCESS" && response.success === true;
-    }
-
-    export interface XOnlyPublicKey extends Base {
-        type: "XONLY_PUBLIC_KEY";
-        success: true;
-        publicKey: number[]; // Uint8Array as number array
-    }
-
-    export function xOnlyPublicKey(
-        id: string,
-        publicKey: Uint8Array | undefined
-    ): XOnlyPublicKey {
-        return {
-            type: "XONLY_PUBLIC_KEY",
-            success: true,
-            id,
-            publicKey: Array.from(publicKey ?? new Uint8Array()),
-        };
-    }
-
-    export function isXOnlyPublicKey(
-        response: Base
-    ): response is XOnlyPublicKey {
-        return (
-            response.type === "XONLY_PUBLIC_KEY" && response.success === true
-        );
     }
 
     export interface TransactionSigned extends Base {

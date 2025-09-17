@@ -18,7 +18,6 @@ export namespace Request {
         | "GET_STATUS"
         | "CLEAR"
         | "SIGN"
-        | "GET_XONLY_PUBLIC_KEY"
         | "SIGN_TRANSACTION";
 
     export interface Base {
@@ -177,16 +176,6 @@ export namespace Request {
                   )
                 : true)
         );
-    }
-
-    export interface GetXOnlyPublicKey extends Base {
-        type: "GET_XONLY_PUBLIC_KEY";
-    }
-
-    export function isGetXOnlyPublicKey(
-        message: Base
-    ): message is GetXOnlyPublicKey {
-        return message.type === "GET_XONLY_PUBLIC_KEY";
     }
 
     export interface SignTransaction extends Base {
