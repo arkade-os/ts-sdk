@@ -10,7 +10,6 @@ import { ArkProvider, RestArkProvider } from "../../providers/ark";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { base64, hex } from "@scure/base";
-import { randomPrivateKeyBytes } from "@scure/btc-signer/utils";
 import { DefaultVtxo } from "../../script/default";
 import { Transaction } from "@scure/btc-signer";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
