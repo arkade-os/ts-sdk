@@ -142,6 +142,7 @@ export type GetVtxosFilter = {
  * operations, and transaction management including sending, settling, and unrolling.
  */
 export interface IWallet {
+    identity: Identity;
     // returns the ark address
     getAddress(): Promise<string>;
     // returns the bitcoin address used to board the ark
