@@ -13,17 +13,17 @@ importers:
   .:
     dependencies:
       '@noble/curves':
-        specifier: 1.9.1
-        version: 1.9.1
+        specifier: 2.0.0
+        version: 2.0.0
       '@noble/hashes':
-        specifier: 1.8.0
-        version: 1.8.0
+        specifier: 2.0.0
+        version: 2.0.0
       '@noble/secp256k1':
-        specifier: 2.2.3
-        version: 2.2.3
+        specifier: 3.0.0
+        version: 3.0.0
       '@scure/base':
-        specifier: 1.2.6
-        version: 1.2.6
+        specifier: 2.0.0
+        version: 2.0.0
       '@scure/btc-signer':
         specifier: 1.8.1
         version: 1.8.1
@@ -47,17 +47,17 @@ importers:
         specifier: 9.1.7
         version: 9.1.7
       prettier:
-        specifier: 3.4.2
-        version: 3.4.2
+        specifier: 3.6.2
+        version: 3.6.2
       rimraf:
-        specifier: ^5.0.0
-        version: 5.0.10
+        specifier: ^6.0.1
+        version: 6.0.1
       typedoc:
         specifier: ^0.28.12
-        version: 0.28.12(typescript@5.7.2)
+        version: 0.28.12(typescript@5.9.2)
       typescript:
-        specifier: 5.7.2
-        version: 5.7.2
+        specifier: 5.9.2
+        version: 5.9.2
       vitest:
         specifier: 3.2.4
         version: 3.2.4(@types/node@24.3.1)(yaml@2.8.1)
@@ -277,16 +277,24 @@ packages:
   '@jridgewell/trace-mapping@0.3.30':
     resolution: {integrity: sha512-GQ7Nw5G2lTu/BtHTKfXhKHok2WGetd4XYcVKGx00SjAk8GMwgJM3zr6zORiPGuOE+/vkc90KtTosSSvaCjKb2Q==}
 
-  '@noble/curves@1.9.1':
-    resolution: {integrity: sha512-k11yZxZg+t+gWvBbIswW0yoJlu8cHOC7dhunwOzoWH/mXGBiYyR4YY6hAEK/3EUs4UpB8la1RfdRpeGsFHkWsA==}
+  '@noble/curves@1.9.7':
+    resolution: {integrity: sha512-gbKGcRUYIjA3/zCCNaWDciTMFI0dCkvou3TL8Zmy5Nc7sJ47a0jtOeZoTaMxkuqRo9cRhjOdZJXegxYE5FN/xw==}
     engines: {node: ^14.21.3 || >=16}
+
+  '@noble/curves@2.0.0':
+    resolution: {integrity: sha512-RiwZZeJnsTnhT+/gg2KvITJZhK5oagQrpZo+yQyd3mv3D5NAG2qEeEHpw7IkXRlpkoD45wl2o4ydHAvY9wyEfw==}
+    engines: {node: '>= 20.19.0'}
 
   '@noble/hashes@1.8.0':
     resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
     engines: {node: ^14.21.3 || >=16}
 
-  '@noble/secp256k1@2.2.3':
-    resolution: {integrity: sha512-l7r5oEQym9Us7EAigzg30/PQAvynhMt2uoYtT3t26eGDVm9Yii5mZ5jWSWmZ/oSIR2Et0xfc6DXrG0bZ787V3w==}
+  '@noble/hashes@2.0.0':
+    resolution: {integrity: sha512-h8VUBlE8R42+XIDO229cgisD287im3kdY6nbNZJFjc6ZvKIXPYXe6Vc/t+kyjFdMFyt5JpapzTsEg8n63w5/lw==}
+    engines: {node: '>= 20.19.0'}
+
+  '@noble/secp256k1@3.0.0':
+    resolution: {integrity: sha512-NJBaR352KyIvj3t6sgT/+7xrNyF9Xk9QlLSIqUGVUYlsnDTAUqY8LOmwpcgEx4AMJXRITQ5XEVHD+mMaPfr3mg==}
 
   '@pkgjs/parseargs@0.11.0':
     resolution: {integrity: sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg==}
@@ -399,6 +407,9 @@ packages:
 
   '@scure/base@1.2.6':
     resolution: {integrity: sha512-g/nm5FgUa//MCj1gV09zTJTaM6KBAHqLN907YVQqf7zC49+DcO4B1so4ZX07Ef10Twr6nuqYEH9GEggFXA4Fmg==}
+
+  '@scure/base@2.0.0':
+    resolution: {integrity: sha512-3E1kpuZginKkek01ovG8krQ0Z44E3DHPjc5S2rjJw9lZn3KSQOs8S7wqikF/AH7iRanHypj85uGyxk0XAyC37w==}
 
   '@scure/btc-signer@1.8.1':
     resolution: {integrity: sha512-8nX9T++dFyKpvqksNHfSi9CgRsGnHAQtCdIQ1y1GmbCGLpV97v4MUyemUUT6uDumKL3oo3m4niyY6A32nmdLuQ==}
@@ -737,8 +748,8 @@ packages:
     resolution: {integrity: sha512-3Ybi1tAuwAP9s0r1UQ2J4n5Y0G05bJkpUIO0/bI9MhwmD70S5aTWbXGBwxHrelT+XM1k6dM0pk+SwNkpTRN7Pg==}
     engines: {node: ^10 || ^12 || >=14}
 
-  prettier@3.4.2:
-    resolution: {integrity: sha512-e9MewbtFo+Fevyuxn/4rrcDAaq0IYxPGLvObpQjiZBMAzB9IGmzlnG9RZy3FFas+eBMu2vA0CszMeduow5dIuQ==}
+  prettier@3.6.2:
+    resolution: {integrity: sha512-I7AIg5boAr5R0FFtJ6rCfD+LFsWHp81dolrFD8S79U9tb8Az2nGrJncnMSnys+bpQJfRUzqs9hnA81OAA3hCuQ==}
     engines: {node: '>=14'}
     hasBin: true
 
@@ -746,8 +757,9 @@ packages:
     resolution: {integrity: sha512-uxFIHU0YlHYhDQtV4R9J6a52SLx28BCjT+4ieh7IGbgwVJWO+km431c4yRlREUAsAmt/uMjQUyQHNEPf0M39CA==}
     engines: {node: '>=6'}
 
-  rimraf@5.0.10:
-    resolution: {integrity: sha512-l0OE8wL34P4nJH/H2ffoaniAokM2qSmrtXHmlpvYr5AVVX8msAyW0l8NVJFDxlSK4u3Uh/f41cQheDVdnYijwQ==}
+  rimraf@6.0.1:
+    resolution: {integrity: sha512-9dkvaxAsk/xNXSJzMgFqqMCuFgt2+KsOFek3TMLfo8NCPfWpBmqwyNn5Y+NX56QUYfCtsyhF3ayiboEoUmJk/A==}
+    engines: {node: 20 || >=22}
     hasBin: true
 
   rollup@4.50.1:
@@ -841,8 +853,8 @@ packages:
     peerDependencies:
       typescript: 5.0.x || 5.1.x || 5.2.x || 5.3.x || 5.4.x || 5.5.x || 5.6.x || 5.7.x || 5.8.x || 5.9.x
 
-  typescript@5.7.2:
-    resolution: {integrity: sha512-i5t66RHxDvVN40HfDd1PsEThGNnlMCMT3jMUuoh9/0TaqWevNontacunWyN02LA9/fIbEWlcHZcgTKb9QoaLfg==}
+  typescript@5.9.2:
+    resolution: {integrity: sha512-CWBzXQrc/qOkhidw1OzBTQuYRbfyxDXJMVJ1XNwUHGROVmuaeiEm3OslpZ1RV96d7SKKjZKrSJu3+t/xlw3R9A==}
     engines: {node: '>=14.17'}
     hasBin: true
 
@@ -1087,13 +1099,19 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@noble/curves@1.9.1':
+  '@noble/curves@1.9.7':
     dependencies:
       '@noble/hashes': 1.8.0
 
+  '@noble/curves@2.0.0':
+    dependencies:
+      '@noble/hashes': 2.0.0
+
   '@noble/hashes@1.8.0': {}
 
-  '@noble/secp256k1@2.2.3': {}
+  '@noble/hashes@2.0.0': {}
+
+  '@noble/secp256k1@3.0.0': {}
 
   '@pkgjs/parseargs@0.11.0':
     optional: true
@@ -1163,9 +1181,11 @@ snapshots:
 
   '@scure/base@1.2.6': {}
 
+  '@scure/base@2.0.0': {}
+
   '@scure/btc-signer@1.8.1':
     dependencies:
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
       micro-packed: 0.7.3
@@ -1528,13 +1548,14 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  prettier@3.4.2: {}
+  prettier@3.6.2: {}
 
   punycode.js@2.3.1: {}
 
-  rimraf@5.0.10:
+  rimraf@6.0.1:
     dependencies:
-      glob: 10.4.5
+      glob: 11.0.3
+      package-json-from-dist: 1.0.1
 
   rollup@4.50.1:
     dependencies:
@@ -1630,16 +1651,16 @@ snapshots:
 
   tinyspy@4.0.3: {}
 
-  typedoc@0.28.12(typescript@5.7.2):
+  typedoc@0.28.12(typescript@5.9.2):
     dependencies:
       '@gerrit0/mini-shiki': 3.12.2
       lunr: 2.3.9
       markdown-it: 14.1.0
       minimatch: 9.0.5
-      typescript: 5.7.2
+      typescript: 5.9.2
       yaml: 2.8.1
 
-  typescript@5.7.2: {}
+  typescript@5.9.2: {}
 
   uc.micro@2.1.0: {}
 
