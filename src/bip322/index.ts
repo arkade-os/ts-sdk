@@ -5,7 +5,7 @@ import {
     ErrMissingInputs,
     ErrMissingWitnessUtxo,
 } from "./errors";
-import { schnorr } from "@noble/curves/secp256k1";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { Bytes } from "@scure/btc-signer/utils";
 import { base64 } from "@scure/base";
 

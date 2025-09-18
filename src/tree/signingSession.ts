@@ -1,7 +1,7 @@
 import * as musig2 from "../musig2";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
+import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { randomPrivateKeyBytes, sha256x2 } from "@scure/btc-signer/utils";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 import { TxTree } from "./txTree";
