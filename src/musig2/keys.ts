@@ -24,14 +24,14 @@ export function aggregateKeys(
 
     if (!options.taprootTweak) {
         return {
-            preTweakedKey: preTweakedKey.toRawBytes(true),
-            finalKey: preTweakedKey.toRawBytes(true),
+            preTweakedKey: preTweakedKey.toBytes(true),
+            finalKey: preTweakedKey.toBytes(true),
         };
     }
 
     const tweakBytes = schnorr.utils.taggedHash(
         "TapTweak",
-        preTweakedKey.toRawBytes(true).subarray(1),
+        preTweakedKey.toBytes(true).subarray(1),
         options.taprootTweak ?? new Uint8Array(0)
     );
 
@@ -42,7 +42,7 @@ export function aggregateKeys(
     );
 
     return {
-        preTweakedKey: preTweakedKey.toRawBytes(true),
-        finalKey: finalKey.toRawBytes(true),
+        preTweakedKey: preTweakedKey.toBytes(true),
+        finalKey: finalKey.toBytes(true),
     };
 }
