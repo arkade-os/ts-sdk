@@ -11,7 +11,7 @@ import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { base64, hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import {
     WalletRepository,

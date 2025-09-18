@@ -3,17 +3,16 @@ import {
     p2tr,
     TAP_LEAF_VERSION,
     taprootListToTree,
-} from "@scure/btc-signer/payment";
+} from "@scure/btc-signer/payment.js";
 import {
     BTC_NETWORK,
     Bytes,
     TAPROOT_UNSPENDABLE_KEY,
-} from "@scure/btc-signer/utils";
+} from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "./address";
-import { Script } from "@scure/btc-signer";
+import { Script } from "@scure/btc-signer/script.js";
 import { hex } from "@scure/base";
 import {
-    ArkTapscript,
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "./tapscript";

@@ -1,12 +1,12 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
-import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment";
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment.js";
+import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import {
     TaprootControlBlock,
     TransactionInput,
     TransactionOutput,
-} from "@scure/btc-signer/psbt";
+} from "@scure/btc-signer/psbt.js";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
@@ -51,7 +51,7 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils";
+import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx } from "../utils/arkTransaction";

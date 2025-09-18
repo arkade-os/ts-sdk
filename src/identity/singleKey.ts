@@ -2,9 +2,9 @@ import {
     pubSchnorr,
     randomPrivateKeyBytes,
     sha256,
-} from "@scure/btc-signer/utils";
+} from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import { Identity } from ".";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr } from "@noble/secp256k1";

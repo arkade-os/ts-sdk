@@ -1,6 +1,6 @@
 import { bech32m } from "@scure/base";
-import { Bytes } from "@scure/btc-signer/utils";
-import { Script } from "@scure/btc-signer";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { Script } from "@scure/btc-signer/script.js";
 
 /**
  * ArkAddress allows to create and decode bech32m encoded ark address.

@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
-import { sha256x2 } from "@scure/btc-signer/utils";
+import { sha256x2 } from "@scure/btc-signer/utils.js";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";

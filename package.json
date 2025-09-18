@@ -82,7 +82,7 @@
         "@noble/hashes": "2.0.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
-        "@scure/btc-signer": "1.8.1",
+        "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4"
     },
     "devDependencies": {

@@ -1,7 +1,7 @@
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
 import { hex } from "@scure/base";
-import { sha256x2 } from "@scure/btc-signer/utils";
+import { sha256x2 } from "@scure/btc-signer/utils.js";
 
 /**
  * TxTreeNode is a node of the tree.
