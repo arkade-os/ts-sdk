@@ -19,9 +19,7 @@ export namespace Response {
         | "TRANSACTION_HISTORY"
         | "WALLET_STATUS"
         | "ERROR"
-        | "CLEAR_RESPONSE"
-        | "SIGN_SUCCESS"
-        | "TRANSACTION_SIGNED";
+        | "CLEAR_RESPONSE";
 
     export interface Base {
         type: Type;
@@ -313,50 +311,5 @@ export namespace Response {
             success,
             id,
         };
-    }
-
-    export interface SignSuccess extends Base {
-        type: "SIGN_SUCCESS";
-        success: true;
-        tx: string;
-    }
-
-    export function signSuccess(id: string, tx: string): SignSuccess {
-        return {
-            type: "SIGN_SUCCESS",
-            success: true,
-            tx,
-            id,
-        };
-    }
-
-    export function isSignSuccess(response: Base): response is SignSuccess {
-        return response.type === "SIGN_SUCCESS" && response.success === true;
-    }
-
-    export interface TransactionSigned extends Base {
-        type: "TRANSACTION_SIGNED";
-        success: true;
-        transaction: number[]; // Serialized signed PSBT as number array
-    }
-
-    export function transactionSigned(
-        id: string,
-        transaction: Uint8Array
-    ): TransactionSigned {
-        return {
-            type: "TRANSACTION_SIGNED",
-            success: true,
-            id,
-            transaction: Array.from(transaction),
-        };
-    }
-
-    export function isTransactionSigned(
-        response: Base
-    ): response is TransactionSigned {
-        return (
-            response.type === "TRANSACTION_SIGNED" && response.success === true
-        );
     }
 }

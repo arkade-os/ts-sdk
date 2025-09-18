@@ -16,9 +16,7 @@ export namespace Request {
         | "SEND_BITCOIN"
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
-        | "CLEAR"
-        | "SIGN"
-        | "SIGN_TRANSACTION";
+        | "CLEAR";
 
     export interface Base {
         type: Type;
@@ -154,50 +152,5 @@ export namespace Request {
 
     export interface Clear extends Base {
         type: "CLEAR";
-    }
-
-    export interface Sign extends Base {
-        type: "SIGN";
-        tx: string;
-        inputIndexes?: number[];
-    }
-
-    export function isSign(message: Base): message is Sign {
-        return (
-            message.type === "SIGN" &&
-            "tx" in message &&
-            typeof message.tx === "string" &&
-            ("inputIndexes" in message && message.inputIndexes != undefined
-                ? Array.isArray(message.inputIndexes) &&
-                  message.inputIndexes.every(
-                      (index) => typeof index === "number"
-                  )
-                : true)
-        );
-    }
-
-    export interface SignTransaction extends Base {
-        type: "SIGN_TRANSACTION";
-        transaction: number[]; // Serialized PSBT as number array
-        inputIndexes?: number[];
-    }
-
-    export function isSignTransaction(
-        message: Base
-    ): message is SignTransaction {
-        return (
-            message.type === "SIGN_TRANSACTION" &&
-            "transaction" in message &&
-            Array.isArray(message.transaction) &&
-            message.transaction.every(
-                (byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255
-            ) &&
-            ("inputIndexes" in message && message.inputIndexes != undefined
-                ? Array.isArray(message.inputIndexes) &&
-                  message.inputIndexes.every(
-                      (index) => Number.isInteger(index) && index >= 0
-                  )
-                : true)
-        );
     }
 }
