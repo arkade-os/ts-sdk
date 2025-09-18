@@ -1,5 +1,5 @@
 import * as musig from "@scure/btc-signer/musig2";
-import { schnorr } from "@noble/curves/secp256k1";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 interface KeyAggOptions {
     taprootTweak?: Uint8Array;
