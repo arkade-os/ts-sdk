@@ -213,7 +213,7 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-**NEW: Ultra-simplified setup!** We handle all the complex service worker registration and identity management for you:
+**Ultra-simplified setup!** We handle all the complex service worker registration and identity management for you:
 
 ```typescript
 // SIMPLE SETUP with identity! 🎉
@@ -233,6 +233,16 @@ const wallet = await ServiceWorkerWallet.setup({
 // That's it! Ready to use immediately:
 const address = await wallet.getAddress();
 const balance = await wallet.getBalance();
+```
+
+You'll also need to create a service worker file:
+
+```typescript
+// service-worker.js
+import { Worker } from '@arkade-os/sdk'
+
+// Worker handles communication between the main thread and service worker
+new Worker().start()
 ```
 
 ### Storage Adapters
