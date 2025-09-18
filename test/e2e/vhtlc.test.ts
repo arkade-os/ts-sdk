@@ -84,6 +84,7 @@ describe("vhtlc", () => {
             },
             xOnlyPublicKey: bob.xOnlyPublicKey,
             signerSession: bob.signerSession,
+            signMessage: bob.signMessage,
         };
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
