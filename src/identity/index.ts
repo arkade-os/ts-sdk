@@ -6,6 +6,7 @@ export interface Identity {
     sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
     xOnlyPublicKey(): Promise<Uint8Array>;
     signerSession(): SignerSession;
+    signMessage(message: string): Promise<Uint8Array>;
 }
 
 export * from "./singleKey";
