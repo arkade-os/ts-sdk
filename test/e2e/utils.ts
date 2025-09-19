@@ -86,7 +86,9 @@ export async function createVtxo(
 // before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
 // if not, fund it with 2 * 20_000
 export function beforeEachFaucet(): void {
-    const balanceOutput = execSync(`${arkdExec} ark balance`).toString();
+    const balanceOutput = execSync(
+        `${arkdExec} ark balance | grep -v WARN`
+    ).toString();
     const balance = JSON.parse(balanceOutput);
     const offchainBalance = balance.offchain_balance.total;
 

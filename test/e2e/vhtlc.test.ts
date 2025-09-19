@@ -82,6 +82,7 @@ describe("vhtlc", () => {
                 setArkPsbtField(cpy, 0, ConditionWitness, [preimage]);
                 return bob.sign(cpy, inputIndexes);
             },
+            compressedPublicKey: bob.compressedPublicKey,
             xOnlyPublicKey: bob.xOnlyPublicKey,
             signerSession: bob.signerSession,
             signMessage: bob.signMessage,
