@@ -1,5 +1,8 @@
+import { hex } from "@scure/base";
+import { TapLeafScript } from "../script/base";
 import { StorageAdapter } from "../storage";
 import { ExtendedVirtualCoin } from "../wallet";
+import { TaprootControlBlock } from "@scure/btc-signer";
 
 export interface WalletState {
     lastSyncTime?: number;
@@ -13,6 +16,41 @@ export interface Transaction {
     type: "send" | "receive";
     status: "pending" | "confirmed" | "failed";
 }
+
+// Utility functions for (de)serializing complex structures
+const toHex = (b: Uint8Array | undefined) => (b ? hex.encode(b) : undefined);
+
+const fromHex = (h: string | undefined) =>
+    h ? hex.decode(h) : (undefined as any);
+
+const serializeTapLeaf = ([cb, s]: TapLeafScript) => ({
+    cb:
+        TaprootControlBlock.encode(cb) &&
+        hex.encode(TaprootControlBlock.encode(cb)),
+    s: hex.encode(s),
+});
+
+const serializeVtxo = (v: ExtendedVirtualCoin) => ({
+    ...v,
+    tapTree: toHex(v.tapTree),
+    forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
+    intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),
+    extraWitness: v.extraWitness?.map((w) => toHex(w)),
+});
+
+const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
+    const cb = TaprootControlBlock.decode(fromHex(t.cb));
+    const s = fromHex(t.s);
+    return [cb, s];
+};
+
+const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
+    ...o,
+    tapTree: fromHex(o.tapTree),
+    forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
+    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
+    extraWitness: o.extraWitness?.map((w: string) => fromHex(w)),
+});
 
 export interface WalletRepository {
     // VTXO management
@@ -64,7 +102,8 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
 
         try {
-            const vtxos = JSON.parse(stored) as ExtendedVirtualCoin[];
+            const parsed = JSON.parse(stored) as ExtendedVirtualCoin[];
+            const vtxos = parsed.map(deserializeVtxo);
             this.cache.vtxos.set(address, vtxos);
             return vtxos.slice();
         } catch (error) {
@@ -90,7 +129,10 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
 
         this.cache.vtxos.set(address, vtxos);
-        await this.storage.setItem(`vtxos:${address}`, JSON.stringify(vtxos));
+        await this.storage.setItem(
+            `vtxos:${address}`,
+            JSON.stringify(vtxos.map(serializeVtxo))
+        );
     }
 
     async saveVtxos(
@@ -111,7 +153,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         this.cache.vtxos.set(address, storedVtxos);
         await this.storage.setItem(
             `vtxos:${address}`,
-            JSON.stringify(storedVtxos)
+            JSON.stringify(storedVtxos.map(serializeVtxo))
         );
     }
 
@@ -125,7 +167,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         this.cache.vtxos.set(address, filtered);
         await this.storage.setItem(
             `vtxos:${address}`,
-            JSON.stringify(filtered)
+            JSON.stringify(filtered.map(serializeVtxo))
         );
     }
 
