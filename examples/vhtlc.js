@@ -86,8 +86,8 @@ async function main() {
     //
     const vhtlcScript = new VHTLC.Script({
         preimageHash,
-        sender: alice.xOnlyPublicKey(),
-        receiver: bob.xOnlyPublicKey(),
+        sender: await alice.xOnlyPublicKey(),
+        receiver: await bob.xOnlyPublicKey(),
         server: SERVER_PUBLIC_KEY,
         refundLocktime: BigInt(chainTip + 10), // 10 blocks from now
         unilateralClaimDelay: {
