@@ -1,7 +1,7 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import * as bip68 from "bip68";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import {
     buildOffchainTx,
     ConditionWitness,
@@ -22,7 +22,7 @@ import {
     createTestIdentity,
     faucetOffchain,
 } from "./utils";
-import { hash160 } from "@scure/btc-signer/utils";
+import { hash160 } from "@scure/btc-signer/utils.js";
 import { execSync } from "child_process";
 import { beforeAll } from "vitest";
 
@@ -47,8 +47,8 @@ describe("vhtlc", () => {
 
         const vhtlcScript = new VHTLC.Script({
             preimageHash,
-            sender: alice.xOnlyPublicKey(),
-            receiver: bob.xOnlyPublicKey(),
+            sender: await alice.xOnlyPublicKey(),
+            receiver: await bob.xOnlyPublicKey(),
             server: X_ONLY_PUBLIC_KEY,
             refundLocktime: BigInt(1000),
             unilateralClaimDelay: {
@@ -84,6 +84,7 @@ describe("vhtlc", () => {
             },
             xOnlyPublicKey: bob.xOnlyPublicKey,
             signerSession: bob.signerSession,
+            signMessage: bob.signMessage,
         };
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
@@ -97,14 +98,13 @@ describe("vhtlc", () => {
         });
         expect(spendableVtxosResponse.vtxos).toHaveLength(1);
 
-        const infos = await arkProvider.getInfo();
-        const serverUnrollScript = CSVMultisigTapscript.encode({
-            timelock: {
-                type: infos.unilateralExitDelay < 512 ? "blocks" : "seconds",
-                value: infos.unilateralExitDelay,
-            },
-            pubkeys: [X_ONLY_PUBLIC_KEY],
-        });
+        const info = await arkProvider.getInfo();
+        const rawCheckpointUnrollClosure = hex.decode(
+            info.checkpointExitClosure
+        );
+        const checkpointUnrollClosure = CSVMultisigTapscript.decode(
+            rawCheckpointUnrollClosure
+        );
 
         const vtxo = spendableVtxosResponse.vtxos[0];
 
@@ -122,7 +122,7 @@ describe("vhtlc", () => {
                     amount: BigInt(fundAmount),
                 },
             ],
-            serverUnrollScript
+            checkpointUnrollClosure
         );
 
         const signedArkTx = await bobVHTLCIdentity.sign(arkTx);
@@ -164,8 +164,8 @@ describe("vhtlc", () => {
 
         const vhtlcScript = new VHTLC.Script({
             preimageHash,
-            sender: alice.identity.xOnlyPublicKey(),
-            receiver: bob.xOnlyPublicKey(),
+            sender: await alice.identity.xOnlyPublicKey(),
+            receiver: await bob.xOnlyPublicKey(),
             server: X_ONLY_PUBLIC_KEY,
             refundLocktime: BigInt(1000),
             unilateralClaimDelay: {
@@ -210,7 +210,7 @@ describe("vhtlc", () => {
         expect(spendableVtxosResponse.vtxos).toHaveLength(1);
 
         const vtxo = spendableVtxosResponse.vtxos[0];
-        const onchainBob = new OnchainWallet(bob, "regtest");
+        const onchainBob = await OnchainWallet.create(bob, "regtest");
 
         execSync(`nigiri faucet ${onchainBob.address} 0.001`);
 

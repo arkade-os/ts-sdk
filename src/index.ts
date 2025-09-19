@@ -1,4 +1,4 @@
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { SingleKey } from "./identity/singleKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
@@ -93,8 +93,6 @@ import {
 } from "./utils/unknownFields";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
-import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
-import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
@@ -116,6 +114,8 @@ import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
+import { WalletRepositoryImpl } from "./repositories/walletRepository";
+import { ContractRepositoryImpl } from "./repositories/contractRepository";
 
 export {
     // Wallets
@@ -177,8 +177,9 @@ export {
     // Network
     networks,
 
-    // Database
-    IndexedDBVtxoRepository,
+    // Repositories
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 
     // BIP322
     BIP322,
@@ -211,7 +212,6 @@ export type {
     VirtualCoin,
     TxKey,
     TapscriptType,
-    VtxoRepository,
     ArkTxInput,
     OffchainTx,
     TapLeaves,

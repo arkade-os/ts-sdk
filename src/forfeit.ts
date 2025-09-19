@@ -1,4 +1,4 @@
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { P2A } from "./utils/anchor";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
 

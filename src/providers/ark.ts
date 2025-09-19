@@ -2,6 +2,7 @@ import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
+import { eventSourceIterator } from "./utils";
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -106,6 +107,7 @@ export interface ArkInfo {
     vtxoMinAmount: bigint;
     vtxoMaxAmount: bigint; // -1 means no limit (default)
     boardingExitDelay: bigint;
+    checkpointExitClosure: string;
 }
 
 export interface Intent {
@@ -191,6 +193,7 @@ export class RestArkProvider implements ArkProvider {
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
+            checkpointExitClosure: fromServer.checkpointTapscript ?? "",
             marketHour:
                 "marketHour" in fromServer && fromServer.marketHour != null
                     ? {
@@ -424,58 +427,35 @@ export class RestArkProvider implements ArkProvider {
 
         while (!signal?.aborted) {
             try {
-                const response = await fetch(url + queryParams, {
-                    headers: {
-                        Accept: "application/json",
-                    },
-                    signal,
-                });
+                const eventSource = new EventSource(url + queryParams);
 
-                if (!response.ok) {
-                    throw new Error(
-                        `Unexpected status ${response.status} when fetching event stream`
-                    );
-                }
+                // Set up abort handling
+                const abortHandler = () => {
+                    eventSource.close();
+                };
+                signal?.addEventListener("abort", abortHandler);
 
-                if (!response.body) {
-                    throw new Error("Response body is null");
-                }
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-
-                while (!signal?.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    // Append new data to buffer and split by newlines
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    // Process all complete lines
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
+                try {
+                    for await (const event of eventSourceIterator(
+                        eventSource
+                    )) {
+                        if (signal?.aborted) break;
 
                         try {
-                            const data = JSON.parse(line);
-                            const event = this.parseSettlementEvent(
-                                data.result
-                            );
-                            if (event) {
-                                yield event;
+                            const data = JSON.parse(event.data);
+                            const settlementEvent =
+                                this.parseSettlementEvent(data);
+                            if (settlementEvent) {
+                                yield settlementEvent;
                             }
                         } catch (err) {
                             console.error("Failed to parse event:", err);
                             throw err;
                         }
                     }
-
-                    // Keep the last partial line in the buffer
-                    buffer = lines[lines.length - 1];
+                } finally {
+                    signal?.removeEventListener("abort", abortHandler);
+                    eventSource.close();
                 }
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
@@ -483,7 +463,6 @@ export class RestArkProvider implements ArkProvider {
                 }
 
                 // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                // these timeouts are set by builtin fetch function
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
@@ -503,52 +482,38 @@ export class RestArkProvider implements ArkProvider {
 
         while (!signal?.aborted) {
             try {
-                const response = await fetch(url, {
-                    headers: {
-                        Accept: "application/json",
-                    },
-                    signal,
-                });
+                const eventSource = new EventSource(url);
 
-                if (!response.ok) {
-                    throw new Error(
-                        `Unexpected status ${response.status} when fetching transaction stream`
-                    );
-                }
+                // Set up abort handling
+                const abortHandler = () => {
+                    eventSource.close();
+                };
+                signal?.addEventListener("abort", abortHandler);
 
-                if (!response.body) {
-                    throw new Error("Response body is null");
-                }
+                try {
+                    for await (const event of eventSourceIterator(
+                        eventSource
+                    )) {
+                        if (signal?.aborted) break;
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-
-                while (!signal?.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    // Append new data to buffer and split by newlines
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    // Process all complete lines
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
-
-                        const data = JSON.parse(line);
-                        const txNotification =
-                            this.parseTransactionNotification(data.result);
-                        if (txNotification) {
-                            yield txNotification;
+                        try {
+                            const data = JSON.parse(event.data);
+                            const txNotification =
+                                this.parseTransactionNotification(data);
+                            if (txNotification) {
+                                yield txNotification;
+                            }
+                        } catch (err) {
+                            console.error(
+                                "Failed to parse transaction notification:",
+                                err
+                            );
+                            throw err;
                         }
                     }
-
-                    // Keep the last partial line in the buffer
-                    buffer = lines[lines.length - 1];
+                } finally {
+                    signal?.removeEventListener("abort", abortHandler);
+                    eventSource.close();
                 }
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
@@ -556,20 +521,19 @@ export class RestArkProvider implements ArkProvider {
                 }
 
                 // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                // these timeouts are set by builtin fetch function
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
                 }
 
-                console.error("Address subscription error:", error);
+                console.error("Transaction stream error:", error);
                 throw error;
             }
         }
     }
 
     private parseSettlementEvent(
-        data: ProtoTypes.EventData
+        data: ProtoTypes.GetEventStreamResponse
     ): SettlementEvent | null {
         // Check for BatchStarted event
         if (data.batchStarted) {
@@ -664,12 +628,17 @@ export class RestArkProvider implements ArkProvider {
             };
         }
 
+        // Skip heartbeat events
+        if (data.heartbeat) {
+            return null;
+        }
+
         console.warn("Unknown event type:", data);
         return null;
     }
 
     private parseTransactionNotification(
-        data: ProtoTypes.TransactionData
+        data: ProtoTypes.GetTransactionsStreamResponse
     ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
         if (data.commitmentTx) {
             return {
@@ -694,6 +663,11 @@ export class RestArkProvider implements ArkProvider {
                     checkpointTxs: data.arkTx.checkpointTxs,
                 },
             };
+        }
+
+        // Skip heartbeat events
+        if (data.heartbeat) {
+            return null;
         }
 
         console.warn("Unknown transaction notification type:", data);
@@ -734,7 +708,7 @@ namespace ProtoTypes {
     interface BatchStartedEvent {
         id: string;
         intentIdHashes: string[];
-        batchExpiry: string;
+        batchExpiry: number;
     }
 
     interface BatchFailed {
@@ -780,6 +754,10 @@ namespace ProtoTypes {
         signature: string;
     }
 
+    interface Heartbeat {
+        // Empty interface for heartbeat events
+    }
+
     export interface VtxoData {
         outpoint: {
             txid: string;
@@ -788,7 +766,7 @@ namespace ProtoTypes {
         amount: string;
         script: string;
         createdAt: string;
-        expiresAt: string;
+        expiresAt: string | null;
         commitmentTxids: string[];
         isPreconfirmed: boolean;
         isSwept: boolean;
@@ -799,6 +777,37 @@ namespace ProtoTypes {
         arkTxid?: string;
     }
 
+    export interface GetEventStreamResponse {
+        batchStarted?: BatchStartedEvent;
+        batchFailed?: BatchFailed;
+        batchFinalization?: BatchFinalizationEvent;
+        batchFinalized?: BatchFinalizedEvent;
+        treeSigningStarted?: TreeSigningStartedEvent;
+        treeNoncesAggregated?: TreeNoncesAggregatedEvent;
+        treeTx?: TreeTxEvent;
+        treeSignature?: TreeSignatureEvent;
+        heartbeat?: Heartbeat;
+    }
+
+    export interface GetTransactionsStreamResponse {
+        commitmentTx?: {
+            txid: string;
+            tx: string;
+            spentVtxos: VtxoData[];
+            spendableVtxos: VtxoData[];
+            checkpointTxs?: Record<string, { txid: string; tx: string }>;
+        };
+        arkTx?: {
+            txid: string;
+            tx: string;
+            spentVtxos: VtxoData[];
+            spendableVtxos: VtxoData[];
+            checkpointTxs?: Record<string, { txid: string; tx: string }>;
+        };
+        heartbeat?: Heartbeat;
+    }
+
+    // Legacy types for backward compatibility
     export interface EventData {
         batchStarted?: BatchStartedEvent;
         batchFailed?: BatchFailed;
