@@ -79,7 +79,7 @@ export class TreeSignerSession implements SignerSession {
 
         const sigs: TreePartialSigs = new Map();
 
-        for (const g of this.graph) {
+        for (const g of this.graph.iterator()) {
             const sig = this.signPartial(g);
             sigs.set(g.txid, sig);
         }
@@ -94,7 +94,7 @@ export class TreeSignerSession implements SignerSession {
 
         const publicKey = secp256k1.getPublicKey(this.secretKey);
 
-        for (const g of this.graph) {
+        for (const g of this.graph.iterator()) {
             const nonces = musig2.generateNonces(publicKey);
             myNonces.set(g.txid, nonces);
         }
@@ -170,7 +170,7 @@ export async function validateTreeSigs(
     vtxoTree: TxTree
 ): Promise<void> {
     // Iterate through each level of the tree
-    for (const g of vtxoTree) {
+    for (const g of vtxoTree.iterator()) {
         // Parse the transaction
         const input = g.root.getInput(0);
 
