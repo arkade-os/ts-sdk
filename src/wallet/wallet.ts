@@ -273,8 +273,9 @@ export class Wallet implements IWallet {
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const address = await this.getAddress();
 
-        // Try to get from cache first
-        const cachedVtxos = await this.walletRepository.getVtxos(address);
+        // Try to get from cache first first (optional fast path)
+        // const cachedVtxos = await this.walletRepository.getVtxos(address);
+        // if (cachedVtxos.length) return cachedVtxos;
 
         // For now, always fetch fresh data from provider and update cache
         // In future, we can add cache invalidation logic based on timestamps
