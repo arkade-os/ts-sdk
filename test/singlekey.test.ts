@@ -27,6 +27,9 @@ describe("SingleKey", () => {
         const key = SingleKey.fromHex(privateKeyHex);
 
         await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
+        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(
+            Uint8Array
+        );
     });
 
     it("should create keys from private key bytes", async () => {
@@ -34,6 +37,9 @@ describe("SingleKey", () => {
         const key = SingleKey.fromPrivateKey(privateKeyBytes);
 
         await expect(key.xOnlyPublicKey()).resolves.toBeInstanceOf(Uint8Array);
+        await expect(key.compressedPublicKey()).resolves.toBeInstanceOf(
+            Uint8Array
+        );
     });
 
     it("should export private key as hex with toHex()", () => {
@@ -62,10 +68,15 @@ describe("SingleKey", () => {
         expect(storedHex).toBeTruthy(); // Ensure it's not null
         const key2 = SingleKey.fromHex(storedHex!);
 
-        // Should have the same public key
+        // Should have the same x-only public key
         const pubKey1 = await key1.xOnlyPublicKey();
         const pubKey2 = await key2.xOnlyPublicKey();
         expect(Array.from(pubKey1)).toEqual(Array.from(pubKey2));
+
+        // Should have the same compressed public key
+        const compPubKey1 = await key1.compressedPublicKey();
+        const compPubKey2 = await key2.compressedPublicKey();
+        expect(Array.from(compPubKey1)).toEqual(Array.from(compPubKey2));
 
         // Should export the same hex
         expect(key2.toHex()).toBe(originalHex);
