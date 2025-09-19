@@ -1,4 +1,5 @@
 import {
+    pubECDSA,
     pubSchnorr,
     randomPrivateKeyBytes,
     sha256,
@@ -86,6 +87,10 @@ export class SingleKey implements Identity {
         }
 
         return txCpy;
+    }
+
+    compressedPublicKey(): Promise<Uint8Array> {
+        return Promise.resolve(pubECDSA(this.key, true));
     }
 
     xOnlyPublicKey(): Promise<Uint8Array> {
