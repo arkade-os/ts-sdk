@@ -50,7 +50,10 @@ describe("Wallet", () => {
                 json: () => Promise.resolve(mockUTXOs),
             });
 
-            const wallet = new OnchainWallet(mockIdentity, "mutinynet");
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
 
             const balance = await wallet.getBalance();
             expect(balance).toBe(100000);
@@ -81,6 +84,12 @@ describe("Wallet", () => {
                 ],
             };
 
+            // Setup mocks in the correct order based on actual call sequence:
+            // 1. getInfo() call during wallet creation
+            // 2. getBoardingUtxos() -> getCoins() call
+            // 3. getVtxos() -> first vtxos call (spendable)
+            // 4. getVtxos() -> second vtxos call (recoverable)
+
             mockFetch
                 .mockResolvedValueOnce({
                     ok: true,
@@ -99,11 +108,11 @@ describe("Wallet", () => {
                 })
                 .mockResolvedValueOnce({
                     ok: true,
-                    json: () => Promise.resolve(mockServerResponse),
+                    json: () => Promise.resolve(mockUTXOs),
                 })
                 .mockResolvedValueOnce({
                     ok: true,
-                    json: () => Promise.resolve(mockUTXOs),
+                    json: () => Promise.resolve(mockServerResponse),
                 })
                 .mockResolvedValueOnce({
                     ok: true,
@@ -146,7 +155,10 @@ describe("Wallet", () => {
                 json: () => Promise.resolve(mockUTXOs),
             });
 
-            const wallet = new OnchainWallet(mockIdentity, "mutinynet");
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
 
             const coins = await wallet.getCoins();
             expect(coins).toEqual(mockUTXOs);
@@ -173,7 +185,10 @@ describe("Wallet", () => {
         });
 
         it("should throw error when amount is negative", async () => {
-            const wallet = new OnchainWallet(mockIdentity, "mutinynet");
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
 
             await expect(
                 wallet.send({

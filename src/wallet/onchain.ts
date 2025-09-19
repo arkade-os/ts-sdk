@@ -1,4 +1,4 @@
-import { p2tr, P2TR } from "@scure/btc-signer/payment";
+import { p2tr, P2TR } from "@scure/btc-signer/payment.js";
 import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
@@ -7,7 +7,7 @@ import {
     EsploraProvider,
     OnchainProvider,
 } from "../providers/onchain";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 
@@ -20,7 +20,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
  *
  * @example
  * ```typescript
- * const wallet = new OnchainWallet(identity, 'mainnet');
+ * const wallet = await OnchainWallet.create(identity, 'mainnet');
  * const balance = await wallet.getBalance();
  * const txid = await wallet.send({
  *   address: 'bc1...',
@@ -36,19 +36,38 @@ export class OnchainWallet implements AnchorBumper {
     readonly provider: OnchainProvider;
     readonly network: Network;
 
-    constructor(
+    private constructor(
         private identity: Identity,
-        network: NetworkName,
-        provider?: OnchainProvider
+        network: Network,
+        onchainP2TR: P2TR,
+        provider: OnchainProvider
     ) {
-        const pubkey = identity.xOnlyPublicKey();
+        this.network = network;
+        this.onchainP2TR = onchainP2TR;
+        this.provider = provider;
+    }
+
+    static async create(
+        identity: Identity,
+        networkName: NetworkName,
+        provider?: OnchainProvider
+    ): Promise<OnchainWallet> {
+        const pubkey = await identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
         }
 
-        this.provider = provider || new EsploraProvider(ESPLORA_URL[network]);
-        this.network = getNetwork(network);
-        this.onchainP2TR = p2tr(pubkey, undefined, this.network);
+        const network = getNetwork(networkName);
+        const onchainProvider =
+            provider || new EsploraProvider(ESPLORA_URL[networkName]);
+        const onchainP2TR = p2tr(pubkey, undefined, network);
+
+        return new OnchainWallet(
+            identity,
+            network,
+            onchainP2TR,
+            onchainProvider
+        );
     }
 
     get address(): string {

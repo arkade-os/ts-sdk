@@ -4,7 +4,6 @@ import {
     SendBitcoinParams,
     SettleParams,
     ArkTransaction,
-    WalletConfig,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
@@ -12,11 +11,28 @@ import {
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
-import { base64, hex } from "@scure/base";
-import { SingleKey } from "../../identity/singleKey";
+import { hex } from "@scure/base";
 import { Identity } from "../../identity";
-import { SignerSession, TreeSignerSession } from "../../tree/signingSession";
-import { Transaction } from "@scure/btc-signer";
+import { StorageAdapter } from "../../storage";
+import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
+import { WalletRepository } from "../../repositories/walletRepository";
+import { WalletRepositoryImpl } from "../../repositories/walletRepository";
+import { ContractRepository } from "../../repositories/contractRepository";
+import { ContractRepositoryImpl } from "../../repositories/contractRepository";
+import { setupServiceWorker } from "./utils";
+
+export type PrivateKeyIdentity = Identity & { toHex(): string };
+
+const isPrivateKeyIdentity = (
+    identity: Identity
+): identity is PrivateKeyIdentity => {
+    return (
+        (identity as PrivateKeyIdentity).toHex !== undefined &&
+        typeof (identity as PrivateKeyIdentity).toHex === "function" &&
+        typeof (identity as PrivateKeyIdentity).toHex() === "string" &&
+        (identity as PrivateKeyIdentity).toHex().length > 0
+    );
+};
 
 class UnexpectedResponseError extends Error {
     constructor(response: Response.Base) {
@@ -37,12 +53,21 @@ class UnexpectedResponseError extends Error {
  *
  * @example
  * ```typescript
- * // Create and initialize the service worker wallet
+ * // SIMPLE: Recommended approach
+ * const identity = SingleKey.fromHex('your_private_key_hex');
+ * const wallet = await ServiceWorkerWallet.setup({
+ *   serviceWorkerPath: '/service-worker.js',
+ *   arkServerUrl: 'https://mutinynet.arkade.sh',
+ *   identity
+ * });
+ *
+ * // ADVANCED: Manual setup with service worker control
  * const serviceWorker = await setupServiceWorker("/service-worker.js");
- * const wallet = new ServiceWorkerWallet(serviceWorker);
- * await wallet.init({
- *   privateKey: 'your_private_key_hex',
- *   arkServerUrl: 'https://ark.example.com'
+ * const identity = SingleKey.fromHex('your_private_key_hex');
+ * const wallet = await ServiceWorkerWallet.create({
+ *   serviceWorker,
+ *   identity,
+ *   arkServerUrl: 'https://mutinynet.arkade.sh'
  * });
  *
  * // Use like any other wallet
@@ -50,74 +75,122 @@ class UnexpectedResponseError extends Error {
  * const balance = await wallet.getBalance();
  * ```
  */
-export class ServiceWorkerWallet implements IWallet, Identity {
-    private cachedXOnlyPublicKey: Uint8Array | undefined;
+interface ServiceWorkerWalletOptions {
+    arkServerPublicKey?: string;
+    arkServerUrl: string;
+    esploraUrl?: string;
+    identity: PrivateKeyIdentity;
+    storage?: StorageAdapter;
+}
+export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
+    serviceWorker: ServiceWorker;
+};
 
-    constructor(public readonly serviceWorker: ServiceWorker) {}
+export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
+    serviceWorkerPath: string;
+};
 
-    async getStatus(): Promise<Response.WalletStatus["status"]> {
-        const message: Request.GetStatus = {
-            type: "GET_STATUS",
-            id: getRandomId(),
-        };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletStatus(response)) {
-            const { walletInitialized, xOnlyPublicKey } = response.status;
-            if (walletInitialized) this.cachedXOnlyPublicKey = xOnlyPublicKey;
-            return response.status;
-        }
-        throw new UnexpectedResponseError(response);
+export class ServiceWorkerWallet implements IWallet {
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+    public readonly identity: Identity;
+
+    private constructor(
+        public readonly serviceWorker: ServiceWorker,
+        identity: PrivateKeyIdentity,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository
+    ) {
+        this.identity = identity;
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
     }
 
-    async init(
-        config: Omit<WalletConfig, "identity"> & { privateKey: string },
-        failIfInitialized = false
-    ): Promise<void> {
-        // Check if wallet is already initialized
-        const statusMessage: Request.GetStatus = {
-            type: "GET_STATUS",
-            id: getRandomId(),
-        };
-        const response = await this.sendMessage(statusMessage);
+    static async create(
+        options: ServiceWorkerWalletCreateOptions
+    ): Promise<ServiceWorkerWallet> {
+        // Default to IndexedDB for service worker context
+        const storage =
+            options.storage || new IndexedDBStorageAdapter("wallet-db");
 
-        if (
-            Response.isWalletStatus(response) &&
-            response.status.walletInitialized
-        ) {
-            if (failIfInitialized) {
-                throw new Error("Wallet already initialized");
-            }
+        // Create repositories
+        const walletRepo = new WalletRepositoryImpl(storage);
+        const contractRepo = new ContractRepositoryImpl(storage);
 
-            this.cachedXOnlyPublicKey = response.status.xOnlyPublicKey;
-            return;
+        // Extract identity and check if it can expose private key
+        const identity = isPrivateKeyIdentity(options.identity)
+            ? options.identity
+            : null;
+        if (!identity) {
+            throw new Error(
+                "ServiceWorkerWallet.create() requires a Identity that can expose its private key"
+            );
         }
 
-        // If not initialized, proceed with initialization
-        const message: Request.InitWallet = {
+        // Extract private key for service worker initialization
+        const privateKey = identity.toHex();
+
+        // Create the wallet instance
+        const wallet = new ServiceWorkerWallet(
+            options.serviceWorker,
+            identity,
+            walletRepo,
+            contractRepo
+        );
+
+        // Initialize the service worker with the config
+        const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
-            privateKey: config.privateKey,
-            arkServerUrl: config.arkServerUrl,
-            arkServerPublicKey: config.arkServerPublicKey,
+            privateKey,
+            arkServerUrl: options.arkServerUrl,
+            arkServerPublicKey: options.arkServerPublicKey,
         };
 
-        await this.sendMessage(message);
+        // Initialize the service worker
+        await wallet.sendMessage(initMessage);
 
-        const privKeyBytes = hex.decode(config.privateKey);
-        // cache the identity xOnlyPublicKey
-        this.cachedXOnlyPublicKey =
-            SingleKey.fromPrivateKey(privKeyBytes).xOnlyPublicKey();
+        return wallet;
     }
 
-    async clear() {
-        const message: Request.Clear = {
-            type: "CLEAR",
-            id: getRandomId(),
-        };
-        await this.sendMessage(message);
+    /**
+     * Simplified setup method that handles service worker registration,
+     * identity creation, and wallet initialization automatically.
+     *
+     * @example
+     * ```typescript
+     * // One-liner setup - handles everything automatically!
+     * const wallet = await ServiceWorkerWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServerUrl: 'https://mutinynet.arkade.sh'
+     * });
+     *
+     * // With custom identity
+     * const identity = SingleKey.fromHex('your_private_key_hex');
+     * const wallet = await ServiceWorkerWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServerUrl: 'https://mutinynet.arkade.sh',
+     *   identity
+     * });
+     * ```
+     */
+    static async setup(
+        options: ServiceWorkerWalletSetupOptions
+    ): Promise<ServiceWorkerWallet> {
+        // Register and setup the service worker
+        const serviceWorker = await setupServiceWorker(
+            options.serviceWorkerPath
+        );
 
-        // clear the cached xOnlyPublicKey
-        this.cachedXOnlyPublicKey = undefined;
+        // Use the existing create method
+        return await ServiceWorkerWallet.create({
+            arkServerPublicKey: options.arkServerPublicKey,
+            arkServerUrl: options.arkServerUrl,
+            esploraUrl: options.esploraUrl,
+            identity: options.identity,
+            serviceWorker,
+            storage: options.storage,
+        });
     }
 
     // send a message and wait for a response
@@ -149,6 +222,22 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             navigator.serviceWorker.addEventListener("message", messageHandler);
             this.serviceWorker.postMessage(message);
         });
+    }
+
+    async clear() {
+        const message: Request.Clear = {
+            type: "CLEAR",
+            id: getRandomId(),
+        };
+        // Clear page-side storage to maintain parity with SW
+        try {
+            const address = await this.getAddress();
+            await this.walletRepository.clearVtxos(address);
+        } catch (_) {
+            console.warn("Failed to clear vtxos from wallet repository");
+        }
+
+        await this.sendMessage(message);
     }
 
     async getAddress(): Promise<string> {
@@ -202,6 +291,52 @@ export class ServiceWorkerWallet implements IWallet, Identity {
         }
     }
 
+    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const message: Request.GetBoardingUtxos = {
+            type: "GET_BOARDING_UTXOS",
+            id: getRandomId(),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isBoardingUtxos(response)) {
+                return response.boardingUtxos;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to get boarding UTXOs: ${error}`);
+        }
+    }
+
+    async getStatus(): Promise<Response.WalletStatus["status"]> {
+        const message: Request.GetStatus = {
+            type: "GET_STATUS",
+            id: getRandomId(),
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isWalletStatus(response)) {
+            return response.status;
+        }
+        throw new UnexpectedResponseError(response);
+    }
+
+    async getTransactionHistory(): Promise<ArkTransaction[]> {
+        const message: Request.GetTransactionHistory = {
+            type: "GET_TRANSACTION_HISTORY",
+            id: getRandomId(),
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isTransactionHistory(response)) {
+                return response.transactions;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Failed to get transaction history: ${error}`);
+        }
+    }
+
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const message: Request.GetVtxos = {
             type: "GET_VTXOS",
@@ -217,23 +352,6 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             throw new UnexpectedResponseError(response);
         } catch (error) {
             throw new Error(`Failed to get vtxos: ${error}`);
-        }
-    }
-
-    async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const message: Request.GetBoardingUtxos = {
-            type: "GET_BOARDING_UTXOS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isBoardingUtxos(response)) {
-                return response.boardingUtxos;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get boarding UTXOs: ${error}`);
         }
     }
 
@@ -307,55 +425,6 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             });
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
-        }
-    }
-
-    async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const message: Request.GetTransactionHistory = {
-            type: "GET_TRANSACTION_HISTORY",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isTransactionHistory(response)) {
-                return response.transactions;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get transaction history: ${error}`);
-        }
-    }
-
-    xOnlyPublicKey(): Uint8Array {
-        if (!this.cachedXOnlyPublicKey) {
-            throw new Error("Wallet not initialized");
-        }
-        return this.cachedXOnlyPublicKey;
-    }
-
-    signerSession(): SignerSession {
-        return TreeSignerSession.random();
-    }
-
-    async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
-        const message: Request.Sign = {
-            type: "SIGN",
-            tx: base64.encode(tx.toPSBT()),
-            inputIndexes,
-            id: getRandomId(),
-        };
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isSignSuccess(response)) {
-                return Transaction.fromPSBT(base64.decode(response.tx), {
-                    allowUnknown: true,
-                    allowUnknownInputs: true,
-                });
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to sign: ${error}`);
         }
     }
 }

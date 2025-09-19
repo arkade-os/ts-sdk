@@ -19,8 +19,7 @@ export namespace Response {
         | "TRANSACTION_HISTORY"
         | "WALLET_STATUS"
         | "ERROR"
-        | "CLEAR_RESPONSE"
-        | "SIGN_SUCCESS";
+        | "CLEAR_RESPONSE";
 
     export interface Base {
         type: Type;
@@ -312,24 +311,5 @@ export namespace Response {
             success,
             id,
         };
-    }
-
-    export interface SignSuccess extends Base {
-        type: "SIGN_SUCCESS";
-        success: true;
-        tx: string;
-    }
-
-    export function signSuccess(id: string, tx: string): SignSuccess {
-        return {
-            type: "SIGN_SUCCESS",
-            success: true,
-            tx,
-            id,
-        };
-    }
-
-    export function isSignSuccess(response: Base): response is SignSuccess {
-        return response.type === "SIGN_SUCCESS" && response.success === true;
     }
 }

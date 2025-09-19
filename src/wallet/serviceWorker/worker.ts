@@ -7,13 +7,16 @@ import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
-import { IndexedDBVtxoRepository } from "./db/vtxo/idb";
-import { VtxoRepository } from "./db/vtxo";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { base64, hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
+import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
+import {
+    WalletRepository,
+    WalletRepositoryImpl,
+} from "../../repositories/walletRepository";
 
 /**
  * Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -24,13 +27,53 @@ export class Worker {
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private vtxoSubscription: AbortController | undefined;
+    private walletRepository: WalletRepository;
+    private storage: IndexedDBStorageAdapter;
 
     constructor(
-        private readonly vtxoRepository: VtxoRepository = new IndexedDBVtxoRepository(),
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
-    ) {}
+    ) {
+        this.storage = new IndexedDBStorageAdapter("arkade-service-worker", 1);
+        this.walletRepository = new WalletRepositoryImpl(this.storage);
+    }
+
+    /**
+     * Get spendable vtxos for the current wallet address
+     */
+    private async getSpendableVtxos() {
+        if (!this.wallet) return [];
+        const address = await this.wallet.getAddress();
+        const allVtxos = await this.walletRepository.getVtxos(address);
+        return allVtxos.filter(isSpendable);
+    }
+
+    /**
+     * Get swept vtxos for the current wallet address
+     */
+    private async getSweptVtxos() {
+        if (!this.wallet) return [];
+        const address = await this.wallet.getAddress();
+        const allVtxos = await this.walletRepository.getVtxos(address);
+        return allVtxos.filter(
+            (vtxo) => vtxo.virtualStatus.state === "swept" && isSpendable(vtxo)
+        );
+    }
+
+    /**
+     * Get all vtxos categorized by type
+     */
+    private async getAllVtxos() {
+        if (!this.wallet) return { spendable: [], spent: [] };
+        const address = await this.wallet.getAddress();
+        const allVtxos = await this.walletRepository.getVtxos(address);
+
+        return {
+            spendable: allVtxos.filter(isSpendable),
+            spent: allVtxos.filter((vtxo) => !isSpendable(vtxo)),
+        };
+    }
 
     async start(withServiceWorkerUpdate = true) {
         self.addEventListener(
@@ -56,7 +99,9 @@ export class Worker {
             this.vtxoSubscription.abort();
         }
 
-        await this.vtxoRepository.close();
+        // Clear storage - this replaces vtxoRepository.close()
+        await this.storage.clear();
+
         this.wallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
@@ -78,8 +123,6 @@ export class Worker {
         ) {
             return;
         }
-        // subscribe to address updates
-        await this.vtxoRepository.open();
 
         const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
         const forfeit = this.wallet.offchainTapscript.forfeit();
@@ -97,7 +140,9 @@ export class Worker {
             tapTree: encodedOffchainTapscript,
         }));
 
-        await this.vtxoRepository.addOrUpdate(vtxos);
+        // Get wallet address and save vtxos using unified repository
+        const address = await this.wallet.getAddress();
+        await this.walletRepository.saveVtxos(address, vtxos);
 
         this.processVtxoSubscription({
             script,
@@ -141,7 +186,11 @@ export class Worker {
                     tapTree,
                 }));
 
-                await this.vtxoRepository.addOrUpdate(extendedVtxos);
+                // Get wallet address and save vtxos using unified repository
+                const address = await this.wallet!.getAddress();
+                await this.walletRepository.saveVtxos(address, extendedVtxos);
+                // Notify all clients about the vtxo update
+                this.sendMessageToAllClients("VTXO_UPDATE", "");
             }
         } catch (error) {
             console.error("Error processing address updates:", error);
@@ -149,7 +198,7 @@ export class Worker {
     }
 
     private async handleClear(event: ExtendableMessageEvent) {
-        this.clear();
+        await this.clear();
         if (Request.isBase(event.data)) {
             event.source?.postMessage(
                 Response.clearResponse(event.data.id, true)
@@ -167,16 +216,24 @@ export class Worker {
             return;
         }
 
+        if (!message.privateKey) {
+            const err = "Missing privateKey";
+            event.source?.postMessage(Response.error(message.id, err));
+            console.error(err);
+            return;
+        }
+
         try {
-            this.arkProvider = new RestArkProvider(message.arkServerUrl);
-            this.indexerProvider = new RestIndexerProvider(
-                message.arkServerUrl
-            );
+            const { arkServerPublicKey, arkServerUrl, privateKey } = message;
+            const identity = SingleKey.fromHex(privateKey);
+            this.arkProvider = new RestArkProvider(arkServerUrl);
+            this.indexerProvider = new RestIndexerProvider(arkServerUrl);
 
             this.wallet = await Wallet.create({
-                identity: SingleKey.fromHex(message.privateKey),
-                arkServerUrl: message.arkServerUrl,
-                arkServerPublicKey: message.arkServerPublicKey,
+                identity,
+                arkServerUrl,
+                arkServerPublicKey,
+                storage: this.storage, // Use unified storage for wallet too
             });
 
             event.source?.postMessage(Response.walletInitialized(message.id));
@@ -353,8 +410,8 @@ export class Worker {
             const [boardingUtxos, spendableVtxos, sweptVtxos] =
                 await Promise.all([
                     this.wallet.getBoardingUtxos(),
-                    this.vtxoRepository.getSpendableVtxos(),
-                    this.vtxoRepository.getSweptVtxos(),
+                    this.getSpendableVtxos(),
+                    this.getSweptVtxos(),
                 ]);
 
             // boarding
@@ -431,18 +488,18 @@ export class Worker {
         }
 
         try {
-            let vtxos = await this.vtxoRepository.getSpendableVtxos();
+            let vtxos = await this.getSpendableVtxos();
             if (!message.filter?.withRecoverable) {
                 if (!this.wallet) throw new Error("Wallet not initialized");
                 // exclude subdust is we don't want recoverable
                 vtxos = vtxos.filter(
-                    (v) => !isSubdust(v, this.wallet!.dustAmount!)
+                    (v: any) => !isSubdust(v, this.wallet!.dustAmount!)
                 );
             }
 
             if (message.filter?.withRecoverable) {
                 // get also swept and spendable vtxos
-                const sweptVtxos = await this.vtxoRepository.getSweptVtxos();
+                const sweptVtxos = await this.getSweptVtxos();
                 vtxos.push(...sweptVtxos.filter(isSpendable));
             }
             event.source?.postMessage(Response.vtxos(message.id, vtxos));
@@ -520,8 +577,7 @@ export class Worker {
             const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
                 await this.wallet.getBoardingTxs();
 
-            const { spendable, spent } =
-                await this.vtxoRepository.getAllVtxos();
+            const { spendable, spent } = await this.getAllVtxos();
 
             // convert VTXOs to offchain transactions
             const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);
@@ -561,56 +617,12 @@ export class Worker {
             return;
         }
 
+        const pubKey = this.wallet
+            ? await this.wallet.identity.xOnlyPublicKey()
+            : undefined;
         event.source?.postMessage(
-            Response.walletStatus(
-                message.id,
-                this.wallet !== undefined,
-                this.wallet?.identity.xOnlyPublicKey()
-            )
+            Response.walletStatus(message.id, this.wallet !== undefined, pubKey)
         );
-    }
-
-    private async handleSign(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isSign(message)) {
-            console.error("Invalid SIGN message format", message);
-            event.source?.postMessage(
-                Response.error(message.id, "Invalid SIGN message format")
-            );
-            return;
-        }
-
-        if (!this.wallet) {
-            console.error("Wallet not initialized");
-            event.source?.postMessage(
-                Response.error(message.id, "Wallet not initialized")
-            );
-            return;
-        }
-
-        try {
-            const tx = Transaction.fromPSBT(base64.decode(message.tx), {
-                allowUnknown: true,
-                allowUnknownInputs: true,
-            });
-            const signedTx = await this.wallet.identity.sign(
-                tx,
-                message.inputIndexes
-            );
-            event.source?.postMessage(
-                Response.signSuccess(
-                    message.id,
-                    base64.encode(signedTx.toPSBT())
-                )
-            );
-        } catch (error: unknown) {
-            console.error("Error signing:", error);
-            const errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Unknown error occurred";
-            event.source?.postMessage(Response.error(message.id, errorMessage));
-        }
     }
 
     private async handleMessage(event: ExtendableMessageEvent) {
@@ -667,14 +679,23 @@ export class Worker {
                 await this.handleClear(event);
                 break;
             }
-            case "SIGN": {
-                await this.handleSign(event);
-                break;
-            }
             default:
                 event.source?.postMessage(
                     Response.error(message.id, "Unknown message type")
                 );
         }
+    }
+
+    private async sendMessageToAllClients(type: string, message: any) {
+        self.clients
+            .matchAll({ includeUncontrolled: true, type: "window" })
+            .then((clients) => {
+                clients.forEach((client) => {
+                    client.postMessage({
+                        type,
+                        message,
+                    });
+                });
+            });
     }
 }

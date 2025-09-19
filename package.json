@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.2.3",
+    "version": "0.3.0-alpha.1",
     "description": "Bitcoin wallet SDK with Taproot and Ark integration",
     "type": "module",
     "main": "./dist/cjs/index.js",
@@ -13,6 +13,30 @@
             "import": "./dist/esm/index.js",
             "require": "./dist/cjs/index.js",
             "default": "./dist/esm/index.js"
+        },
+        "./adapters/localStorage": {
+            "types": "./dist/types/adapters/localStorage.d.ts",
+            "import": "./dist/esm/adapters/localStorage.js",
+            "require": "./dist/cjs/adapters/localStorage.js",
+            "default": "./dist/esm/adapters/localStorage.js"
+        },
+        "./adapters/fileSystem": {
+            "types": "./dist/types/adapters/fileSystem.d.ts",
+            "import": "./dist/esm/adapters/fileSystem.js",
+            "require": "./dist/cjs/adapters/fileSystem.js",
+            "default": "./dist/esm/adapters/fileSystem.js"
+        },
+        "./adapters/indexedDB": {
+            "types": "./dist/types/adapters/indexedDB.d.ts",
+            "import": "./dist/esm/adapters/indexedDB.js",
+            "require": "./dist/cjs/adapters/indexedDB.js",
+            "default": "./dist/esm/adapters/indexedDB.js"
+        },
+        "./adapters/asyncStorage": {
+            "types": "./dist/types/adapters/asyncStorage.d.ts",
+            "import": "./dist/esm/adapters/asyncStorage.js",
+            "require": "./dist/cjs/adapters/asyncStorage.js",
+            "default": "./dist/esm/adapters/asyncStorage.js"
         }
     },
     "files": [
@@ -54,11 +78,11 @@
         "release:cleanup": "bash scripts/release.sh --cleanup"
     },
     "dependencies": {
-        "@noble/curves": "1.9.1",
-        "@noble/hashes": "1.8.0",
-        "@noble/secp256k1": "2.2.3",
-        "@scure/base": "1.2.6",
-        "@scure/btc-signer": "1.8.1",
+        "@noble/curves": "2.0.0",
+        "@noble/hashes": "2.0.0",
+        "@noble/secp256k1": "3.0.0",
+        "@scure/base": "2.0.0",
+        "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4"
     },
     "devDependencies": {
@@ -68,10 +92,10 @@
         "eventsource": "4.0.0",
         "glob": "11.0.3",
         "husky": "9.1.7",
-        "prettier": "3.4.2",
-        "rimraf": "^5.0.0",
+        "prettier": "3.6.2",
+        "rimraf": "^6.0.1",
         "typedoc": "^0.28.12",
-        "typescript": "5.7.2",
+        "typescript": "5.9.2",
         "vitest": "3.2.4"
     },
     "keywords": [

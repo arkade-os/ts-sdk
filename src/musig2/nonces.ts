@@ -1,4 +1,4 @@
-import * as musig from "@scure/btc-signer/musig2";
+import * as musig from "@scure/btc-signer/musig2.js";
 
 /**
  * MuSig2 nonce pair containing public and secret values.

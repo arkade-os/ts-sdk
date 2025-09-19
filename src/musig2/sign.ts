@@ -1,8 +1,8 @@
-import * as musig from "@scure/btc-signer/musig2";
-import { bytesToNumberBE } from "@noble/curves/abstract/utils";
-import { CURVE } from "@noble/secp256k1";
+import * as musig from "@scure/btc-signer/musig2.js";
+import { bytesToNumberBE } from "@noble/curves/utils.js";
+import { Point } from "@noble/secp256k1";
 import { aggregateKeys } from "./keys";
-import { schnorr } from "@noble/curves/secp256k1";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 // Add this error type for decode failures
 export class PartialSignatureError extends Error {
@@ -51,7 +51,7 @@ export class PartialSig {
 
         // Verify s is less than curve order
         const s = bytesToNumberBE(bytes);
-        if (s >= CURVE.n) {
+        if (s >= Point.CURVE().n) {
             throw new PartialSignatureError("s value overflows curve order");
         }
 

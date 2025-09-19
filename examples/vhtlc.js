@@ -23,7 +23,8 @@ import {
 } from "../dist/esm/index.js";
 import { hash160 } from "@scure/btc-signer/utils";
 import { base64, hex } from "@scure/base";
-import { utils, Transaction } from "@scure/btc-signer";
+import { utils } from "@scure/btc-signer/utils.js";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { execSync } from "child_process";
 
 const SERVER_PUBLIC_KEY = hex.decode(

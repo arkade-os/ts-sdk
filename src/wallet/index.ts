@@ -2,7 +2,8 @@ import { Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { Bytes } from "@scure/btc-signer/utils";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { StorageAdapter } from "../storage";
 
 /**
  * Configuration options for wallet initialization.
@@ -19,6 +20,7 @@ export interface WalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
+    storage?: StorageAdapter;
 }
 
 export interface WalletBalance {
@@ -140,6 +142,7 @@ export type GetVtxosFilter = {
  * operations, and transaction management including sending, settling, and unrolling.
  */
 export interface IWallet {
+    identity: Identity;
     // returns the ark address
     getAddress(): Promise<string>;
     // returns the bitcoin address used to board the ark

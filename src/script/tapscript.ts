@@ -1,7 +1,7 @@
 import * as bip68 from "bip68";
-import { Bytes } from "@scure/btc-signer/utils";
-import { Script, ScriptNum, ScriptType } from "@scure/btc-signer/script";
-import { p2tr_ms } from "@scure/btc-signer/payment";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { Script, ScriptNum, ScriptType } from "@scure/btc-signer/script.js";
+import { p2tr_ms } from "@scure/btc-signer/payment.js";
 import { hex } from "@scure/base";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
