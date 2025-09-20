@@ -1,4 +1,7 @@
-import { DEFAULT_SEQUENCE, Transaction } from "@scure/btc-signer";
+import {
+    DEFAULT_SEQUENCE,
+    Transaction,
+} from "@scure/btc-signer/transaction.js";
 import { VirtualCoin } from "../wallet";
 import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 import {
@@ -10,8 +13,8 @@ import {
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
-import { TransactionOutput } from "@scure/btc-signer/psbt";
-import { Bytes, sha256x2 } from "@scure/btc-signer/utils";
+import { TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { Bytes, sha256x2 } from "@scure/btc-signer/utils.js";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 
 export type ArkTxInput = {

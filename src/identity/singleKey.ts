@@ -1,8 +1,14 @@
-import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
+import {
+    pubECDSA,
+    pubSchnorr,
+    randomPrivateKeyBytes,
+    sha256,
+} from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import { Identity } from ".";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
+import { schnorr } from "@noble/secp256k1";
 
 const ZERO_32 = new Uint8Array(32).fill(0);
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
@@ -17,6 +23,9 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
  *
  * // Create from raw bytes
  * const key = SingleKey.fromPrivateKey(privateKeyBytes);
+ *
+ * // Create random key
+ * const randomKey = SingleKey.fromRandomBytes();
  *
  * // Sign a transaction
  * const signedTx = await key.sign(transaction);
@@ -35,6 +44,19 @@ export class SingleKey implements Identity {
 
     static fromHex(privateKeyHex: string): SingleKey {
         return new SingleKey(hex.decode(privateKeyHex));
+    }
+
+    static fromRandomBytes(): SingleKey {
+        return new SingleKey(randomPrivateKeyBytes());
+    }
+
+    /**
+     * Export the private key as a hex string.
+     *
+     * @returns The private key as a hex string
+     */
+    toHex(): string {
+        return hex.encode(this.key);
     }
 
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
@@ -67,11 +89,20 @@ export class SingleKey implements Identity {
         return txCpy;
     }
 
-    xOnlyPublicKey(): Uint8Array {
-        return pubSchnorr(this.key);
+    compressedPublicKey(): Promise<Uint8Array> {
+        return Promise.resolve(pubECDSA(this.key, true));
+    }
+
+    xOnlyPublicKey(): Promise<Uint8Array> {
+        return Promise.resolve(pubSchnorr(this.key));
     }
 
     signerSession(): SignerSession {
         return TreeSignerSession.random();
+    }
+
+    async signMessage(message: string): Promise<Uint8Array> {
+        const msgBytes = new TextEncoder().encode(message);
+        return schnorr.sign(sha256(msgBytes), this.key);
     }
 }

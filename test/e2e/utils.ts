@@ -1,4 +1,3 @@
-import { utils } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { Wallet, SingleKey, OnchainWallet } from "../../src";
 import { execSync } from "child_process";
@@ -17,14 +16,12 @@ export interface TestOnchainWallet {
 }
 
 export function createTestIdentity(): SingleKey {
-    const privateKeyBytes = utils.randomPrivateKeyBytes();
-    const privateKeyHex = hex.encode(privateKeyBytes);
-    return SingleKey.fromHex(privateKeyHex);
+    return SingleKey.fromRandomBytes();
 }
 
-export function createTestOnchainWallet(): TestOnchainWallet {
+export async function createTestOnchainWallet(): Promise<TestOnchainWallet> {
     const identity = createTestIdentity();
-    const wallet = new OnchainWallet(identity, "regtest");
+    const wallet = await OnchainWallet.create(identity, "regtest");
     return {
         wallet,
         identity,
@@ -89,7 +86,9 @@ export async function createVtxo(
 // before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
 // if not, fund it with 2 * 20_000
 export function beforeEachFaucet(): void {
-    const balanceOutput = execSync(`${arkdExec} ark balance`).toString();
+    const balanceOutput = execSync(
+        `${arkdExec} ark balance | grep -v WARN`
+    ).toString();
     const balance = JSON.parse(balanceOutput);
     const offchainBalance = balance.offchain_balance.total;
 
@@ -102,4 +101,16 @@ export function beforeEachFaucet(): void {
             );
         }
     }
+}
+
+export async function waitFor(
+    fn: () => Promise<boolean>,
+    { timeout = 25_000, interval = 250 } = {}
+): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeout) {
+        if (await fn()) return;
+        await new Promise((r) => setTimeout(r, interval));
+    }
+    throw new Error("timeout waiting for commitment tx");
 }
