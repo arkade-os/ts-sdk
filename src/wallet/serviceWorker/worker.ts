@@ -468,9 +468,11 @@ export class Worker {
             if (!message.filter?.withRecoverable) {
                 if (!this.wallet) throw new Error("Wallet not initialized");
                 // exclude subdust is we don't want recoverable
-                vtxos = vtxos.filter(
-                    (v: any) => !isSubdust(v, this.wallet!.dustAmount!)
-                );
+                const dustAmount = this.wallet?.dustAmount;
+                vtxos =
+                    dustAmount == null
+                        ? vtxos
+                        : vtxos.filter((v: any) => !isSubdust(v, dustAmount));
             }
 
             if (message.filter?.withRecoverable) {
