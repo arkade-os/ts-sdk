@@ -21,7 +21,7 @@ import {
     waitFor,
 } from "./utils";
 
-describe.only("Ark integration tests", () => {
+describe("Ark integration tests", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
