@@ -5,6 +5,7 @@ export interface ContractRepository {
     getContractData<T>(contractId: string, key: string): Promise<T | null>;
     setContractData<T>(contractId: string, key: string, data: T): Promise<void>;
     deleteContractData(contractId: string, key: string): Promise<void>;
+    clearContractData(): Promise<void>;
 
     // Contract collections (following boltz-swap pattern) - with type-safe id fields
     getContractCollection<T>(contractType: string): Promise<ReadonlyArray<T>>;
@@ -199,5 +200,10 @@ export class ContractRepositoryImpl implements ContractRepository {
             );
             throw error; // Rethrow to notify caller of failure
         }
+    }
+
+    async clearContractData(): Promise<void> {
+        await this.storage.clear();
+        this.cache.clear();
     }
 }
