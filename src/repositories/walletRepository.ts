@@ -63,6 +63,7 @@ export interface WalletRepository {
     // Transaction history
     getTransactionHistory(address: string): Promise<Transaction[]>;
     saveTransaction(address: string, tx: Transaction): Promise<void>;
+    clearTransactions(address: string): Promise<void>;
 
     // Wallet state
     getWalletState(): Promise<WalletState | null>;
@@ -220,6 +221,11 @@ export class WalletRepositoryImpl implements WalletRepository {
             `tx:${address}`,
             JSON.stringify(transactions)
         );
+    }
+
+    async clearTransactions(address: string): Promise<void> {
+        this.cache.transactions.set(address, []);
+        await this.storage.removeItem(`tx:${address}`);
     }
 
     async getWalletState(): Promise<WalletState | null> {
