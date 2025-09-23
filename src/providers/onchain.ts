@@ -57,6 +57,7 @@ export interface OnchainProvider {
  * ```
  */
 export class EsploraProvider implements OnchainProvider {
+    private polling = false;
     constructor(private baseUrl: string) {}
 
     async getCoins(address: string): Promise<Coin[]> {
@@ -157,6 +158,9 @@ export class EsploraProvider implements OnchainProvider {
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
 
         const poll = async () => {
+            if (this.polling) return;
+            this.polling = true;
+
             // websocket is not reliable, so we will fallback to polling
             const pollingInterval = 5_000; // 5 seconds
 
