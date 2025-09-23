@@ -68,6 +68,7 @@ import {
     ContractRepository,
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
+import { extendVirtualCoin } from "./serviceWorker/utils";
 
 export type IncomingFunds =
     | {
@@ -76,7 +77,7 @@ export type IncomingFunds =
       }
     | {
           type: "vtxo";
-          vtxos: VirtualCoin[];
+          vtxos: ExtendedVirtualCoin[];
       };
 
 /**
@@ -905,7 +906,9 @@ export class Wallet implements IWallet {
                         if (update.newVtxos?.length > 0) {
                             eventCallback({
                                 type: "vtxo",
-                                vtxos: update.newVtxos,
+                                vtxos: update.newVtxos.map((vtxo) =>
+                                    extendVirtualCoin(this, vtxo)
+                                ),
                             });
                         }
                     }
