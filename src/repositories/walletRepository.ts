@@ -203,9 +203,10 @@ export class WalletRepositoryImpl implements WalletRepository {
             transactions[existing] = tx;
         } else {
             transactions.push(tx);
-            // Sort by createdAt descending
-            transactions.sort((a, b) => b.createdAt - a.createdAt);
         }
+
+        // Sort by createdAt descending
+        transactions.sort((a, b) => b.createdAt - a.createdAt);
 
         this.cache.transactions.set(address, transactions);
         await this.storage.setItem(
