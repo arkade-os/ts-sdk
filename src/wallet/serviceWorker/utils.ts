@@ -1,3 +1,5 @@
+import { ExtendedVirtualCoin, VirtualCoin, Wallet } from "../..";
+
 /**
  * setupServiceWorker sets up the service worker.
  * @param path - the path to the service worker script
@@ -51,4 +53,16 @@ export async function setupServiceWorker(path: string): Promise<ServiceWorker> {
         navigator.serviceWorker.addEventListener("activate", onActivate);
         navigator.serviceWorker.addEventListener("error", onError);
     });
+}
+
+export function extendVirtualCoin(
+    wallet: Wallet,
+    vtxo: VirtualCoin
+): ExtendedVirtualCoin {
+    return {
+        ...vtxo,
+        forfeitTapLeafScript: wallet.offchainTapscript.forfeit(),
+        intentTapLeafScript: wallet.offchainTapscript.exit(),
+        tapTree: wallet.offchainTapscript.encode(),
+    };
 }

@@ -2,7 +2,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { SingleKey } from "../../identity/singleKey";
-import { isSpendable, isSubdust } from "..";
+import { ExtendedVirtualCoin, isSpendable, isSubdust } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -16,6 +16,7 @@ import {
     WalletRepository,
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
+import { extendVirtualCoin } from "./utils";
 
 /**
  * Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -123,21 +124,14 @@ export class Worker {
             return;
         }
 
-        const encodedOffchainTapscript = this.wallet.offchainTapscript.encode();
-        const forfeit = this.wallet.offchainTapscript.forfeit();
-        const exit = this.wallet.offchainTapscript.exit();
-
+        // Get public key script and set the initial vtxos state
         const script = hex.encode(this.wallet.offchainTapscript.pkScript);
-        // set the initial vtxos state
         const response = await this.indexerProvider.getVtxos({
             scripts: [script],
         });
-        const vtxos = response.vtxos.map((vtxo) => ({
-            ...vtxo,
-            forfeitTapLeafScript: forfeit,
-            intentTapLeafScript: exit,
-            tapTree: encodedOffchainTapscript,
-        }));
+        const vtxos = response.vtxos.map((vtxo) =>
+            extendVirtualCoin(this.wallet!, vtxo)
+        ) as ExtendedVirtualCoin[];
 
         // Get wallet address and save vtxos using unified repository
         const address = await this.wallet.getAddress();
@@ -157,9 +151,6 @@ export class Worker {
         vtxoScript: DefaultVtxo.Script;
     }) {
         try {
-            const forfeitTapLeafScript = vtxoScript.forfeit();
-            const intentTapLeafScript = vtxoScript.exit();
-
             const abortController = new AbortController();
             const subscriptionId =
                 await this.indexerProvider!.subscribeForScripts([script]);
@@ -170,24 +161,20 @@ export class Worker {
 
             this.vtxoSubscription = abortController;
 
-            const tapTree = vtxoScript.encode();
-
             for await (const update of subscription) {
                 const vtxos = [...update.newVtxos, ...update.spentVtxos];
                 if (vtxos.length === 0) {
                     continue;
                 }
 
-                const extendedVtxos = vtxos.map((vtxo) => ({
-                    ...vtxo,
-                    forfeitTapLeafScript,
-                    intentTapLeafScript,
-                    tapTree,
-                }));
+                const extendedVtxos = vtxos.map((vtxo) =>
+                    extendVirtualCoin(this.wallet!, vtxo)
+                ) as ExtendedVirtualCoin[];
 
                 // Get wallet address and save vtxos using unified repository
                 const address = await this.wallet!.getAddress();
                 await this.walletRepository.saveVtxos(address, extendedVtxos);
+
                 // Notify all clients about the vtxo update
                 this.sendMessageToAllClients("VTXO_UPDATE", "");
             }
