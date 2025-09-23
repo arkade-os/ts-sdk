@@ -1,20 +1,12 @@
 import { hex } from "@scure/base";
 import { TapLeafScript } from "../script/base";
 import { StorageAdapter } from "../storage";
-import { ExtendedVirtualCoin } from "../wallet";
+import { ArkTransaction, ExtendedVirtualCoin } from "../wallet";
 import { TaprootControlBlock } from "@scure/btc-signer";
 
 export interface WalletState {
     lastSyncTime?: number;
     settings?: Record<string, any>;
-}
-
-export interface Transaction {
-    id: string;
-    timestamp: number;
-    amount: number;
-    type: "send" | "receive";
-    status: "pending" | "confirmed" | "failed";
 }
 
 // Utility functions for (de)serializing complex structures
@@ -61,8 +53,9 @@ export interface WalletRepository {
     clearVtxos(address: string): Promise<void>;
 
     // Transaction history
-    getTransactionHistory(address: string): Promise<Transaction[]>;
-    saveTransaction(address: string, tx: Transaction): Promise<void>;
+    getTransactionHistory(address: string): Promise<ArkTransaction[]>;
+    saveTransaction(address: string, tx: ArkTransaction): Promise<void>;
+    saveTransactions(address: string, txs: ArkTransaction[]): Promise<void>;
     clearTransactions(address: string): Promise<void>;
 
     // Wallet state
@@ -74,7 +67,7 @@ export class WalletRepositoryImpl implements WalletRepository {
     private storage: StorageAdapter;
     private cache: {
         vtxos: Map<string, ExtendedVirtualCoin[]>;
-        transactions: Map<string, Transaction[]>;
+        transactions: Map<string, ArkTransaction[]>;
         walletState: WalletState | null;
         initialized: Set<string>;
     };
@@ -177,7 +170,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         await this.storage.removeItem(`vtxos:${address}`);
     }
 
-    async getTransactionHistory(address: string): Promise<Transaction[]> {
+    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
         const cacheKey = `tx:${address}`;
 
         if (this.cache.transactions.has(address)) {
@@ -191,7 +184,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
 
         try {
-            const transactions = JSON.parse(stored) as Transaction[];
+            const transactions = JSON.parse(stored) as ArkTransaction[];
             this.cache.transactions.set(address, transactions);
             return transactions.slice();
         } catch (error) {
@@ -204,22 +197,44 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
     }
 
-    async saveTransaction(address: string, tx: Transaction): Promise<void> {
+    async saveTransaction(address: string, tx: ArkTransaction): Promise<void> {
         const transactions = await this.getTransactionHistory(address);
-        const existing = transactions.findIndex((t) => t.id === tx.id);
+        const existing = transactions.findIndex((t) => t.key === tx.key);
 
         if (existing !== -1) {
             transactions[existing] = tx;
         } else {
             transactions.push(tx);
-            // Sort by timestamp descending
-            transactions.sort((a, b) => b.timestamp - a.timestamp);
+            // Sort by createdAt descending
+            transactions.sort((a, b) => b.createdAt - a.createdAt);
         }
 
         this.cache.transactions.set(address, transactions);
         await this.storage.setItem(
             `tx:${address}`,
             JSON.stringify(transactions)
+        );
+    }
+
+    async saveTransactions(
+        address: string,
+        txs: ArkTransaction[]
+    ): Promise<void> {
+        const storedTransactions = await this.getTransactionHistory(address);
+        for (const tx of txs) {
+            const existing = storedTransactions.findIndex(
+                (t) => t.key === tx.key
+            );
+            if (existing !== -1) {
+                storedTransactions[existing] = tx;
+            } else {
+                storedTransactions.push(tx);
+            }
+        }
+        this.cache.transactions.set(address, storedTransactions);
+        await this.storage.setItem(
+            `tx:${address}`,
+            JSON.stringify(storedTransactions)
         );
     }
 
