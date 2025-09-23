@@ -10,7 +10,6 @@ import { ArkProvider, RestArkProvider } from "../../providers/ark";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { hex } from "@scure/base";
-import { DefaultVtxo } from "../../script/default";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import {
     WalletRepository,
@@ -26,7 +25,7 @@ export class Worker {
     private wallet: Wallet | undefined;
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
-    private vtxoSubscription: AbortController | undefined;
+    private incomingFundsSubscription: (() => void) | undefined;
     private walletRepository: WalletRepository;
     private storage: IndexedDBStorageAdapter;
 
@@ -95,9 +94,7 @@ export class Worker {
     }
 
     async clear() {
-        if (this.vtxoSubscription) {
-            this.vtxoSubscription.abort();
-        }
+        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
 
         // Clear storage - this replaces vtxoRepository.close()
         await this.storage.clear();
@@ -105,11 +102,9 @@ export class Worker {
         this.wallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
-        this.vtxoSubscription = undefined;
     }
 
     async reload() {
-        if (this.vtxoSubscription) this.vtxoSubscription.abort();
         await this.onWalletInitialized();
     }
 
@@ -137,50 +132,45 @@ export class Worker {
         const address = await this.wallet.getAddress();
         await this.walletRepository.saveVtxos(address, vtxos);
 
-        this.processVtxoSubscription({
-            script,
-            vtxoScript: this.wallet.offchainTapscript,
-        });
-    }
+        // Get transaction history to cache boarding txs
+        const txs = await this.wallet.getTransactionHistory();
+        if (txs) await this.walletRepository.saveTransactions(address, txs);
 
-    private async processVtxoSubscription({
-        script,
-        vtxoScript,
-    }: {
-        script: string;
-        vtxoScript: DefaultVtxo.Script;
-    }) {
-        try {
-            const abortController = new AbortController();
-            const subscriptionId =
-                await this.indexerProvider!.subscribeForScripts([script]);
-            const subscription = this.indexerProvider!.getSubscription(
-                subscriptionId,
-                abortController.signal
-            );
+        // stop previous subscriptions if any
+        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
 
-            this.vtxoSubscription = abortController;
+        // subscribe for incoming funds and notify all clients when new funds arrive
+        this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
+            async (funds) => {
+                if (funds.type === "vtxo" && funds.vtxos.length > 0) {
+                    // extend vtxos with taproot scripts
+                    const extendedVtxos = funds.vtxos.map((vtxo) =>
+                        extendVirtualCoin(this.wallet!, vtxo)
+                    );
 
-            for await (const update of subscription) {
-                const vtxos = [...update.newVtxos, ...update.spentVtxos];
-                if (vtxos.length === 0) {
-                    continue;
+                    // save vtxos using unified repository
+                    await this.walletRepository.saveVtxos(
+                        address,
+                        funds.vtxos.map((vtxo) =>
+                            extendVirtualCoin(this.wallet!, vtxo)
+                        )
+                    );
+
+                    // notify all clients about the vtxo update
+                    this.sendMessageToAllClients(
+                        "VTXO_UPDATE",
+                        JSON.stringify(extendedVtxos)
+                    );
                 }
-
-                const extendedVtxos = vtxos.map((vtxo) =>
-                    extendVirtualCoin(this.wallet!, vtxo)
-                ) as ExtendedVirtualCoin[];
-
-                // Get wallet address and save vtxos using unified repository
-                const address = await this.wallet!.getAddress();
-                await this.walletRepository.saveVtxos(address, extendedVtxos);
-
-                // Notify all clients about the vtxo update
-                this.sendMessageToAllClients("VTXO_UPDATE", "");
+                if (funds.type === "utxo" && funds.coins.length > 0) {
+                    // notify all clients about the utxo update
+                    this.sendMessageToAllClients(
+                        "UTXO_UPDATE",
+                        JSON.stringify(funds.coins)
+                    );
+                }
             }
-        } catch (error) {
-            console.error("Error processing address updates:", error);
-        }
+        );
     }
 
     private async handleClear(event: ExtendableMessageEvent) {
