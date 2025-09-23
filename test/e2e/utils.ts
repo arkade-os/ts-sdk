@@ -1,4 +1,3 @@
-import { hex } from "@scure/base";
 import { Wallet, SingleKey, OnchainWallet } from "../../src";
 import { execSync } from "child_process";
 
@@ -13,6 +12,12 @@ export interface TestArkWallet {
 export interface TestOnchainWallet {
     wallet: OnchainWallet;
     identity: SingleKey;
+}
+
+export function execCommand(command: string): string {
+    command += " | grep -v WARN";
+    const result = execSync(command).toString().trim();
+    return result;
 }
 
 export function createTestIdentity(): SingleKey {
@@ -43,14 +48,14 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
 }
 
 export function faucetOffchain(address: string, amount: number): void {
-    execSync(
+    execCommand(
         `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`
     );
 }
 
 export function faucetOnchain(address: string, amount: number): void {
     const btc = amount > 999 ? amount / 100_000_000 : amount;
-    execSync(`nigiri faucet ${address} ${btc}`);
+    execCommand(`nigiri faucet ${address} ${btc}`);
 }
 
 export async function createVtxo(
@@ -84,22 +89,17 @@ export async function createVtxo(
 }
 
 // before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
-// if not, fund it with 2 * 20_000
+// if not, fund it with 100.000
 export function beforeEachFaucet(): void {
-    const balanceOutput = execSync(
-        `${arkdExec} ark balance | grep -v WARN`
-    ).toString();
+    const balanceOutput = execCommand(`${arkdExec} ark balance`);
     const balance = JSON.parse(balanceOutput);
     const offchainBalance = balance.offchain_balance.total;
 
     if (offchainBalance <= 20_000) {
-        for (let i = 0; i < 2; i++) {
-            const note = execSync(`${arkdExec} arkd note --amount 20_000`);
-            const noteStr = note.toString().trim();
-            execSync(
-                `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
-            );
-        }
+        const noteStr = execCommand(`${arkdExec} arkd note --amount 100000`);
+        execCommand(
+            `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
+        );
     }
 }
 
@@ -112,5 +112,5 @@ export async function waitFor(
         if (await fn()) return;
         await new Promise((r) => setTimeout(r, interval));
     }
-    throw new Error("timeout waiting for commitment tx");
+    throw new Error("timeout in waitFor");
 }

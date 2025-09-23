@@ -27,7 +27,7 @@ import { execSync } from "child_process";
 import { beforeAll } from "vitest";
 
 describe("vhtlc", () => {
-    beforeEach(beforeEachFaucet);
+    beforeEach(beforeEachFaucet, 20000);
 
     let X_ONLY_PUBLIC_KEY: Uint8Array;
     beforeAll(() => {

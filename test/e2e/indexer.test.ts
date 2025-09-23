@@ -20,7 +20,7 @@ import { vi } from "vitest";
 import { afterEach } from "vitest";
 
 describe("Indexer provider", () => {
-    beforeEach(beforeEachFaucet);
+    beforeEach(beforeEachFaucet, 20000);
     afterEach(() => vi.restoreAllMocks());
 
     it("should inspect a VTXO", { timeout: 60000 }, async () => {

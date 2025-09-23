@@ -1,5 +1,4 @@
 import { expect, describe, it, beforeEach } from "vitest";
-import { execSync } from "child_process";
 import {
     TxType,
     RestIndexerProvider,
@@ -13,21 +12,25 @@ import {
 } from "../../src";
 import {
     arkdExec,
+    beforeEachFaucet,
     createTestArkWallet,
     createTestOnchainWallet,
+    execCommand,
     faucetOffchain,
     faucetOnchain,
     waitFor,
 } from "./utils";
 
-describe("Ark integration tests", () => {
+describe.only("Ark integration tests", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
     it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
 
         const boardingAddress = await alice.wallet.getBoardingAddress();
 
         // faucet
-        execSync(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -42,7 +45,7 @@ describe("Ark integration tests", () => {
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
-        execSync(
+        execCommand(
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
@@ -80,10 +83,10 @@ describe("Ark integration tests", () => {
             expect(bobOffchainAddress).toBeDefined();
 
             const fundAmount = 1000;
-            execSync(
+            execCommand(
                 `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
             );
-            execSync(
+            execCommand(
                 `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`
             );
 
@@ -152,7 +155,7 @@ describe("Ark integration tests", () => {
 
             // Use a smaller amount for testing
             const fundAmount = 10000;
-            execSync(
+            execCommand(
                 `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
             );
 
@@ -204,7 +207,7 @@ describe("Ark integration tests", () => {
         // Alice onboarding
         const boardingAmount = 10000;
         const boardingAddress = await alice.wallet.getBoardingAddress();
-        execSync(
+        execCommand(
             `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
         );
 
@@ -225,7 +228,7 @@ describe("Ark integration tests", () => {
         });
 
         // Wait for the transaction to be processed
-        execSync("nigiri rpc --generate 1");
+        execCommand("nigiri rpc --generate 1");
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Check history before sending to bob
@@ -355,9 +358,9 @@ describe("Ark integration tests", () => {
 
         const fundAmount = 1000;
 
-        const arknote = execSync(`${arkdExec} arkd note --amount ${fundAmount}`)
-            .toString()
-            .replace(/\n/g, "");
+        const arknote = execCommand(
+            `${arkdExec} arkd note --amount ${fundAmount}`
+        );
 
         const settleTxid = await alice.wallet.settle({
             inputs: [ArkNote.fromString(arknote)],
@@ -385,7 +388,7 @@ describe("Ark integration tests", () => {
         const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
-        execSync(`nigiri faucet ${boardingAddress} 0.0001`);
+        execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
 
         // wait until indexer reflects the faucet instead of sleeping.
         await waitFor(async () => {
@@ -406,7 +409,7 @@ describe("Ark integration tests", () => {
             ],
         });
 
-        execSync(`nigiri rpc --generate 1`);
+        execCommand(`nigiri rpc --generate 1`);
 
         // wait until indexer reflects the new block instead of sleeping.
         await waitFor(async () => {
@@ -424,7 +427,7 @@ describe("Ark integration tests", () => {
             "regtest"
         );
 
-        execSync(`nigiri faucet ${onchainAlice.address} 0.001`);
+        execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -439,7 +442,7 @@ describe("Ark integration tests", () => {
             switch (done.type) {
                 case Unroll.StepType.WAIT:
                 case Unroll.StepType.UNROLL:
-                    execSync(`nigiri rpc --generate 1`);
+                    execCommand(`nigiri rpc --generate 1`);
                     break;
             }
         }
@@ -458,7 +461,7 @@ describe("Ark integration tests", () => {
 
         // faucet offchain address
         const fundAmount = 10_000;
-        execSync(
+        execCommand(
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
@@ -478,7 +481,7 @@ describe("Ark integration tests", () => {
         expect(aliceOffchainAddress).toBeDefined();
 
         // faucet
-        execSync(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -507,11 +510,13 @@ describe("Ark integration tests", () => {
         expect(vtxo.virtualStatus.state).toBe("settled");
 
         // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
-        execSync(`nigiri rpc --generate 25`);
+        execCommand(`nigiri rpc --generate 25`);
 
         // wait until indexer reflects the swept instead of sleeping.
         await waitFor(async () => {
-            const v = await alice.wallet.getVtxos({ withRecoverable: true });
+            const v = await alice.wallet.getVtxos({
+                withRecoverable: true,
+            });
             return v.some(
                 (c) => c.txid === vtxo.txid && c.virtualStatus.state === "swept"
             );
@@ -697,7 +702,7 @@ describe("Ark integration tests", () => {
         const bobOffchainAddress = await bob.wallet.getAddress();
 
         const fundAmount = 10_000;
-        execSync(
+        execCommand(
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
