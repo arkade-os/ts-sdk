@@ -177,15 +177,15 @@ export class EsploraProvider implements OnchainProvider {
             const txKey = (tx: ExplorerTransaction) =>
                 `${tx.txid}_${tx.status.block_time}`;
 
+            // create a set of existing transactions to avoid duplicates
+            const existingTxs = new Set(initialTxs.map(txKey));
+
             // polling for new transactions
             intervalId = setInterval(async () => {
                 try {
                     // get current transactions
                     // we will compare with initialTxs to find new ones
                     const currentTxs = await getAllTxs();
-
-                    // create a set of existing transactions to avoid duplicates
-                    const existingTxs = new Set(initialTxs.map(txKey));
 
                     // filter out transactions that are already in initialTxs
                     const newTxs = currentTxs.filter(
@@ -194,7 +194,7 @@ export class EsploraProvider implements OnchainProvider {
 
                     if (newTxs.length > 0) {
                         // Update the tracking set instead of growing the array
-                        initialTxs.push(...newTxs);
+                        newTxs.forEach((tx) => existingTxs.add(txKey(tx)));
                         callback(newTxs);
                     }
                 } catch (error) {
