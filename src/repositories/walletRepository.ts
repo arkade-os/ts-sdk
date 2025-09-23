@@ -16,9 +16,7 @@ const fromHex = (h: string | undefined) =>
     h ? hex.decode(h) : (undefined as any);
 
 const serializeTapLeaf = ([cb, s]: TapLeafScript) => ({
-    cb:
-        TaprootControlBlock.encode(cb) &&
-        hex.encode(TaprootControlBlock.encode(cb)),
+    cb: hex.encode(TaprootControlBlock.encode(cb)),
     s: hex.encode(s),
 });
 
@@ -155,7 +153,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         const vtxos = await this.getVtxos(address);
         const [txid, vout] = vtxoId.split(":");
         const filtered = vtxos.filter(
-            (v) => !(v.txid === txid && v.vout === parseInt(vout))
+            (v) => !(v.txid === txid && v.vout === parseInt(vout, 10))
         );
 
         this.cache.vtxos.set(address, filtered);
