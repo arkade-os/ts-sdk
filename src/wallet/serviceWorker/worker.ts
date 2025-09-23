@@ -55,9 +55,7 @@ export class Worker {
         if (!this.wallet) return [];
         const address = await this.wallet.getAddress();
         const allVtxos = await this.walletRepository.getVtxos(address);
-        return allVtxos.filter(
-            (vtxo) => vtxo.virtualStatus.state === "swept" && isSpendable(vtxo)
-        );
+        return allVtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
     }
 
     /**
