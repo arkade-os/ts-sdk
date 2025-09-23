@@ -154,7 +154,7 @@ export class EsploraProvider implements OnchainProvider {
         addresses: string[],
         callback: (txs: ExplorerTransaction[]) => void
     ): Promise<() => void> {
-        let intervalId: NodeJS.Timeout | null = null;
+        let intervalId: ReturnType<typeof setInterval> | null = null;
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
 
         const poll = async () => {
