@@ -32,7 +32,9 @@ describe("Ark integration tests", () => {
         // faucet
         execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await waitFor(
+            async () => (await alice.wallet.getBoardingUtxos()).length > 0
+        );
 
         const settleTxid = await new Ramps(alice.wallet).onboard();
         expect(settleTxid).toBeDefined();
