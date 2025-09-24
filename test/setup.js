@@ -18,7 +18,7 @@ async function execCommand(command) {
                 error.stderr.toString().includes("wallet already initialized")
             ) {
                 console.log("Wallet already initialized, continuing...");
-                resolve(new Uint8Array([]));
+                resolve("");
             } else {
                 reject(error);
             }
