@@ -96,7 +96,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         try {
             const parsed = JSON.parse(stored) as ExtendedVirtualCoin[];
             const vtxos = parsed.map(deserializeVtxo);
-            this.cache.vtxos.set(address, vtxos);
+            this.cache.vtxos.set(address, vtxos.slice());
             return vtxos.slice();
         } catch (error) {
             console.error(
@@ -120,7 +120,7 @@ export class WalletRepositoryImpl implements WalletRepository {
             vtxos.push(vtxo);
         }
 
-        this.cache.vtxos.set(address, vtxos);
+        this.cache.vtxos.set(address, vtxos.slice());
         await this.storage.setItem(
             `vtxos:${address}`,
             JSON.stringify(vtxos.map(serializeVtxo))
@@ -142,7 +142,7 @@ export class WalletRepositoryImpl implements WalletRepository {
                 storedVtxos.push(vtxo);
             }
         }
-        this.cache.vtxos.set(address, storedVtxos);
+        this.cache.vtxos.set(address, storedVtxos.slice());
         await this.storage.setItem(
             `vtxos:${address}`,
             JSON.stringify(storedVtxos.map(serializeVtxo))
@@ -156,7 +156,7 @@ export class WalletRepositoryImpl implements WalletRepository {
             (v) => !(v.txid === txid && v.vout === parseInt(vout, 10))
         );
 
-        this.cache.vtxos.set(address, filtered);
+        this.cache.vtxos.set(address, filtered.slice());
         await this.storage.setItem(
             `vtxos:${address}`,
             JSON.stringify(filtered.map(serializeVtxo))
