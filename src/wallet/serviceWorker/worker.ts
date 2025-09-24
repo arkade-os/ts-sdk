@@ -149,9 +149,7 @@ export class Worker {
                     // save vtxos using unified repository
                     await this.walletRepository.saveVtxos(
                         address,
-                        funds.vtxos.map((vtxo) =>
-                            extendVirtualCoin(this.wallet!, vtxo)
-                        )
+                        extendedVtxos
                     );
 
                     // notify all clients about the vtxo update
