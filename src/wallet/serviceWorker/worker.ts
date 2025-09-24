@@ -468,7 +468,7 @@ export class Worker {
                 vtxos =
                     dustAmount == null
                         ? vtxos
-                        : vtxos.filter((v: any) => !isSubdust(v, dustAmount));
+                        : vtxos.filter((v) => !isSubdust(v, dustAmount));
             }
 
             if (message.filter?.withRecoverable) {

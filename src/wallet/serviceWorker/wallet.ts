@@ -26,12 +26,7 @@ export type PrivateKeyIdentity = Identity & { toHex(): string };
 const isPrivateKeyIdentity = (
     identity: Identity
 ): identity is PrivateKeyIdentity => {
-    return (
-        (identity as PrivateKeyIdentity).toHex !== undefined &&
-        typeof (identity as PrivateKeyIdentity).toHex === "function" &&
-        typeof (identity as PrivateKeyIdentity).toHex() === "string" &&
-        (identity as PrivateKeyIdentity).toHex().length > 0
-    );
+    return typeof (identity as any).toHex === "function";
 };
 
 class UnexpectedResponseError extends Error {
