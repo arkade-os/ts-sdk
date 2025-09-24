@@ -113,8 +113,7 @@ async function setupArkServer() {
         const note = await execCommand(
             `${arkdExec} arkd note --amount 2000000`
         );
-        const noteStr = note.toString().trim();
-        const cmd = `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`;
+        const cmd = `${arkdExec} ark redeem-notes -n ${note} --password secret`;
         await execCommand(cmd);
 
         // Settle the funds and wait for completion
