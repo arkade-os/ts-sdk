@@ -140,22 +140,32 @@ export class Worker {
         // subscribe for incoming funds and notify all clients when new funds arrive
         this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
             async (funds) => {
-                if (funds.type === "vtxo" && funds.vtxos.length > 0) {
-                    // extend vtxos with taproot scripts
-                    const extendedVtxos = funds.vtxos.map((vtxo) =>
-                        extendVirtualCoin(this.wallet!, vtxo)
-                    );
+                if (funds.type === "vtxo") {
+                    const newVtxos =
+                        funds.newVtxos.length > 0
+                            ? funds.newVtxos.map((vtxo) =>
+                                  extendVirtualCoin(this.wallet!, vtxo)
+                              )
+                            : [];
+                    const spentVtxos =
+                        funds.spentVtxos.length > 0
+                            ? funds.spentVtxos.map((vtxo) =>
+                                  extendVirtualCoin(this.wallet!, vtxo)
+                              )
+                            : [];
+
+                    if ([...newVtxos, ...spentVtxos].length === 0) return;
 
                     // save vtxos using unified repository
-                    await this.walletRepository.saveVtxos(
-                        address,
-                        extendedVtxos
-                    );
+                    await this.walletRepository.saveVtxos(address, [
+                        ...newVtxos,
+                        ...spentVtxos,
+                    ]);
 
                     // notify all clients about the vtxo update
                     this.sendMessageToAllClients(
                         "VTXO_UPDATE",
-                        JSON.stringify(extendedVtxos)
+                        JSON.stringify({ newVtxos, spentVtxos })
                     );
                 }
                 if (funds.type === "utxo" && funds.coins.length > 0) {

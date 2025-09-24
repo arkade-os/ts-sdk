@@ -564,15 +564,15 @@ describe("Ark integration tests", () => {
             alice.wallet.notifyIncomingFunds((notification) => {
                 const now = new Date();
                 expect(notification.type).toBe("vtxo");
-                let vtxos: VirtualCoin[] = [];
+                let newVtxos: VirtualCoin[] = [];
                 if (notification.type === "vtxo") {
-                    vtxos = notification.vtxos;
+                    newVtxos = notification.newVtxos;
                 }
-                expect(vtxos).toHaveLength(1);
-                expect(vtxos[0].spentBy).toBeFalsy();
-                expect(vtxos[0].value).toBe(fundAmount);
-                expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
-                const age = now.getTime() - vtxos[0].createdAt.getTime();
+                expect(newVtxos).toHaveLength(1);
+                expect(newVtxos[0].spentBy).toBeFalsy();
+                expect(newVtxos[0].value).toBe(fundAmount);
+                expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+                const age = now.getTime() - newVtxos[0].createdAt.getTime();
                 expect(age).toBeLessThanOrEqual(4000);
                 notified = true;
             });
@@ -647,17 +647,17 @@ describe("Ark integration tests", () => {
 
             // wait for coins to arrive
             const notification = await waitForIncomingFunds(alice.wallet);
-            let vtxos: VirtualCoin[] = [];
+            let newVtxos: VirtualCoin[] = [];
             if (notification.type === "vtxo") {
-                vtxos = notification.vtxos;
+                newVtxos = notification.newVtxos;
             }
 
             // assert
-            expect(vtxos).toHaveLength(1);
-            expect(vtxos[0].spentBy).toBeFalsy();
-            expect(vtxos[0].value).toBe(fundAmount);
-            expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
-            const age = now.getTime() - vtxos[0].createdAt.getTime();
+            expect(newVtxos).toHaveLength(1);
+            expect(newVtxos[0].spentBy).toBeFalsy();
+            expect(newVtxos[0].value).toBe(fundAmount);
+            expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+            const age = now.getTime() - newVtxos[0].createdAt.getTime();
             expect(age).toBeLessThanOrEqual(4000);
         }
     );

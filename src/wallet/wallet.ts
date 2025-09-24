@@ -77,7 +77,8 @@ export type IncomingFunds =
       }
     | {
           type: "vtxo";
-          vtxos: ExtendedVirtualCoin[];
+          newVtxos: ExtendedVirtualCoin[];
+          spentVtxos: ExtendedVirtualCoin[];
       };
 
 /**
@@ -906,7 +907,10 @@ export class Wallet implements IWallet {
                         if (update.newVtxos?.length > 0) {
                             eventCallback({
                                 type: "vtxo",
-                                vtxos: update.newVtxos.map((vtxo) =>
+                                newVtxos: update.newVtxos.map((vtxo) =>
+                                    extendVirtualCoin(this, vtxo)
+                                ),
+                                spentVtxos: update.spentVtxos.map((vtxo) =>
                                     extendVirtualCoin(this, vtxo)
                                 ),
                             });
