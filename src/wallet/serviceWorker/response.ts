@@ -7,6 +7,7 @@ import { SettlementEvent } from "../../providers/ark";
 export namespace Response {
     export type Type =
         | "WALLET_INITIALIZED"
+        | "WALLET_RELOADED"
         | "SETTLE_EVENT"
         | "SETTLE_SUCCESS"
         | "ADDRESS"
@@ -308,6 +309,27 @@ export namespace Response {
     export function clearResponse(id: string, success: boolean): ClearResponse {
         return {
             type: "CLEAR_RESPONSE",
+            success,
+            id,
+        };
+    }
+
+    export interface WalletReloaded extends Base {
+        type: "WALLET_RELOADED";
+    }
+
+    export function isWalletReloaded(
+        response: Base
+    ): response is WalletReloaded {
+        return response.type === "WALLET_RELOADED";
+    }
+
+    export function walletReloaded(
+        id: string,
+        success: boolean
+    ): WalletReloaded {
+        return {
+            type: "WALLET_RELOADED",
             success,
             id,
         };

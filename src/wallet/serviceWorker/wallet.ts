@@ -427,6 +427,18 @@ export class ServiceWorkerWallet implements IWallet {
             throw new Error(`Settlement failed: ${error}`);
         }
     }
+
+    async reload(): Promise<boolean> {
+        const message: Request.ReloadWallet = {
+            type: "RELOAD_WALLET",
+            id: getRandomId(),
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isWalletReloaded(response)) {
+            return response.success;
+        }
+        throw new UnexpectedResponseError(response);
+    }
 }
 
 function getRandomId(): string {
