@@ -54,7 +54,7 @@ export function faucetOffchain(address: string, amount: number): void {
 }
 
 export function faucetOnchain(address: string, amount: number): void {
-    const btc = amount > 999 ? amount / 100_000_000 : amount;
+    const btc = (amount / 100_000_000).toFixed(8); // BTC with 8 decimals
     execCommand(`nigiri faucet ${address} ${btc}`);
 }
 
