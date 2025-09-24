@@ -2,7 +2,7 @@ import { promisify } from "util";
 import { setTimeout } from "timers";
 import { execSync } from "child_process";
 
-let arkdExec = "nigiri ";
+let arkdExec = "nigiri";
 
 const sleep = promisify(setTimeout);
 
