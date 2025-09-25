@@ -2,14 +2,14 @@ import { promisify } from "util";
 import { setTimeout } from "timers";
 import { execSync } from "child_process";
 
-let arkdExec = "nigiri ";
+let arkdExec = "nigiri";
 
 const sleep = promisify(setTimeout);
 
 async function execCommand(command) {
     return new Promise((resolve, reject) => {
         try {
-            const result = execSync(command);
+            const result = execSync(command).toString().trim();
             resolve(result);
         } catch (error) {
             // If the error indicates the wallet is already initialized, we can continue
@@ -18,7 +18,7 @@ async function execCommand(command) {
                 error.stderr.toString().includes("wallet already initialized")
             ) {
                 console.log("Wallet already initialized, continuing...");
-                resolve(new Uint8Array([]));
+                resolve("");
             } else {
                 reject(error);
             }
@@ -91,11 +91,9 @@ async function setupArkServer() {
             console.log("Ark Server Public Key:", serverInfo.signerPubkey);
 
             // Get arkd address and fund it with nigiri faucet
-            const arkdAddress = (
-                await execCommand(`${arkdExec} arkd wallet address`)
-            )
-                .toString()
-                .trim();
+            const arkdAddress = await execCommand(
+                `${arkdExec} arkd wallet address`
+            );
             console.log("Funding arkd address:", arkdAddress);
 
             for (let i = 0; i < 10; i++) {
@@ -111,12 +109,11 @@ async function setupArkServer() {
             );
         }
 
-        // fund the ark-cli with 1 vtxo worth of 2_000_000
+        // fund the ark-cli with 1 vtxo worth of 2000000
         const note = await execCommand(
-            `${arkdExec} arkd note --amount 2_000_000`
+            `${arkdExec} arkd note --amount 2000000`
         );
-        const noteStr = note.toString().trim();
-        const cmd = `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`;
+        const cmd = `${arkdExec} ark redeem-notes -n ${note} --password secret`;
         await execCommand(cmd);
 
         // Settle the funds and wait for completion

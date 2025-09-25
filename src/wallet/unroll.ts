@@ -1,4 +1,4 @@
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";
@@ -12,7 +12,7 @@ import { VtxoScript } from "../script/base";
 import {
     TaprootControlBlock,
     TransactionInputUpdate,
-} from "@scure/btc-signer/psbt";
+} from "@scure/btc-signer/psbt.js";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 

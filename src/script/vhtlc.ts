@@ -1,5 +1,5 @@
-import { Script } from "@scure/btc-signer";
-import { Bytes } from "@scure/btc-signer/utils";
+import { Script } from "@scure/btc-signer/script.js";
+import { Bytes } from "@scure/btc-signer/utils.js";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,

@@ -1,7 +1,7 @@
 import { base58, hex } from "@scure/base";
 import { TapLeafScript, VtxoScript } from "../script/base";
-import { Bytes, sha256 } from "@scure/btc-signer/utils";
-import { Script } from "@scure/btc-signer";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Script } from "@scure/btc-signer/script.js";
 import { ExtendedCoin, Status } from "../wallet";
 
 /**
