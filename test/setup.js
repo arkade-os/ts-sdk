@@ -105,7 +105,7 @@ async function setupArkServer() {
 
             // Initialize ark client
             await execCommand(
-                `${arkdExec} ark init --server-url http://localhost:7070 --explorer http://chopsticks:3000 --password secret --network regtest`
+                `${arkdExec} ark init --server-url http://localhost:7070 --explorer http://chopsticks:3000 --password secret`
             );
         }
 
