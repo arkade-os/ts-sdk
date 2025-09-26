@@ -92,6 +92,29 @@ export interface MarketHour {
     roundInterval: bigint;
 }
 
+export interface IntentFeeInfo {
+    offchainInput: string;
+    offchainOutput: string;
+    onchainInput: string;
+    onchainOutput: string;
+}
+
+export interface FeeInfo {
+    intentFee: IntentFeeInfo;
+    txFeeRate: string;
+}
+
+export interface PendingTx {
+    arkTxid: string;
+    finalArkTx: string;
+    signedCheckpointTxs: string[];
+}
+
+export interface DeprecatedSigner {
+    cutoffDate: bigint;
+    pubkey: string;
+}
+
 export interface ArkInfo {
     signerPubkey: string;
     vtxoTreeExpiry: bigint;
@@ -108,6 +131,9 @@ export interface ArkInfo {
     vtxoMaxAmount: bigint; // -1 means no limit (default)
     boardingExitDelay: bigint;
     checkpointExitClosure: string;
+    fees: FeeInfo;
+    deprecatedSigners: DeprecatedSigner[];
+    digest: string;
 }
 
 export interface Intent {
@@ -158,6 +184,9 @@ export interface ArkProvider {
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
+    }>;
+    getPendingTxs(proof: string): Promise<{
+        pendingTxs: PendingTx[];
     }>;
 }
 
@@ -227,8 +256,8 @@ export class RestArkProvider implements ArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                signedArkTx: signedArkTx,
-                checkpointTxs: checkpointTxs,
+                signedArkTx,
+                checkpointTxs,
             }),
         });
 
@@ -530,6 +559,43 @@ export class RestArkProvider implements ArkProvider {
                 throw error;
             }
         }
+    }
+
+    async getPendingTxs(proof: string): Promise<{
+        pendingTxs: PendingTx[];
+    }> {
+        const url = `${this.serverUrl}/v1/tx/pending`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                proof,
+            }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            try {
+                const grpcError = JSON.parse(errorText);
+                // gRPC errors usually have a message and code field
+                throw new Error(
+                    `Failed to get pending transactions: ${grpcError.message || grpcError.error || errorText}`
+                );
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            } catch (_) {
+                // If JSON parse fails, use the raw error text
+                throw new Error(
+                    `Failed to get pending transactions: ${errorText}`
+                );
+            }
+        }
+
+        const data = await response.json();
+        return {
+            pendingTxs: data.pendingTxs,
+        };
     }
 
     private parseSettlementEvent(
