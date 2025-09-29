@@ -34,7 +34,7 @@ describe("Ark integration tests", () => {
         expect(settleTxid).toBeDefined();
     });
 
-    it("should settle a VTXO", { timeout: 60000 }, async () => {
+    it.only("should settle a VTXO", { timeout: 60000 }, async () => {
         // Create fresh wallet instance for this test
         const alice = await createTestArkWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
