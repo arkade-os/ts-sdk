@@ -327,7 +327,9 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const vtxos = await this.getVtxos();
+        const response = await this.indexerProvider.getVtxos({
+            scripts: [hex.encode(this.offchainTapscript.pkScript)],
+        });
 
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
@@ -335,7 +337,7 @@ export class Wallet implements IWallet {
         const spendableVtxos = [];
         const spentVtxos = [];
 
-        for (const vtxo of vtxos) {
+        for (const vtxo of response.vtxos) {
             if (isSpendable(vtxo)) {
                 spendableVtxos.push(vtxo);
             } else {
