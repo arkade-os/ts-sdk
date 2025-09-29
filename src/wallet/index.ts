@@ -1,4 +1,6 @@
-import { Output, SettlementEvent } from "../providers/ark";
+import { Output, SettlementEvent, ArkProvider } from "../providers/ark";
+import { IndexerProvider } from "../providers/indexer";
+import { OnchainProvider } from "../providers/onchain";
 import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
@@ -19,6 +21,35 @@ export interface WalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
+}
+
+/**
+ * Provider class constructor interface for dependency injection.
+ * Ensures provider classes follow the consistent constructor pattern.
+ */
+export interface ProviderClass<T> {
+    new (serverUrl: string): T;
+}
+
+/**
+ * Extended wallet configuration that supports provider class injection.
+ * Allows specifying custom provider implementations while maintaining
+ * backward compatibility with URL-based configuration.
+ *
+ * @example
+ * ```typescript
+ * // Use ExpoArkProvider for React Native/Expo environments
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('...'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   arkProvider: ExpoArkProvider
+ * });
+ * ```
+ */
+export interface ExtendedWalletConfig extends WalletConfig {
+    arkProvider?: ProviderClass<ArkProvider>;
+    indexerProvider?: ProviderClass<IndexerProvider>;
+    onchainProvider?: ProviderClass<OnchainProvider>;
 }
 
 export interface WalletBalance {

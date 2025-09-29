@@ -568,7 +568,7 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    private parseSettlementEvent(
+    protected parseSettlementEvent(
         data: ProtoTypes.EventData
     ): SettlementEvent | null {
         // Check for BatchStarted event
@@ -668,7 +668,7 @@ export class RestArkProvider implements ArkProvider {
         return null;
     }
 
-    private parseTransactionNotification(
+    protected parseTransactionNotification(
         data: ProtoTypes.TransactionData
     ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
         if (data.commitmentTx) {

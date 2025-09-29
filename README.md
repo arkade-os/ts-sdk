@@ -238,6 +238,35 @@ console.log('Service worker status:', status.walletInitialized)
 await wallet.clear()
 ```
 
+### Using with Expo/React Native
+
+For React Native and Expo applications where standard EventSource and fetch streaming may not work properly, use the Expo-compatible providers:
+
+```typescript
+import { Wallet, SingleKey } from '@arkade-os/sdk'
+import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
+
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+const wallet = await Wallet.create({
+  identity: identity,
+  esploraUrl: 'https://mutinynet.com/api',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkProvider: ExpoArkProvider, // For settlement events and transactions streaming
+  indexerProvider: ExpoIndexerProvider, // For address subscriptions and VTXO updates
+})
+
+// Both providers use expo/fetch for streaming support (SSE and JSON streaming)
+// All other wallet functionality remains the same
+const balance = await wallet.getBalance()
+const address = await wallet.getAddress()
+```
+
+Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
+
+- **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
+- **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
+
 _For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
 ## Development

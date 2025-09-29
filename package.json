@@ -13,6 +13,12 @@
             "import": "./dist/esm/index.js",
             "require": "./dist/cjs/index.js",
             "default": "./dist/esm/index.js"
+        },
+        "./adapters/expo": {
+            "types": "./dist/types/adapters/expo.d.ts",
+            "import": "./dist/esm/adapters/expo.js",
+            "require": "./dist/cjs/adapters/expo.js",
+            "default": "./dist/esm/adapters/expo.js"
         }
     },
     "files": [

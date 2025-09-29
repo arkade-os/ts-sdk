@@ -39,6 +39,7 @@ import {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    ExtendedWalletConfig,
     GetVtxosFilter,
     isRecoverable,
     isSpendable,
@@ -113,21 +114,29 @@ export class Wallet implements IWallet {
         readonly dustAmount: bigint
     ) {}
 
-    static async create(config: WalletConfig): Promise<Wallet> {
+    static async create(config: ExtendedWalletConfig): Promise<Wallet> {
         const pubkey = config.identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
         }
 
-        const arkProvider = new RestArkProvider(config.arkServerUrl);
-        const indexerProvider = new RestIndexerProvider(config.arkServerUrl);
+        const arkProvider = config.arkProvider
+            ? new config.arkProvider(config.arkServerUrl)
+            : new RestArkProvider(config.arkServerUrl);
+        const indexerProvider = config.indexerProvider
+            ? new config.indexerProvider(config.arkServerUrl)
+            : new RestIndexerProvider(config.arkServerUrl);
 
         const info = await arkProvider.getInfo();
 
         const network = getNetwork(info.network as NetworkName);
-        const onchainProvider = new EsploraProvider(
-            config.esploraUrl || ESPLORA_URL[info.network as NetworkName]
-        );
+        const onchainProvider = config.onchainProvider
+            ? new config.onchainProvider(
+                  config.esploraUrl || ESPLORA_URL[info.network as NetworkName]
+              )
+            : new EsploraProvider(
+                  config.esploraUrl || ESPLORA_URL[info.network as NetworkName]
+              );
 
         const exitTimelock: RelativeTimelock = {
             value: info.unilateralExitDelay,
