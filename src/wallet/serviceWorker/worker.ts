@@ -168,7 +168,7 @@ export class Worker {
                         JSON.stringify({ newVtxos, spentVtxos })
                     );
                 }
-                if (funds.type === "utxo" && funds.coins.length > 0) {
+                if (funds.type === "utxo") {
                     // notify all clients about the utxo update
                     this.sendMessageToAllClients(
                         "UTXO_UPDATE",
