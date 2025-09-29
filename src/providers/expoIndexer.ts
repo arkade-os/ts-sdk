@@ -50,28 +50,26 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
 
     async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
         // Dynamic import to avoid bundling expo/fetch in non-Expo environments
-        let expoFetch: typeof fetch;
+        // Falls back to standard fetch on web
+        let expoFetch: typeof fetch = fetch; // Default to standard fetch
         try {
-            // Use eval to avoid TypeScript compilation errors when expo/fetch is not available
-            const importFunc = new Function(
-                "specifier",
-                "return import(specifier)"
-            );
-            const expoFetchModule = await importFunc("expo/fetch");
-            expoFetch = expoFetchModule.fetch;
+            const expoFetchModule = await import("expo/fetch");
+            // expo/fetch returns a compatible fetch function but with different types
+            expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
+            console.debug("Using expo/fetch for indexer subscription");
         } catch (error) {
-            throw new Error(
-                "expo/fetch is required for ExpoIndexerProvider. Please install expo package."
-            );
+            // In web environments or when expo/fetch is not available, use standard fetch
+            console.debug("Using standard fetch instead of expo/fetch", error);
         }
 
-        const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
+        const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
             try {
                 const res = await expoFetch(url, {
                     headers: {
-                        Accept: "application/json",
+                        Accept: "text/event-stream",
+                        "Content-Type": "application/json",
                     },
                     signal: abortSignal,
                 });
@@ -79,6 +77,18 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                 if (!res.ok) {
                     throw new Error(
                         `Unexpected status ${res.status} when subscribing to address updates`
+                    );
+                }
+
+                // Check if response is the expected content type
+                const contentType = res.headers.get("content-type");
+                if (
+                    contentType &&
+                    !contentType.includes("text/event-stream") &&
+                    !contentType.includes("application/json")
+                ) {
+                    throw new Error(
+                        `Unexpected content-type: ${contentType}. Expected text/event-stream or application/json`
                     );
                 }
 
@@ -104,20 +114,35 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                         if (!line) continue;
 
                         try {
-                            const data = JSON.parse(line);
-                            if ("result" in data) {
-                                yield {
-                                    txid: data.result.txid,
-                                    scripts: data.result.scripts || [],
-                                    newVtxos: (data.result.newVtxos || []).map(
-                                        convertVtxo
-                                    ),
-                                    spentVtxos: (
-                                        data.result.spentVtxos || []
-                                    ).map(convertVtxo),
-                                    tx: data.result.tx,
-                                    checkpointTxs: data.result.checkpointTxs,
-                                };
+                            // Parse SSE format: "data: {json}"
+                            if (line.startsWith("data:")) {
+                                const jsonStr = line.substring(5).trim();
+                                if (!jsonStr) continue;
+
+                                const data = JSON.parse(jsonStr);
+                                // Handle new v8 proto format with heartbeat or event
+                                if (data.heartbeat !== undefined) {
+                                    // Skip heartbeat messages
+                                    continue;
+                                }
+                                // Process event messages
+                                if (data.event) {
+                                    yield {
+                                        txid: data.event.txid,
+                                        scripts: data.event.scripts || [],
+                                        newVtxos: (
+                                            data.event.newVtxos || []
+                                        ).map(convertVtxo),
+                                        spentVtxos: (
+                                            data.event.spentVtxos || []
+                                        ).map(convertVtxo),
+                                        sweptVtxos: (
+                                            data.event.sweptVtxos || []
+                                        ).map(convertVtxo),
+                                        tx: data.event.tx,
+                                        checkpointTxs: data.event.checkpointTxs,
+                                    };
+                                }
                             }
                         } catch (parseError) {
                             console.error(

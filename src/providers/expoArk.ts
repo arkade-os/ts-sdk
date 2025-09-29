@@ -28,19 +28,17 @@ export class ExpoArkProvider extends RestArkProvider {
         topics: string[]
     ): AsyncIterableIterator<SettlementEvent> {
         // Dynamic import to avoid bundling expo/fetch in non-Expo environments
-        let expoFetch: typeof fetch;
+        // Falls back to standard fetch on web
+        let expoFetch: typeof fetch = fetch; // Default to standard fetch
         try {
-            // Use eval to avoid TypeScript compilation errors when expo/fetch is not available
-            const importFunc = new Function(
-                "specifier",
-                "return import(specifier)"
-            );
-            const expoFetchModule = await importFunc("expo/fetch");
-            expoFetch = expoFetchModule.fetch;
+            // Try dynamic import first
+            const expoFetchModule = await import("expo/fetch");
+            // expo/fetch returns a compatible fetch function but with different types
+            expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
+            console.debug("Using expo/fetch for SSE");
         } catch (error) {
-            throw new Error(
-                "expo/fetch is required for ExpoArkProvider. Please install expo package."
-            );
+            // In web environments or when expo/fetch is not available, use standard fetch
+            console.debug("Using standard fetch instead of expo/fetch", error);
         }
 
         const url = `${this.serverUrl}/v1/batch/events`;
@@ -88,15 +86,31 @@ export class ExpoArkProvider extends RestArkProvider {
                         if (!line) continue;
 
                         try {
-                            const data = JSON.parse(line);
-                            const event = this.parseSettlementEvent(
-                                data.result
-                            );
-                            if (event) {
-                                yield event;
+                            // Parse SSE format: "data: {json}"
+                            if (line.startsWith("data:")) {
+                                const jsonStr = line.substring(5).trim();
+                                if (!jsonStr) continue;
+
+                                const data = JSON.parse(jsonStr);
+
+                                // Handle different response structures
+                                // v8 mesh API might wrap in {result: ...} or send directly
+                                const eventData = data.result || data;
+
+                                // Skip heartbeat messages
+                                if (eventData.heartbeat !== undefined) {
+                                    continue;
+                                }
+
+                                const event =
+                                    this.parseSettlementEvent(eventData);
+                                if (event) {
+                                    yield event;
+                                }
                             }
                         } catch (err) {
-                            console.error("Failed to parse event:", err);
+                            console.error("Failed to parse event:", line);
+                            console.error("Parse error:", err);
                             throw err;
                         }
                     }
@@ -129,13 +143,10 @@ export class ExpoArkProvider extends RestArkProvider {
         // Dynamic import to avoid bundling expo/fetch in non-Expo environments
         let expoFetch: typeof fetch;
         try {
-            // Use eval to avoid TypeScript compilation errors when expo/fetch is not available
-            const importFunc = new Function(
-                "specifier",
-                "return import(specifier)"
-            );
-            const expoFetchModule = await importFunc("expo/fetch");
-            expoFetch = expoFetchModule.fetch;
+            const expoFetchModule = await import("expo/fetch");
+            // expo/fetch returns a compatible fetch function but with different types
+            expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
+            console.debug("Using expo/fetch for transaction stream");
         } catch (error) {
             throw new Error(
                 "expo/fetch is required for ExpoArkProvider. Please install expo package."

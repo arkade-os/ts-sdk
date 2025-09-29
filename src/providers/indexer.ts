@@ -91,8 +91,17 @@ export interface SubscriptionResponse {
     scripts: string[];
     newVtxos: VirtualCoin[];
     spentVtxos: VirtualCoin[];
+    sweptVtxos: VirtualCoin[];
     tx?: string;
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
+}
+
+export interface SubscriptionHeartbeat {
+    type: "heartbeat";
+}
+
+export interface SubscriptionEvent extends SubscriptionResponse {
+    type: "event";
 }
 
 export interface IndexerProvider {
@@ -163,7 +172,7 @@ export class RestIndexerProvider implements IndexerProvider {
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<{ vtxoTree: Tx[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
+        let url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -198,7 +207,7 @@ export class RestIndexerProvider implements IndexerProvider {
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<{ leaves: Outpoint[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
+        let url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/tree/leaves`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -225,7 +234,7 @@ export class RestIndexerProvider implements IndexerProvider {
     async getBatchSweepTransactions(
         batchOutpoint: Outpoint
     ): Promise<{ sweptBy: string[] }> {
-        const url = `${this.serverUrl}/v1/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
+        const url = `${this.serverUrl}/v1/indexer/batch/${batchOutpoint.txid}/${batchOutpoint.vout}/sweepTxs`;
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(
@@ -240,7 +249,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getCommitmentTx(txid: string): Promise<CommitmentTx> {
-        const url = `${this.serverUrl}/v1/commitmentTx/${txid}`;
+        const url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}`;
         const res = await fetch(url);
         if (!res.ok) {
             throw new Error(`Failed to fetch commitment tx: ${res.statusText}`);
@@ -257,7 +266,7 @@ export class RestIndexerProvider implements IndexerProvider {
         txid: string,
         opts?: PaginationOptions
     ): Promise<{ connectors: Tx[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/commitmentTx/${txid}/connectors`;
+        let url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}/connectors`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -294,7 +303,7 @@ export class RestIndexerProvider implements IndexerProvider {
         txid: string,
         opts?: PaginationOptions
     ): Promise<{ txids: string[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/commitmentTx/${txid}/forfeitTxs`;
+        let url = `${this.serverUrl}/v1/indexer/commitmentTx/${txid}/forfeitTxs`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -319,19 +328,33 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
-        const url = `${this.serverUrl}/v1/script/subscription/${subscriptionId}`;
+        const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
             try {
                 const res = await fetch(url, {
                     headers: {
-                        Accept: "application/json",
+                        Accept: "text/event-stream",
+                        "Content-Type": "application/json",
                     },
+                    signal: abortSignal,
                 });
 
                 if (!res.ok) {
                     throw new Error(
                         `Unexpected status ${res.status} when subscribing to address updates`
+                    );
+                }
+
+                // Check if response is the expected content type
+                const contentType = res.headers.get("content-type");
+                if (
+                    contentType &&
+                    !contentType.includes("text/event-stream") &&
+                    !contentType.includes("application/json")
+                ) {
+                    throw new Error(
+                        `Unexpected content-type: ${contentType}. Expected text/event-stream or application/json`
                     );
                 }
 
@@ -356,20 +379,44 @@ export class RestIndexerProvider implements IndexerProvider {
                         const line = lines[i].trim();
                         if (!line) continue;
 
-                        const data = JSON.parse(line);
-                        if ("result" in data) {
-                            yield {
-                                txid: data.result.txid,
-                                scripts: data.result.scripts || [],
-                                newVtxos: (data.result.newVtxos || []).map(
-                                    convertVtxo
-                                ),
-                                spentVtxos: (data.result.spentVtxos || []).map(
-                                    convertVtxo
-                                ),
-                                tx: data.result.tx,
-                                checkpointTxs: data.result.checkpointTxs,
-                            };
+                        // Parse SSE format: "data: {json}"
+                        if (line.startsWith("data:")) {
+                            const jsonStr = line.substring(5).trim();
+                            if (!jsonStr) continue;
+
+                            try {
+                                const data = JSON.parse(jsonStr);
+                                // Handle new v8 proto format with heartbeat or event
+                                if (data.heartbeat !== undefined) {
+                                    // Skip heartbeat messages
+                                    continue;
+                                }
+                                // Process event messages
+                                if (data.event) {
+                                    yield {
+                                        txid: data.event.txid,
+                                        scripts: data.event.scripts || [],
+                                        newVtxos: (
+                                            data.event.newVtxos || []
+                                        ).map(convertVtxo),
+                                        spentVtxos: (
+                                            data.event.spentVtxos || []
+                                        ).map(convertVtxo),
+                                        sweptVtxos: (
+                                            data.event.sweptVtxos || []
+                                        ).map(convertVtxo),
+                                        tx: data.event.tx,
+                                        checkpointTxs: data.event.checkpointTxs,
+                                    };
+                                }
+                            } catch (parseError) {
+                                console.error(
+                                    "Failed to parse SSE data:",
+                                    jsonStr
+                                );
+                                console.error("Parse error:", parseError);
+                                throw parseError;
+                            }
                         }
                     }
 
@@ -397,7 +444,7 @@ export class RestIndexerProvider implements IndexerProvider {
         txids: string[],
         opts?: PaginationOptions
     ): Promise<{ txs: string[]; page?: PageResponse }> {
-        let url = `${this.serverUrl}/v1/virtualTx/${txids.join(",")}`;
+        let url = `${this.serverUrl}/v1/indexer/virtualTx/${txids.join(",")}`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -423,7 +470,7 @@ export class RestIndexerProvider implements IndexerProvider {
         vtxoOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<VtxoChain> {
-        let url = `${this.serverUrl}/v1/vtxo/${vtxoOutpoint.txid}/${vtxoOutpoint.vout}/chain`;
+        let url = `${this.serverUrl}/v1/indexer/vtxo/${vtxoOutpoint.txid}/${vtxoOutpoint.vout}/chain`;
         const params = new URLSearchParams();
         if (opts) {
             if (opts.pageIndex !== undefined)
@@ -465,7 +512,7 @@ export class RestIndexerProvider implements IndexerProvider {
             throw new Error("Either scripts or outpoints must be provided");
         }
 
-        let url = `${this.serverUrl}/v1/vtxos`;
+        let url = `${this.serverUrl}/v1/indexer/vtxos`;
         const params = new URLSearchParams();
 
         // Handle scripts with multi collection format
@@ -518,7 +565,7 @@ export class RestIndexerProvider implements IndexerProvider {
         scripts: string[],
         subscriptionId?: string
     ): Promise<string> {
-        const url = `${this.serverUrl}/v1/script/subscribe`;
+        const url = `${this.serverUrl}/v1/indexer/script/subscribe`;
         const res = await fetch(url, {
             headers: {
                 "Content-Type": "application/json",
@@ -539,7 +586,7 @@ export class RestIndexerProvider implements IndexerProvider {
         subscriptionId: string,
         scripts?: string[]
     ): Promise<void> {
-        const url = `${this.serverUrl}/v1/script/unsubscribe`;
+        const url = `${this.serverUrl}/v1/indexer/script/unsubscribe`;
         const res = await fetch(url, {
             headers: {
                 "Content-Type": "application/json",

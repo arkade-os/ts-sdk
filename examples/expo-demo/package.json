@@ -1,0 +1,31 @@
+{
+    "name": "arkade-expo-demo",
+    "version": "1.0.0",
+    "main": "index.js",
+    "scripts": {
+        "start": "expo start",
+        "ios": "expo run:ios",
+        "android": "expo run:android",
+        "web": "expo start --port 8080 --web"
+    },
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "@babel/runtime": "7.28.4",
+        "@expo/metro-runtime": "~4.0.1",
+        "@scure/bip32": "2.0.0",
+        "@scure/bip39": "2.0.0",
+        "expo": "~52.0.47",
+        "expo-clipboard": "8.0.7",
+        "expo-fetch": "0.0.0",
+        "react": "18.3.1",
+        "react-dom": "18.3.1",
+        "react-native": "0.76.9",
+        "react-native-web": "~0.19.13"
+    },
+    "devDependencies": {
+        "@babel/core": "^7.25.0",
+        "@types/react": "~18.3.12",
+        "typescript": "^5.3.0"
+    },
+    "private": true
+}

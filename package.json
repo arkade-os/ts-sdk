@@ -49,6 +49,8 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "test:sw": "pnpm run build:browser && node test/serviceWorker/serve.js",
+        "expo:web:install": "cd examples/expo-web && pnpm install",
+        "expo:web": "cd examples/expo-web && pnpm start",
         "format": "prettier --write src test examples",
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
@@ -96,7 +98,8 @@
     "pnpm": {
         "overrides": {
             "esbuild": ">=0.25.0",
-            "brace-expansion": ">=2.0.2"
+            "brace-expansion": "2.0.1",
+            "minimatch": "9.0.3"
         }
     }
 }

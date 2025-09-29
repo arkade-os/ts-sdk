@@ -426,7 +426,7 @@ export class RestArkProvider implements ArkProvider {
             try {
                 const response = await fetch(url + queryParams, {
                     headers: {
-                        Accept: "application/json",
+                        Accept: "text/event-stream",
                     },
                     signal,
                 });
@@ -461,15 +461,28 @@ export class RestArkProvider implements ArkProvider {
                         if (!line) continue;
 
                         try {
-                            const data = JSON.parse(line);
-                            const event = this.parseSettlementEvent(
-                                data.result
-                            );
-                            if (event) {
-                                yield event;
+                            // Parse SSE format: "data: {json}"
+                            if (line.startsWith("data:")) {
+                                const jsonStr = line.substring(5).trim();
+                                if (!jsonStr) continue;
+
+                                const data = JSON.parse(jsonStr);
+                                const eventData = data.result || data;
+
+                                // Skip heartbeat messages
+                                if (eventData.heartbeat !== undefined) {
+                                    continue;
+                                }
+
+                                const event =
+                                    this.parseSettlementEvent(eventData);
+                                if (event) {
+                                    yield event;
+                                }
                             }
                         } catch (err) {
-                            console.error("Failed to parse event:", err);
+                            console.error("Failed to parse event:", line);
+                            console.error("Parse error:", err);
                             throw err;
                         }
                     }
