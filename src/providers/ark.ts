@@ -223,6 +223,13 @@ export class RestArkProvider implements ArkProvider {
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointExitClosure: fromServer.checkpointTapscript ?? "",
+            digest: fromServer.digest ?? "",
+            fees: fromServer.fees,
+            deprecatedSigners:
+                fromServer.deprecatedSigners?.map((signer: any) => ({
+                    cutoffDate: BigInt(signer.cutoffDate ?? 0),
+                    pubkey: signer.pubkey ?? "",
+                })) ?? [],
             marketHour:
                 "marketHour" in fromServer && fromServer.marketHour != null
                     ? {
