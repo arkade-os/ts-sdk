@@ -539,7 +539,7 @@ export class RestIndexerProvider implements IndexerProvider {
         });
         if (!res.ok) {
             const errorText = await res.text();
-            throw new Error(`Failed to unsubscribe to scripts: ${errorText}`);
+            console.warn(`Failed to unsubscribe to scripts: ${errorText}`);
         }
     }
 }
