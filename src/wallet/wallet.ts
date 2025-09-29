@@ -68,7 +68,7 @@ import {
     ContractRepository,
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
-import { extendVirtualCoin } from "./serviceWorker/utils";
+import { extendVirtualCoin } from "./utils";
 
 export type IncomingFunds =
     | {
@@ -282,16 +282,9 @@ export class Wallet implements IWallet {
         // For now, always fetch fresh data from provider and update cache
         // In future, we can add cache invalidation logic based on timestamps
         const spendableVtxos = await this.getVirtualCoins(filter);
-        const encodedOffchainTapscript = this.offchainTapscript.encode();
-        const forfeit = this.offchainTapscript.forfeit();
-        const exit = this.offchainTapscript.exit();
-
-        const extendedVtxos = spendableVtxos.map((vtxo) => ({
-            ...vtxo,
-            forfeitTapLeafScript: forfeit,
-            intentTapLeafScript: exit,
-            tapTree: encodedOffchainTapscript,
-        }));
+        const extendedVtxos = spendableVtxos.map((vtxo) =>
+            extendVirtualCoin(this, vtxo)
+        );
 
         // Update cache with fresh data
         await this.walletRepository.saveVtxos(address, extendedVtxos);
@@ -334,9 +327,7 @@ export class Wallet implements IWallet {
             return [];
         }
 
-        const response = await this.indexerProvider.getVtxos({
-            scripts: [hex.encode(this.offchainTapscript.pkScript)],
-        });
+        const vtxos = await this.getVtxos();
 
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
@@ -344,7 +335,7 @@ export class Wallet implements IWallet {
         const spendableVtxos = [];
         const spentVtxos = [];
 
-        for (const vtxo of response.vtxos) {
+        for (const vtxo of vtxos) {
             if (isSpendable(vtxo)) {
                 spendableVtxos.push(vtxo);
             } else {
@@ -378,10 +369,10 @@ export class Wallet implements IWallet {
         boardingTxs: ArkTransaction[];
         commitmentsToIgnore: Set<string>;
     }> {
-        const boardingAddress = await this.getBoardingAddress();
-        const txs = await this.onchainProvider.getTransactions(boardingAddress);
         const utxos: VirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
+        const boardingAddress = await this.getBoardingAddress();
+        const txs = await this.onchainProvider.getTransactions(boardingAddress);
 
         for (const tx of txs) {
             for (let i = 0; i < tx.vout.length; i++) {

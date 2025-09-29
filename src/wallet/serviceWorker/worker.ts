@@ -15,7 +15,7 @@ import {
     WalletRepository,
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
-import { extendVirtualCoin } from "./utils";
+import { extendVirtualCoin } from "../utils";
 
 /**
  * Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -689,7 +689,6 @@ export class Worker {
 
     private async handleReloadWallet(event: ExtendableMessageEvent) {
         const message = event.data;
-        console.log("RELOAD_WALLET message received", message);
         if (!Request.isReloadWallet(message)) {
             console.error("Invalid RELOAD_WALLET message format", message);
             event.source?.postMessage(
