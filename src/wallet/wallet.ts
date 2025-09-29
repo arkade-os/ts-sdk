@@ -846,31 +846,27 @@ export class Wallet implements IWallet {
         let indexerStopFunc: () => void;
 
         if (this.onchainProvider && boardingAddress) {
+            const findVoutOnTx = (tx: any) => {
+                return tx.vout.findIndex(
+                    (v: any) => v.scriptpubkey_address === boardingAddress
+                );
+            };
             onchainStopFunc = await this.onchainProvider.watchAddresses(
                 [boardingAddress],
                 (txs) => {
+                    // find all utxos belonging to our boarding address
                     const coins: Coin[] = txs
+                        // filter txs where address is in output
+                        .filter((tx) => findVoutOnTx(tx) !== -1)
+                        // return utxo as Coin
                         .map((tx) => {
-                            const vout = tx.vout.findIndex(
-                                (v) =>
-                                    v.scriptpubkey_address === boardingAddress
-                            );
+                            const { txid, status } = tx;
+                            const vout = findVoutOnTx(tx);
+                            const value = Number(tx.vout[vout].value);
+                            return { txid, vout, value, status };
+                        });
 
-                            if (vout === -1) {
-                                console.warn(
-                                    `No vout found for address ${boardingAddress} in transaction ${tx.txid}`
-                                );
-                                return null;
-                            }
-
-                            return {
-                                txid: tx.txid,
-                                vout,
-                                value: Number(tx.vout[vout].value),
-                                status: tx.status,
-                            };
-                        })
-                        .filter((coin) => coin !== null);
+                    // and notify via callback
                     eventCallback({
                         type: "utxo",
                         coins,
