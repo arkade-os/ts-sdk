@@ -278,9 +278,6 @@ export function verifyTapscriptSignatures(
             );
         }
 
-        const script = matchingScript;
-        const version = matchingVersion;
-
         // Reconstruct the message that was signed
         // Note: preimageWitnessV1 requires ALL input prevout scripts and amounts
         const message = tx.preimageWitnessV1(
@@ -289,8 +286,8 @@ export function verifyTapscriptSignatures(
             sighashType,
             prevoutAmounts,
             undefined,
-            script,
-            version
+            matchingScript,
+            matchingVersion
         );
 
         // Verify the schnorr signature
