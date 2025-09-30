@@ -1,12 +1,12 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
-import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment";
-import { SigHash, Transaction } from "@scure/btc-signer";
+import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment.js";
+import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import {
     TaprootControlBlock,
     TransactionInput,
     TransactionOutput,
-} from "@scure/btc-signer/psbt";
+} from "@scure/btc-signer/psbt.js";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
@@ -52,7 +52,7 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils";
+import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx } from "../utils/arkTransaction";
@@ -60,6 +60,16 @@ import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree, TxTreeNode } from "../tree/txTree";
+import { InMemoryStorageAdapter } from "../storage/inMemory";
+import {
+    WalletRepository,
+    WalletRepositoryImpl,
+} from "../repositories/walletRepository";
+import {
+    ContractRepository,
+    ContractRepositoryImpl,
+} from "../repositories/contractRepository";
+import { extendVirtualCoin } from "./utils";
 
 export type IncomingFunds =
     | {
@@ -68,7 +78,8 @@ export type IncomingFunds =
       }
     | {
           type: "vtxo";
-          vtxos: VirtualCoin[];
+          newVtxos: ExtendedVirtualCoin[];
+          spentVtxos: ExtendedVirtualCoin[];
       };
 
 /**
@@ -107,6 +118,9 @@ export type IncomingFunds =
 export class Wallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
@@ -119,11 +133,16 @@ export class Wallet implements IWallet {
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
-        readonly dustAmount: bigint
-    ) {}
+        readonly dustAmount: bigint,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository
+    ) {
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
+    }
 
-    static async create(config: ExtendedWalletConfig): Promise<Wallet> {
-        const pubkey = config.identity.xOnlyPublicKey();
+    static async create(config: WalletConfig): Promise<Wallet> {
+        const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
         }
@@ -189,15 +208,20 @@ export class Wallet implements IWallet {
         const offchainTapscript = bareVtxoTapscript;
 
         // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-        const serverUnrollScript = CSVMultisigTapscript.encode({
-            timelock: exitTimelock,
-            pubkeys: [serverPubKey],
-        });
+        const rawCheckpointExitClosure = hex.decode(info.checkpointExitClosure);
+        const serverUnrollScript = CSVMultisigTapscript.decode(
+            rawCheckpointExitClosure
+        );
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
         const forfeitAddress = Address(network).decode(info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
+
+        // Set up storage and repositories
+        const storage = config.storage || new InMemoryStorageAdapter();
+        const walletRepository = new WalletRepositoryImpl(storage);
+        const contractRepository = new ContractRepositoryImpl(storage);
 
         return new Wallet(
             config.identity,
@@ -211,7 +235,9 @@ export class Wallet implements IWallet {
             boardingTapscript,
             serverUnrollScript,
             forfeitOutputScript,
-            info.dust
+            info.dust,
+            walletRepository,
+            contractRepository
         );
     }
 
@@ -282,17 +308,23 @@ export class Wallet implements IWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        const spendableVtxos = await this.getVirtualCoins(filter);
-        const encodedOffchainTapscript = this.offchainTapscript.encode();
-        const forfeit = this.offchainTapscript.forfeit();
-        const exit = this.offchainTapscript.exit();
+        const address = await this.getAddress();
 
-        return spendableVtxos.map((vtxo) => ({
-            ...vtxo,
-            forfeitTapLeafScript: forfeit,
-            intentTapLeafScript: exit,
-            tapTree: encodedOffchainTapscript,
-        }));
+        // Try to get from cache first first (optional fast path)
+        // const cachedVtxos = await this.walletRepository.getVtxos(address);
+        // if (cachedVtxos.length) return cachedVtxos;
+
+        // For now, always fetch fresh data from provider and update cache
+        // In future, we can add cache invalidation logic based on timestamps
+        const spendableVtxos = await this.getVirtualCoins(filter);
+        const extendedVtxos = spendableVtxos.map((vtxo) =>
+            extendVirtualCoin(this, vtxo)
+        );
+
+        // Update cache with fresh data
+        await this.walletRepository.saveVtxos(address, extendedVtxos);
+
+        return extendedVtxos;
     }
 
     private async getVirtualCoins(
@@ -374,10 +406,10 @@ export class Wallet implements IWallet {
         boardingTxs: ArkTransaction[];
         commitmentsToIgnore: Set<string>;
     }> {
-        const boardingAddress = await this.getBoardingAddress();
-        const txs = await this.onchainProvider.getTransactions(boardingAddress);
         const utxos: VirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
+        const boardingAddress = await this.getBoardingAddress();
+        const txs = await this.onchainProvider.getTransactions(boardingAddress);
 
         for (const tx of txs) {
             for (let i = 0; i < tx.vout.length; i++) {
@@ -842,31 +874,27 @@ export class Wallet implements IWallet {
         let indexerStopFunc: () => void;
 
         if (this.onchainProvider && boardingAddress) {
+            const findVoutOnTx = (tx: any) => {
+                return tx.vout.findIndex(
+                    (v: any) => v.scriptpubkey_address === boardingAddress
+                );
+            };
             onchainStopFunc = await this.onchainProvider.watchAddresses(
                 [boardingAddress],
                 (txs) => {
+                    // find all utxos belonging to our boarding address
                     const coins: Coin[] = txs
+                        // filter txs where address is in output
+                        .filter((tx) => findVoutOnTx(tx) !== -1)
+                        // return utxo as Coin
                         .map((tx) => {
-                            const vout = tx.vout.findIndex(
-                                (v) =>
-                                    v.scriptpubkey_address === boardingAddress
-                            );
+                            const { txid, status } = tx;
+                            const vout = findVoutOnTx(tx);
+                            const value = Number(tx.vout[vout].value);
+                            return { txid, vout, value, status };
+                        });
 
-                            if (vout === -1) {
-                                console.warn(
-                                    `No vout found for address ${boardingAddress} in transaction ${tx.txid}`
-                                );
-                                return null;
-                            }
-
-                            return {
-                                txid: tx.txid,
-                                vout,
-                                value: Number(tx.vout[vout].value),
-                                status: tx.status,
-                            };
-                        })
-                        .filter((coin) => coin !== null);
+                    // and notify via callback
                     eventCallback({
                         type: "utxo",
                         coins,
@@ -903,7 +931,12 @@ export class Wallet implements IWallet {
                         if (update.newVtxos?.length > 0) {
                             eventCallback({
                                 type: "vtxo",
-                                vtxos: update.newVtxos,
+                                newVtxos: update.newVtxos.map((vtxo) =>
+                                    extendVirtualCoin(this, vtxo)
+                                ),
+                                spentVtxos: update.spentVtxos.map((vtxo) =>
+                                    extendVirtualCoin(this, vtxo)
+                                ),
                             });
                         }
                     }

@@ -1,7 +1,7 @@
 import * as bip68 from "bip68";
-import { Bytes } from "@scure/btc-signer/utils";
-import { Script, ScriptNum, ScriptType } from "@scure/btc-signer/script";
-import { p2tr_ms } from "@scure/btc-signer/payment";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { Script, ScriptNum, ScriptType } from "@scure/btc-signer/script.js";
+import { p2tr_ms } from "@scure/btc-signer/payment.js";
 import { hex } from "@scure/base";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
@@ -359,7 +359,7 @@ export namespace CSVMultisigTapscript {
         }
 
         const sequence = asm[0];
-        if (typeof sequence === "string" || typeof sequence === "number") {
+        if (typeof sequence === "string") {
             throw new Error("Invalid script: expected sequence number");
         }
 
@@ -380,7 +380,14 @@ export namespace CSVMultisigTapscript {
             );
         }
 
-        const sequenceNum = Number(MinimalScriptNum.decode(sequence));
+        let sequenceNum: number;
+        if (typeof sequence === "number") {
+            sequenceNum = sequence;
+        } else {
+            sequenceNum = Number(
+                MinimalScriptNum.decode(sequence as Uint8Array)
+            );
+        }
         const decodedTimelock = bip68.decode(sequenceNum);
 
         const timelock: RelativeTimelock =

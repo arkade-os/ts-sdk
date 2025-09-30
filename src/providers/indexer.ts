@@ -1,5 +1,6 @@
 import { Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
+import { eventSourceIterator } from "./utils";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -330,97 +331,49 @@ export class RestIndexerProvider implements IndexerProvider {
     async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
         const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
 
-        while (!abortSignal.aborted) {
+        while (!abortSignal?.aborted) {
             try {
-                const res = await fetch(url, {
-                    headers: {
-                        Accept: "text/event-stream",
-                        "Content-Type": "application/json",
-                    },
-                    signal: abortSignal,
-                });
+                const eventSource = new EventSource(url);
 
-                if (!res.ok) {
-                    throw new Error(
-                        `Unexpected status ${res.status} when subscribing to address updates`
-                    );
-                }
+                // Set up abort handling
+                const abortHandler = () => {
+                    eventSource.close();
+                };
+                abortSignal?.addEventListener("abort", abortHandler);
 
-                // Check if response is the expected content type
-                const contentType = res.headers.get("content-type");
-                if (
-                    contentType &&
-                    !contentType.includes("text/event-stream") &&
-                    !contentType.includes("application/json")
-                ) {
-                    throw new Error(
-                        `Unexpected content-type: ${contentType}. Expected text/event-stream or application/json`
-                    );
-                }
+                try {
+                    for await (const event of eventSourceIterator(
+                        eventSource
+                    )) {
+                        if (abortSignal?.aborted) break;
 
-                if (!res.body) {
-                    throw new Error("Response body is null");
-                }
-
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-
-                while (!abortSignal.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
-
-                        // Parse SSE format: "data: {json}"
-                        if (line.startsWith("data:")) {
-                            const jsonStr = line.substring(5).trim();
-                            if (!jsonStr) continue;
-
-                            try {
-                                const data = JSON.parse(jsonStr);
-                                // Handle new v8 proto format with heartbeat or event
-                                if (data.heartbeat !== undefined) {
-                                    // Skip heartbeat messages
-                                    continue;
-                                }
-                                // Process event messages
-                                if (data.event) {
-                                    yield {
-                                        txid: data.event.txid,
-                                        scripts: data.event.scripts || [],
-                                        newVtxos: (
-                                            data.event.newVtxos || []
-                                        ).map(convertVtxo),
-                                        spentVtxos: (
-                                            data.event.spentVtxos || []
-                                        ).map(convertVtxo),
-                                        sweptVtxos: (
-                                            data.event.sweptVtxos || []
-                                        ).map(convertVtxo),
-                                        tx: data.event.tx,
-                                        checkpointTxs: data.event.checkpointTxs,
-                                    };
-                                }
-                            } catch (parseError) {
-                                console.error(
-                                    "Failed to parse SSE data:",
-                                    jsonStr
-                                );
-                                console.error("Parse error:", parseError);
-                                throw parseError;
+                        try {
+                            const data = JSON.parse(event.data);
+                            if (data.event) {
+                                yield {
+                                    txid: data.event.txid,
+                                    scripts: data.event.scripts || [],
+                                    newVtxos: (data.event.newVtxos || []).map(
+                                        convertVtxo
+                                    ),
+                                    spentVtxos: (
+                                        data.event.spentVtxos || []
+                                    ).map(convertVtxo),
+                                    tx: data.event.tx,
+                                    checkpointTxs: data.event.checkpointTxs,
+                                };
                             }
+                        } catch (err) {
+                            console.error(
+                                "Failed to parse subscription event:",
+                                err
+                            );
+                            throw err;
                         }
                     }
-
-                    buffer = lines[lines.length - 1];
+                } finally {
+                    abortSignal?.removeEventListener("abort", abortHandler);
+                    eventSource.close();
                 }
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
@@ -428,7 +381,6 @@ export class RestIndexerProvider implements IndexerProvider {
                 }
 
                 // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                // these timeouts are set by builtin fetch function
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
@@ -596,7 +548,7 @@ export class RestIndexerProvider implements IndexerProvider {
         });
         if (!res.ok) {
             const errorText = await res.text();
-            throw new Error(`Failed to unsubscribe to scripts: ${errorText}`);
+            console.warn(`Failed to unsubscribe to scripts: ${errorText}`);
         }
     }
 }
@@ -723,7 +675,7 @@ namespace Response {
             typeof data === "object" &&
             isOutpoint(data.outpoint) &&
             typeof data.createdAt === "string" &&
-            typeof data.expiresAt === "string" &&
+            (data.expiresAt === null || typeof data.expiresAt === "string") &&
             typeof data.amount === "string" &&
             typeof data.script === "string" &&
             typeof data.isPreconfirmed === "boolean" &&
