@@ -54,7 +54,7 @@ export class ExpoArkProvider extends RestArkProvider {
             // to prevent accumulating listeners on the parent signal
             const fetchController = new AbortController();
             const cleanup = () => fetchController.abort();
-            signal?.addEventListener("abort", cleanup);
+            signal?.addEventListener("abort", cleanup, { once: true });
 
             try {
                 const response = await expoFetch(url + queryParams, {
@@ -174,7 +174,7 @@ export class ExpoArkProvider extends RestArkProvider {
             // to prevent accumulating listeners on the parent signal
             const fetchController = new AbortController();
             const cleanup = () => fetchController.abort();
-            signal?.addEventListener("abort", cleanup);
+            signal?.addEventListener("abort", cleanup, { once: true });
 
             try {
                 const response = await expoFetch(url, {
