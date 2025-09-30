@@ -978,15 +978,18 @@ export class Wallet implements IWallet {
     /**
      * Get VTXOs that are expiring soon based on renewal configuration
      *
+     * @deprecated Use `Renewal` class instead for better platform support and consistency
      * @returns Array of expiring VTXOs, empty array if renewal is disabled or no VTXOs expiring
      *
      * @example
      * ```typescript
+     * // Deprecated approach
      * const expiringVtxos = await wallet.getExpiringVtxos();
-     * if (expiringVtxos.length > 0) {
-     *   console.log(`${expiringVtxos.length} VTXOs expiring soon`);
-     *   await wallet.renewVtxos(expiringVtxos);
-     * }
+     *
+     * // Recommended approach
+     * import { Renewal } from '@arkade-os/sdk';
+     * const renewal = new Renewal(wallet, wallet.renewalConfig);
+     * const expiringVtxos = await renewal.getExpiringVtxos();
      * ```
      */
     async getExpiringVtxos(): Promise<ExtendedVirtualCoin[]> {
@@ -1010,23 +1013,20 @@ export class Wallet implements IWallet {
     /**
      * Renew VTXOs by settling them back to the wallet's address
      *
-     * This method collects all spendable VTXOs and settles them back to the wallet,
-     * effectively refreshing their expiration time. This is the primary way to prevent
-     * VTXOs from expiring.
-     *
+     * @deprecated Use `Renewal` class instead for better platform support and consistency
      * @param eventCallback - Optional callback for settlement events
      * @returns Settlement transaction ID
      * @throws Error if no VTXOs available to renew
      *
      * @example
      * ```typescript
-     * // Renew all VTXOs
+     * // Deprecated approach
      * const txid = await wallet.renewVtxos();
      *
-     * // With event callback
-     * const txid = await wallet.renewVtxos((event) => {
-     *   console.log('Settlement event:', event.type);
-     * });
+     * // Recommended approach
+     * import { Renewal } from '@arkade-os/sdk';
+     * const renewal = new Renewal(wallet);
+     * const txid = await renewal.renewVtxos();
      * ```
      */
     async renewVtxos(

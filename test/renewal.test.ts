@@ -6,8 +6,9 @@ import {
     getMinimumExpiry,
     calculateDynamicThreshold,
     DEFAULT_RENEWAL_CONFIG,
+    Renewal,
 } from "../src/wallet/renewal";
-import { ExtendedVirtualCoin } from "../src/wallet";
+import { ExtendedVirtualCoin, IWallet } from "../src/wallet";
 
 describe("Renewal utilities", () => {
     describe("DEFAULT_RENEWAL_CONFIG", () => {
@@ -286,6 +287,62 @@ describe("Renewal utilities", () => {
 
             const threshold = calculateDynamicThreshold(vtxos, 10);
             expect(threshold).toBeUndefined();
+        });
+    });
+});
+
+// Mock wallet for Renewal class tests
+const createMockWallet = (
+    vtxos: ExtendedVirtualCoin[] = [],
+    arkAddress = "arkade1test"
+): IWallet => {
+    return {
+        getVtxos: () => Promise.resolve(vtxos),
+        getAddress: () => Promise.resolve(arkAddress),
+        settle: () => Promise.resolve("mock-txid"),
+    } as any;
+};
+
+describe("Renewal class", () => {
+    describe("renewVtxos", () => {
+        it("should throw error when no VTXOs available", async () => {
+            const wallet = createMockWallet([]);
+            const renewal = new Renewal(wallet);
+
+            await expect(renewal.renewVtxos()).rejects.toThrow(
+                "No VTXOs available to renew"
+            );
+        });
+
+        it("should settle all VTXOs back to wallet address", async () => {
+            const vtxos = [
+                {
+                    txid: "tx1",
+                    vout: 0,
+                    value: 5000,
+                    virtualStatus: { state: "settled" },
+                    status: { confirmed: true },
+                    createdAt: new Date(),
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+                {
+                    txid: "tx2",
+                    vout: 0,
+                    value: 3000,
+                    virtualStatus: { state: "settled" },
+                    status: { confirmed: true },
+                    createdAt: new Date(),
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+            ];
+            const wallet = createMockWallet(vtxos, "arkade1myaddress");
+            const renewal = new Renewal(wallet);
+
+            const txid = await renewal.renewVtxos();
+
+            expect(txid).toBe("mock-txid");
         });
     });
 });

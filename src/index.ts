@@ -34,6 +34,8 @@ import {
     TreePartialSigs,
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
+import { Recovery } from "./wallet/recovery";
+import { Renewal } from "./wallet/renewal";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
@@ -127,6 +129,8 @@ export {
     SingleKey,
     OnchainWallet,
     Ramps,
+    Recovery,
+    Renewal,
 
     // Providers
     ESPLORA_URL,

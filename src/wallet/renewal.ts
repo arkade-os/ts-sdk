@@ -1,4 +1,5 @@
-import { ExtendedVirtualCoin } from ".";
+import { ExtendedVirtualCoin, IWallet } from ".";
+import { SettlementEvent } from "../providers/ark";
 
 /**
  * Configuration options for automatic VTXO renewal
@@ -151,4 +152,123 @@ export function calculateDynamicThreshold(
     }
 
     return calculateExpiryThreshold(minExpiry, percentage);
+}
+
+/**
+ * Renewal is a class wrapping IWallet.settle method to provide a convenient interface
+ * for renewing VTXOs to prevent expiration.
+ *
+ * This class provides:
+ * - Checking for expiring VTXOs based on configurable threshold
+ * - Renewing all VTXOs (including recoverable ones) back to the wallet
+ * - Future: Platform-specific automatic renewal scheduling (Expo, Browser, Service Worker)
+ *
+ * @example
+ * ```typescript
+ * const renewal = new Renewal(wallet);
+ *
+ * // Check for expiring VTXOs
+ * const expiring = await renewal.getExpiringVtxos();
+ * if (expiring.length > 0) {
+ *   console.log(`${expiring.length} VTXOs expiring soon`);
+ * }
+ *
+ * // Renew all VTXOs
+ * const txid = await renewal.renewVtxos();
+ * console.log(`Renewal transaction: ${txid}`);
+ * ```
+ */
+export class Renewal {
+    constructor(
+        readonly wallet: IWallet,
+        readonly config?: RenewalConfig
+    ) {}
+
+    /**
+     * Get VTXOs that are expiring soon based on renewal configuration
+     *
+     * @param thresholdPercentage - Optional override for threshold percentage (0-100)
+     * @returns Array of expiring VTXOs, empty array if renewal is disabled or no VTXOs expiring
+     *
+     * @example
+     * ```typescript
+     * const renewal = new Renewal(wallet, { enabled: true, thresholdPercentage: 10 });
+     * const expiringVtxos = await renewal.getExpiringVtxos();
+     * if (expiringVtxos.length > 0) {
+     *   console.log(`${expiringVtxos.length} VTXOs expiring soon`);
+     * }
+     * ```
+     */
+    async getExpiringVtxos(
+        thresholdPercentage?: number
+    ): Promise<ExtendedVirtualCoin[]> {
+        if (!this.config?.enabled) {
+            return [];
+        }
+
+        const vtxos = await this.wallet.getVtxos();
+        const percentage =
+            thresholdPercentage ??
+            this.config.thresholdPercentage ??
+            DEFAULT_RENEWAL_CONFIG.thresholdPercentage;
+
+        const threshold = calculateDynamicThreshold(vtxos, percentage);
+
+        if (!threshold) {
+            return [];
+        }
+
+        return getExpiringVtxos(vtxos, threshold);
+    }
+
+    /**
+     * Renew VTXOs by settling them back to the wallet's address
+     *
+     * This method collects all spendable VTXOs (including recoverable ones) and settles
+     * them back to the wallet, effectively refreshing their expiration time. This is the
+     * primary way to prevent VTXOs from expiring.
+     *
+     * @param eventCallback - Optional callback for settlement events
+     * @returns Settlement transaction ID
+     * @throws Error if no VTXOs available to renew
+     *
+     * @example
+     * ```typescript
+     * const renewal = new Renewal(wallet);
+     *
+     * // Simple renewal
+     * const txid = await renewal.renewVtxos();
+     *
+     * // With event callback
+     * const txid = await renewal.renewVtxos((event) => {
+     *   console.log('Settlement event:', event.type);
+     * });
+     * ```
+     */
+    async renewVtxos(
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string> {
+        // Get all VTXOs (including recoverable ones)
+        const vtxos = await this.wallet.getVtxos({ withRecoverable: true });
+
+        if (vtxos.length === 0) {
+            throw new Error("No VTXOs available to renew");
+        }
+
+        const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+        const arkAddress = await this.wallet.getAddress();
+
+        return this.wallet.settle(
+            {
+                inputs: vtxos,
+                outputs: [
+                    {
+                        address: arkAddress,
+                        amount: BigInt(totalAmount),
+                    },
+                ],
+            },
+            eventCallback
+        );
+    }
 }
