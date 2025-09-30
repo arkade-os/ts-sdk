@@ -359,6 +359,9 @@ export class RestIndexerProvider implements IndexerProvider {
                                     spentVtxos: (
                                         data.event.spentVtxos || []
                                     ).map(convertVtxo),
+                                    sweptVtxos: (
+                                        data.event.sweptVtxos || []
+                                    ).map(convertVtxo),
                                     tx: data.event.tx,
                                     checkpointTxs: data.event.checkpointTxs,
                                 };

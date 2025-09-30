@@ -1,3 +1,10 @@
+// Polyfill crypto.getRandomValues for React Native/Expo (required for MuSig2 settlements)
+import * as Crypto from "expo-crypto";
+global.crypto = {
+    ...global.crypto,
+    getRandomValues: Crypto.getRandomValues,
+} as any;
+
 import React, { useState, useEffect, useRef } from "react";
 import {
     View,
@@ -31,6 +38,31 @@ type LogEntry = {
     timestamp: string;
     type: "info" | "error" | "event";
     message: string;
+};
+
+/**
+ * Helper to create unique transaction key from ArkTransaction.
+ *
+ * Multiple VTXOs can share the same txid (different vouts/outpoints),
+ * but ArkTransaction only stores txids without vout indices.
+ * To ensure uniqueness for React keys, we combine:
+ * - All available txids (arkTxid, commitmentTxid, boardingTxid)
+ * - Transaction metadata (timestamp, amount, type)
+ *
+ * This creates a composite key that uniquely identifies each transaction
+ * even when multiple VTXOs from the same transaction are aggregated.
+ */
+const getTxUniqueKey = (tx: ArkTransaction, index: number): string => {
+    const parts = [
+        tx.key.arkTxid,
+        tx.key.commitmentTxid,
+        tx.key.boardingTxid,
+        tx.createdAt.toString(),
+        tx.amount.toString(),
+        tx.type,
+    ].filter(Boolean);
+
+    return parts.join("-") || `tx-${index}`;
 };
 
 export default function App() {
@@ -123,23 +155,23 @@ export default function App() {
             // If this is from a subscription, detect new transactions
             if (fromSubscription) {
                 const oldTxIds = new Set(
-                    transactions.map((tx) => `${tx.key.arkTxid}`)
+                    transactions.map((tx, i) => getTxUniqueKey(tx, i))
                 );
                 const newTxIds = new Set<string>();
 
-                newTxs.forEach((tx) => {
-                    const txId = `${tx.key.arkTxid}`;
-                    if (!oldTxIds.has(txId)) {
-                        newTxIds.add(txId);
+                newTxs.forEach((tx, index) => {
+                    const txKey = getTxUniqueKey(tx, index);
+                    if (!oldTxIds.has(txKey)) {
+                        newTxIds.add(txKey);
                         // Initialize shake animation for new transaction
-                        if (!shakeAnimations.current.has(txId)) {
+                        if (!shakeAnimations.current.has(txKey)) {
                             shakeAnimations.current.set(
-                                txId,
+                                txKey,
                                 new Animated.Value(0)
                             );
                         }
                         // Trigger shake animation
-                        const shakeAnim = shakeAnimations.current.get(txId)!;
+                        const shakeAnim = shakeAnimations.current.get(txKey)!;
                         Animated.sequence([
                             Animated.timing(shakeAnim, {
                                 toValue: 10,
@@ -171,7 +203,7 @@ export default function App() {
                             const timeoutId = setTimeout(() => {
                                 setNewTxIndices((prev) => {
                                     const updated = new Set(prev);
-                                    updated.delete(txId);
+                                    updated.delete(txKey);
                                     return updated;
                                 });
                                 animationTimeoutRefs.current.delete(timeoutId);
@@ -418,6 +450,37 @@ export default function App() {
         setLogs([]);
     };
 
+    const settlePreconfirmed = async () => {
+        if (!wallet) {
+            addLog("error", "Wallet not initialized");
+            return;
+        }
+
+        try {
+            addLog("info", "Fetching VTXOs...");
+            const vtxos = await wallet.getVtxos();
+
+            addLog(
+                "info",
+                `Found ${vtxos.length} VTXOs, total amount: ${vtxos.reduce((sum, v) => sum + v.value, 0)} sats`
+            );
+            addLog("info", "Starting settlement...");
+
+            const txid = await wallet.settle(undefined, (event) => {
+                addLog("event", `Settlement event: ${event.type}`);
+            });
+
+            addLog("info", `Settlement successful! Txid: ${txid}`);
+
+            // Refresh wallet data
+            await loadWalletData(wallet);
+        } catch (error) {
+            const errorMsg =
+                error instanceof Error ? error.message : String(error);
+            addLog("error", `Settlement failed: ${errorMsg}`);
+        }
+    };
+
     const toggleSubscription = async () => {
         if (!wallet) return;
 
@@ -504,14 +567,14 @@ export default function App() {
     // Cleanup stale animation Map entries when transactions change
     useEffect(() => {
         const currentTxIds = new Set(
-            transactions.map((tx) => `${tx.key.arkTxid}`)
+            transactions.map((tx, i) => getTxUniqueKey(tx, i))
         );
 
         // Remove animations for transactions no longer in the list
-        shakeAnimations.current.forEach((animation, txId) => {
-            if (!currentTxIds.has(txId)) {
+        shakeAnimations.current.forEach((animation, txKey) => {
+            if (!currentTxIds.has(txKey)) {
                 animation.stopAnimation();
-                shakeAnimations.current.delete(txId);
+                shakeAnimations.current.delete(txKey);
             }
         });
     }, [transactions]);
@@ -700,10 +763,11 @@ export default function App() {
                             </Text>
                         ) : (
                             transactions.map((tx, index) => {
-                                const txId = `${tx.key.arkTxid}`;
-                                const isNew = newTxIndices.has(txId);
+                                // Create unique key from all transaction identifiers
+                                const txKey = getTxUniqueKey(tx, index);
+                                const isNew = newTxIndices.has(txKey);
                                 const shakeAnim =
-                                    shakeAnimations.current.get(txId);
+                                    shakeAnimations.current.get(txKey);
 
                                 const animatedStyle =
                                     isNew && shakeAnim
@@ -716,7 +780,7 @@ export default function App() {
 
                                 return (
                                     <Animated.View
-                                        key={txId}
+                                        key={txKey}
                                         style={[styles.txItem, animatedStyle]}
                                     >
                                         <View style={styles.txLeft}>
@@ -801,6 +865,14 @@ export default function App() {
                             title="Clear Logs"
                             onPress={clearLogs}
                             color="#757575"
+                        />
+                    </View>
+
+                    <View style={styles.buttonRow}>
+                        <Button
+                            title="Settle Preconfirmed"
+                            onPress={settlePreconfirmed}
+                            color="#FF9800"
                         />
                     </View>
 

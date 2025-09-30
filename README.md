@@ -316,6 +316,26 @@ Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
 
+#### Crypto Polyfill Requirement
+
+Install `expo-crypto` and polyfill `crypto.getRandomValues()` at the top of your app entry point:
+
+```bash
+npx expo install expo-crypto
+```
+
+```typescript
+// App.tsx or index.js - MUST be first import
+import * as Crypto from 'expo-crypto';
+global.crypto = { ...global.crypto, getRandomValues: Crypto.getRandomValues } as any;
+
+// Now import the SDK
+import { Wallet, SingleKey } from '@arkade-os/sdk';
+import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
+```
+
+This is required for MuSig2 settlements and cryptographic operations.
+
 ### Repository Pattern
 
 Access low-level data management through repositories:

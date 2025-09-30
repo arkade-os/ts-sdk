@@ -39,7 +39,6 @@ import {
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
-    ExtendedWalletConfig,
     GetVtxosFilter,
     isRecoverable,
     isSpendable,
@@ -168,8 +167,10 @@ export class Wallet implements IWallet {
         }
 
         // Use provided indexerProvider instance or create a new one
+        // indexerUrl defaults to arkServerUrl if not provided
+        const indexerUrl = config.indexerUrl || arkServerUrl;
         const indexerProvider =
-            config.indexerProvider || new RestIndexerProvider(arkServerUrl);
+            config.indexerProvider || new RestIndexerProvider(indexerUrl);
 
         const info = await arkProvider.getInfo();
 
