@@ -137,9 +137,6 @@ export class Worker {
         const txs = await this.wallet.getTransactionHistory();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
-        // stop previous subscriptions if any
-        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
-
         // subscribe for incoming funds and notify all clients when new funds arrive
         this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
             async (funds) => {
