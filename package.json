@@ -49,8 +49,8 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "test:sw": "pnpm run build:browser && node test/serviceWorker/serve.js",
-        "expo:web:install": "cd examples/expo-web && pnpm install",
-        "expo:web": "cd examples/expo-web && pnpm start",
+        "expo:web:install": "cd examples/expo-demo && pnpm install",
+        "expo:web": "cd examples/expo-demo && pnpm start",
         "format": "prettier --write src test examples",
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
@@ -73,6 +73,7 @@
         "@types/node": "24.3.1",
         "@vitest/coverage-v8": "3.2.4",
         "esbuild": "^0.25.9",
+        "expo": "~52.0.47",
         "glob": "11.0.3",
         "husky": "9.1.7",
         "prettier": "3.6.2",
@@ -98,7 +99,7 @@
     "pnpm": {
         "overrides": {
             "esbuild": ">=0.25.0",
-            "brace-expansion": "2.0.1",
+            "brace-expansion": ">=2.0.2",
             "minimatch": "9.0.3"
         }
     }

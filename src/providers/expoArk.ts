@@ -141,16 +141,17 @@ export class ExpoArkProvider extends RestArkProvider {
         arkTx?: TxNotification;
     }> {
         // Dynamic import to avoid bundling expo/fetch in non-Expo environments
-        let expoFetch: typeof fetch;
+        // Falls back to standard fetch on web
+        let expoFetch: typeof fetch = fetch; // Default to standard fetch
         try {
+            // Try dynamic import first
             const expoFetchModule = await import("expo/fetch");
             // expo/fetch returns a compatible fetch function but with different types
             expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
             console.debug("Using expo/fetch for transaction stream");
         } catch (error) {
-            throw new Error(
-                "expo/fetch is required for ExpoArkProvider. Please install expo package."
-            );
+            // In web environments or when expo/fetch is not available, use standard fetch
+            console.debug("Using standard fetch instead of expo/fetch", error);
         }
 
         const url = `${this.serverUrl}/v1/txs`;

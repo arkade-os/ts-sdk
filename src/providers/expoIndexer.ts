@@ -49,8 +49,12 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
     }
 
     async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
+        // Detect if we're running in React Native/Expo environment
+        const isReactNative =
+            typeof navigator !== "undefined" &&
+            navigator.product === "ReactNative";
+
         // Dynamic import to avoid bundling expo/fetch in non-Expo environments
-        // Falls back to standard fetch on web
         let expoFetch: typeof fetch = fetch; // Default to standard fetch
         try {
             const expoFetchModule = await import("expo/fetch");
@@ -58,8 +62,20 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
             expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
             console.debug("Using expo/fetch for indexer subscription");
         } catch (error) {
-            // In web environments or when expo/fetch is not available, use standard fetch
-            console.debug("Using standard fetch instead of expo/fetch", error);
+            // In React Native/Expo, expo/fetch is required for proper streaming support
+            if (isReactNative) {
+                throw new Error(
+                    "expo/fetch is unavailable in React Native environment. " +
+                        "Please ensure expo/fetch is installed and properly configured. " +
+                        "Streaming support may not work with standard fetch in React Native."
+                );
+            }
+            // In non-RN environments, fall back to standard fetch but warn about potential streaming issues
+            console.warn(
+                "Using standard fetch instead of expo/fetch. " +
+                    "Streaming may not be fully supported in some environments.",
+                error
+            );
         }
 
         const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;

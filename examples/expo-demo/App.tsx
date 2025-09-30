@@ -49,8 +49,9 @@ export default function App() {
     const [isSubscribed, setIsSubscribed] = useState(false);
     const [subscriptionId, setSubscriptionId] = useState<string | null>(null);
     const subscriptionAbortRef = useRef<AbortController | null>(null);
-    const [newTxIndices, setNewTxIndices] = useState<Set<number>>(new Set());
-    const shakeAnimations = useRef<Map<number, Animated.Value>>(new Map());
+    const [newTxIndices, setNewTxIndices] = useState<Set<string>>(new Set());
+    const shakeAnimations = useRef<Map<string, Animated.Value>>(new Map());
+    const animationTimeoutRefs = useRef<Set<NodeJS.Timeout>>(new Set());
 
     // Doctor tab state
     const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -125,21 +126,21 @@ export default function App() {
                 const oldTxIds = new Set(
                     transactions.map((tx) => `${tx.key.arkTxid}`)
                 );
-                const newIndices = new Set<number>();
+                const newTxIds = new Set<string>();
 
-                newTxs.forEach((tx, idx) => {
+                newTxs.forEach((tx) => {
                     const txId = `${tx.key.arkTxid}`;
                     if (!oldTxIds.has(txId)) {
-                        newIndices.add(idx);
+                        newTxIds.add(txId);
                         // Initialize shake animation for new transaction
-                        if (!shakeAnimations.current.has(idx)) {
+                        if (!shakeAnimations.current.has(txId)) {
                             shakeAnimations.current.set(
-                                idx,
+                                txId,
                                 new Animated.Value(0)
                             );
                         }
                         // Trigger shake animation
-                        const shakeAnim = shakeAnimations.current.get(idx)!;
+                        const shakeAnim = shakeAnimations.current.get(txId)!;
                         Animated.sequence([
                             Animated.timing(shakeAnim, {
                                 toValue: 10,
@@ -168,18 +169,20 @@ export default function App() {
                             }),
                         ]).start(() => {
                             // Clear the animation after it's done
-                            setTimeout(() => {
+                            const timeoutId = setTimeout(() => {
                                 setNewTxIndices((prev) => {
                                     const updated = new Set(prev);
-                                    updated.delete(idx);
+                                    updated.delete(txId);
                                     return updated;
                                 });
+                                animationTimeoutRefs.current.delete(timeoutId);
                             }, 2000);
+                            animationTimeoutRefs.current.add(timeoutId);
                         });
                     }
                 });
 
-                setNewTxIndices(newIndices);
+                setNewTxIndices(newTxIds);
             }
 
             setTransactions(newTxs);
@@ -499,6 +502,21 @@ export default function App() {
         }
     };
 
+    // Cleanup stale animation Map entries when transactions change
+    useEffect(() => {
+        const currentTxIds = new Set(
+            transactions.map((tx) => `${tx.key.arkTxid}`)
+        );
+
+        // Remove animations for transactions no longer in the list
+        shakeAnimations.current.forEach((animation, txId) => {
+            if (!currentTxIds.has(txId)) {
+                animation.stopAnimation();
+                shakeAnimations.current.delete(txId);
+            }
+        });
+    }, [transactions]);
+
     useEffect(() => {
         return () => {
             if (abortControllerRef.current) {
@@ -507,6 +525,16 @@ export default function App() {
             if (subscriptionAbortRef.current) {
                 subscriptionAbortRef.current.abort();
             }
+            // Clear all animation timeouts
+            animationTimeoutRefs.current.forEach((timeoutId) => {
+                clearTimeout(timeoutId);
+            });
+            animationTimeoutRefs.current.clear();
+            // Stop and clear all animations
+            shakeAnimations.current.forEach((animation) => {
+                animation.stopAnimation();
+            });
+            shakeAnimations.current.clear();
         };
     }, []);
 
@@ -673,9 +701,10 @@ export default function App() {
                             </Text>
                         ) : (
                             transactions.map((tx, index) => {
-                                const isNew = newTxIndices.has(index);
+                                const txId = `${tx.key.arkTxid}`;
+                                const isNew = newTxIndices.has(txId);
                                 const shakeAnim =
-                                    shakeAnimations.current.get(index);
+                                    shakeAnimations.current.get(txId);
 
                                 const animatedStyle =
                                     isNew && shakeAnim
@@ -688,7 +717,7 @@ export default function App() {
 
                                 return (
                                     <Animated.View
-                                        key={index}
+                                        key={txId}
                                         style={[styles.txItem, animatedStyle]}
                                     >
                                         <View style={styles.txLeft}>
