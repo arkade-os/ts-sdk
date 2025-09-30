@@ -1,11 +1,13 @@
 # First stage: build the ark-wallet-daemon binary
-FROM golang:1.24.6 AS builder
+FROM golang:1.25.1-alpine3.22 AS builder
 
 ARG VERSION
 ARG TARGETOS
 ARG TARGETARCH
 
-ARG BRANCH=v0.7.1
+RUN apk update && apk upgrade && apk add --no-cache git
+
+ARG BRANCH=v8
 
 WORKDIR /app
 
@@ -16,7 +18,7 @@ RUN mkdir -p bin && cd arkd && \
     go build -ldflags="-X 'main.Version=${VERSION}'" -o /app/bin/arkd-wallet ./cmd/arkd-wallet/main.go
 
 # Second stage: minimal runtime image
-FROM alpine:3.20
+FROM alpine:3.22
 
 RUN apk update && apk upgrade
 
