@@ -63,12 +63,18 @@ export class ExpoArkProvider extends RestArkProvider {
                 : "";
 
         while (!signal?.aborted) {
+            // Create a new AbortController for this specific fetch attempt
+            // to prevent accumulating listeners on the parent signal
+            const fetchController = new AbortController();
+            const cleanup = () => fetchController.abort();
+            signal?.addEventListener("abort", cleanup);
+
             try {
                 const response = await expoFetch(url + queryParams, {
                     headers: {
                         Accept: "text/event-stream",
                     },
-                    signal,
+                    signal: fetchController.signal,
                 });
 
                 if (!response.ok) {
@@ -147,6 +153,9 @@ export class ExpoArkProvider extends RestArkProvider {
 
                 console.error("Event stream error:", error);
                 throw error;
+            } finally {
+                // Clean up the abort listener
+                signal?.removeEventListener("abort", cleanup);
             }
         }
     }
@@ -187,12 +196,18 @@ export class ExpoArkProvider extends RestArkProvider {
         const url = `${this.serverUrl}/v1/txs`;
 
         while (!signal?.aborted) {
+            // Create a new AbortController for this specific fetch attempt
+            // to prevent accumulating listeners on the parent signal
+            const fetchController = new AbortController();
+            const cleanup = () => fetchController.abort();
+            signal?.addEventListener("abort", cleanup);
+
             try {
                 const response = await expoFetch(url, {
                     headers: {
                         Accept: "text/event-stream",
                     },
-                    signal,
+                    signal: fetchController.signal,
                 });
 
                 if (!response.ok) {
@@ -249,6 +264,9 @@ export class ExpoArkProvider extends RestArkProvider {
 
                 console.error("Address subscription error:", error);
                 throw error;
+            } finally {
+                // Clean up the abort listener
+                signal?.removeEventListener("abort", cleanup);
             }
         }
     }
