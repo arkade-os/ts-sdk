@@ -77,6 +77,7 @@ import {
     RelativeTimelock,
 } from "./script/tapscript";
 import {
+    hasBoardingTxExpired,
     buildOffchainTx,
     ArkTxInput,
     OffchainTx,
@@ -173,6 +174,7 @@ export {
     // Utils
     buildOffchainTx,
     waitForIncomingFunds,
+    hasBoardingTxExpired,
 
     // Arknote
     ArkNote,

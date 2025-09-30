@@ -54,7 +54,7 @@ import {
 import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { buildOffchainTx } from "../utils/arkTransaction";
+import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -588,11 +588,21 @@ export class Wallet implements IWallet {
             }
         }
 
-        // if no params are provided, use all boarding and offchain utxos as inputs
+        // if no params are provided, use all non expired boarding utxos and offchain vtxos as inputs
         // and send all to the offchain address
         if (!params) {
             let amount = 0;
-            const boardingUtxos = await this.getBoardingUtxos();
+
+            const exitScript = CSVMultisigTapscript.decode(
+                hex.decode(this.boardingTapscript.exitScript)
+            );
+
+            const boardingTimelock = exitScript.params.timelock;
+
+            const boardingUtxos = (await this.getBoardingUtxos()).filter(
+                (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
+            );
+
             amount += boardingUtxos.reduce(
                 (sum, input) => sum + input.value,
                 0
