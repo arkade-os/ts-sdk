@@ -237,19 +237,15 @@ export function verifyTapscriptSignatures(
 
         // Verify sighash type is allowed
         if (!allowedSighashTypes.includes(sighashType)) {
-            const sighashName = `0x${sighashType.toString(16)}`;
-            const allowedNames = allowedSighashTypes
-                .map((t) => `0x${t.toString(16)}`)
-                .join(", ");
-            throw new Error(
-                `Invalid sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}. Allowed: ${allowedNames}`
-            );
+            const formatSighash = (type: number) => `0x${type.toString(16).padStart(2, '0')}`;
+            const sighashName = formatSighash(sighashType);
+            const allowedNames = allowedSighashTypes.map(formatSighash).join(', ');
+            throw new Error(`Invalid sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}. Allowed: ${allowedNames}`);
         }
 
         // Find the tapLeafScript that matches this signature's leafHash
         if (!input.tapLeafScript || input.tapLeafScript.length === 0) {
             throw new Error(
-                `Input ${inputIndex} is missing tapLeafScript for tapScriptSig verification`
             );
         }
 
