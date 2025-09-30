@@ -173,10 +173,13 @@ export class Wallet implements IWallet {
         const offchainTapscript = bareVtxoTapscript;
 
         // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-        const rawCheckpointExitClosure = hex.decode(info.checkpointExitClosure);
-        const serverUnrollScript = CSVMultisigTapscript.decode(
-            rawCheckpointExitClosure
-        );
+        let serverUnrollScript: CSVMultisigTapscript.Type;
+        try {
+            const raw = hex.decode(info.checkpointExitClosure);
+            serverUnrollScript = CSVMultisigTapscript.decode(raw);
+        } catch (e) {
+            throw new Error("Invalid checkpointExitClosure from server");
+        }
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
