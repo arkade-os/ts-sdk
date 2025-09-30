@@ -335,27 +335,19 @@ export class Wallet implements IWallet {
         filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
     ): Promise<VirtualCoin[]> {
         const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+        const response = await this.indexerProvider.getVtxos({ scripts });
+        const allVtxos = response.vtxos;
 
-        const response = await this.indexerProvider.getVtxos({
-            scripts,
-            spendableOnly: true,
-        });
-        const vtxos = response.vtxos;
+        let vtxos: VirtualCoin[] = allVtxos.filter(isSpendable);
 
-        if (filter.withRecoverable) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts,
-                recoverableOnly: true,
-            });
-            vtxos.push(...response.vtxos);
+        // all recoverable vtxos are spendable by definition
+        if (!filter.withRecoverable) {
+            vtxos = vtxos.filter((vtxo) => !isRecoverable(vtxo));
         }
 
         if (filter.withUnrolled) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts,
-                spentOnly: true,
-            });
-            vtxos.push(...response.vtxos.filter((vtxo) => vtxo.isUnrolled));
+            const spentVtxos = allVtxos.filter((vtxo) => !isSpendable(vtxo));
+            vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
         }
 
         return vtxos;
@@ -606,7 +598,7 @@ export class Wallet implements IWallet {
                 0
             );
 
-            const vtxos = await this.getVtxos();
+            const vtxos = await this.getVtxos({ withRecoverable: true });
             amount += vtxos.reduce((sum, input) => sum + input.value, 0);
 
             const inputs = [...boardingUtxos, ...vtxos];
