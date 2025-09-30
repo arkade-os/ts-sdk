@@ -255,7 +255,7 @@ const wallet = await Wallet.create({
   indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'), // For address subscriptions and VTXO updates
 })
 
-// Both providers use expo/fetch for streaming support (SSE and JSON streaming)
+// use expo/fetch for streaming support (SSE)
 // All other wallet functionality remains the same
 const balance = await wallet.getBalance()
 const address = await wallet.getAddress()
