@@ -3,7 +3,6 @@ import { SingleKey } from "./identity/singleKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
-import { VEscrow } from "./script/escrow";
 import { DefaultVtxo } from "./script/default";
 import { VtxoScript, EncodedVtxoScript, TapLeafScript } from "./script/base";
 import {
@@ -137,7 +136,6 @@ export {
     DefaultVtxo,
     VtxoScript,
     VHTLC,
-    VEscrow,
 
     // Enums
     TxType,
