@@ -157,9 +157,7 @@ const urgentlyExpiring = await renewal.getExpiringVtxos(5) // Last 5% of lifetim
 **Platform Support:**
 The `Renewal` class wrapper pattern enables future platform-specific automatic renewal implementations for Expo, Browser service workers, and Node.js environments.
 
-### Recovering Swept VTXOs
-
-VTXOs can become "swept" when the Ark server includes them in a settlement round but they remain spendable by you. The `Recovery` class provides a dedicated interface for recovering these swept VTXOs:
+### Recovering Expired VTXOs
 
 ```typescript
 import { Recovery } from '@arkade-os/sdk'
@@ -183,12 +181,6 @@ const txid = await recovery.recoverVtxos((event) => {
 })
 ```
 
-**Key Features:**
-- Automatically filters for swept but still spendable VTXOs
-- Includes subdust VTXOs when their combined value exceeds the dust threshold
-- Settles all recoverable funds back to your wallet's Ark address
-- Provides `getRecoverableBalance()` to inspect what's recoverable before executing
-
 **When to use:**
 - **`Renewal.renewVtxos()`**: Refresh all VTXOs (including recoverable) to prevent expiration
 - **`Recovery.recoverVtxos()`**: Recover swept VTXOs with smart subdust aggregation
@@ -198,20 +190,6 @@ const txid = await recovery.recoverVtxos((event) => {
 ```typescript
 // Get transaction history
 const history = await wallet.getTransactionHistory()
-console.log('History:', history)
-
-// Example history entry:
-{
-  key: {
-    boardingTxid: '...', // for boarding transactions
-    commitmentTxid: '...', // for commitment transactions
-    redeemTxid: '...'    // for regular transactions
-  },
-  type: TxType.TxReceived, // or TxType.TxSent
-  amount: 50000,
-  settled: true,
-  createdAt: 1234567890
-}
 ```
 
 ### Offboarding
