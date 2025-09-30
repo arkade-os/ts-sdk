@@ -1,10 +1,5 @@
 import { OP, Transaction, Script, SigHash } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt";
-import {
-    ErrMissingData,
-    ErrMissingInputs,
-    ErrMissingWitnessUtxo,
-} from "./errors";
 import { schnorr } from "@noble/curves/secp256k1";
 import { Bytes } from "@scure/btc-signer/utils";
 
@@ -53,9 +48,10 @@ export namespace Intent {
         inputs: TransactionInput[],
         outputs: TransactionOutput[] = []
     ): Proof {
-        if (inputs.length == 0) throw ErrMissingInputs;
-        if (!validateInputs(inputs)) throw ErrMissingData;
-        if (!validateOutputs(outputs)) throw ErrMissingData;
+        if (inputs.length == 0)
+            throw new Error("intent proof requires at least one input");
+        if (!validateInputs(inputs)) throw new Error("invalid inputs");
+        if (!validateOutputs(outputs)) throw new Error("invalid outputs");
 
         // create the initial transaction to spend
         const toSpend = craftToSpendTx(message, inputs[0].witnessUtxo.script);
@@ -82,9 +78,12 @@ type ValidatedTxOutput = TransactionOutput & {
 };
 
 function validateInput(input: TransactionInput): input is ValidatedTxInput {
-    if (input.index === undefined) throw ErrMissingData;
-    if (input.txid === undefined) throw ErrMissingData;
-    if (input.witnessUtxo === undefined) throw ErrMissingWitnessUtxo;
+    if (input.index === undefined)
+        throw new Error("intent proof input requires index");
+    if (input.txid === undefined)
+        throw new Error("intent proof input requires txid");
+    if (input.witnessUtxo === undefined)
+        throw new Error("intent proof input requires witness utxo");
     return true;
 }
 
@@ -98,8 +97,10 @@ function validateInputs(
 function validateOutput(
     output: TransactionOutput
 ): output is ValidatedTxOutput {
-    if (output.amount === undefined) throw ErrMissingData;
-    if (output.script === undefined) throw ErrMissingData;
+    if (output.amount === undefined)
+        throw new Error("intent proof output requires amount");
+    if (output.script === undefined)
+        throw new Error("intent proof output requires script");
     return true;
 }
 
