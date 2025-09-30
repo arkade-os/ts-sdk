@@ -80,9 +80,6 @@ importers:
       '@expo/metro-runtime':
         specifier: ~4.0.1
         version: 4.0.1(react-native@0.76.9(@babel/core@7.28.4)(@babel/preset-env@7.28.3(@babel/core@7.28.4))(@types/react@18.3.25)(react@18.3.1))
-      '@scure/base':
-        specifier: 2.0.0
-        version: 2.0.0
       '@scure/bip32':
         specifier: 2.0.0
         version: 2.0.0
