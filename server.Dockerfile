@@ -5,7 +5,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
 
-ARG BRANCH=intent-proof-rework
+ARG BRANCH=master
 
 WORKDIR /app
 
