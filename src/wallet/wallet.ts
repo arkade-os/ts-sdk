@@ -55,6 +55,11 @@ import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
+import {
+    getExpiringVtxos,
+    calculateDynamicThreshold,
+    DEFAULT_RENEWAL_CONFIG,
+} from "./renewal";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -119,6 +124,9 @@ export class Wallet implements IWallet {
 
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
+    public readonly renewalConfig: Required<
+        Omit<WalletConfig["renewalConfig"], "enabled">
+    > & { enabled: boolean };
 
     private constructor(
         readonly identity: Identity,
@@ -134,10 +142,16 @@ export class Wallet implements IWallet {
         readonly forfeitOutputScript: Bytes,
         readonly dustAmount: bigint,
         walletRepository: WalletRepository,
-        contractRepository: ContractRepository
+        contractRepository: ContractRepository,
+        renewalConfig?: WalletConfig["renewalConfig"]
     ) {
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
+        this.renewalConfig = {
+            enabled: renewalConfig?.enabled ?? false,
+            ...DEFAULT_RENEWAL_CONFIG,
+            ...renewalConfig,
+        };
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -241,7 +255,8 @@ export class Wallet implements IWallet {
             forfeitOutputScript,
             info.dust,
             walletRepository,
-            contractRepository
+            contractRepository,
+            config.renewalConfig
         );
     }
 
@@ -958,6 +973,65 @@ export class Wallet implements IWallet {
         };
 
         return stopFunc;
+    }
+
+    /**
+     * Get VTXOs that are expiring soon based on renewal configuration
+     *
+     * @returns Array of expiring VTXOs, empty array if renewal is disabled or no VTXOs expiring
+     *
+     * @example
+     * ```typescript
+     * const expiringVtxos = await wallet.getExpiringVtxos();
+     * if (expiringVtxos.length > 0) {
+     *   console.log(`${expiringVtxos.length} VTXOs expiring soon`);
+     *   await wallet.renewVtxos(expiringVtxos);
+     * }
+     * ```
+     */
+    async getExpiringVtxos(): Promise<ExtendedVirtualCoin[]> {
+        if (!this.renewalConfig.enabled) {
+            return [];
+        }
+
+        const vtxos = await this.getVtxos();
+        const threshold = calculateDynamicThreshold(
+            vtxos,
+            this.renewalConfig.thresholdPercentage
+        );
+
+        if (!threshold) {
+            return [];
+        }
+
+        return getExpiringVtxos(vtxos, threshold);
+    }
+
+    /**
+     * Renew VTXOs by settling them back to the wallet's address
+     *
+     * This is a convenience method that calls settle() without parameters,
+     * which automatically renews all VTXOs (including expiring ones) back to the wallet.
+     *
+     * @param eventCallback - Optional callback for settlement events
+     * @returns Settlement transaction ID
+     *
+     * @example
+     * ```typescript
+     * // Renew all VTXOs (including expiring ones)
+     * const txid = await wallet.renewVtxos();
+     *
+     * // With event callback
+     * const txid = await wallet.renewVtxos((event) => {
+     *   console.log('Settlement event:', event.type);
+     * });
+     * ```
+     */
+    async renewVtxos(
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string> {
+        // settle() without params handles everything: boarding UTXOs + all VTXOs
+        return this.settle(undefined, eventCallback);
     }
 
     private async handleBatchStartedEvent(
