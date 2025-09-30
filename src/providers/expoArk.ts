@@ -27,18 +27,33 @@ export class ExpoArkProvider extends RestArkProvider {
         signal: AbortSignal,
         topics: string[]
     ): AsyncIterableIterator<SettlementEvent> {
+        // Detect if we're running in React Native/Expo environment
+        const isReactNative =
+            typeof navigator !== "undefined" &&
+            navigator.product === "ReactNative";
+
         // Dynamic import to avoid bundling expo/fetch in non-Expo environments
-        // Falls back to standard fetch on web
         let expoFetch: typeof fetch = fetch; // Default to standard fetch
         try {
-            // Try dynamic import first
             const expoFetchModule = await import("expo/fetch");
             // expo/fetch returns a compatible fetch function but with different types
             expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
             console.debug("Using expo/fetch for SSE");
         } catch (error) {
-            // In web environments or when expo/fetch is not available, use standard fetch
-            console.debug("Using standard fetch instead of expo/fetch", error);
+            // In React Native/Expo, expo/fetch is required for proper streaming support
+            if (isReactNative) {
+                throw new Error(
+                    "expo/fetch is unavailable in React Native environment. " +
+                        "Please ensure expo/fetch is installed and properly configured. " +
+                        "Streaming support may not work with standard fetch in React Native."
+                );
+            }
+            // In non-RN environments, fall back to standard fetch but warn about potential streaming issues
+            console.warn(
+                "Using standard fetch instead of expo/fetch. " +
+                    "Streaming may not be fully supported in some environments.",
+                error
+            );
         }
 
         const url = `${this.serverUrl}/v1/batch/events`;
@@ -140,18 +155,33 @@ export class ExpoArkProvider extends RestArkProvider {
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }> {
+        // Detect if we're running in React Native/Expo environment
+        const isReactNative =
+            typeof navigator !== "undefined" &&
+            navigator.product === "ReactNative";
+
         // Dynamic import to avoid bundling expo/fetch in non-Expo environments
-        // Falls back to standard fetch on web
         let expoFetch: typeof fetch = fetch; // Default to standard fetch
         try {
-            // Try dynamic import first
             const expoFetchModule = await import("expo/fetch");
             // expo/fetch returns a compatible fetch function but with different types
             expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
             console.debug("Using expo/fetch for transaction stream");
         } catch (error) {
-            // In web environments or when expo/fetch is not available, use standard fetch
-            console.debug("Using standard fetch instead of expo/fetch", error);
+            // In React Native/Expo, expo/fetch is required for proper streaming support
+            if (isReactNative) {
+                throw new Error(
+                    "expo/fetch is unavailable in React Native environment. " +
+                        "Please ensure expo/fetch is installed and properly configured. " +
+                        "Streaming support may not work with standard fetch in React Native."
+                );
+            }
+            // In non-RN environments, fall back to standard fetch but warn about potential streaming issues
+            console.warn(
+                "Using standard fetch instead of expo/fetch. " +
+                    "Streaming may not be fully supported in some environments.",
+                error
+            );
         }
 
         const url = `${this.serverUrl}/v1/txs`;
