@@ -320,8 +320,8 @@ export class Wallet implements IWallet {
 
         // For now, always fetch fresh data from provider and update cache
         // In future, we can add cache invalidation logic based on timestamps
-        const spendableVtxos = await this.getVirtualCoins(filter);
-        const extendedVtxos = spendableVtxos.map((vtxo) =>
+        const vtxos = await this.getVirtualCoins(filter);
+        const extendedVtxos = vtxos.map((vtxo) =>
             extendVirtualCoin(this, vtxo)
         );
 
