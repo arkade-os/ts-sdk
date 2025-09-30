@@ -251,9 +251,8 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 const wallet = await Wallet.create({
   identity: identity,
   esploraUrl: 'https://mutinynet.com/api',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  arkProvider: ExpoArkProvider, // For settlement events and transactions streaming
-  indexerProvider: ExpoIndexerProvider, // For address subscriptions and VTXO updates
+  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'), // For settlement events and transactions streaming
+  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'), // For address subscriptions and VTXO updates
 })
 
 // Both providers use expo/fetch for streaming support (SSE and JSON streaming)

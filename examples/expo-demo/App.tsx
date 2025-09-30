@@ -81,12 +81,11 @@ export default function App() {
 
             const identity = SingleKey.fromPrivateKey(derived.privateKey);
 
-            // Create wallet with Expo providers
+            // Create wallet with Expo provider instances
             const walletInstance = await Wallet.create({
                 identity,
-                arkServerUrl: SERVER_URL,
-                arkProvider: ExpoArkProvider,
-                indexerProvider: ExpoIndexerProvider,
+                arkProvider: new ExpoArkProvider(SERVER_URL),
+                indexerProvider: new ExpoIndexerProvider(SERVER_URL),
             });
 
             setWallet(walletInstance);

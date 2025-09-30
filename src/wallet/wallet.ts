@@ -78,10 +78,18 @@ export type IncomingFunds =
  *
  * @example
  * ```typescript
- * // Create a wallet
+ * // Create a wallet with URL configuration
  * const wallet = await Wallet.create({
  *   identity: SingleKey.fromHex('your_private_key'),
  *   arkServerUrl: 'https://ark.example.com',
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Or with custom provider instances (e.g., for Expo/React Native)
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('your_private_key'),
+ *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
+ *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
  *   esploraUrl: 'https://mempool.space/api'
  * });
  *
@@ -120,23 +128,41 @@ export class Wallet implements IWallet {
             throw new Error("Invalid configured public key");
         }
 
-        const arkProvider = config.arkProvider
-            ? new config.arkProvider(config.arkServerUrl)
-            : new RestArkProvider(config.arkServerUrl);
-        const indexerProvider = config.indexerProvider
-            ? new config.indexerProvider(config.arkServerUrl)
-            : new RestIndexerProvider(config.arkServerUrl);
+        // Use provided arkProvider instance or create a new one from arkServerUrl
+        const arkProvider =
+            config.arkProvider ||
+            (() => {
+                if (!config.arkServerUrl) {
+                    throw new Error(
+                        "Either arkProvider or arkServerUrl must be provided"
+                    );
+                }
+                return new RestArkProvider(config.arkServerUrl);
+            })();
+
+        // Extract arkServerUrl from provider if not explicitly provided
+        const arkServerUrl =
+            config.arkServerUrl || (arkProvider as RestArkProvider).serverUrl;
+
+        if (!arkServerUrl) {
+            throw new Error("Could not determine arkServerUrl from provider");
+        }
+
+        // Use provided indexerProvider instance or create a new one
+        const indexerProvider =
+            config.indexerProvider || new RestIndexerProvider(arkServerUrl);
 
         const info = await arkProvider.getInfo();
 
         const network = getNetwork(info.network as NetworkName);
-        const onchainProvider = config.onchainProvider
-            ? new config.onchainProvider(
-                  config.esploraUrl || ESPLORA_URL[info.network as NetworkName]
-              )
-            : new EsploraProvider(
-                  config.esploraUrl || ESPLORA_URL[info.network as NetworkName]
-              );
+
+        // Extract esploraUrl from provider if not explicitly provided
+        const esploraUrl =
+            config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
+
+        // Use provided onchainProvider instance or create a new one
+        const onchainProvider =
+            config.onchainProvider || new EsploraProvider(esploraUrl);
 
         const exitTimelock: RelativeTimelock = {
             value: info.unilateralExitDelay,

@@ -92,6 +92,13 @@ export class ServiceWorkerWallet implements IWallet, Identity {
             return;
         }
 
+        // Validate arkServerUrl is provided for service worker wallet
+        if (!config.arkServerUrl) {
+            throw new Error(
+                "arkServerUrl is required for ServiceWorkerWallet initialization"
+            );
+        }
+
         // If not initialized, proceed with initialization
         const message: Request.InitWallet = {
             type: "INIT_WALLET",

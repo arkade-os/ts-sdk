@@ -16,7 +16,7 @@ import { Bytes } from "@scure/btc-signer/utils";
  */
 export interface WalletConfig {
     identity: Identity;
-    arkServerUrl: string;
+    arkServerUrl?: string;
     esploraUrl?: string;
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
@@ -32,24 +32,23 @@ export interface ProviderClass<T> {
 }
 
 /**
- * Extended wallet configuration that supports provider class injection.
+ * Extended wallet configuration that supports provider instance injection.
  * Allows specifying custom provider implementations while maintaining
  * backward compatibility with URL-based configuration.
  *
  * @example
  * ```typescript
- * // Use ExpoArkProvider for React Native/Expo environments
+ * // Use ExpoArkProvider instance for React Native/Expo environments
  * const wallet = await Wallet.create({
  *   identity: SingleKey.fromHex('...'),
- *   arkServerUrl: 'https://ark.example.com',
- *   arkProvider: ExpoArkProvider
+ *   arkProvider: new ExpoArkProvider('https://ark.example.com')
  * });
  * ```
  */
 export interface ExtendedWalletConfig extends WalletConfig {
-    arkProvider?: ProviderClass<ArkProvider>;
-    indexerProvider?: ProviderClass<IndexerProvider>;
-    onchainProvider?: ProviderClass<OnchainProvider>;
+    arkProvider?: ArkProvider;
+    indexerProvider?: IndexerProvider;
+    onchainProvider?: OnchainProvider;
 }
 
 export interface WalletBalance {
