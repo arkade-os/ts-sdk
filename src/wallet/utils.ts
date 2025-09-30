@@ -1,4 +1,4 @@
-import { ExtendedVirtualCoin, VirtualCoin, Wallet } from "..";
+import type { ExtendedVirtualCoin, VirtualCoin, Wallet } from "..";
 
 export function extendVirtualCoin(
     wallet: Wallet,
