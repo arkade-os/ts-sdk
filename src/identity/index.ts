@@ -1,10 +1,13 @@
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { SignerSession } from "../tree/signingSession";
 
 export interface Identity {
+    signerSession(): SignerSession;
+    xOnlyPublicKey(): Promise<Uint8Array>;
+    compressedPublicKey(): Promise<Uint8Array>;
+    signMessage(message: string): Promise<Uint8Array>;
     // if inputIndexes is not provided, try to sign all inputs
     sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
-    xOnlyPublicKey(): Uint8Array;
-    // TODO deterministic signer session
-    signerSession(): SignerSession;
 }
+
+export * from "./singleKey";

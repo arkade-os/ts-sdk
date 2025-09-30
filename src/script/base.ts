@@ -1,11 +1,11 @@
 import { Script, Address, p2tr, taprootListToTree } from "@scure/btc-signer";
-import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment";
-import { PSBTOutput } from "@scure/btc-signer/psbt";
+import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
+import { PSBTOutput } from "@scure/btc-signer/psbt.js";
 import {
     BTC_NETWORK,
     Bytes,
     TAPROOT_UNSPENDABLE_KEY,
-} from "@scure/btc-signer/utils";
+} from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { ArkAddress } from "./address";
 import {

@@ -1,5 +1,4 @@
 import { expect, describe, it, beforeEach } from "vitest";
-import { execSync } from "child_process";
 import {
     TxType,
     RestIndexerProvider,
@@ -13,22 +12,29 @@ import {
 } from "../../src";
 import {
     arkdExec,
+    beforeEachFaucet,
     createTestArkWallet,
     createTestOnchainWallet,
+    execCommand,
     faucetOffchain,
     faucetOnchain,
+    waitFor,
 } from "./utils";
 
 describe("Ark integration tests", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
     it("should settle a boarding UTXO", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
 
         const boardingAddress = await alice.wallet.getBoardingAddress();
 
         // faucet
-        execSync(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await waitFor(
+            async () => (await alice.wallet.getBoardingUtxos()).length > 0
+        );
 
         const settleTxid = await new Ramps(alice.wallet).onboard();
         expect(settleTxid).toBeDefined();
@@ -41,7 +47,7 @@ describe("Ark integration tests", () => {
         expect(aliceOffchainAddress).toBeDefined();
 
         const fundAmount = 1000;
-        execSync(
+        execCommand(
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
@@ -79,10 +85,10 @@ describe("Ark integration tests", () => {
             expect(bobOffchainAddress).toBeDefined();
 
             const fundAmount = 1000;
-            execSync(
+            execCommand(
                 `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
             );
-            execSync(
+            execCommand(
                 `${arkdExec} ark send --to ${bobOffchainAddress} --amount ${fundAmount} --password secret`
             );
 
@@ -151,7 +157,7 @@ describe("Ark integration tests", () => {
 
             // Use a smaller amount for testing
             const fundAmount = 10000;
-            execSync(
+            execCommand(
                 `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
             );
 
@@ -203,7 +209,7 @@ describe("Ark integration tests", () => {
         // Alice onboarding
         const boardingAmount = 10000;
         const boardingAddress = await alice.wallet.getBoardingAddress();
-        execSync(
+        execCommand(
             `nigiri faucet ${boardingAddress} ${boardingAmount * 0.00000001}`
         );
 
@@ -224,7 +230,7 @@ describe("Ark integration tests", () => {
         });
 
         // Wait for the transaction to be processed
-        execSync("nigiri rpc --generate 1");
+        execCommand("nigiri rpc --generate 1");
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
         // Check history before sending to bob
@@ -354,9 +360,9 @@ describe("Ark integration tests", () => {
 
         const fundAmount = 1000;
 
-        const arknote = execSync(`${arkdExec} arkd note --amount ${fundAmount}`)
-            .toString()
-            .replace(/\n/g, "");
+        const arknote = execCommand(
+            `${arkdExec} arkd note --amount ${fundAmount}`
+        );
 
         const settleTxid = await alice.wallet.settle({
             inputs: [ArkNote.fromString(arknote)],
@@ -384,9 +390,13 @@ describe("Ark integration tests", () => {
         const offchainAddress = await alice.wallet.getAddress();
 
         // faucet
-        execSync(`nigiri faucet ${boardingAddress} 0.0001`);
+        execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
 
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        // wait until indexer reflects the faucet instead of sleeping.
+        await waitFor(async () => {
+            const b = await alice.wallet.getBoardingUtxos();
+            return b.length > 0;
+        });
 
         const boardingInputs = await alice.wallet.getBoardingUtxos();
         expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
@@ -401,17 +411,25 @@ describe("Ark integration tests", () => {
             ],
         });
 
-        execSync(`nigiri rpc --generate 1`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
+        execCommand(`nigiri rpc --generate 1`);
+
+        // wait until indexer reflects the new block instead of sleeping.
+        await waitFor(async () => {
+            const v = await alice.wallet.getVtxos();
+            return v.length > 0;
+        });
 
         const virtualCoins = await alice.wallet.getVtxos();
         expect(virtualCoins).toHaveLength(1);
         const vtxo = virtualCoins[0];
         expect(vtxo.txid).toBeDefined();
 
-        const onchainAlice = new OnchainWallet(alice.identity, "regtest");
+        const onchainAlice = await OnchainWallet.create(
+            alice.identity,
+            "regtest"
+        );
 
-        execSync(`nigiri faucet ${onchainAlice.address} 0.001`);
+        execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -426,7 +444,7 @@ describe("Ark integration tests", () => {
             switch (done.type) {
                 case Unroll.StepType.WAIT:
                 case Unroll.StepType.UNROLL:
-                    execSync(`nigiri rpc --generate 1`);
+                    execCommand(`nigiri rpc --generate 1`);
                     break;
             }
         }
@@ -440,12 +458,12 @@ describe("Ark integration tests", () => {
 
     it("should exit collaboratively", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
-        const onchainAlice = createTestOnchainWallet();
+        const onchainAlice = await createTestOnchainWallet();
         const aliceOffchainAddress = await alice.wallet.getAddress();
 
         // faucet offchain address
         const fundAmount = 10_000;
-        execSync(
+        execCommand(
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
@@ -465,7 +483,7 @@ describe("Ark integration tests", () => {
         expect(aliceOffchainAddress).toBeDefined();
 
         // faucet
-        execSync(`nigiri faucet ${boardingAddress} 0.001`);
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
 
         await new Promise((resolve) => setTimeout(resolve, 5000));
 
@@ -494,13 +512,24 @@ describe("Ark integration tests", () => {
         expect(vtxo.virtualStatus.state).toBe("settled");
 
         // generate 25 blocks to make the vtxo swept (expiry set to 20 blocks)
-        execSync(`nigiri rpc --generate 25`);
+        execCommand(`nigiri rpc --generate 25`);
 
-        await new Promise((resolve) => setTimeout(resolve, 20000));
+        // wait until indexer reflects the swept instead of sleeping.
+        await waitFor(async () => {
+            const v = await alice.wallet.getVtxos({
+                withRecoverable: true,
+            });
+            return v.some(
+                (c) => c.txid === vtxo.txid && c.virtualStatus.state === "swept"
+            );
+        });
 
+        // get vtxos including the recoverable ones
         const vtxosAfterSweep = await alice.wallet.getVtxos({
             withRecoverable: true,
         });
+
+        // assert
         expect(vtxosAfterSweep).toHaveLength(1);
         const vtxoAfterSweep = vtxosAfterSweep[0];
         expect(vtxoAfterSweep.txid).toBe(vtxo.txid);
@@ -535,15 +564,15 @@ describe("Ark integration tests", () => {
             alice.wallet.notifyIncomingFunds((notification) => {
                 const now = new Date();
                 expect(notification.type).toBe("vtxo");
-                let vtxos: VirtualCoin[] = [];
+                let newVtxos: VirtualCoin[] = [];
                 if (notification.type === "vtxo") {
-                    vtxos = notification.vtxos;
+                    newVtxos = notification.newVtxos;
                 }
-                expect(vtxos).toHaveLength(1);
-                expect(vtxos[0].spentBy).toBeFalsy();
-                expect(vtxos[0].value).toBe(fundAmount);
-                expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
-                const age = now.getTime() - vtxos[0].createdAt.getTime();
+                expect(newVtxos).toHaveLength(1);
+                expect(newVtxos[0].spentBy).toBeFalsy();
+                expect(newVtxos[0].value).toBe(fundAmount);
+                expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+                const age = now.getTime() - newVtxos[0].createdAt.getTime();
                 expect(age).toBeLessThanOrEqual(4000);
                 notified = true;
             });
@@ -618,17 +647,17 @@ describe("Ark integration tests", () => {
 
             // wait for coins to arrive
             const notification = await waitForIncomingFunds(alice.wallet);
-            let vtxos: VirtualCoin[] = [];
+            let newVtxos: VirtualCoin[] = [];
             if (notification.type === "vtxo") {
-                vtxos = notification.vtxos;
+                newVtxos = notification.newVtxos;
             }
 
             // assert
-            expect(vtxos).toHaveLength(1);
-            expect(vtxos[0].spentBy).toBeFalsy();
-            expect(vtxos[0].value).toBe(fundAmount);
-            expect(vtxos[0].virtualStatus.state).toBe("preconfirmed");
-            const age = now.getTime() - vtxos[0].createdAt.getTime();
+            expect(newVtxos).toHaveLength(1);
+            expect(newVtxos[0].spentBy).toBeFalsy();
+            expect(newVtxos[0].value).toBe(fundAmount);
+            expect(newVtxos[0].virtualStatus.state).toBe("preconfirmed");
+            const age = now.getTime() - newVtxos[0].createdAt.getTime();
             expect(age).toBeLessThanOrEqual(4000);
         }
     );
@@ -675,7 +704,7 @@ describe("Ark integration tests", () => {
         const bobOffchainAddress = await bob.wallet.getAddress();
 
         const fundAmount = 10_000;
-        execSync(
+        execCommand(
             `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
         );
 
