@@ -148,12 +148,9 @@ export class Wallet implements IWallet {
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
         this.renewalConfig = {
+            enabled: renewalConfig?.enabled ?? false,
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
-            enabled: renewalConfig?.enabled ?? DEFAULT_RENEWAL_CONFIG.autoRenew,
-            thresholdPercentage:
-                renewalConfig?.thresholdPercentage ??
-                DEFAULT_RENEWAL_CONFIG.thresholdPercentage,
         };
     }
 
@@ -1013,15 +1010,17 @@ export class Wallet implements IWallet {
     /**
      * Renew VTXOs by settling them back to the wallet's address
      *
-     * This is a convenience method that calls settle() without parameters,
-     * which automatically renews all VTXOs (including expiring ones) back to the wallet.
+     * This method collects all spendable VTXOs and settles them back to the wallet,
+     * effectively refreshing their expiration time. This is the primary way to prevent
+     * VTXOs from expiring.
      *
      * @param eventCallback - Optional callback for settlement events
      * @returns Settlement transaction ID
+     * @throws Error if no VTXOs available to renew
      *
      * @example
      * ```typescript
-     * // Renew all VTXOs (including expiring ones)
+     * // Renew all VTXOs
      * const txid = await wallet.renewVtxos();
      *
      * // With event callback
@@ -1033,8 +1032,28 @@ export class Wallet implements IWallet {
     async renewVtxos(
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        // settle() without params handles everything: boarding UTXOs + all VTXOs
-        return this.settle(undefined, eventCallback);
+        // Get all VTXOs (including recoverable ones)
+        const vtxos = await this.getVtxos({ withRecoverable: true });
+
+        if (vtxos.length === 0) {
+            throw new Error("No VTXOs available to renew");
+        }
+
+        const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+        const arkAddress = await this.getAddress();
+
+        return this.settle(
+            {
+                inputs: vtxos,
+                outputs: [
+                    {
+                        address: arkAddress,
+                        amount: BigInt(totalAmount),
+                    },
+                ],
+            },
+            eventCallback
+        );
     }
 
     private async handleBatchStartedEvent(

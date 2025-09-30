@@ -108,6 +108,61 @@ const settleTxid = await wallet.settle({
 })
 ```
 
+### VTXO Renewal
+
+VTXOs have an expiration time (batch expiry). The SDK provides automatic monitoring and renewal capabilities to prevent VTXOs from expiring.
+
+#### Enabling Renewal Monitoring
+
+```typescript
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  renewalConfig: {
+    enabled: true,           // Enable expiration checking (allows getExpiringVtxos() to work)
+    thresholdPercentage: 10, // Alert when 10% of time until expiry remains (default)
+    autoRenew: false,        // If true, automatically calls renewVtxos() when expiring detected
+                             // (requires background scheduler - future feature)
+    checkIntervalMs: 3600000 // Background check interval in ms (default: 1 hour)
+  }
+})
+```
+
+**Configuration Options:**
+- **`enabled`**: Must be `true` to use expiration checking features
+- **`thresholdPercentage`**: Defines "expiring soon" (e.g., 10 = last 10% of lifetime)
+- **`autoRenew`**: Automatic renewal (requires scheduler adapter - see Phase 3)
+- **`checkIntervalMs`**: How often to check in background (requires scheduler adapter)
+
+#### Checking for Expiring VTXOs
+
+```typescript
+// Get VTXOs that are expiring soon (based on threshold)
+const expiringVtxos = await wallet.getExpiringVtxos()
+
+if (expiringVtxos.length > 0) {
+  console.log(`${expiringVtxos.length} VTXOs expiring soon`)
+  expiringVtxos.forEach(vtxo => {
+    const timeLeft = vtxo.virtualStatus.batchExpiry - Date.now()
+    console.log(`VTXO ${vtxo.txid} expires in ${timeLeft}ms`)
+  })
+}
+```
+
+#### Manually Renewing VTXOs
+
+```typescript
+// Renew all VTXOs back to your wallet
+const txid = await wallet.renewVtxos()
+console.log('Renewal transaction:', txid)
+
+// With event callback to track settlement progress
+const txid = await wallet.renewVtxos((event) => {
+  console.log('Settlement event:', event.type)
+})
+```
+
+**Note:** The `renewVtxos()` method settles all your VTXOs back to your wallet address, refreshing their expiration time. It only renews VTXOs - use `settle()` without parameters to also include boarding UTXOs.
 
 ### Transaction History
 
