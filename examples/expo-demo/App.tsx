@@ -1,9 +1,9 @@
 // Polyfill crypto.getRandomValues for React Native/Expo (required for MuSig2 settlements)
 import * as Crypto from "expo-crypto";
-global.crypto = {
-    ...global.crypto,
-    getRandomValues: Crypto.getRandomValues,
-} as any;
+// @ts-ignore
+if (!global.crypto) global.crypto = {} as any;
+// @ts-ignore
+global.crypto.getRandomValues = Crypto.getRandomValues;
 
 import React, { useState, useEffect, useRef } from "react";
 import {
@@ -27,8 +27,8 @@ import { SingleKey } from "../../src/identity/singleKey";
 import { DefaultVtxo } from "../../src/script/default";
 import * as bip39 from "@scure/bip39";
 import { HDKey } from "@scure/bip32";
-import { hex } from "@scure/base";
 import * as Clipboard from "expo-clipboard";
+import { hex } from "@scure/base";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -83,7 +83,9 @@ export default function App() {
     const subscriptionAbortRef = useRef<AbortController | null>(null);
     const [newTxIndices, setNewTxIndices] = useState<Set<string>>(new Set());
     const shakeAnimations = useRef<Map<string, Animated.Value>>(new Map());
-    const animationTimeoutRefs = useRef<Set<NodeJS.Timeout>>(new Set());
+    const animationTimeoutRefs = useRef<Set<ReturnType<typeof setTimeout>>>(
+        new Set()
+    );
 
     // Doctor tab state
     const [logs, setLogs] = useState<LogEntry[]>([]);

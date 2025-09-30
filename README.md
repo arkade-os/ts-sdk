@@ -327,7 +327,8 @@ npx expo install expo-crypto
 ```typescript
 // App.tsx or index.js - MUST be first import
 import * as Crypto from 'expo-crypto';
-global.crypto = { ...global.crypto, getRandomValues: Crypto.getRandomValues } as any;
+if (!global.crypto) global.crypto = {} as any;
+global.crypto.getRandomValues = Crypto.getRandomValues;
 
 // Now import the SDK
 import { Wallet, SingleKey } from '@arkade-os/sdk';
