@@ -170,6 +170,13 @@ function isSeconds(locktime: bigint): boolean {
 }
 
 /**
+ * Formats a sighash type as a hex string (e.g., 0x01)
+ */
+function formatSighash(type: number): string {
+    return `0x${type.toString(16).padStart(2, '0')}`;
+}
+
+/**
  * Verify tapscript signatures on a transaction input
  * @param tx Transaction to verify
  * @param inputIndex Index of the input to verify
@@ -186,11 +193,6 @@ export function verifyTapscriptSignatures(
     allowedSighashTypes: number[] = [SigHash.DEFAULT]
 ): void {
     const input = tx.getInput(inputIndex);
-
-    // Extract prevout information from witnessUtxo for the input being verified
-    if (!input.witnessUtxo) {
-        throw new Error(`Input ${inputIndex} is missing witnessUtxo`);
-    }
 
     // Collect prevout scripts and amounts for ALL inputs (required for preimageWitnessV1)
     const prevoutScripts: Uint8Array[] = [];
@@ -222,22 +224,11 @@ export function verifyTapscriptSignatures(
 
         // Extract sighash type from signature
         // Schnorr signatures are 64 bytes, with optional 1-byte sighash appended
-        let sighashType = SigHash.DEFAULT;
-        let sig = signature;
-
-        if (signature.length === 65) {
-            // Last byte is the sighash type
-            sighashType = signature[64];
-            sig = signature.subarray(0, 64);
-        } else if (signature.length !== 64) {
-            throw new Error(
-                `Invalid signature length: ${signature.length} (expected 64 or 65)`
-            );
-        }
+        const sighashType = signature.length === 65 ? signature[64] : SigHash.DEFAULT;
+        const sig = signature.subarray(0, 64);
 
         // Verify sighash type is allowed
         if (!allowedSighashTypes.includes(sighashType)) {
-            const formatSighash = (type: number) => `0x${type.toString(16).padStart(2, '0')}`;
             const sighashName = formatSighash(sighashType);
             const allowedNames = allowedSighashTypes.map(formatSighash).join(', ');
             throw new Error(`Invalid sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}. Allowed: ${allowedNames}`);
@@ -261,9 +252,7 @@ export function verifyTapscriptSignatures(
 
             // Compute the leaf hash for this script and compare as hex strings
             const computedLeafHash = tapLeafHash(script, version);
-            const computedHex = hex.encode(
-                new Uint8Array(computedLeafHash as any)
-            );
+            const computedHex = hex.encode(computedLeafHash);
 
             if (computedHex === leafHashHex) {
                 matchingScript = script;
