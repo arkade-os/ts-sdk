@@ -77,6 +77,7 @@ import {
 } from "./script/tapscript";
 import {
     buildOffchainTx,
+    verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
 } from "./utils/arkTransaction";
@@ -169,6 +170,7 @@ export {
 
     // Utils
     buildOffchainTx,
+    verifyTapscriptSignatures,
     waitForIncomingFunds,
 
     // Arknote

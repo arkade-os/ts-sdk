@@ -1,4 +1,4 @@
-import { DEFAULT_SEQUENCE, Transaction } from "@scure/btc-signer";
+import { DEFAULT_SEQUENCE, Transaction, SigHash } from "@scure/btc-signer";
 import { VirtualCoin } from "../wallet";
 import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 import {
@@ -13,6 +13,8 @@ import { hex } from "@scure/base";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { Bytes, sha256x2 } from "@scure/btc-signer/utils";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
+import { tapLeafHash } from "@scure/btc-signer/payment";
+import { schnorr } from "@noble/curves/secp256k1";
 
 export type ArkTxInput = {
     // the script used to spend the vtxo
@@ -165,4 +167,143 @@ const nLocktimeMinSeconds = 500_000_000n;
 
 function isSeconds(locktime: bigint): boolean {
     return locktime >= nLocktimeMinSeconds;
+}
+
+/**
+ * Formats a sighash type as a hex string (e.g., 0x01)
+ */
+function formatSighash(type: number): string {
+    return `0x${type.toString(16).padStart(2, "0")}`;
+}
+
+/**
+ * Verify tapscript signatures on a transaction input
+ * @param tx Transaction to verify
+ * @param inputIndex Index of the input to verify
+ * @param requiredSigners List of required signer pubkeys (hex encoded)
+ * @param excludePubkeys List of pubkeys to exclude from verification (hex encoded, e.g., server key not yet signed)
+ * @param allowedSighashTypes List of allowed sighash types (defaults to [SigHash.DEFAULT])
+ * @throws Error if verification fails
+ */
+export function verifyTapscriptSignatures(
+    tx: Transaction,
+    inputIndex: number,
+    requiredSigners: string[],
+    excludePubkeys: string[] = [],
+    allowedSighashTypes: number[] = [SigHash.DEFAULT]
+): void {
+    const input = tx.getInput(inputIndex);
+
+    // Collect prevout scripts and amounts for ALL inputs (required for preimageWitnessV1)
+    const prevoutScripts: Uint8Array[] = [];
+    const prevoutAmounts: bigint[] = [];
+
+    for (let i = 0; i < tx.inputsLength; i++) {
+        const inp = tx.getInput(i);
+        if (!inp.witnessUtxo) {
+            throw new Error(`Input ${i} is missing witnessUtxo`);
+        }
+        prevoutScripts.push(inp.witnessUtxo.script);
+        prevoutAmounts.push(inp.witnessUtxo.amount);
+    }
+
+    // Verify tapScriptSig signatures
+    if (!input.tapScriptSig || input.tapScriptSig.length === 0) {
+        throw new Error(`Input ${inputIndex} is missing tapScriptSig`);
+    }
+
+    // Verify each signature in tapScriptSig
+    for (const [tapScriptSigData, signature] of input.tapScriptSig) {
+        const pubKey = tapScriptSigData.pubKey;
+        const pubKeyHex = hex.encode(pubKey);
+
+        // Skip verification for excluded pubkeys
+        if (excludePubkeys.includes(pubKeyHex)) {
+            continue;
+        }
+
+        // Extract sighash type from signature
+        // Schnorr signatures are 64 bytes, with optional 1-byte sighash appended
+        const sighashType =
+            signature.length === 65 ? signature[64] : SigHash.DEFAULT;
+        const sig = signature.subarray(0, 64);
+
+        // Verify sighash type is allowed
+        if (!allowedSighashTypes.includes(sighashType)) {
+            const sighashName = formatSighash(sighashType);
+            throw new Error(
+                `Unallowed sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}.`
+            );
+        }
+
+        // Find the tapLeafScript that matches this signature's leafHash
+        if (!input.tapLeafScript || input.tapLeafScript.length === 0) {
+            throw new Error();
+        }
+
+        // Search for the leaf that matches the leafHash in tapScriptSigData
+        const leafHash = tapScriptSigData.leafHash;
+        const leafHashHex = hex.encode(leafHash);
+        let matchingScript: Uint8Array | undefined;
+        let matchingVersion: number | undefined;
+
+        for (const [_, scriptWithVersion] of input.tapLeafScript) {
+            const script = scriptWithVersion.subarray(0, -1);
+            const version = scriptWithVersion[scriptWithVersion.length - 1];
+
+            // Compute the leaf hash for this script and compare as hex strings
+            const computedLeafHash = tapLeafHash(script, version);
+            const computedHex = hex.encode(computedLeafHash);
+
+            if (computedHex === leafHashHex) {
+                matchingScript = script;
+                matchingVersion = version;
+                break;
+            }
+        }
+
+        if (!matchingScript || matchingVersion === undefined) {
+            throw new Error(
+                `Input ${inputIndex}: No tapLeafScript found matching leafHash ${hex.encode(leafHash)}`
+            );
+        }
+
+        // Reconstruct the message that was signed
+        // Note: preimageWitnessV1 requires ALL input prevout scripts and amounts
+        const message = tx.preimageWitnessV1(
+            inputIndex,
+            prevoutScripts,
+            sighashType,
+            prevoutAmounts,
+            undefined,
+            matchingScript,
+            matchingVersion
+        );
+
+        // Verify the schnorr signature
+        const isValid = schnorr.verify(sig, message, pubKey);
+
+        if (!isValid) {
+            throw new Error(
+                `Invalid signature for input ${inputIndex}, pubkey ${pubKeyHex}`
+            );
+        }
+    }
+
+    // Verify we have signatures from all required signers (excluding those we're skipping)
+    const signedPubkeys = input.tapScriptSig.map(([data]) =>
+        hex.encode(data.pubKey)
+    );
+    const requiredNotExcluded = requiredSigners.filter(
+        (pk) => !excludePubkeys.includes(pk)
+    );
+    const missingSigners = requiredNotExcluded.filter(
+        (pk) => !signedPubkeys.includes(pk)
+    );
+
+    if (missingSigners.length > 0) {
+        throw new Error(
+            `Missing signatures from: ${missingSigners.map((pk) => pk.slice(0, 16)).join(", ")}...`
+        );
+    }
 }
