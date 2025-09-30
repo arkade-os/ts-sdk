@@ -123,12 +123,12 @@ export default function App() {
             // If this is from a subscription, detect new transactions
             if (fromSubscription) {
                 const oldTxIds = new Set(
-                    transactions.map((tx) => `${tx.roundId}-${tx.amount}`)
+                    transactions.map((tx) => `${tx.key.arkTxid}`)
                 );
                 const newIndices = new Set<number>();
 
                 newTxs.forEach((tx, idx) => {
-                    const txId = `${tx.roundId}-${tx.amount}`;
+                    const txId = `${tx.key.arkTxid}`;
                     if (!oldTxIds.has(txId)) {
                         newIndices.add(idx);
                         // Initialize shake animation for new transaction
