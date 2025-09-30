@@ -121,6 +121,7 @@ export interface VirtualCoin extends Coin {
     arkTxId?: string;
     createdAt: Date;
     isUnrolled: boolean;
+    isSpent?: boolean;
 }
 
 export enum TxType {
@@ -156,7 +157,7 @@ export type ExtendedVirtualCoin = TapLeaves &
     VirtualCoin & { extraWitness?: Bytes[] };
 
 export function isSpendable(vtxo: VirtualCoin): boolean {
-    return vtxo.spentBy === undefined || vtxo.spentBy === "";
+    return !vtxo.isSpent;
 }
 
 export function isRecoverable(vtxo: VirtualCoin): boolean {
