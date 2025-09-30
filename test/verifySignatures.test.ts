@@ -167,6 +167,48 @@ describe("verifyTapscriptSignatures", () => {
         }).toThrow(/Invalid signature/);
     });
 
+    it("should throw error for invalid sighash type", () => {
+        // Create a properly signed transaction with DEFAULT sighash
+        const tx = createMockTransaction([
+            { identity: identity1, publicKey: publicKey1 },
+        ]);
+
+        // Access the internal PSBT inputs array and modify the signature to use SigHash.ALL
+        const txAny = tx as any;
+        if (txAny.inputs && txAny.inputs.length > 0) {
+            const internalInput = txAny.inputs[0];
+
+            if (
+                internalInput.tapScriptSig &&
+                internalInput.tapScriptSig.length > 0
+            ) {
+                const [tapScriptSigData, validSignature] =
+                    internalInput.tapScriptSig[0];
+
+                // Append SigHash.ALL byte to the signature (making it 65 bytes)
+                const sigWithSighash = new Uint8Array(65);
+                sigWithSighash.set(validSignature);
+                sigWithSighash[64] = SigHash.ALL; // Append sighash type
+
+                // Replace the signature with the modified one
+                internalInput.tapScriptSig[0] = [
+                    tapScriptSigData,
+                    sigWithSighash,
+                ];
+            }
+        }
+
+        expect(() => {
+            verifyTapscriptSignatures(
+                tx,
+                0,
+                [hex.encode(publicKey1)],
+                [],
+                [SigHash.DEFAULT] // Only allow DEFAULT
+            );
+        }).toThrow(/Invalid sighash type/);
+    });
+
     it("should throw error for missing witnessUtxo", () => {
         const tx = new Transaction();
 
