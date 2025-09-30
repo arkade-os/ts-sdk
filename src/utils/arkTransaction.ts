@@ -173,7 +173,7 @@ function isSeconds(locktime: bigint): boolean {
  * Formats a sighash type as a hex string (e.g., 0x01)
  */
 function formatSighash(type: number): string {
-    return `0x${type.toString(16).padStart(2, '0')}`;
+    return `0x${type.toString(16).padStart(2, "0")}`;
 }
 
 /**
@@ -224,20 +224,24 @@ export function verifyTapscriptSignatures(
 
         // Extract sighash type from signature
         // Schnorr signatures are 64 bytes, with optional 1-byte sighash appended
-        const sighashType = signature.length === 65 ? signature[64] : SigHash.DEFAULT;
+        const sighashType =
+            signature.length === 65 ? signature[64] : SigHash.DEFAULT;
         const sig = signature.subarray(0, 64);
 
         // Verify sighash type is allowed
         if (!allowedSighashTypes.includes(sighashType)) {
             const sighashName = formatSighash(sighashType);
-            const allowedNames = allowedSighashTypes.map(formatSighash).join(', ');
-            throw new Error(`Invalid sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}. Allowed: ${allowedNames}`);
+            const allowedNames = allowedSighashTypes
+                .map(formatSighash)
+                .join(", ");
+            throw new Error(
+                `Invalid sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}. Allowed: ${allowedNames}`
+            );
         }
 
         // Find the tapLeafScript that matches this signature's leafHash
         if (!input.tapLeafScript || input.tapLeafScript.length === 0) {
-            throw new Error(
-            );
+            throw new Error();
         }
 
         // Search for the leaf that matches the leafHash in tapScriptSigData
