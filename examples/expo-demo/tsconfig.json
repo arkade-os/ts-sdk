@@ -1,0 +1,6 @@
+{
+    "compilerOptions": {
+        "moduleResolution": "bundler"
+    },
+    "extends": "expo/tsconfig.base"
+}
