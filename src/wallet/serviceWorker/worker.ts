@@ -97,6 +97,9 @@ export class Worker {
         // Clear storage - this replaces vtxoRepository.close()
         await this.storage.clear();
 
+        // Reset in-memory caches by recreating the repository
+        this.walletRepository = new WalletRepositoryImpl(this.storage);
+
         this.wallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
