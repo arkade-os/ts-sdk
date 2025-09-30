@@ -231,11 +231,8 @@ export function verifyTapscriptSignatures(
         // Verify sighash type is allowed
         if (!allowedSighashTypes.includes(sighashType)) {
             const sighashName = formatSighash(sighashType);
-            const allowedNames = allowedSighashTypes
-                .map(formatSighash)
-                .join(", ");
             throw new Error(
-                `Invalid sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}. Allowed: ${allowedNames}`
+                `Unallowed sighash type ${sighashName} for input ${inputIndex}, pubkey ${pubKeyHex}.`
             );
         }
 

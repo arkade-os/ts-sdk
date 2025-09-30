@@ -206,7 +206,7 @@ describe("verifyTapscriptSignatures", () => {
                 [],
                 [SigHash.DEFAULT] // Only allow DEFAULT
             );
-        }).toThrow(/Invalid sighash type/);
+        }).toThrow(/Unallowed sighash type/);
     });
 
     it("should throw error for missing witnessUtxo", () => {
