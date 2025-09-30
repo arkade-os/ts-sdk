@@ -25,7 +25,7 @@ import * as Clipboard from "expo-clipboard";
 
 const MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-const SERVER_URL = "https://bitcoin-beta-v8.arkade.sh";
+const SERVER_URL = "https://localhost:7070";
 
 type LogEntry = {
     timestamp: string;
@@ -389,7 +389,7 @@ export default function App() {
             });
 
             const generatedScript = hex.encode(vtxoScript.pkScript);
-            const generatedAddress = vtxoScript.address("ark", serverPubKey);
+            const generatedAddress = vtxoScript.address("tark", serverPubKey);
             addLog("info", `VTXO Address: ${generatedAddress.encode()}`);
             addLog(
                 "info",
