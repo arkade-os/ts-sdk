@@ -9,6 +9,7 @@ import {
     TxType,
     IWallet,
     WalletConfig,
+    ProviderClass,
     ArkTransaction,
     Coin,
     ExtendedCoin,
@@ -109,6 +110,8 @@ import {
     Vtxo,
     PaginationOptions,
     SubscriptionResponse,
+    SubscriptionHeartbeat,
+    SubscriptionEvent,
 } from "./providers/indexer";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
@@ -198,6 +201,7 @@ export type {
     Identity,
     IWallet,
     WalletConfig,
+    ProviderClass,
     ArkTransaction,
     Coin,
     ExtendedCoin,
@@ -248,6 +252,8 @@ export type {
     MarketHour,
     PaginationOptions,
     SubscriptionResponse,
+    SubscriptionHeartbeat,
+    SubscriptionEvent,
 
     // Network types
     Network,

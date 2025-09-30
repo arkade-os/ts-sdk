@@ -92,8 +92,17 @@ export interface SubscriptionResponse {
     scripts: string[];
     newVtxos: VirtualCoin[];
     spentVtxos: VirtualCoin[];
+    sweptVtxos: VirtualCoin[];
     tx?: string;
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
+}
+
+export interface SubscriptionHeartbeat {
+    type: "heartbeat";
+}
+
+export interface SubscriptionEvent extends SubscriptionResponse {
+    type: "event";
 }
 
 export interface IndexerProvider {
@@ -349,6 +358,9 @@ export class RestIndexerProvider implements IndexerProvider {
                                     ),
                                     spentVtxos: (
                                         data.event.spentVtxos || []
+                                    ).map(convertVtxo),
+                                    sweptVtxos: (
+                                        data.event.sweptVtxos || []
                                     ).map(convertVtxo),
                                     tx: data.event.tx,
                                     checkpointTxs: data.event.checkpointTxs,

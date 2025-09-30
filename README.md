@@ -288,6 +288,55 @@ const wallet = await Wallet.create({
 })
 ```
 
+### Using with Expo/React Native
+
+For React Native and Expo applications where standard EventSource and fetch streaming may not work properly, use the Expo-compatible providers:
+
+```typescript
+import { Wallet, SingleKey } from '@arkade-os/sdk'
+import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
+
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+const wallet = await Wallet.create({
+  identity: identity,
+  esploraUrl: 'https://mutinynet.com/api',
+  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'), // For settlement events and transactions streaming
+  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'), // For address subscriptions and VTXO updates
+})
+
+// use expo/fetch for streaming support (SSE)
+// All other wallet functionality remains the same
+const balance = await wallet.getBalance()
+const address = await wallet.getAddress()
+```
+
+Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
+
+- **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
+- **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
+
+#### Crypto Polyfill Requirement
+
+Install `expo-crypto` and polyfill `crypto.getRandomValues()` at the top of your app entry point:
+
+```bash
+npx expo install expo-crypto
+```
+
+```typescript
+// App.tsx or index.js - MUST be first import
+import * as Crypto from 'expo-crypto';
+if (!global.crypto) global.crypto = {} as any;
+global.crypto.getRandomValues = Crypto.getRandomValues;
+
+// Now import the SDK
+import { Wallet, SingleKey } from '@arkade-os/sdk';
+import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
+```
+
+This is required for MuSig2 settlements and cryptographic operations.
+
 ### Repository Pattern
 
 Access low-level data management through repositories:
@@ -310,6 +359,8 @@ await wallet.contractRepository.saveToContractCollection(
 )
 const swaps = await wallet.contractRepository.getContractCollection('swaps')
 ```
+
+_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
 
 ## Development
 
