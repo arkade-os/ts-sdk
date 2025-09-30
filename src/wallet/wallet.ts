@@ -126,7 +126,7 @@ export class Wallet implements IWallet {
     public readonly contractRepository: ContractRepository;
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
-    > & { enabled: boolean };
+    > & { enabled: boolean; thresholdPercentage: number };
 
     private constructor(
         readonly identity: Identity,
@@ -148,9 +148,12 @@ export class Wallet implements IWallet {
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
         this.renewalConfig = {
-            enabled: renewalConfig?.enabled ?? false,
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
+            enabled: renewalConfig?.enabled ?? DEFAULT_RENEWAL_CONFIG.autoRenew,
+            thresholdPercentage:
+                renewalConfig?.thresholdPercentage ??
+                DEFAULT_RENEWAL_CONFIG.thresholdPercentage,
         };
     }
 
