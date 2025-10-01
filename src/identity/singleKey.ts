@@ -101,8 +101,7 @@ export class SingleKey implements Identity {
         return TreeSignerSession.random();
     }
 
-    async signMessage(message: string): Promise<Uint8Array> {
-        const msgBytes = new TextEncoder().encode(message);
-        return schnorr.sign(sha256(msgBytes), this.key);
+    async signMessage(message: Uint8Array): Promise<Uint8Array> {
+        return schnorr.sign(sha256(message), this.key);
     }
 }
