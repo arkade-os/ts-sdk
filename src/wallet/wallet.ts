@@ -117,16 +117,18 @@ export type IncomingFunds =
 export class Wallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
-    public readonly walletRepository: WalletRepository;
-    public readonly contractRepository: ContractRepository;
-
-private constructor(
-readonly identity: Identity,
-readonly network: Network,
-@@ -110,24 +132,57 @@
-readonly boardingTapscript: DefaultVtxo.Script,
-readonly serverUnrollScript: CSVMultisigTapscript.Type,
-readonly forfeitOutputScript: Bytes,
+    private constructor(
+        readonly identity: Identity,
+        readonly network: Network,
+        readonly networkName: NetworkName,
+        readonly onchainProvider: OnchainProvider,
+        readonly arkProvider: ArkProvider,
+        readonly indexerProvider: IndexerProvider,
+        readonly arkServerPublicKey: Bytes,
+        readonly offchainTapscript: DefaultVtxo.Script,
+        readonly boardingTapscript: DefaultVtxo.Script,
+        readonly serverUnrollScript: CSVMultisigTapscript.Type,
+        readonly forfeitOutputScript: Bytes,
         readonly dustAmount: bigint,
         readonly walletRepository: WalletRepository,
         readonly contractRepository: ContractRepository
