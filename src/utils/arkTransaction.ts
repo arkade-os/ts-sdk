@@ -5,7 +5,11 @@ import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { ExtendedCoin, VirtualCoin } from "../wallet";
-import { CLTVMultisigTapscript, decodeTapscript, RelativeTimelock } from "../script/tapscript";
+import {
+    CLTVMultisigTapscript,
+    decodeTapscript,
+    RelativeTimelock,
+} from "../script/tapscript";
 import {
     EncodedVtxoScript,
     scriptFromTapLeafScript,
