@@ -2,21 +2,21 @@ import { describe, it, expect } from "vitest";
 import { verifyTapscriptSignatures } from "../src/utils/arkTransaction";
 import { Transaction, SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { randomPrivateKeyBytes } from "@scure/btc-signer/utils";
+import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../src/script/base";
 import { MultisigTapscript } from "../src/script/tapscript";
 import { SingleKey } from "../src/identity/singleKey";
 
-describe("verifyTapscriptSignatures", () => {
+describe("verifyTapscriptSignatures", async () => {
     // Test identities
     const identity1 = SingleKey.fromPrivateKey(randomPrivateKeyBytes());
-    const publicKey1 = identity1.xOnlyPublicKey();
+    const publicKey1 = await identity1.xOnlyPublicKey();
 
     const identity2 = SingleKey.fromPrivateKey(randomPrivateKeyBytes());
-    const publicKey2 = identity2.xOnlyPublicKey();
+    const publicKey2 = await identity2.xOnlyPublicKey();
 
     const identity3 = SingleKey.fromPrivateKey(randomPrivateKeyBytes());
-    const publicKey3 = identity3.xOnlyPublicKey();
+    const publicKey3 = await identity3.xOnlyPublicKey();
 
     // Create a 3-of-3 multisig VtxoScript
     const multisigScript = MultisigTapscript.encode({
@@ -36,9 +36,6 @@ describe("verifyTapscriptSignatures", () => {
 
         // Use the first tapLeafScript from vtxoScript
         const tapLeaf = vtxoScript.leaves[0];
-        const [controlBlock, scriptWithVersion] = tapLeaf;
-        const script = scriptWithVersion.subarray(0, -1);
-        const version = scriptWithVersion[scriptWithVersion.length - 1];
 
         tx.addInput({
             txid: new Uint8Array(32).fill(0),
