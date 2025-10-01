@@ -14,7 +14,6 @@ import {
     ChainTxType,
 } from "../../src";
 import { hex } from "@scure/base";
-import { sha256x2 } from "@scure/btc-signer/utils";
 import { vi } from "vitest";
 import { afterEach } from "vitest";
 
@@ -418,7 +417,7 @@ describe("Indexer provider", () => {
         expect(leaves.length).toBeGreaterThanOrEqual(1);
 
         const found = leaves.find((leaf) => {
-            const txid = hex.encode(sha256x2(leaf.toBytes(true)).reverse());
+            const txid = leaf.id;
             return txid === aliceVtxoOutpoint.txid;
         });
         expect(found).toBeDefined();

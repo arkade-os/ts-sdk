@@ -6,7 +6,7 @@ import {
     ConditionCSVMultisigTapscript,
     ConditionMultisigTapscript,
 } from "../src/script/tapscript";
-import { Script } from "@scure/btc-signer/script";
+import { Script } from "@scure/btc-signer/script.js";
 import { hex } from "@scure/base";
 
 const exPubKey1 = Buffer.from(

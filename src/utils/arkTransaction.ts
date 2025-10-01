@@ -1,4 +1,9 @@
+import { schnorr } from "@noble/curves/secp256k1";
+import { hex } from "@scure/base";
 import { DEFAULT_SEQUENCE, Transaction, SigHash } from "@scure/btc-signer";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { VirtualCoin } from "../wallet";
 import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
 import {
@@ -9,12 +14,7 @@ import {
 } from "../script/base";
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
-import { hex } from "@scure/base";
-import { TransactionOutput } from "@scure/btc-signer/psbt";
-import { Bytes, sha256x2 } from "@scure/btc-signer/utils";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
-import { tapLeafHash } from "@scure/btc-signer/payment";
-import { schnorr } from "@noble/curves/secp256k1";
 
 export type ArkTxInput = {
     // the script used to spend the vtxo
@@ -150,7 +150,7 @@ function buildCheckpointTx(
 
     // create the checkpoint input that will be used as input of the virtual tx
     const checkpointInput = {
-        txid: hex.encode(sha256x2(checkpointTx.toBytes(true)).reverse()),
+        txid: checkpointTx.id,
         vout: 0,
         value: vtxo.value,
         tapLeafScript: collaborativeLeafProof,

@@ -1,8 +1,8 @@
+import { Bytes } from "@scure/btc-signer/utils.js";
 import { Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { Bytes } from "@scure/btc-signer/utils";
 
 /**
  * Configuration options for wallet initialization.
