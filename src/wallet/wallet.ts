@@ -904,7 +904,7 @@ export class Wallet implements IWallet {
     > {
         const utf8IntentId = new TextEncoder().encode(intentId);
         const intentIdHash = sha256(utf8IntentId);
-        const intentIdHashStr = hex.encode(new Uint8Array(intentIdHash));
+        const intentIdHashStr = hex.encode(intentIdHash);
 
         let skip = true;
 

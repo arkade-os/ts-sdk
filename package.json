@@ -55,7 +55,6 @@
     },
     "dependencies": {
         "@noble/curves": "2.0.0",
-        "@noble/hashes": "2.0.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1",
