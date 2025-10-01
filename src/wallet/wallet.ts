@@ -1,12 +1,15 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
-import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment.js";
-import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import {
+    SigHash,
+    Transaction,
+    Address,
+    OutScript,
     TaprootControlBlock,
-    TransactionInput,
-    TransactionOutput,
-} from "@scure/btc-signer/psbt.js";
+} from "@scure/btc-signer";
+import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
@@ -51,7 +54,6 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
@@ -970,7 +972,7 @@ export class Wallet implements IWallet {
     > {
         const utf8IntentId = new TextEncoder().encode(intentId);
         const intentIdHash = sha256(utf8IntentId);
-        const intentIdHashStr = hex.encode(new Uint8Array(intentIdHash));
+        const intentIdHashStr = hex.encode(intentIdHash);
 
         let skip = true;
 
@@ -1122,9 +1124,7 @@ export class Wallet implements IWallet {
             }
 
             const connectorLeaf = connectorsLeaves[connectorIndex];
-            const connectorTxId = hex.encode(
-                sha256x2(connectorLeaf.toBytes(true)).reverse()
-            );
+            const connectorTxId = connectorLeaf.id;
             const connectorOutput = connectorLeaf.getOutput(0);
             if (!connectorOutput) {
                 throw new Error("connector output not found");

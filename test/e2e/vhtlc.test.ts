@@ -1,7 +1,8 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import * as bip68 from "bip68";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer/transaction.js";
+import { Transaction } from "@scure/btc-signer";
+import { hash160 } from "@scure/btc-signer/utils.js";
 import {
     buildOffchainTx,
     ConditionWitness,
@@ -22,7 +23,6 @@ import {
     createTestIdentity,
     faucetOffchain,
 } from "./utils";
-import { hash160 } from "@scure/btc-signer/utils.js";
 import { execSync } from "child_process";
 import { beforeAll } from "vitest";
 

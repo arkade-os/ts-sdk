@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { verifyTapscriptSignatures } from "../src/utils/arkTransaction";
 import { Transaction, SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../src/script/base";
 import { MultisigTapscript } from "../src/script/tapscript";
 import { SingleKey } from "../src/identity/singleKey";
+import { verifyTapscriptSignatures } from "../src/utils/arkTransaction";
 
 describe("verifyTapscriptSignatures", async () => {
     // Test identities

@@ -1,6 +1,6 @@
-import { Transaction } from "@scure/btc-signer/transaction.js";
-import { P2A } from "./utils/anchor";
+import { Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
+import { P2A } from "./utils/anchor";
 
 export function buildForfeitTx(
     inputs: TransactionInputUpdate[],

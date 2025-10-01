@@ -1,15 +1,13 @@
-import { OP } from "@scure/btc-signer/script.js";
-import { Transaction, SigHash } from "@scure/btc-signer/transaction.js";
-import { Script } from "@scure/btc-signer/script.js";
+import { OP, Transaction, Script, SigHash } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { schnorr } from "@noble/curves/secp256k1";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { base64 } from "@scure/base";
 import {
     ErrMissingData,
     ErrMissingInputs,
     ErrMissingWitnessUtxo,
 } from "./errors";
-import { schnorr } from "@noble/curves/secp256k1.js";
-import { Bytes } from "@scure/btc-signer/utils.js";
-import { base64 } from "@scure/base";
 
 /**
  * BIP-322 signature implementation for Bitcoin message signing.

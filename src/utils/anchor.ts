@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer/transaction.js";
+import { Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 
 export const ANCHOR_VALUE = 0n;
