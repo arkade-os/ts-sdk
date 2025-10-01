@@ -7,7 +7,7 @@ ARG TARGETARCH
 
 RUN apk update && apk upgrade && apk add --no-cache git
 
-ARG BRANCH=v8
+ARG BRANCH=master
 
 WORKDIR /app
 
