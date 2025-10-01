@@ -13,13 +13,12 @@ import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
 import { Identity } from "../../identity";
-import { StorageAdapter } from "../../storage";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
-import { setupServiceWorker } from "./utils";
+import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
 
 export type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -74,8 +73,9 @@ interface ServiceWorkerWalletOptions {
     arkServerPublicKey?: string;
     arkServerUrl: string;
     esploraUrl?: string;
+    dbName?: string;
+    dbVersion?: number;
     identity: PrivateKeyIdentity;
-    storage?: StorageAdapter;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -105,8 +105,10 @@ export class ServiceWorkerWallet implements IWallet {
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
         // Default to IndexedDB for service worker context
-        const storage =
-            options.storage || new IndexedDBStorageAdapter("wallet-db");
+        const storage = new IndexedDBStorageAdapter(
+            options.dbName || DEFAULT_DB_NAME,
+            options.dbVersion
+        );
 
         // Create repositories
         const walletRepo = new WalletRepositoryImpl(storage);
@@ -178,13 +180,9 @@ export class ServiceWorkerWallet implements IWallet {
         );
 
         // Use the existing create method
-        return await ServiceWorkerWallet.create({
-            arkServerPublicKey: options.arkServerPublicKey,
-            arkServerUrl: options.arkServerUrl,
-            esploraUrl: options.esploraUrl,
-            identity: options.identity,
+        return ServiceWorkerWallet.create({
+            ...options,
             serviceWorker,
-            storage: options.storage,
         });
     }
 

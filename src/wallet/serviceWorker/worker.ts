@@ -16,6 +16,7 @@ import {
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
 import { extendVirtualCoin } from "../utils";
+import { DEFAULT_DB_NAME } from "./utils";
 
 /**
  * Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -30,11 +31,13 @@ export class Worker {
     private storage: IndexedDBStorageAdapter;
 
     constructor(
+        readonly dbName: string = DEFAULT_DB_NAME,
+        readonly dbVersion: number = 1,
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
     ) {
-        this.storage = new IndexedDBStorageAdapter("arkade-service-worker", 1);
+        this.storage = new IndexedDBStorageAdapter(dbName, dbVersion);
         this.walletRepository = new WalletRepositoryImpl(this.storage);
     }
 
