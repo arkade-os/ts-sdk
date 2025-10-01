@@ -470,7 +470,7 @@ export class Worker {
         }
 
         try {
-            if (!this.wallet) throw new Error("Wallet not initialized");
+             const vtxos = await this.getSpendableVtxos();
 
             const vtxos = await this.getSpendableVtxos();
             const dustAmount = this.wallet.dustAmount;
