@@ -10,6 +10,9 @@ export function buildForfeitTx(
     const tx = new Transaction({
         version: 3,
         lockTime: txLocktime,
+        allowUnknownOutputs: true,
+        allowUnknown: true,
+        allowUnknownInputs: true,
     });
 
     let amount = 0n;

@@ -52,7 +52,7 @@ import {
     SettlementEvent,
     SettlementEventType,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     BatchFinalizationEvent,
@@ -94,7 +94,7 @@ import {
     CosignerPublicKey,
     VtxoTreeExpiry,
 } from "./utils/unknownFields";
-import { BIP322 } from "./bip322";
+import { Intent } from "./intent";
 import { ArkNote } from "./arknote";
 import { networks, Network, NetworkName } from "./networks";
 import {
@@ -188,8 +188,8 @@ export {
     WalletRepositoryImpl,
     ContractRepositoryImpl,
 
-    // BIP322
-    BIP322,
+    // Intent proof
+    Intent,
 
     // TxTree
     TxTree,
@@ -241,7 +241,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     ExplorerTransaction,

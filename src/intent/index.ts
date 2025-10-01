@@ -2,26 +2,21 @@ import { OP, Transaction, Script, SigHash } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { schnorr } from "@noble/curves/secp256k1";
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { base64 } from "@scure/base";
-import {
-    ErrMissingData,
-    ErrMissingInputs,
-    ErrMissingWitnessUtxo,
-} from "./errors";
 
 /**
- * BIP-322 signature implementation for Bitcoin message signing.
+ * Intent proof implementation for Bitcoin message signing.
  *
- * BIP-322 defines a standard for signing Bitcoin messages as well as proving
+ * Intent proof defines a standard for signing Bitcoin messages as well as proving
  * ownership of coins. This namespace provides utilities for creating and
- * validating BIP-322.
+ * validating Intent proof.
  *
+ * it is greatly inspired by BIP322.
  * @see https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki
  *
  * @example
  * ```typescript
- * // Create a BIP-322 proof
- * const proof = BIP322.create(
+ * // Create a Intent proof
+ * const proof = Intent.create(
  *   "Hello Bitcoin!",
  *   [input],
  *   [output]
@@ -30,39 +25,33 @@ import {
  * // Sign the proof
  * const signedProof = await identity.sign(proof);
  *
- * // Extract the signature
- * const signature = BIP322.signature(signedProof);
- * ```
  */
-export namespace BIP322 {
-    // BIP0322 full proof of funds is a special invalid psbt containing the inputs to prove ownership
+export namespace Intent {
+    // Intent proof is a special invalid psbt containing the inputs to prove ownership
     // signing the proof means signing the psbt as a regular transaction
-    export type FullProof = Transaction;
-
-    // a BIP322 Signature is the raw FullProof transaction signed and finalized
-    // BIP322 signatures are base64 encoded to avoid confusion with real signed transactions
-    export type Signature = string;
+    export type Proof = Transaction;
 
     /**
-     * Creates a new BIP-322 "full" proof of funds unsigned transaction.
+     * Creates a new Intent proof unsigned transaction.
      *
      * This function constructs a special transaction that can be signed to prove
      * ownership of VTXOs and UTXOs. The proof includes the message to be
      * signed and the inputs/outputs that demonstrate ownership.
      *
-     * @param message - The BIP-322 message to be signed
+     * @param message - The Intent message to be signed
      * @param inputs - Array of transaction inputs to prove ownership of
      * @param outputs - Optional array of transaction outputs
-     * @returns An unsigned BIP-322 proof transaction
+     * @returns An unsigned Intent proof transaction
      */
     export function create(
         message: string,
         inputs: TransactionInput[],
         outputs: TransactionOutput[] = []
-    ): FullProof {
-        if (inputs.length == 0) throw ErrMissingInputs;
-        if (!validateInputs(inputs)) throw ErrMissingData;
-        if (!validateOutputs(outputs)) throw ErrMissingData;
+    ): Proof {
+        if (inputs.length == 0)
+            throw new Error("intent proof requires at least one input");
+        if (!validateInputs(inputs)) throw new Error("invalid inputs");
+        if (!validateOutputs(outputs)) throw new Error("invalid outputs");
 
         // create the initial transaction to spend
         const toSpend = craftToSpendTx(message, inputs[0].witnessUtxo.script);
@@ -70,31 +59,12 @@ export namespace BIP322 {
         // create the transaction to sign
         return craftToSignTx(toSpend, inputs, outputs);
     }
-
-    /**
-     * Finalizes and extracts the FullProof transaction into a BIP-322 signature.
-     *
-     * This function takes a signed proof transaction and converts it into a
-     * base64-encoded signature string. If the proof's inputs have special
-     * spending conditions, a custom finalizer can be provided.
-     *
-     * @param signedProof - The signed BIP-322 proof transaction
-     * @param finalizer - Optional custom finalizer function
-     * @returns Base64-encoded BIP-322 signature
-     */
-    export function signature(
-        signedProof: FullProof,
-        finalizer = (tx: FullProof) => tx.finalize()
-    ): Signature {
-        finalizer(signedProof);
-        return base64.encode(signedProof.extract());
-    }
 }
 
 const OP_RETURN_EMPTY_PKSCRIPT = new Uint8Array([OP.RETURN]);
 const ZERO_32 = new Uint8Array(32).fill(0);
 const MAX_INDEX = 0xffffffff;
-const TAG_BIP322 = "BIP0322-signed-message";
+const TAG_INTENT_PROOF = "ark-intent-proof-message";
 
 type ValidatedTxInput = TransactionInput & {
     witnessUtxo: { script: Uint8Array; amount: bigint };
@@ -108,9 +78,12 @@ type ValidatedTxOutput = TransactionOutput & {
 };
 
 function validateInput(input: TransactionInput): input is ValidatedTxInput {
-    if (input.index === undefined) throw ErrMissingData;
-    if (input.txid === undefined) throw ErrMissingData;
-    if (input.witnessUtxo === undefined) throw ErrMissingWitnessUtxo;
+    if (input.index === undefined)
+        throw new Error("intent proof input requires index");
+    if (input.txid === undefined)
+        throw new Error("intent proof input requires txid");
+    if (input.witnessUtxo === undefined)
+        throw new Error("intent proof input requires witness utxo");
     return true;
 }
 
@@ -124,8 +97,10 @@ function validateInputs(
 function validateOutput(
     output: TransactionOutput
 ): output is ValidatedTxOutput {
-    if (output.amount === undefined) throw ErrMissingData;
-    if (output.script === undefined) throw ErrMissingData;
+    if (output.amount === undefined)
+        throw new Error("intent proof output requires amount");
+    if (output.script === undefined)
+        throw new Error("intent proof output requires script");
     return true;
 }
 
@@ -137,10 +112,7 @@ function validateOutputs(
 }
 
 // craftToSpendTx creates the initial transaction that will be spent in the proof
-export function craftToSpendTx(
-    message: string,
-    pkScript: Uint8Array
-): Transaction {
+function craftToSpendTx(message: string, pkScript: Uint8Array): Transaction {
     const messageHash = hashMessage(message);
     const tx = new Transaction({
         version: 0,
@@ -198,11 +170,17 @@ function craftToSignTx(
     });
 
     // add other inputs
-    for (const input of inputs) {
+    for (const [i, input] of inputs.entries()) {
         tx.addInput({
             ...input,
             sighashType: SigHash.ALL,
         });
+
+        if (input.unknown?.length) {
+            tx.updateInput(i + 1, {
+                unknown: input.unknown,
+            });
+        }
     }
 
     // add the special OP_RETURN output if no outputs are provided
@@ -227,7 +205,7 @@ function craftToSignTx(
 
 function hashMessage(message: string): Uint8Array {
     return schnorr.utils.taggedHash(
-        TAG_BIP322,
+        TAG_INTENT_PROOF,
         new TextEncoder().encode(message)
     );
 }

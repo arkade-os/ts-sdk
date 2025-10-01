@@ -110,8 +110,8 @@ export interface ArkInfo {
     checkpointExitClosure: string;
 }
 
-export interface Intent {
-    signature: string;
+export interface SignedIntent {
+    proof: string;
     message: string;
 }
 
@@ -134,8 +134,8 @@ export interface ArkProvider {
         signedCheckpointTxs: string[];
     }>;
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
-    registerIntent(intent: Intent): Promise<string>;
-    deleteIntent(intent: Intent): Promise<void>;
+    registerIntent(intent: SignedIntent): Promise<string>;
+    deleteIntent(intent: SignedIntent): Promise<void>;
     confirmRegistration(intentId: string): Promise<void>;
     submitTreeNonces(
         batchId: string,
@@ -281,7 +281,7 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async registerIntent(intent: Intent): Promise<string> {
+    async registerIntent(intent: SignedIntent): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -290,7 +290,7 @@ export class RestArkProvider implements ArkProvider {
             },
             body: JSON.stringify({
                 intent: {
-                    signature: intent.signature,
+                    proof: intent.proof,
                     message: intent.message,
                 },
             }),
@@ -305,7 +305,7 @@ export class RestArkProvider implements ArkProvider {
         return data.intentId;
     }
 
-    async deleteIntent(intent: Intent): Promise<void> {
+    async deleteIntent(intent: SignedIntent): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -314,7 +314,7 @@ export class RestArkProvider implements ArkProvider {
             },
             body: JSON.stringify({
                 proof: {
-                    signature: intent.signature,
+                    proof: intent.proof,
                     message: intent.message,
                 },
             }),
