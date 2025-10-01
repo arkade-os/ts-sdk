@@ -470,24 +470,21 @@ export class Worker {
         }
 
         try {
-             const vtxos = await this.getSpendableVtxos();
-
             const vtxos = await this.getSpendableVtxos();
             const dustAmount = this.wallet.dustAmount;
             const includeRecoverable = message.filter?.withRecoverable ?? false;
 
-            // Single-pass filter: always exclude subdust, conditionally exclude recoverable
-            const filteredVtxos = vtxos.filter((v) => {
-                // Always filter out subdust (if dustAmount is configured)
-                if (dustAmount != null && isSubdust(v, dustAmount)) {
-                    return false;
-                }
-                // Filter out recoverable only when not requested
-                if (!includeRecoverable && isRecoverable(v)) {
-                    return false;
-                }
-                return true;
-            });
+            const filteredVtxos = includeRecoverable
+                ? vtxos
+                : vtxos.filter((v) => {
+                      if (dustAmount != null && isSubdust(v, dustAmount)) {
+                          return false;
+                      }
+                      if (isRecoverable(v)) {
+                          return false;
+                      }
+                      return true;
+                  });
 
             event.source?.postMessage(
                 Response.vtxos(message.id, filteredVtxos)
