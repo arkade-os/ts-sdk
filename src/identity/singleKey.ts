@@ -101,8 +101,12 @@ export class SingleKey implements Identity {
         return TreeSignerSession.random();
     }
 
-    async signMessage(message: Uint8Array, signatureType: 'schnorr' | 'ecdsa' = 'schnorr'): Promise<Uint8Array> {
-        if (signatureType === 'ecdsa') return sign(message, this.key, { prehash: false });
+    async signMessage(
+        message: Uint8Array,
+        signatureType: "schnorr" | "ecdsa" = "schnorr"
+    ): Promise<Uint8Array> {
+        if (signatureType === "ecdsa")
+            return sign(message, this.key, { prehash: false });
         return schnorr.sign(message, this.key);
     }
 }
