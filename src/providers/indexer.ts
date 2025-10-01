@@ -92,8 +92,17 @@ export interface SubscriptionResponse {
     scripts: string[];
     newVtxos: VirtualCoin[];
     spentVtxos: VirtualCoin[];
+    sweptVtxos: VirtualCoin[];
     tx?: string;
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
+}
+
+export interface SubscriptionHeartbeat {
+    type: "heartbeat";
+}
+
+export interface SubscriptionEvent extends SubscriptionResponse {
+    type: "event";
 }
 
 export interface IndexerProvider {
@@ -350,6 +359,9 @@ export class RestIndexerProvider implements IndexerProvider {
                                     spentVtxos: (
                                         data.event.spentVtxos || []
                                     ).map(convertVtxo),
+                                    sweptVtxos: (
+                                        data.event.sweptVtxos || []
+                                    ).map(convertVtxo),
                                     tx: data.event.tx,
                                     checkpointTxs: data.event.checkpointTxs,
                                 };
@@ -539,7 +551,7 @@ export class RestIndexerProvider implements IndexerProvider {
         });
         if (!res.ok) {
             const errorText = await res.text();
-            throw new Error(`Failed to unsubscribe to scripts: ${errorText}`);
+            console.warn(`Failed to unsubscribe to scripts: ${errorText}`);
         }
     }
 }
@@ -568,6 +580,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         arkTxId: vtxo.arkTxid,
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
         isUnrolled: vtxo.isUnrolled,
+        isSpent: vtxo.isSpent,
     };
 }
 

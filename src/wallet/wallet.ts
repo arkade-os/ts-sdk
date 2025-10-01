@@ -1,12 +1,15 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
-import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment.js";
-import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import {
+    SigHash,
+    Transaction,
+    Address,
+    OutScript,
     TaprootControlBlock,
-    TransactionInput,
-    TransactionOutput,
-} from "@scure/btc-signer/psbt.js";
+} from "@scure/btc-signer";
+import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
@@ -25,7 +28,7 @@ import {
     ArkProvider,
     RestArkProvider,
     BatchStartedEvent,
-    Intent,
+    SignedIntent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -51,14 +54,14 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { buildOffchainTx } from "../utils/arkTransaction";
+import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
 import { ArkNote } from "../arknote";
-import { BIP322 } from "../bip322";
+import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree, TxTreeNode } from "../tree/txTree";
+import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
 import { InMemoryStorageAdapter } from "../storage/inMemory";
 import {
     WalletRepository,
@@ -68,7 +71,7 @@ import {
     ContractRepository,
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
-import { extendVirtualCoin } from "./serviceWorker/utils";
+import { extendVirtualCoin } from "./utils";
 
 export type IncomingFunds =
     | {
@@ -88,10 +91,18 @@ export type IncomingFunds =
  *
  * @example
  * ```typescript
- * // Create a wallet
+ * // Create a wallet with URL configuration
  * const wallet = await Wallet.create({
  *   identity: SingleKey.fromHex('your_private_key'),
  *   arkServerUrl: 'https://ark.example.com',
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Or with custom provider instances (e.g., for Expo/React Native)
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('your_private_key'),
+ *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
+ *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
  *   esploraUrl: 'https://mempool.space/api'
  * });
  *
@@ -109,9 +120,6 @@ export type IncomingFunds =
 export class Wallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
-    public readonly walletRepository: WalletRepository;
-    public readonly contractRepository: ContractRepository;
-
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
@@ -125,12 +133,9 @@ export class Wallet implements IWallet {
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
         readonly dustAmount: bigint,
-        walletRepository: WalletRepository,
-        contractRepository: ContractRepository
-    ) {
-        this.walletRepository = walletRepository;
-        this.contractRepository = contractRepository;
-    }
+        readonly walletRepository: WalletRepository,
+        readonly contractRepository: ContractRepository
+    ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
@@ -138,15 +143,43 @@ export class Wallet implements IWallet {
             throw new Error("Invalid configured public key");
         }
 
-        const arkProvider = new RestArkProvider(config.arkServerUrl);
-        const indexerProvider = new RestIndexerProvider(config.arkServerUrl);
+        // Use provided arkProvider instance or create a new one from arkServerUrl
+        const arkProvider =
+            config.arkProvider ||
+            (() => {
+                if (!config.arkServerUrl) {
+                    throw new Error(
+                        "Either arkProvider or arkServerUrl must be provided"
+                    );
+                }
+                return new RestArkProvider(config.arkServerUrl);
+            })();
+
+        // Extract arkServerUrl from provider if not explicitly provided
+        const arkServerUrl =
+            config.arkServerUrl || (arkProvider as RestArkProvider).serverUrl;
+
+        if (!arkServerUrl) {
+            throw new Error("Could not determine arkServerUrl from provider");
+        }
+
+        // Use provided indexerProvider instance or create a new one
+        // indexerUrl defaults to arkServerUrl if not provided
+        const indexerUrl = config.indexerUrl || arkServerUrl;
+        const indexerProvider =
+            config.indexerProvider || new RestIndexerProvider(indexerUrl);
 
         const info = await arkProvider.getInfo();
 
         const network = getNetwork(info.network as NetworkName);
-        const onchainProvider = new EsploraProvider(
-            config.esploraUrl || ESPLORA_URL[info.network as NetworkName]
-        );
+
+        // Extract esploraUrl from provider if not explicitly provided
+        const esploraUrl =
+            config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
+
+        // Use provided onchainProvider instance or create a new one
+        const onchainProvider =
+            config.onchainProvider || new EsploraProvider(esploraUrl);
 
         const exitTimelock: RelativeTimelock = {
             value: info.unilateralExitDelay,
@@ -173,10 +206,13 @@ export class Wallet implements IWallet {
         const offchainTapscript = bareVtxoTapscript;
 
         // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-        const rawCheckpointExitClosure = hex.decode(info.checkpointExitClosure);
-        const serverUnrollScript = CSVMultisigTapscript.decode(
-            rawCheckpointExitClosure
-        );
+        let serverUnrollScript: CSVMultisigTapscript.Type;
+        try {
+            const raw = hex.decode(info.checkpointExitClosure);
+            serverUnrollScript = CSVMultisigTapscript.decode(raw);
+        } catch (e) {
+            throw new Error("Invalid checkpointExitClosure from server");
+        }
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
@@ -281,17 +317,10 @@ export class Wallet implements IWallet {
 
         // For now, always fetch fresh data from provider and update cache
         // In future, we can add cache invalidation logic based on timestamps
-        const spendableVtxos = await this.getVirtualCoins(filter);
-        const encodedOffchainTapscript = this.offchainTapscript.encode();
-        const forfeit = this.offchainTapscript.forfeit();
-        const exit = this.offchainTapscript.exit();
-
-        const extendedVtxos = spendableVtxos.map((vtxo) => ({
-            ...vtxo,
-            forfeitTapLeafScript: forfeit,
-            intentTapLeafScript: exit,
-            tapTree: encodedOffchainTapscript,
-        }));
+        const vtxos = await this.getVirtualCoins(filter);
+        const extendedVtxos = vtxos.map((vtxo) =>
+            extendVirtualCoin(this, vtxo)
+        );
 
         // Update cache with fresh data
         await this.walletRepository.saveVtxos(address, extendedVtxos);
@@ -303,27 +332,19 @@ export class Wallet implements IWallet {
         filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
     ): Promise<VirtualCoin[]> {
         const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+        const response = await this.indexerProvider.getVtxos({ scripts });
+        const allVtxos = response.vtxos;
 
-        const response = await this.indexerProvider.getVtxos({
-            scripts,
-            spendableOnly: true,
-        });
-        const vtxos = response.vtxos;
+        let vtxos: VirtualCoin[] = allVtxos.filter(isSpendable);
 
-        if (filter.withRecoverable) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts,
-                recoverableOnly: true,
-            });
-            vtxos.push(...response.vtxos);
+        // all recoverable vtxos are spendable by definition
+        if (!filter.withRecoverable) {
+            vtxos = vtxos.filter((vtxo) => !isRecoverable(vtxo));
         }
 
         if (filter.withUnrolled) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts,
-                spentOnly: true,
-            });
-            vtxos.push(...response.vtxos.filter((vtxo) => vtxo.isUnrolled));
+            const spentVtxos = allVtxos.filter((vtxo) => !isSpendable(vtxo));
+            vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
         }
 
         return vtxos;
@@ -378,10 +399,10 @@ export class Wallet implements IWallet {
         boardingTxs: ArkTransaction[];
         commitmentsToIgnore: Set<string>;
     }> {
-        const boardingAddress = await this.getBoardingAddress();
-        const txs = await this.onchainProvider.getTransactions(boardingAddress);
         const utxos: VirtualCoin[] = [];
         const commitmentsToIgnore = new Set<string>();
+        const boardingAddress = await this.getBoardingAddress();
+        const txs = await this.onchainProvider.getTransactions(boardingAddress);
 
         for (const tx of txs) {
             for (let i = 0; i < tx.vout.length; i++) {
@@ -564,17 +585,27 @@ export class Wallet implements IWallet {
             }
         }
 
-        // if no params are provided, use all boarding and offchain utxos as inputs
+        // if no params are provided, use all non expired boarding utxos and offchain vtxos as inputs
         // and send all to the offchain address
         if (!params) {
             let amount = 0;
-            const boardingUtxos = await this.getBoardingUtxos();
+
+            const exitScript = CSVMultisigTapscript.decode(
+                hex.decode(this.boardingTapscript.exitScript)
+            );
+
+            const boardingTimelock = exitScript.params.timelock;
+
+            const boardingUtxos = (await this.getBoardingUtxos()).filter(
+                (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
+            );
+
             amount += boardingUtxos.reduce(
                 (sum, input) => sum + input.value,
                 0
             );
 
-            const vtxos = await this.getVtxos();
+            const vtxos = await this.getVtxos({ withRecoverable: true });
             amount += vtxos.reduce((sum, input) => sum + input.value, 0);
 
             const inputs = [...boardingUtxos, ...vtxos];
@@ -623,7 +654,7 @@ export class Wallet implements IWallet {
         const signingPublicKeys: string[] = [];
         if (hasOffchainOutputs) {
             session = this.identity.signerSession();
-            signingPublicKeys.push(hex.encode(session.getPublicKey()));
+            signingPublicKeys.push(hex.encode(await session.getPublicKey()));
         }
 
         const [intent, deleteIntent] = await Promise.all([
@@ -846,31 +877,27 @@ export class Wallet implements IWallet {
         let indexerStopFunc: () => void;
 
         if (this.onchainProvider && boardingAddress) {
+            const findVoutOnTx = (tx: any) => {
+                return tx.vout.findIndex(
+                    (v: any) => v.scriptpubkey_address === boardingAddress
+                );
+            };
             onchainStopFunc = await this.onchainProvider.watchAddresses(
                 [boardingAddress],
                 (txs) => {
+                    // find all utxos belonging to our boarding address
                     const coins: Coin[] = txs
+                        // filter txs where address is in output
+                        .filter((tx) => findVoutOnTx(tx) !== -1)
+                        // return utxo as Coin
                         .map((tx) => {
-                            const vout = tx.vout.findIndex(
-                                (v) =>
-                                    v.scriptpubkey_address === boardingAddress
-                            );
+                            const { txid, status } = tx;
+                            const vout = findVoutOnTx(tx);
+                            const value = Number(tx.vout[vout].value);
+                            return { txid, vout, value, status };
+                        });
 
-                            if (vout === -1) {
-                                console.warn(
-                                    `No vout found for address ${boardingAddress} in transaction ${tx.txid}`
-                                );
-                                return null;
-                            }
-
-                            return {
-                                txid: tx.txid,
-                                vout,
-                                value: Number(tx.vout[vout].value),
-                                status: tx.status,
-                            };
-                        })
-                        .filter((coin) => coin !== null);
+                    // and notify via callback
                     eventCallback({
                         type: "utxo",
                         coins,
@@ -946,7 +973,7 @@ export class Wallet implements IWallet {
     > {
         const utf8IntentId = new TextEncoder().encode(intentId);
         const intentIdHash = sha256(utf8IntentId);
-        const intentIdHashStr = hex.encode(new Uint8Array(intentIdHash));
+        const intentIdHashStr = hex.encode(intentIdHash);
 
         let skip = true;
 
@@ -1005,11 +1032,10 @@ export class Wallet implements IWallet {
 
         session.init(vtxoGraph, sweepTapTreeRoot, sharedOutput.amount);
 
-        await this.arkProvider.submitTreeNonces(
-            event.id,
-            hex.encode(session.getPublicKey()),
-            session.getNonces()
-        );
+        const pubkey = hex.encode(await session.getPublicKey());
+        const nonces = await session.getNonces();
+
+        await this.arkProvider.submitTreeNonces(event.id, pubkey, nonces);
     }
 
     private async handleSettlementSigningNoncesGeneratedEvent(
@@ -1017,11 +1043,12 @@ export class Wallet implements IWallet {
         session: SignerSession
     ) {
         session.setAggregatedNonces(event.treeNonces);
-        const signatures = session.sign();
+        const signatures = await session.sign();
+        const pubkey = hex.encode(await session.getPublicKey());
 
         await this.arkProvider.submitTreeSignatures(
             event.id,
-            hex.encode(session.getPublicKey()),
+            pubkey,
             signatures
         );
     }
@@ -1098,9 +1125,7 @@ export class Wallet implements IWallet {
             }
 
             const connectorLeaf = connectorsLeaves[connectorIndex];
-            const connectorTxId = hex.encode(
-                sha256x2(connectorLeaf.toBytes(true)).reverse()
-            );
+            const connectorTxId = connectorLeaf.id;
             const connectorOutput = connectorLeaf.getOutput(0);
             if (!connectorOutput) {
                 throw new Error("connector output not found");
@@ -1156,18 +1181,16 @@ export class Wallet implements IWallet {
     }
 
     private async makeRegisterIntentSignature(
-        bip322Inputs: ExtendedCoin[],
+        coins: ExtendedCoin[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[]
-    ): Promise<Intent> {
+    ): Promise<SignedIntent> {
         const nowSeconds = Math.floor(Date.now() / 1000);
-        const { inputs, inputTapTrees, finalizer } =
-            this.prepareBIP322Inputs(bip322Inputs);
+        const inputs = this.prepareIntentProofInputs(coins);
 
         const message = {
             type: "register",
-            input_tap_trees: inputTapTrees,
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: nowSeconds,
             expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
@@ -1175,24 +1198,21 @@ export class Wallet implements IWallet {
         };
 
         const encodedMessage = JSON.stringify(message, null, 0);
-        const signature = await this.makeBIP322Signature(
-            encodedMessage,
-            inputs,
-            finalizer,
-            outputs
-        );
+
+        const proof = Intent.create(encodedMessage, inputs, outputs);
+        const signedProof = await this.identity.sign(proof);
 
         return {
-            signature,
+            proof: base64.encode(signedProof.toPSBT()),
             message: encodedMessage,
         };
     }
 
     private async makeDeleteIntentSignature(
-        bip322Inputs: ExtendedCoin[]
-    ): Promise<{ signature: BIP322.Signature; message: string }> {
+        coins: ExtendedCoin[]
+    ): Promise<SignedIntent> {
         const nowSeconds = Math.floor(Date.now() / 1000);
-        const { inputs, finalizer } = this.prepareBIP322Inputs(bip322Inputs);
+        const inputs = this.prepareIntentProofInputs(coins);
 
         const message = {
             type: "delete",
@@ -1201,109 +1221,51 @@ export class Wallet implements IWallet {
 
         const encodedMessage = JSON.stringify(message, null, 0);
 
-        const signature = await this.makeBIP322Signature(
-            encodedMessage,
-            inputs,
-            finalizer
-        );
+        const proof = Intent.create(encodedMessage, inputs, []);
+        const signedProof = await this.identity.sign(proof);
 
         return {
-            signature,
+            proof: base64.encode(signedProof.toPSBT()),
             message: encodedMessage,
         };
     }
 
-    private prepareBIP322Inputs(bip322Inputs: ExtendedCoin[]): {
-        inputs: TransactionInput[];
-        inputTapTrees: string[];
-        finalizer: (tx: BIP322.FullProof) => void;
-    } {
+    private prepareIntentProofInputs(
+        coins: ExtendedCoin[]
+    ): TransactionInput[] {
         const inputs: TransactionInput[] = [];
-        const inputTapTrees: string[] = [];
-        const inputExtraWitnesses: Bytes[][] = [];
 
-        for (const bip322Input of bip322Inputs) {
-            const vtxoScript = VtxoScript.decode(bip322Input.tapTree);
-            const sequence = getSequence(bip322Input);
+        for (const input of coins) {
+            const vtxoScript = VtxoScript.decode(input.tapTree);
+            const sequence = getSequence(input);
+
+            const unknown = [VtxoTaprootTree.encode(input.tapTree)];
+            if (input.extraWitness) {
+                unknown.push(ConditionWitness.encode(input.extraWitness));
+            }
 
             inputs.push({
-                txid: hex.decode(bip322Input.txid),
-                index: bip322Input.vout,
+                txid: hex.decode(input.txid),
+                index: input.vout,
                 witnessUtxo: {
-                    amount: BigInt(bip322Input.value),
+                    amount: BigInt(input.value),
                     script: vtxoScript.pkScript,
                 },
                 sequence,
-                tapLeafScript: [bip322Input.intentTapLeafScript],
+                tapLeafScript: [input.intentTapLeafScript],
+                unknown,
             });
-            inputTapTrees.push(hex.encode(bip322Input.tapTree));
-            inputExtraWitnesses.push(bip322Input.extraWitness || []);
         }
 
-        return {
-            inputs,
-            inputTapTrees,
-            finalizer: finalizeWithExtraWitnesses(inputExtraWitnesses),
-        };
-    }
-
-    private async makeBIP322Signature(
-        message: string,
-        inputs: TransactionInput[],
-        finalizer: (tx: BIP322.FullProof) => void,
-        outputs?: TransactionOutput[]
-    ): Promise<BIP322.Signature> {
-        const proof = BIP322.create(message, inputs, outputs);
-        const signedProof = await this.identity.sign(proof);
-        return BIP322.signature(signedProof, finalizer);
+        return inputs;
     }
 }
 
-function finalizeWithExtraWitnesses(
-    inputExtraWitnesses: Bytes[][]
-): (tx: BIP322.FullProof) => void {
-    return function (tx) {
-        for (let i = 0; i < tx.inputsLength; i++) {
-            try {
-                tx.finalizeIdx(i);
-            } catch (e) {
-                // handle empty witness error
-                if (
-                    e instanceof Error &&
-                    e.message.includes("finalize/taproot: empty witness")
-                ) {
-                    const tapLeaves = tx.getInput(i).tapLeafScript;
-                    if (!tapLeaves || tapLeaves.length <= 0) throw e;
-                    const [cb, s] = tapLeaves[0];
-                    const script = s.slice(0, -1);
-                    tx.updateInput(i, {
-                        finalScriptWitness: [
-                            script,
-                            TaprootControlBlock.encode(cb),
-                        ],
-                    });
-                }
-            }
-
-            const finalScriptWitness = tx.getInput(i).finalScriptWitness;
-            if (!finalScriptWitness) throw new Error("input not finalized");
-
-            // input 0 and 1 spend the same pkscript
-            const extra = inputExtraWitnesses[i === 0 ? 0 : i - 1];
-            if (extra && extra.length > 0) {
-                tx.updateInput(i, {
-                    finalScriptWitness: [...extra, ...finalScriptWitness],
-                });
-            }
-        }
-    };
-}
-
-function getSequence(bip322Input: ExtendedCoin): number | undefined {
+function getSequence(coin: ExtendedCoin): number | undefined {
     let sequence: number | undefined = undefined;
 
     try {
-        const scriptWithLeafVersion = bip322Input.intentTapLeafScript[1];
+        const scriptWithLeafVersion = coin.intentTapLeafScript[1];
         const script = scriptWithLeafVersion.subarray(
             0,
             scriptWithLeafVersion.length - 1

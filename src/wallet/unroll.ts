@@ -1,18 +1,15 @@
-import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
+import { base64, hex } from "@scure/base";
+import { SigHash, Transaction, TaprootControlBlock } from "@scure/btc-signer";
+import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";
-import { base64, hex } from "@scure/base";
 import { ExtendedVirtualCoin, Outpoint } from ".";
 import {
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "../script/tapscript";
 import { VtxoScript } from "../script/base";
-import {
-    TaprootControlBlock,
-    TransactionInputUpdate,
-} from "@scure/btc-signer/psbt.js";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 

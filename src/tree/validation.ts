@@ -1,7 +1,6 @@
 import { hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
-import { sha256x2 } from "@scure/btc-signer/utils.js";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
@@ -42,9 +41,7 @@ export function validateConnectorsTxGraph(
     if (settlementTx.outputsLength <= BATCH_OUTPUT_CONNECTORS_INDEX)
         throw ErrInvalidSettlementTxOutputs;
 
-    const expectedRootTxid = hex.encode(
-        sha256x2(settlementTx.toBytes(true)).reverse()
-    );
+    const expectedRootTxid = settlementTx.id;
 
     if (!rootInput.txid) throw ErrWrongSettlementTxid;
 
@@ -83,9 +80,7 @@ export function validateVtxoTxGraph(
     }
 
     const rootInput = graph.root.getInput(0);
-    const commitmentTxid = hex.encode(
-        sha256x2(roundTransaction.toBytes(true)).reverse()
-    );
+    const commitmentTxid = roundTransaction.id;
 
     if (
         !rootInput.txid ||

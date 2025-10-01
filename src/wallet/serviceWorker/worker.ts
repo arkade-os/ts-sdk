@@ -2,7 +2,7 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { SingleKey } from "../../identity/singleKey";
-import { ExtendedVirtualCoin, isSpendable, isSubdust } from "..";
+import { ExtendedVirtualCoin, isRecoverable, isSpendable, isSubdust } from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -15,7 +15,8 @@ import {
     WalletRepository,
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
-import { extendVirtualCoin } from "./utils";
+import { extendVirtualCoin } from "../utils";
+import { DEFAULT_DB_NAME } from "./utils";
 
 /**
  * Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -30,11 +31,13 @@ export class Worker {
     private storage: IndexedDBStorageAdapter;
 
     constructor(
+        readonly dbName: string = DEFAULT_DB_NAME,
+        readonly dbVersion: number = 1,
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
     ) {
-        this.storage = new IndexedDBStorageAdapter("arkade-service-worker", 1);
+        this.storage = new IndexedDBStorageAdapter(dbName, dbVersion);
         this.walletRepository = new WalletRepositoryImpl(this.storage);
     }
 
@@ -97,6 +100,9 @@ export class Worker {
         // Clear storage - this replaces vtxoRepository.close()
         await this.storage.clear();
 
+        // Reset in-memory caches by recreating the repository
+        this.walletRepository = new WalletRepositoryImpl(this.storage);
+
         this.wallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
@@ -134,9 +140,6 @@ export class Worker {
         const txs = await this.wallet.getTransactionHistory();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
-        // stop previous subscriptions if any
-        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
-
         // subscribe for incoming funds and notify all clients when new funds arrive
         this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
             async (funds) => {
@@ -168,7 +171,7 @@ export class Worker {
                         JSON.stringify({ newVtxos, spentVtxos })
                     );
                 }
-                if (funds.type === "utxo" && funds.coins.length > 0) {
+                if (funds.type === "utxo") {
                     // notify all clients about the utxo update
                     this.sendMessageToAllClients(
                         "UTXO_UPDATE",
@@ -473,19 +476,18 @@ export class Worker {
             let vtxos = await this.getSpendableVtxos();
             if (!message.filter?.withRecoverable) {
                 if (!this.wallet) throw new Error("Wallet not initialized");
-                // exclude subdust is we don't want recoverable
-                const dustAmount = this.wallet?.dustAmount;
-                vtxos =
-                    dustAmount == null
-                        ? vtxos
-                        : vtxos.filter((v) => !isSubdust(v, dustAmount));
+                // exclude subdust and recoverable if we don't want recoverable
+                const notSubdust = (v: ExtendedVirtualCoin) => {
+                    const dustAmount = this.wallet?.dustAmount;
+                    return dustAmount == null
+                        ? true
+                        : !isSubdust(v, dustAmount);
+                };
+                vtxos = vtxos
+                    .filter(notSubdust)
+                    .filter((v) => !isRecoverable(v));
             }
 
-            if (message.filter?.withRecoverable) {
-                // get also swept and spendable vtxos
-                const sweptVtxos = await this.getSweptVtxos();
-                vtxos.push(...sweptVtxos.filter(isSpendable));
-            }
             event.source?.postMessage(Response.vtxos(message.id, vtxos));
         } catch (error: unknown) {
             console.error("Error getting vtxos:", error);
@@ -689,7 +691,6 @@ export class Worker {
 
     private async handleReloadWallet(event: ExtendableMessageEvent) {
         const message = event.data;
-        console.log("RELOAD_WALLET message received", message);
         if (!Request.isReloadWallet(message)) {
             console.error("Invalid RELOAD_WALLET message format", message);
             event.source?.postMessage(

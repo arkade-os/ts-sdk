@@ -9,6 +9,7 @@ import {
     TxType,
     IWallet,
     WalletConfig,
+    ProviderClass,
     ArkTransaction,
     Coin,
     ExtendedCoin,
@@ -51,7 +52,7 @@ import {
     SettlementEvent,
     SettlementEventType,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     BatchFinalizationEvent,
@@ -76,7 +77,9 @@ import {
     RelativeTimelock,
 } from "./script/tapscript";
 import {
+    hasBoardingTxExpired,
     buildOffchainTx,
+    verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
 } from "./utils/arkTransaction";
@@ -91,7 +94,7 @@ import {
     CosignerPublicKey,
     VtxoTreeExpiry,
 } from "./utils/unknownFields";
-import { BIP322 } from "./bip322";
+import { Intent } from "./intent";
 import { ArkNote } from "./arknote";
 import { networks, Network, NetworkName } from "./networks";
 import {
@@ -109,6 +112,8 @@ import {
     Vtxo,
     PaginationOptions,
     SubscriptionResponse,
+    SubscriptionHeartbeat,
+    SubscriptionEvent,
 } from "./providers/indexer";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
@@ -169,7 +174,9 @@ export {
 
     // Utils
     buildOffchainTx,
+    verifyTapscriptSignatures,
     waitForIncomingFunds,
+    hasBoardingTxExpired,
 
     // Arknote
     ArkNote,
@@ -181,8 +188,8 @@ export {
     WalletRepositoryImpl,
     ContractRepositoryImpl,
 
-    // BIP322
-    BIP322,
+    // Intent proof
+    Intent,
 
     // TxTree
     TxTree,
@@ -198,6 +205,7 @@ export type {
     Identity,
     IWallet,
     WalletConfig,
+    ProviderClass,
     ArkTransaction,
     Coin,
     ExtendedCoin,
@@ -233,7 +241,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     ExplorerTransaction,
@@ -248,6 +256,8 @@ export type {
     MarketHour,
     PaginationOptions,
     SubscriptionResponse,
+    SubscriptionHeartbeat,
+    SubscriptionEvent,
 
     // Network types
     Network,

@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.3.0-alpha.7",
+    "version": "0.3.0-alpha.8",
     "description": "Bitcoin wallet SDK with Taproot and Ark integration",
     "type": "module",
     "main": "./dist/cjs/index.js",
@@ -13,6 +13,12 @@
             "import": "./dist/esm/index.js",
             "require": "./dist/cjs/index.js",
             "default": "./dist/esm/index.js"
+        },
+        "./adapters/expo": {
+            "types": "./dist/types/adapters/expo.d.ts",
+            "import": "./dist/esm/adapters/expo.js",
+            "require": "./dist/cjs/adapters/expo.js",
+            "default": "./dist/esm/adapters/expo.js"
         },
         "./adapters/localStorage": {
             "types": "./dist/types/adapters/localStorage.d.ts",
@@ -67,6 +73,8 @@
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
         "test:sw": "pnpm run build:browser && node test/serviceWorker/serve.js",
+        "expo:web:install": "cd examples/expo-demo && pnpm install",
+        "expo:web": "cd examples/expo-demo && pnpm start",
         "format": "prettier --write src test examples",
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
@@ -79,7 +87,6 @@
     },
     "dependencies": {
         "@noble/curves": "2.0.0",
-        "@noble/hashes": "2.0.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1",
@@ -89,6 +96,7 @@
         "@types/node": "24.3.1",
         "@vitest/coverage-v8": "3.2.4",
         "esbuild": "^0.25.9",
+        "expo": "~52.0.47",
         "eventsource": "4.0.0",
         "glob": "11.0.3",
         "husky": "9.1.7",
@@ -110,12 +118,13 @@
     "license": "MIT",
     "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
     "engines": {
-        "node": "^14.17.0 || ^16.13.0 || >=18.0.0"
+        "node": ">=20.0.0"
     },
     "pnpm": {
         "overrides": {
             "esbuild": ">=0.25.0",
-            "brace-expansion": ">=2.0.2"
+            "brace-expansion": ">=2.0.2",
+            "minimatch": "9.0.3"
         }
     }
 }
