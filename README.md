@@ -108,26 +108,88 @@ const settleTxid = await wallet.settle({
 })
 ```
 
+### VTXO Renewal
+
+VTXOs have an expiration time (batch expiry). The SDK provides automatic monitoring and renewal capabilities to prevent VTXOs from expiring.
+
+The `Renewal` class provides a dedicated interface for preventing VTXO expiration through renewal:
+
+```typescript
+import { Renewal } from '@arkade-os/sdk'
+
+// Create renewal instance with configuration
+const renewal = new Renewal(wallet, {
+  enabled: true,           // Enable expiration checking
+  thresholdPercentage: 10, // Alert when 10% of time until expiry remains (default)
+  autoRenew: false,        // Future: automatic renewal with platform scheduler
+  checkIntervalMs: 3600000 // Future: background check interval (1 hour default)
+})
+
+// Check for expiring VTXOs
+const expiringVtxos = await renewal.getExpiringVtxos()
+if (expiringVtxos.length > 0) {
+  console.log(`${expiringVtxos.length} VTXOs expiring soon`)
+  expiringVtxos.forEach(vtxo => {
+    const timeLeft = vtxo.virtualStatus.batchExpiry - Date.now()
+    console.log(`VTXO ${vtxo.txid} expires in ${timeLeft}ms`)
+  })
+}
+
+// Renew all VTXOs (includes recoverable ones)
+const txid = await renewal.renewVtxos()
+console.log('Renewal transaction:', txid)
+
+// With event callback
+const txid = await renewal.renewVtxos((event) => {
+  console.log('Settlement event:', event.type)
+})
+
+// Override threshold percentage on-the-fly
+const urgentlyExpiring = await renewal.getExpiringVtxos(5) // Last 5% of lifetime
+```
+
+**Configuration Options:**
+- **`enabled`**: Must be `true` to use expiration checking features
+- **`thresholdPercentage`**: Defines "expiring soon" (e.g., 10 = last 10% of lifetime)
+- **`autoRenew`**: Future: automatic renewal with platform-specific scheduler
+- **`checkIntervalMs`**: Future: background check interval for automatic renewal
+
+**Platform Support:**
+The `Renewal` class wrapper pattern enables future platform-specific automatic renewal implementations for Expo, Browser service workers, and Node.js environments.
+
+### Recovering Expired VTXOs
+
+```typescript
+import { Recovery } from '@arkade-os/sdk'
+
+const recovery = new Recovery(wallet)
+
+// Check recoverable balance before recovering
+const balance = await recovery.getRecoverableBalance()
+console.log(`Recoverable: ${balance.recoverable} sats`)
+console.log(`Subdust: ${balance.subdust} sats`)
+console.log(`Includes subdust: ${balance.includesSubdust}`)
+console.log(`VTXO count: ${balance.vtxoCount}`)
+
+// Recover all swept VTXOs
+const txid = await recovery.recoverVtxos()
+console.log('Recovery transaction:', txid)
+
+// With event callback
+const txid = await recovery.recoverVtxos((event) => {
+  console.log('Settlement event:', event.type)
+})
+```
+
+**When to use:**
+- **`Renewal.renewVtxos()`**: Refresh all VTXOs (including recoverable) to prevent expiration
+- **`Recovery.recoverVtxos()`**: Recover swept VTXOs with smart subdust aggregation
 
 ### Transaction History
 
 ```typescript
 // Get transaction history
 const history = await wallet.getTransactionHistory()
-console.log('History:', history)
-
-// Example history entry:
-{
-  key: {
-    boardingTxid: '...', // for boarding transactions
-    commitmentTxid: '...', // for commitment transactions
-    redeemTxid: '...'    // for regular transactions
-  },
-  type: TxType.TxReceived, // or TxType.TxSent
-  amount: 50000,
-  settled: true,
-  createdAt: 1234567890
-}
 ```
 
 ### Offboarding
