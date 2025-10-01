@@ -118,7 +118,7 @@ export class ServiceWorkerWallet implements IWallet {
             : null;
         if (!identity) {
             throw new Error(
-                "ServiceWorkerWallet.create() requires a Identity that can expose its private key"
+                "ServiceWorkerWallet.create() requires a Identity that can expose a single private key"
             );
         }
 
