@@ -21,7 +21,7 @@ import { hex } from "@scure/base";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256x2 } from "@scure/btc-signer/utils.js";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
-import { tapLeafHash } from "@scure/btc-signer/payment";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { schnorr } from "@noble/curves/secp256k1";
 
 export type ArkTxInput = {
