@@ -651,7 +651,7 @@ export class Wallet implements IWallet {
         const signingPublicKeys: string[] = [];
         if (hasOffchainOutputs) {
             session = this.identity.signerSession();
-            signingPublicKeys.push(hex.encode(session.getPublicKey()));
+            signingPublicKeys.push(hex.encode(await session.getPublicKey()));
         }
 
         const [intent, deleteIntent] = await Promise.all([
@@ -1029,11 +1029,10 @@ export class Wallet implements IWallet {
 
         session.init(vtxoGraph, sweepTapTreeRoot, sharedOutput.amount);
 
-        await this.arkProvider.submitTreeNonces(
-            event.id,
-            hex.encode(session.getPublicKey()),
-            session.getNonces()
-        );
+        const pubkey = hex.encode(await session.getPublicKey());
+        const nonces = await session.getNonces();
+
+        await this.arkProvider.submitTreeNonces(event.id, pubkey, nonces);
     }
 
     private async handleSettlementSigningNoncesGeneratedEvent(
@@ -1041,11 +1040,12 @@ export class Wallet implements IWallet {
         session: SignerSession
     ) {
         session.setAggregatedNonces(event.treeNonces);
-        const signatures = session.sign();
+        const signatures = await session.sign();
+        const pubkey = hex.encode(await session.getPublicKey());
 
         await this.arkProvider.submitTreeSignatures(
             event.id,
-            hex.encode(session.getPublicKey()),
+            pubkey,
             signatures
         );
     }

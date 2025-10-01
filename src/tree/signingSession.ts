@@ -17,11 +17,15 @@ export type TreePartialSigs = Map<string, musig2.PartialSig>;
 // with participants of a settlement. It holds the state of the musig2 nonces and allows to
 // create the partial signatures for each transaction in the vtxo tree
 export interface SignerSession {
-    getPublicKey(): Uint8Array;
-    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void;
-    getNonces(): TreeNonces;
-    setAggregatedNonces(nonces: TreeNonces): void;
-    sign(): TreePartialSigs;
+    getPublicKey(): Promise<Uint8Array>;
+    init(
+        tree: TxTree,
+        scriptRoot: Uint8Array,
+        rootInputAmount: bigint
+    ): Promise<void>;
+    getNonces(): Promise<TreeNonces>;
+    setAggregatedNonces(nonces: TreeNonces): Promise<void>;
+    sign(): Promise<TreePartialSigs>;
 }
 
 export class TreeSignerSession implements SignerSession {
@@ -42,17 +46,21 @@ export class TreeSignerSession implements SignerSession {
         return new TreeSignerSession(secretKey);
     }
 
-    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void {
+    async init(
+        tree: TxTree,
+        scriptRoot: Uint8Array,
+        rootInputAmount: bigint
+    ): Promise<void> {
         this.graph = tree;
         this.scriptRoot = scriptRoot;
         this.rootSharedOutputAmount = rootInputAmount;
     }
 
-    getPublicKey(): Uint8Array {
+    async getPublicKey(): Promise<Uint8Array> {
         return secp256k1.getPublicKey(this.secretKey);
     }
 
-    getNonces(): TreeNonces {
+    async getNonces(): Promise<TreeNonces> {
         if (!this.graph) throw ErrMissingVtxoGraph;
         if (!this.myNonces) {
             this.myNonces = this.generateNonces();
@@ -67,12 +75,12 @@ export class TreeSignerSession implements SignerSession {
         return publicNonces;
     }
 
-    setAggregatedNonces(nonces: TreeNonces) {
+    async setAggregatedNonces(nonces: TreeNonces): Promise<void> {
         if (this.aggregateNonces) throw new Error("nonces already set");
         this.aggregateNonces = nonces;
     }
 
-    sign(): TreePartialSigs {
+    async sign(): Promise<TreePartialSigs> {
         if (!this.graph) throw ErrMissingVtxoGraph;
         if (!this.aggregateNonces) throw new Error("nonces not set");
         if (!this.myNonces) throw new Error("nonces not generated");

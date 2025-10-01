@@ -2,7 +2,6 @@ import { Transaction } from "@scure/btc-signer/transaction.js";
 import { SignerSession } from "../tree/signingSession";
 
 export interface Identity {
-    // todo: check if we need promise here as well
     signerSession(): SignerSession;
     xOnlyPublicKey(): Promise<Uint8Array>;
     compressedPublicKey(): Promise<Uint8Array>;
