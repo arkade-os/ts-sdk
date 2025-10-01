@@ -2,13 +2,12 @@ import {
     pubECDSA,
     pubSchnorr,
     randomPrivateKeyBytes,
-    sha256,
 } from "@scure/btc-signer/utils.js";
-import { hex } from "@scure/base";
 import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
+import { hex } from "@scure/base";
 import { Identity } from ".";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
-import { schnorr } from "@noble/secp256k1";
+import { schnorr, sign } from "@noble/secp256k1";
 
 const ZERO_32 = new Uint8Array(32).fill(0);
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
@@ -101,8 +100,12 @@ export class SingleKey implements Identity {
         return TreeSignerSession.random();
     }
 
-    async signMessage(message: string): Promise<Uint8Array> {
-        const msgBytes = new TextEncoder().encode(message);
-        return schnorr.sign(sha256(msgBytes), this.key);
+    async signMessage(
+        message: Uint8Array,
+        signatureType: "schnorr" | "ecdsa" = "schnorr"
+    ): Promise<Uint8Array> {
+        if (signatureType === "ecdsa")
+            return sign(message, this.key, { prehash: false });
+        return schnorr.sign(message, this.key);
     }
 }

@@ -1,11 +1,11 @@
-import { Output, SettlementEvent, ArkProvider } from "../providers/ark";
-import { IndexerProvider } from "../providers/indexer";
-import { OnchainProvider } from "../providers/onchain";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { Bytes } from "@scure/btc-signer/utils.js";
 import { StorageAdapter } from "../storage";
+import { IndexerProvider } from "../providers/indexer";
+import { OnchainProvider } from "../providers/onchain";
 
 /**
  * Configuration options for wallet initialization.
@@ -121,6 +121,7 @@ export interface VirtualCoin extends Coin {
     arkTxId?: string;
     createdAt: Date;
     isUnrolled: boolean;
+    isSpent?: boolean;
 }
 
 export enum TxType {
@@ -156,7 +157,7 @@ export type ExtendedVirtualCoin = TapLeaves &
     VirtualCoin & { extraWitness?: Bytes[] };
 
 export function isSpendable(vtxo: VirtualCoin): boolean {
-    return vtxo.spentBy === undefined || vtxo.spentBy === "";
+    return !vtxo.isSpent;
 }
 
 export function isRecoverable(vtxo: VirtualCoin): boolean {

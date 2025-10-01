@@ -580,6 +580,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         arkTxId: vtxo.arkTxid,
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
         isUnrolled: vtxo.isUnrolled,
+        isSpent: vtxo.isSpent,
     };
 }
 

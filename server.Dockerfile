@@ -5,9 +5,7 @@ ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
 
-ARG BRANCH=v8
-
-RUN apk update && apk upgrade && apk add --no-cache git
+ARG BRANCH=master
 
 WORKDIR /app
 

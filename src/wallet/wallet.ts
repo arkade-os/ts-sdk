@@ -1,8 +1,15 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
-import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt";
+import {
+    SigHash,
+    Transaction,
+    Address,
+    OutScript,
+    TaprootControlBlock,
+} from "@scure/btc-signer";
+import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
@@ -47,10 +54,9 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
-import { buildOffchainTx } from "../utils/arkTransaction";
+import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -114,9 +120,6 @@ export type IncomingFunds =
 export class Wallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
-    public readonly walletRepository: WalletRepository;
-    public readonly contractRepository: ContractRepository;
-
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
@@ -130,12 +133,9 @@ export class Wallet implements IWallet {
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
         readonly dustAmount: bigint,
-        walletRepository: WalletRepository,
-        contractRepository: ContractRepository
-    ) {
-        this.walletRepository = walletRepository;
-        this.contractRepository = contractRepository;
-    }
+        readonly walletRepository: WalletRepository,
+        readonly contractRepository: ContractRepository
+    ) {}
 
     static async create(config: WalletConfig): Promise<Wallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
@@ -206,10 +206,13 @@ export class Wallet implements IWallet {
         const offchainTapscript = bareVtxoTapscript;
 
         // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-        const rawCheckpointExitClosure = hex.decode(info.checkpointExitClosure);
-        const serverUnrollScript = CSVMultisigTapscript.decode(
-            rawCheckpointExitClosure
-        );
+        let serverUnrollScript: CSVMultisigTapscript.Type;
+        try {
+            const raw = hex.decode(info.checkpointExitClosure);
+            serverUnrollScript = CSVMultisigTapscript.decode(raw);
+        } catch (e) {
+            throw new Error("Invalid checkpointExitClosure from server");
+        }
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
@@ -314,8 +317,8 @@ export class Wallet implements IWallet {
 
         // For now, always fetch fresh data from provider and update cache
         // In future, we can add cache invalidation logic based on timestamps
-        const spendableVtxos = await this.getVirtualCoins(filter);
-        const extendedVtxos = spendableVtxos.map((vtxo) =>
+        const vtxos = await this.getVirtualCoins(filter);
+        const extendedVtxos = vtxos.map((vtxo) =>
             extendVirtualCoin(this, vtxo)
         );
 
@@ -329,27 +332,19 @@ export class Wallet implements IWallet {
         filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
     ): Promise<VirtualCoin[]> {
         const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+        const response = await this.indexerProvider.getVtxos({ scripts });
+        const allVtxos = response.vtxos;
 
-        const response = await this.indexerProvider.getVtxos({
-            scripts,
-            spendableOnly: true,
-        });
-        const vtxos = response.vtxos;
+        let vtxos: VirtualCoin[] = allVtxos.filter(isSpendable);
 
-        if (filter.withRecoverable) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts,
-                recoverableOnly: true,
-            });
-            vtxos.push(...response.vtxos);
+        // all recoverable vtxos are spendable by definition
+        if (!filter.withRecoverable) {
+            vtxos = vtxos.filter((vtxo) => !isRecoverable(vtxo));
         }
 
         if (filter.withUnrolled) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts,
-                spentOnly: true,
-            });
-            vtxos.push(...response.vtxos.filter((vtxo) => vtxo.isUnrolled));
+            const spentVtxos = allVtxos.filter((vtxo) => !isSpendable(vtxo));
+            vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
         }
 
         return vtxos;
@@ -590,17 +585,27 @@ export class Wallet implements IWallet {
             }
         }
 
-        // if no params are provided, use all boarding and offchain utxos as inputs
+        // if no params are provided, use all non expired boarding utxos and offchain vtxos as inputs
         // and send all to the offchain address
         if (!params) {
             let amount = 0;
-            const boardingUtxos = await this.getBoardingUtxos();
+
+            const exitScript = CSVMultisigTapscript.decode(
+                hex.decode(this.boardingTapscript.exitScript)
+            );
+
+            const boardingTimelock = exitScript.params.timelock;
+
+            const boardingUtxos = (await this.getBoardingUtxos()).filter(
+                (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
+            );
+
             amount += boardingUtxos.reduce(
                 (sum, input) => sum + input.value,
                 0
             );
 
-            const vtxos = await this.getVtxos();
+            const vtxos = await this.getVtxos({ withRecoverable: true });
             amount += vtxos.reduce((sum, input) => sum + input.value, 0);
 
             const inputs = [...boardingUtxos, ...vtxos];
@@ -649,7 +654,7 @@ export class Wallet implements IWallet {
         const signingPublicKeys: string[] = [];
         if (hasOffchainOutputs) {
             session = this.identity.signerSession();
-            signingPublicKeys.push(hex.encode(session.getPublicKey()));
+            signingPublicKeys.push(hex.encode(await session.getPublicKey()));
         }
 
         const [intent, deleteIntent] = await Promise.all([
@@ -968,7 +973,7 @@ export class Wallet implements IWallet {
     > {
         const utf8IntentId = new TextEncoder().encode(intentId);
         const intentIdHash = sha256(utf8IntentId);
-        const intentIdHashStr = hex.encode(new Uint8Array(intentIdHash));
+        const intentIdHashStr = hex.encode(intentIdHash);
 
         let skip = true;
 
@@ -1027,11 +1032,10 @@ export class Wallet implements IWallet {
 
         session.init(vtxoGraph, sweepTapTreeRoot, sharedOutput.amount);
 
-        await this.arkProvider.submitTreeNonces(
-            event.id,
-            hex.encode(session.getPublicKey()),
-            session.getNonces()
-        );
+        const pubkey = hex.encode(await session.getPublicKey());
+        const nonces = await session.getNonces();
+
+        await this.arkProvider.submitTreeNonces(event.id, pubkey, nonces);
     }
 
     private async handleSettlementSigningNoncesGeneratedEvent(
@@ -1039,11 +1043,12 @@ export class Wallet implements IWallet {
         session: SignerSession
     ) {
         session.setAggregatedNonces(event.treeNonces);
-        const signatures = session.sign();
+        const signatures = await session.sign();
+        const pubkey = hex.encode(await session.getPublicKey());
 
         await this.arkProvider.submitTreeSignatures(
             event.id,
-            hex.encode(session.getPublicKey()),
+            pubkey,
             signatures
         );
     }
@@ -1120,9 +1125,7 @@ export class Wallet implements IWallet {
             }
 
             const connectorLeaf = connectorsLeaves[connectorIndex];
-            const connectorTxId = hex.encode(
-                sha256x2(connectorLeaf.toBytes(true)).reverse()
-            );
+            const connectorTxId = connectorLeaf.id;
             const connectorOutput = connectorLeaf.getOutput(0);
             if (!connectorOutput) {
                 throw new Error("connector output not found");

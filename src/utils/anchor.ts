@@ -1,6 +1,6 @@
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer/transaction.js";
-import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
+import { Transaction } from "@scure/btc-signer";
+import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 
 export const ANCHOR_VALUE = 0n;
 export const ANCHOR_PKSCRIPT = new Uint8Array([0x51, 0x02, 0x4e, 0x73]);
