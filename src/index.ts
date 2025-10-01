@@ -79,6 +79,7 @@ import {
 import {
     hasBoardingTxExpired,
     buildOffchainTx,
+    verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
 } from "./utils/arkTransaction";
@@ -173,6 +174,7 @@ export {
 
     // Utils
     buildOffchainTx,
+    verifyTapscriptSignatures,
     waitForIncomingFunds,
     hasBoardingTxExpired,
 
