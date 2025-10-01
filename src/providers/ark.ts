@@ -185,9 +185,7 @@ export interface ArkProvider {
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }>;
-    getPendingTxs(proof: string): Promise<{
-        pendingTxs: PendingTx[];
-    }>;
+    getPendingTxs(proof: string): Promise<PendingTx[]>;
 }
 
 /**
@@ -568,9 +566,7 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async getPendingTxs(proof: string): Promise<{
-        pendingTxs: PendingTx[];
-    }> {
+    async getPendingTxs(proof: string): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
         const response = await fetch(url, {
             method: "POST",
@@ -600,9 +596,7 @@ export class RestArkProvider implements ArkProvider {
         }
 
         const data = await response.json();
-        return {
-            pendingTxs: data.pendingTxs,
-        };
+        return data.pendingTxs;
     }
 
     private parseSettlementEvent(
