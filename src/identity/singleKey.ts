@@ -1,4 +1,4 @@
-import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils";
+import { pubSchnorr, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { SigHash, Transaction } from "@scure/btc-signer";
 import { Identity } from ".";

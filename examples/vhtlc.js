@@ -21,7 +21,7 @@ import {
     networks,
     CSVMultisigTapscript,
 } from "../dist/esm/index.js";
-import { hash160 } from "@scure/btc-signer/utils";
+import { hash160 } from "@scure/btc-signer/utils.js";
 import { base64, hex } from "@scure/base";
 import { utils, Transaction } from "@scure/btc-signer";
 import { execSync } from "child_process";

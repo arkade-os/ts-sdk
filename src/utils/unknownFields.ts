@@ -1,6 +1,6 @@
 import * as bip68 from "bip68";
 import { RawWitness, ScriptNum, Transaction } from "@scure/btc-signer";
-import { TransactionInputUpdate } from "@scure/btc-signer/psbt";
+import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { hex } from "@scure/base";
 
 /**

@@ -14,7 +14,7 @@ import {
     ChainTxType,
 } from "../../src";
 import { hex } from "@scure/base";
-import { sha256x2 } from "@scure/btc-signer/utils";
+import { sha256x2 } from "@scure/btc-signer/utils.js";
 import { vi } from "vitest";
 import { afterEach } from "vitest";
 

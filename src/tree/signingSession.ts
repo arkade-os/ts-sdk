@@ -2,7 +2,7 @@ import * as musig2 from "../musig2";
 import { Script, SigHash, Transaction } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
-import { randomPrivateKeyBytes, sha256x2 } from "@scure/btc-signer/utils";
+import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 import { TxTree } from "./txTree";
 
@@ -221,10 +221,8 @@ function getPrevOutput(
     // generate P2TR script from musig2 final key
     const pkScript = Script.encode(["OP_1", finalKey.slice(1)]);
 
-    const txid = hex.encode(sha256x2(tx.toBytes(true)).reverse());
-
     // if the input is the root input, return the shared output amount
-    if (txid === graph.txid) {
+    if (tx.id === graph.txid) {
         return {
             amount: sharedOutputAmount,
             script: pkScript,
@@ -234,7 +232,7 @@ function getPrevOutput(
     // find the parent transaction
     const parentInput = tx.getInput(0);
     if (!parentInput.txid) throw new Error("missing parent input txid");
-    const parentTxid = hex.encode(new Uint8Array(parentInput.txid));
+    const parentTxid = hex.encode(parentInput.txid);
     const parent = graph.find(parentTxid);
     if (!parent) throw new Error("parent  tx not found");
 

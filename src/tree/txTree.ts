@@ -1,7 +1,6 @@
 import { Transaction } from "@scure/btc-signer";
 import { base64 } from "@scure/base";
 import { hex } from "@scure/base";
-import { sha256x2 } from "@scure/btc-signer/utils";
 
 /**
  * TxTreeNode is a node of the tree.
@@ -41,9 +40,7 @@ export class TxTree implements Iterable<TxTree> {
 
         for (const chunk of chunks) {
             const decodedChunk = decodeNode(chunk);
-            const txid = hex.encode(
-                sha256x2(decodedChunk.tx.toBytes(true)).reverse()
-            );
+            const txid = decodedChunk.tx.id;
             chunksByTxid.set(txid, decodedChunk);
         }
 
@@ -138,9 +135,7 @@ export class TxTree implements Iterable<TxTree> {
             child.validate();
 
             const childInput = child.root.getInput(0);
-            const parentTxid = hex.encode(
-                sha256x2(this.root.toBytes(true)).reverse()
-            );
+            const parentTxid = this.root.id;
 
             // verify the input of the child is the output of the parent
             if (
@@ -188,7 +183,7 @@ export class TxTree implements Iterable<TxTree> {
     }
 
     get txid(): string {
-        return hex.encode(sha256x2(this.root.toBytes(true)).reverse());
+        return this.root.id;
     }
 
     find(txid: string): TxTree | null {
