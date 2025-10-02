@@ -209,7 +209,7 @@ export class Recovery {
 
         // Calculate subdust amount separately for reporting
         const subdustAmount = vtxosToRecover
-            .filter((v) => v.value < dustAmount)
+            .filter((v) => BigInt(v.value) < dustAmount)
             .reduce((sum, v) => sum + BigInt(v.value), 0n);
 
         return {
