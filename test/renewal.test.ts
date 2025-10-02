@@ -300,6 +300,7 @@ const createMockWallet = (
         getVtxos: () => Promise.resolve(vtxos),
         getAddress: () => Promise.resolve(arkAddress),
         settle: () => Promise.resolve("mock-txid"),
+        dustAmount: 1000n,
     } as any;
 };
 
@@ -343,6 +344,37 @@ describe("Renewal class", () => {
             const txid = await renewal.renewVtxos();
 
             expect(txid).toBe("mock-txid");
+        });
+
+        it("should throw error when total amount is below dust threshold", async () => {
+            const vtxos = [
+                {
+                    txid: "tx1",
+                    vout: 0,
+                    value: 500,
+                    virtualStatus: { state: "settled" },
+                    status: { confirmed: true },
+                    createdAt: new Date(),
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+                {
+                    txid: "tx2",
+                    vout: 0,
+                    value: 400,
+                    virtualStatus: { state: "settled" },
+                    status: { confirmed: true },
+                    createdAt: new Date(),
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+            ];
+            const wallet = createMockWallet(vtxos);
+            const renewal = new Renewal(wallet);
+
+            await expect(renewal.renewVtxos()).rejects.toThrow(
+                "Total amount 900 is below dust threshold 1000"
+            );
         });
     });
 });

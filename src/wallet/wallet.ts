@@ -1017,6 +1017,7 @@ export class Wallet implements IWallet {
      * @param eventCallback - Optional callback for settlement events
      * @returns Settlement transaction ID
      * @throws Error if no VTXOs available to renew
+     * @throws Error if total amount is below dust threshold
      *
      * @example
      * ```typescript
@@ -1040,6 +1041,14 @@ export class Wallet implements IWallet {
         }
 
         const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+
+        // Check if total amount is above dust threshold
+        if (BigInt(totalAmount) < this.dustAmount) {
+            throw new Error(
+                `Total amount ${totalAmount} is below dust threshold ${this.dustAmount}`
+            );
+        }
+
         const arkAddress = await this.getAddress();
 
         return this.settle(

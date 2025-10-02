@@ -14,7 +14,10 @@ function getRecoverableVtxos(
 }
 
 /**
- * Get recoverable VTXOs including subdust coins if their combined value exceeds dust threshold
+ * Get recoverable VTXOs including subdust coins if the total value exceeds dust threshold.
+ *
+ * Decision is based on the combined total of ALL recoverable VTXOs (regular + subdust),
+ * not just the subdust portion alone.
  *
  * @param vtxos - Array of virtual coins to check
  * @param dustAmount - Dust threshold amount in satoshis
@@ -42,14 +45,19 @@ function getRecoverableWithSubdust(
         }
     }
 
-    // Calculate total subdust amount
+    // Calculate totals
+    const regularTotal = regular.reduce(
+        (sum, vtxo) => sum + BigInt(vtxo.value),
+        0n
+    );
     const subdustTotal = subdust.reduce(
         (sum, vtxo) => sum + BigInt(vtxo.value),
         0n
     );
+    const combinedTotal = regularTotal + subdustTotal;
 
-    // Include subdust if total exceeds dust threshold
-    const shouldIncludeSubdust = subdustTotal >= dustAmount;
+    // Include subdust only if the combined total exceeds dust threshold
+    const shouldIncludeSubdust = combinedTotal >= dustAmount;
     const vtxosToRecover = shouldIncludeSubdust ? recoverableVtxos : regular;
 
     const totalAmount = vtxosToRecover.reduce(
@@ -74,7 +82,7 @@ function getRecoverableWithSubdust(
  *
  * The Recovery class automatically handles:
  * - Filtering recoverable VTXOs
- * - Including subdust VTXOs when their combined value exceeds the dust threshold
+ * - Including subdust VTXOs when the total value (regular + subdust) exceeds the dust threshold
  * - Settling all recoverable funds back to the wallet's Ark address
  *
  * @example
@@ -100,7 +108,7 @@ export class Recovery {
      * This method:
      * 1. Fetches all VTXOs (including recoverable ones)
      * 2. Filters for swept but still spendable VTXOs
-     * 3. Includes subdust VTXOs if their combined value >= dust threshold
+     * 3. Includes subdust VTXOs if the total value >= dust threshold
      * 4. Settles everything back to the wallet's Ark address
      *
      * @param eventCallback - Optional callback to receive settlement events

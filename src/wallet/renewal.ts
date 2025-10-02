@@ -231,6 +231,7 @@ export class Renewal {
      * @param eventCallback - Optional callback for settlement events
      * @returns Settlement transaction ID
      * @throws Error if no VTXOs available to renew
+     * @throws Error if total amount is below dust threshold
      *
      * @example
      * ```typescript
@@ -256,6 +257,20 @@ export class Renewal {
         }
 
         const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+
+        // Get dust amount from wallet
+        const dustAmount =
+            "dustAmount" in this.wallet
+                ? (this.wallet.dustAmount as bigint)
+                : 1000n;
+
+        // Check if total amount is above dust threshold
+        if (BigInt(totalAmount) < dustAmount) {
+            throw new Error(
+                `Total amount ${totalAmount} is below dust threshold ${dustAmount}`
+            );
+        }
+
         const arkAddress = await this.wallet.getAddress();
 
         return this.wallet.settle(

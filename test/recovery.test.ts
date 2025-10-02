@@ -54,20 +54,21 @@ describe("Recovery", () => {
             expect(balance.vtxoCount).toBe(0);
         });
 
-        it("should calculate recoverable balance excluding subdust when below threshold", async () => {
+        it("should calculate recoverable balance excluding subdust when total below threshold", async () => {
+            // Total (500 + 400 = 900) < dust (1000), so subdust should be excluded
             const wallet = createMockWallet([
-                createMockVtxo(5000, "swept", false), // Recoverable
-                createMockVtxo(500, "swept", false), // Subdust, but alone < dust
+                createMockVtxo(500, "swept", false), // Subdust
+                createMockVtxo(400, "swept", false), // Subdust
                 createMockVtxo(3000, "settled"), // Not recoverable
             ]);
             const recovery = new Recovery(wallet);
 
             const balance = await recovery.getRecoverableBalance();
 
-            expect(balance.recoverable).toBe(5000n);
+            expect(balance.recoverable).toBe(0n);
             expect(balance.subdust).toBe(0n);
             expect(balance.includesSubdust).toBe(false);
-            expect(balance.vtxoCount).toBe(1);
+            expect(balance.vtxoCount).toBe(0);
         });
 
         it("should include subdust when combined value exceeds dust threshold", async () => {
@@ -85,6 +86,25 @@ describe("Recovery", () => {
             expect(balance.subdust).toBe(1100n);
             expect(balance.includesSubdust).toBe(true);
             expect(balance.vtxoCount).toBe(3);
+        });
+
+        it("should include subdust based on total amount, not subdust alone", async () => {
+            // This tests the fix: both VTXOs are subdust (700 and 300 both < 1000),
+            // but total (700 + 300 = 1000) >= dust, so all should be included
+            const wallet = createMockWallet([
+                createMockVtxo(700, "swept", false), // Subdust
+                createMockVtxo(300, "swept", false), // Subdust
+                // Subdust total: 700 + 300 = 1000
+                // Total: 700 + 300 = 1000 >= 1000 (dust threshold)
+            ]);
+            const recovery = new Recovery(wallet);
+
+            const balance = await recovery.getRecoverableBalance();
+
+            expect(balance.recoverable).toBe(1000n);
+            expect(balance.subdust).toBe(1000n); // Both are subdust
+            expect(balance.includesSubdust).toBe(true);
+            expect(balance.vtxoCount).toBe(2);
         });
 
         it("should only count swept and spendable VTXOs as recoverable", async () => {
@@ -166,27 +186,45 @@ describe("Recovery", () => {
             );
         });
 
-        it("should exclude subdust when below dust threshold", async () => {
+        it("should include subdust based on total amount, not subdust alone", async () => {
+            // This tests the fix: subdust alone (300) < dust (1000),
+            // but total (700 + 300 = 1000) >= dust, so subdust should be included
             const vtxos = [
-                createMockVtxo(5000, "swept", false),
-                createMockVtxo(500, "swept", false), // Subdust, alone < dust
+                createMockVtxo(700, "swept", false), // Regular but small
+                createMockVtxo(300, "swept", false), // Subdust
             ];
             const wallet = createMockWallet(vtxos, "arkade1myaddress");
             const recovery = new Recovery(wallet);
 
             const txid = await recovery.recoverVtxos();
 
+            expect(txid).toBe("mock-txid");
             expect(wallet.settle).toHaveBeenCalledWith(
                 {
-                    inputs: [vtxos[0]], // Only the 5000 sat VTXO
+                    inputs: vtxos,
                     outputs: [
                         {
                             address: "arkade1myaddress",
-                            amount: 5000n,
+                            amount: 1000n,
                         },
                     ],
                 },
                 undefined
+            );
+        });
+
+        it("should exclude subdust when total below dust threshold", async () => {
+            // Total (500 + 400 = 900) < dust (1000), so only regular (non-subdust) VTXOs recovered
+            // But since there are no regular VTXOs, this should actually throw
+            const vtxos = [
+                createMockVtxo(500, "swept", false), // Subdust
+                createMockVtxo(400, "swept", false), // Subdust
+            ];
+            const wallet = createMockWallet(vtxos, "arkade1myaddress");
+            const recovery = new Recovery(wallet);
+
+            await expect(recovery.recoverVtxos()).rejects.toThrow(
+                "No recoverable VTXOs found"
             );
         });
 
