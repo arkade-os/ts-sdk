@@ -6,7 +6,7 @@ import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { StorageAdapter } from "../storage";
-import { RenewalConfig } from "./renewal";
+import { RenewalConfig } from "./vtxo-manager";
 
 /**
  * Configuration options for wallet initialization.

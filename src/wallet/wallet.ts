@@ -55,11 +55,7 @@ import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
-import {
-    getExpiringVtxos,
-    calculateDynamicThreshold,
-    DEFAULT_RENEWAL_CONFIG,
-} from "./renewal";
+import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { BIP322 } from "../bip322";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -973,96 +969,6 @@ export class Wallet implements IWallet {
         };
 
         return stopFunc;
-    }
-
-    /**
-     * Get VTXOs that are expiring soon based on renewal configuration
-     *
-     * @deprecated Use `Renewal` class instead for better platform support and consistency
-     * @returns Array of expiring VTXOs, empty array if renewal is disabled or no VTXOs expiring
-     *
-     * @example
-     * ```typescript
-     * // Deprecated approach
-     * const expiringVtxos = await wallet.getExpiringVtxos();
-     *
-     * // Recommended approach
-     * import { Renewal } from '@arkade-os/sdk';
-     * const renewal = new Renewal(wallet, wallet.renewalConfig);
-     * const expiringVtxos = await renewal.getExpiringVtxos();
-     * ```
-     */
-    async getExpiringVtxos(): Promise<ExtendedVirtualCoin[]> {
-        if (!this.renewalConfig.enabled) {
-            return [];
-        }
-
-        const vtxos = await this.getVtxos();
-        const threshold = calculateDynamicThreshold(
-            vtxos,
-            this.renewalConfig.thresholdPercentage
-        );
-
-        if (!threshold) {
-            return [];
-        }
-
-        return getExpiringVtxos(vtxos, threshold);
-    }
-
-    /**
-     * Renew VTXOs by settling them back to the wallet's address
-     *
-     * @deprecated Use `Renewal` class instead for better platform support and consistency
-     * @param eventCallback - Optional callback for settlement events
-     * @returns Settlement transaction ID
-     * @throws Error if no VTXOs available to renew
-     * @throws Error if total amount is below dust threshold
-     *
-     * @example
-     * ```typescript
-     * // Deprecated approach
-     * const txid = await wallet.renewVtxos();
-     *
-     * // Recommended approach
-     * import { Renewal } from '@arkade-os/sdk';
-     * const renewal = new Renewal(wallet);
-     * const txid = await renewal.renewVtxos();
-     * ```
-     */
-    async renewVtxos(
-        eventCallback?: (event: SettlementEvent) => void
-    ): Promise<string> {
-        // Get all VTXOs (including recoverable ones)
-        const vtxos = await this.getVtxos({ withRecoverable: true });
-
-        if (vtxos.length === 0) {
-            throw new Error("No VTXOs available to renew");
-        }
-
-        const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-
-        // Check if total amount is above dust threshold
-        if (BigInt(totalAmount) < this.dustAmount) {
-            throw new Error(
-                `Total amount ${totalAmount} is below dust threshold ${this.dustAmount}`
-            );
-        }
-
-        const arkAddress = await this.getAddress();
-
-        return this.settle(
-            {
-                inputs: vtxos,
-                outputs: [
-                    {
-                        address: arkAddress,
-                        amount: BigInt(totalAmount),
-                    },
-                ],
-            },
-            eventCallback
-        );
     }
 
     private async handleBatchStartedEvent(

@@ -108,82 +108,108 @@ const settleTxid = await wallet.settle({
 })
 ```
 
-### VTXO Renewal
+### VTXO Management (Renewal & Recovery)
 
-VTXOs have an expiration time (batch expiry). The SDK provides automatic monitoring and renewal capabilities to prevent VTXOs from expiring.
+VTXOs have an expiration time (batch expiry). The SDK provides the `VtxoManager` class to handle both:
 
-The `Renewal` class provides a dedicated interface for preventing VTXO expiration through renewal:
+- **Renewal**: Refresh VTXOs before they expire to maintain liquidity
+- **Recovery**: Reclaim swept or expired VTXOs back to the wallet
 
 ```typescript
-import { Renewal } from '@arkade-os/sdk'
+import { VtxoManager } from '@arkade-os/sdk'
 
-// Create renewal instance with configuration
-const renewal = new Renewal(wallet, {
-  enabled: true,           // Enable expiration checking
-  thresholdPercentage: 10, // Alert when 10% of time until expiry remains (default)
-  autoRenew: false,        // Future: automatic renewal with platform scheduler
-  checkIntervalMs: 3600000 // Future: background check interval (1 hour default)
+// Create manager with optional renewal configuration
+const manager = new VtxoManager(wallet, {
+  enabled: true,           // Enable expiration monitoring
+  thresholdPercentage: 10, // Alert when 10% of lifetime remains (default)
+  autoRenew: false,        // Future: automatic renewal (default)
+  checkIntervalMs: 3600000 // Future: check interval in ms (default: 1 hour)
 })
+```
 
-// Check for expiring VTXOs
-const expiringVtxos = await renewal.getExpiringVtxos()
+#### Renewal: Prevent Expiration
+
+Renew VTXOs before they expire to keep your liquidity accessible. This settles all VTXOs (including recoverable ones) back to your wallet with a fresh expiration time.
+
+```typescript
+// Check which VTXOs are expiring soon
+const expiringVtxos = await manager.getExpiringVtxos()
 if (expiringVtxos.length > 0) {
   console.log(`${expiringVtxos.length} VTXOs expiring soon`)
+
   expiringVtxos.forEach(vtxo => {
-    const timeLeft = vtxo.virtualStatus.batchExpiry - Date.now()
-    console.log(`VTXO ${vtxo.txid} expires in ${timeLeft}ms`)
+    const timeLeft = vtxo.virtualStatus.batchExpiry! - Date.now()
+    const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60))
+    console.log(`VTXO ${vtxo.txid} expires in ${hoursLeft} hours`)
   })
+
+  // Renew all VTXOs to prevent expiration
+  const txid = await manager.renewVtxos()
+  console.log('Renewed:', txid)
 }
 
-// Renew all VTXOs (includes recoverable ones)
-const txid = await renewal.renewVtxos()
-console.log('Renewal transaction:', txid)
-
-// With event callback
-const txid = await renewal.renewVtxos((event) => {
-  console.log('Settlement event:', event.type)
-})
-
-// Override threshold percentage on-the-fly
-const urgentlyExpiring = await renewal.getExpiringVtxos(5) // Last 5% of lifetime
+// Override threshold percentage (e.g., renew when 5% of time remains)
+const urgentlyExpiring = await manager.getExpiringVtxos(5)
 ```
 
-**Configuration Options:**
-- **`enabled`**: Must be `true` to use expiration checking features
-- **`thresholdPercentage`**: Defines "expiring soon" (e.g., 10 = last 10% of lifetime)
-- **`autoRenew`**: Future: automatic renewal with platform-specific scheduler
-- **`checkIntervalMs`**: Future: background check interval for automatic renewal
+**When to renew:**
 
-**Platform Support:**
-The `Renewal` class wrapper pattern enables future platform-specific automatic renewal implementations for Expo, Browser service workers, and Node.js environments.
+- When VTXOs approach expiration (before they're swept by the server)
+- To consolidate all VTXOs into a single fresh VTXO
+- To refresh expiration time without external transaction
 
-### Recovering Expired VTXOs
+#### Recovery: Reclaim Swept VTXOs
+
+Recover VTXOs that have been swept by the server or consolidate small amounts (subdust).
 
 ```typescript
-import { Recovery } from '@arkade-os/sdk'
-
-const recovery = new Recovery(wallet)
-
-// Check recoverable balance before recovering
-const balance = await recovery.getRecoverableBalance()
+// Check what's recoverable
+const balance = await manager.getRecoverableBalance()
 console.log(`Recoverable: ${balance.recoverable} sats`)
 console.log(`Subdust: ${balance.subdust} sats`)
-console.log(`Includes subdust: ${balance.includesSubdust}`)
+console.log(`Subdust included: ${balance.includesSubdust}`)
 console.log(`VTXO count: ${balance.vtxoCount}`)
 
-// Recover all swept VTXOs
-const txid = await recovery.recoverVtxos()
-console.log('Recovery transaction:', txid)
-
-// With event callback
-const txid = await recovery.recoverVtxos((event) => {
-  console.log('Settlement event:', event.type)
-})
+if (balance.recoverable > 0n) {
+  // Recover swept VTXOs and preconfirmed subdust
+  const txid = await manager.recoverVtxos((event) => {
+    console.log('Settlement event:', event.type)
+  })
+  console.log('Recovered:', txid)
+}
 ```
 
-**When to use:**
-- **`Renewal.renewVtxos()`**: Refresh all VTXOs (including recoverable) to prevent expiration
-- **`Recovery.recoverVtxos()`**: Recover swept VTXOs with smart subdust aggregation
+**Recovery Strategy:**
+
+The manager uses a smart recovery strategy to avoid unnecessary liquidity locks:
+
+1. **Always recovers:**
+   - ✅ Swept VTXOs (already taken by the server, must be recovered)
+
+2. **Selectively recovers:**
+   - ✅ Preconfirmed subdust (small amounts worth consolidating)
+
+3. **Never recovers:**
+   - ❌ Settled VTXOs with remaining expiry time (keeps your liquidity accessible)
+
+4. **Subdust handling:**
+   - Subdust VTXOs are only included if the total recoverable amount (regular + subdust) exceeds the dust threshold
+   - This ensures recovery transactions are economically viable
+
+**When to recover:**
+
+- After VTXOs have been swept by the server
+- To consolidate many small (subdust) preconfirmed VTXOs
+- When you see recoverable balance in your wallet
+
+#### Configuration Reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `enabled` | `boolean` | required | Enable expiration monitoring (needed for `getExpiringVtxos()`) |
+| `thresholdPercentage` | `number` | `10` | Percentage of lifetime remaining to trigger "expiring soon" (0-100) |
+| `autoRenew` | `boolean` | `false` | Future: automatically renew when expiring |
+| `checkIntervalMs` | `number` | `3600000` | Future: background check interval (1 hour) |
 
 ### Transaction History
 
