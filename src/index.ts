@@ -1,4 +1,4 @@
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { SingleKey } from "./identity/singleKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
@@ -9,6 +9,7 @@ import {
     TxType,
     IWallet,
     WalletConfig,
+    ProviderClass,
     ArkTransaction,
     Coin,
     ExtendedCoin,
@@ -51,7 +52,7 @@ import {
     SettlementEvent,
     SettlementEventType,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     BatchFinalizationEvent,
@@ -76,6 +77,7 @@ import {
     RelativeTimelock,
 } from "./script/tapscript";
 import {
+    hasBoardingTxExpired,
     buildOffchainTx,
     verifyTapscriptSignatures,
     ArkTxInput,
@@ -92,10 +94,8 @@ import {
     CosignerPublicKey,
     VtxoTreeExpiry,
 } from "./utils/unknownFields";
-import { BIP322 } from "./bip322";
+import { Intent } from "./intent";
 import { ArkNote } from "./arknote";
-import { IndexedDBVtxoRepository } from "./wallet/serviceWorker/db/vtxo/idb";
-import { VtxoRepository } from "./wallet/serviceWorker/db/vtxo";
 import { networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
@@ -112,11 +112,15 @@ import {
     Vtxo,
     PaginationOptions,
     SubscriptionResponse,
+    SubscriptionHeartbeat,
+    SubscriptionEvent,
 } from "./providers/indexer";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
+import { WalletRepositoryImpl } from "./repositories/walletRepository";
+import { ContractRepositoryImpl } from "./repositories/contractRepository";
 
 export {
     // Wallets
@@ -172,6 +176,7 @@ export {
     buildOffchainTx,
     verifyTapscriptSignatures,
     waitForIncomingFunds,
+    hasBoardingTxExpired,
 
     // Arknote
     ArkNote,
@@ -179,11 +184,12 @@ export {
     // Network
     networks,
 
-    // Database
-    IndexedDBVtxoRepository,
+    // Repositories
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 
-    // BIP322
-    BIP322,
+    // Intent proof
+    Intent,
 
     // TxTree
     TxTree,
@@ -199,6 +205,7 @@ export type {
     Identity,
     IWallet,
     WalletConfig,
+    ProviderClass,
     ArkTransaction,
     Coin,
     ExtendedCoin,
@@ -213,7 +220,6 @@ export type {
     VirtualCoin,
     TxKey,
     TapscriptType,
-    VtxoRepository,
     ArkTxInput,
     OffchainTx,
     TapLeaves,
@@ -235,7 +241,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     ExplorerTransaction,
@@ -250,6 +256,8 @@ export type {
     MarketHour,
     PaginationOptions,
     SubscriptionResponse,
+    SubscriptionHeartbeat,
+    SubscriptionEvent,
 
     // Network types
     Network,

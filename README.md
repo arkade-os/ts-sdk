@@ -1,8 +1,9 @@
 # Arkade TypeScript SDK
+
 The Arkade SDK is a TypeScript library for building Bitcoin wallets with support for both on-chain and off-chain transactions via the Ark protocol.
 
 [![TypeScript Documentation](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
-[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/arkade-os/ts-sdk)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ark-ts-sdk)
 
 ## Installation
 
@@ -22,16 +23,20 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
-  identity: identity,
-  // Esplora API, can be left empty mempool.space API will be used
+  identity,
+  // Esplora API, can be left empty - mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api', 
   arkServerUrl: 'https://mutinynet.arkade.sh',
+  // Optional: specify storage adapter (defaults to InMemoryStorageAdapter)
+  // storage: new LocalStorageAdapter() // for browser persistence
 })
 ```
 
 ### Receiving Bitcoin
 
 ```typescript
+import { waitForIncomingFunds } from '@arkade-os/sdk'
+
 // Get wallet addresses
 const arkAddress = await wallet.getAddress()
 const boardingAddress = await wallet.getBoardingAddress()
@@ -40,17 +45,17 @@ console.log('Boarding Address:', boardingAddress)
 
 const incomingFunds = await waitForIncomingFunds(wallet)
 if (incomingFunds.type === "vtxo") {
-  // virtual coins received 
+  // Virtual coins received 
   console.log("VTXOs: ", incomingFunds.vtxos)
 } else if (incomingFunds.type === "utxo") {
-  // boarding coins received
+  // Boarding coins received
   console.log("UTXOs: ", incomingFunds.coins)
 }
 ```
 
 ### Onboarding
 
-Onboarding allows you to swap onchain funds into VTXOs
+Onboarding allows you to swap on-chain funds into VTXOs:
 
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
@@ -88,9 +93,9 @@ const txid = await wallet.sendBitcoin({
 })
 ```
 
-### Batch Settlements 
+### Batch Settlements
 
-This can be used to move preconfirmed balances into finalized balances, to convert manually UTXOs and VTXOs.
+This can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs and VTXOs.
 
 ```typescript
 // For settling transactions
@@ -127,7 +132,7 @@ console.log('History:', history)
 
 ### Offboarding
 
-Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an onchain address.
+Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an on-chain address:
 
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
@@ -145,11 +150,14 @@ Unilateral exit allows you to withdraw your funds from the Ark protocol back to 
 #### Step 1: Unrolling VTXOs
 
 ```typescript
-import { Unroll, OnchainWallet } from '@arkade-os/sdk'
+import { Unroll, OnchainWallet, SingleKey } from '@arkade-os/sdk'
+
+// Create an identity for the onchain wallet
+const onchainIdentity = SingleKey.fromHex('your_onchain_private_key_hex');
 
 // Create an onchain wallet to pay for P2A outputs in VTXO branches
 // OnchainWallet implements the AnchorBumper interface
-const onchainWallet = new OnchainWallet(wallet.identity, 'regtest');
+const onchainWallet = await OnchainWallet.create(onchainIdentity, 'regtest');
 
 // Unroll a specific VTXO
 const vtxo = { txid: 'your_vtxo_txid', vout: 0 };
@@ -177,6 +185,7 @@ for await (const step of session) {
 ```
 
 The unrolling process works by:
+
 - Traversing the transaction chain from the root (most recent) to the leaf (oldest)
 - Broadcasting each transaction that isn't already on-chain
 - Waiting for confirmations between steps
@@ -196,6 +205,7 @@ await Unroll.completeUnroll(
 ```
 
 **Important Notes:**
+
 - Each VTXO may require multiple unroll steps depending on the transaction chain length
 - Each unroll step must be confirmed before proceeding to the next
 - The `completeUnroll` method can only be called after VTXOs are fully unrolled and the timelock has expired
@@ -203,39 +213,151 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-1. Create a service worker file
+**Ultra-simplified setup!** We handle all the complex service worker registration and identity management for you:
 
 ```typescript
-// service-worker.ts
+// SIMPLE SETUP with identity! 🎉
+import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk';
+
+// Create your identity
+const identity = SingleKey.fromHex('your_private_key_hex');
+// Or generate a new one:
+// const identity = SingleKey.fromRandomBytes();
+
+const wallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity
+});
+
+// That's it! Ready to use immediately:
+const address = await wallet.getAddress();
+const balance = await wallet.getBalance();
+```
+
+You'll also need to create a service worker file:
+
+```typescript
+// service-worker.js
 import { Worker } from '@arkade-os/sdk'
 
 // Worker handles communication between the main thread and service worker
 new Worker().start()
 ```
 
-2. Instantiate the ServiceWorkerWallet
+### Storage Adapters
+
+Choose the appropriate storage adapter for your environment:
 
 ```typescript
-// specify the path to the service worker file
-// this will automatically register the service worker
-const serviceWorker = await setupServiceWorker('/service-worker.js')
-const wallet = new ServiceWorkerWallet(serviceWorker)
+import { 
+  SingleKey,
+  Wallet,
+  InMemoryStorageAdapter,     // Works everywhere, data lost on restart
+} from '@arkade-os/sdk'
 
-// Initialize the wallet
-await wallet.init({
-  privateKey: 'your_private_key_hex',
-  // Esplora API, can be left empty mempool.space API will be used
-  esploraUrl: 'https://mutinynet.com/api', 
-  // OPTIONAL Ark Server connection information
+// Import additional storage adapters as needed:
+import { LocalStorageAdapter } from '@arkade-os/sdk/adapters/localStorage'        // Browser/PWA persistent storage  
+import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'      // Browser/PWA/Service Worker advanced storage
+import { AsyncStorageAdapter } from '@arkade-os/sdk/adapters/asyncStorage'      // React Native persistent storage
+import { FileSystemStorageAdapter } from '@arkade-os/sdk/adapters/fileSystem'   // Node.js file-based storage
+
+// Node.js
+const storage = new FileSystemStorageAdapter('./wallet-data')
+
+// Browser/PWA
+const storage = new LocalStorageAdapter()
+// or for advanced features:
+const storage = new IndexedDBStorageAdapter('my-app', 1)
+
+// React Native  
+const storage = new AsyncStorageAdapter()
+
+// Service Worker
+const storage = new IndexedDBStorageAdapter('service-worker-wallet', 1)
+
+// Load identity from storage (simple pattern everywhere)
+const privateKeyHex = await storage.getItem('private-key')
+const identity = SingleKey.fromHex(privateKeyHex)
+
+// Create wallet (same API everywhere)
+const wallet = await Wallet.create({
+  identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
+  storage // optional
+})
+```
+
+### Using with Expo/React Native
+
+For React Native and Expo applications where standard EventSource and fetch streaming may not work properly, use the Expo-compatible providers:
+
+```typescript
+import { Wallet, SingleKey } from '@arkade-os/sdk'
+import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
+
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+const wallet = await Wallet.create({
+  identity: identity,
+  esploraUrl: 'https://mutinynet.com/api',
+  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'), // For settlement events and transactions streaming
+  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'), // For address subscriptions and VTXO updates
 })
 
-// check service worker status
-const status = await wallet.getStatus()
-console.log('Service worker status:', status.walletInitialized)
+// use expo/fetch for streaming support (SSE)
+// All other wallet functionality remains the same
+const balance = await wallet.getBalance()
+const address = await wallet.getAddress()
+```
 
-// clear wallet data stored in the service worker memory
-await wallet.clear()
+Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
+
+- **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
+- **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
+
+#### Crypto Polyfill Requirement
+
+Install `expo-crypto` and polyfill `crypto.getRandomValues()` at the top of your app entry point:
+
+```bash
+npx expo install expo-crypto
+```
+
+```typescript
+// App.tsx or index.js - MUST be first import
+import * as Crypto from 'expo-crypto';
+if (!global.crypto) global.crypto = {} as any;
+global.crypto.getRandomValues = Crypto.getRandomValues;
+
+// Now import the SDK
+import { Wallet, SingleKey } from '@arkade-os/sdk';
+import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
+```
+
+This is required for MuSig2 settlements and cryptographic operations.
+
+### Repository Pattern
+
+Access low-level data management through repositories:
+
+```typescript
+// VTXO management (automatically cached for performance)
+const addr = await wallet.getAddress()
+const vtxos = await wallet.walletRepository.getVtxos(addr)
+await wallet.walletRepository.saveVtxos(addr, vtxos)
+
+// Contract data for SDK integrations
+await wallet.contractRepository.setContractData('my-contract', 'status', 'active')
+const status = await wallet.contractRepository.getContractData('my-contract', 'status')
+
+// Collection management for related data
+await wallet.contractRepository.saveToContractCollection(
+  'swaps',
+  { id: 'swap-1', amount: 50000, type: 'reverse' },
+  'id' // key field
+)
+const swaps = await wallet.contractRepository.getContractCollection('swaps')
 ```
 
 _For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
@@ -251,17 +373,17 @@ _For complete API documentation, visit our [TypeScript documentation](https://ar
 
 1. Install dependencies:
 
-```bash
-pnpm install
-pnpm format
-pnpm lint
-```
+   ```bash
+   pnpm install
+   pnpm format
+   pnpm lint
+   ```
 
-2. Install nigiri for integration tests:
+1. Install nigiri for integration tests:
 
-```bash
-curl https://getnigiri.vulpem.com | bash
-```
+   ```bash
+   curl https://getnigiri.vulpem.com | bash
+   ```
 
 ### Running Tests
 
@@ -296,9 +418,9 @@ pnpm test:coverage
 ### Building the documentation
 
 ```bash
-# Build the TS doc
+# Build the TypeScript documentation
 pnpm docs:build
-# open the docs in the browser
+# Open the docs in the browser
 pnpm docs:open
 ```
 

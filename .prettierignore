@@ -2,4 +2,6 @@ dist/
 node_modules/
 coverage/
 pnpm-lock.yaml
-*.md 
+*.md
+examples/expo-demo/ios/
+examples/expo-demo/android/ 

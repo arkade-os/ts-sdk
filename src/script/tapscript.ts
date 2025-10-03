@@ -358,7 +358,7 @@ export namespace CSVMultisigTapscript {
         }
 
         const sequence = asm[0];
-        if (typeof sequence === "string" || typeof sequence === "number") {
+        if (typeof sequence === "string") {
             throw new Error("Invalid script: expected sequence number");
         }
 
@@ -379,7 +379,14 @@ export namespace CSVMultisigTapscript {
             );
         }
 
-        const sequenceNum = Number(MinimalScriptNum.decode(sequence));
+        let sequenceNum: number;
+        if (typeof sequence === "number") {
+            sequenceNum = sequence;
+        } else {
+            sequenceNum = Number(
+                MinimalScriptNum.decode(sequence as Uint8Array)
+            );
+        }
         const decodedTimelock = bip68.decode(sequenceNum);
 
         const timelock: RelativeTimelock =

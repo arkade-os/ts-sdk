@@ -20,7 +20,8 @@ import {
     networks,
 } from "../dist/esm/index.js";
 import { base64, hex } from "@scure/base";
-import { utils, Transaction } from "@scure/btc-signer";
+import { utils } from "@scure/btc-signer/utils.js";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { execSync } from "child_process";
 
 const SERVER_PUBLIC_KEY = hex.decode(
@@ -29,12 +30,12 @@ const SERVER_PUBLIC_KEY = hex.decode(
 
 const arkdExec = process.argv[2] || "docker exec -t arkd";
 
-const alice = SingleKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
-const bob = SingleKey.fromHex(hex.encode(utils.randomPrivateKeyBytes()));
+const alice = SingleKey.fromRandomBytes();
+const bob = SingleKey.fromRandomBytes();
 
 console.log("Creating Spillman Channel between Alice and Bob");
-console.log("Alice's public key:", hex.encode(alice.xOnlyPublicKey()));
-console.log("Bob's public key:", hex.encode(bob.xOnlyPublicKey()));
+console.log("Alice's public key:", hex.encode(await alice.xOnlyPublicKey()));
+console.log("Bob's public key:", hex.encode(await bob.xOnlyPublicKey()));
 
 async function main() {
     console.log("\nInitializing Bob's wallet...");
@@ -69,24 +70,24 @@ async function main() {
     //
     const updateScript = MultisigTapscript.encode({
         pubkeys: [
-            alice.xOnlyPublicKey(),
-            bob.xOnlyPublicKey(),
+            await alice.xOnlyPublicKey(),
+            await bob.xOnlyPublicKey(),
             SERVER_PUBLIC_KEY,
         ],
     }).script;
 
     const refundScript = CLTVMultisigTapscript.encode({
-        pubkeys: [alice.xOnlyPublicKey(), SERVER_PUBLIC_KEY],
+        pubkeys: [await alice.xOnlyPublicKey(), SERVER_PUBLIC_KEY],
         absoluteTimelock: BigInt(chainTip + 10),
     }).script;
 
     const unilateralUpdateScript = CSVMultisigTapscript.encode({
-        pubkeys: [alice.xOnlyPublicKey(), bob.xOnlyPublicKey()],
+        pubkeys: [await alice.xOnlyPublicKey(), await bob.xOnlyPublicKey()],
         timelock: { type: "blocks", value: 100n },
     }).script;
 
     const unilateralRefundScript = CSVMultisigTapscript.encode({
-        pubkeys: [alice.xOnlyPublicKey()],
+        pubkeys: [await alice.xOnlyPublicKey()],
         timelock: { type: "blocks", value: 102n },
     }).script;
 

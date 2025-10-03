@@ -57,6 +57,7 @@ export interface OnchainProvider {
  * ```
  */
 export class EsploraProvider implements OnchainProvider {
+    private polling = false;
     constructor(private baseUrl: string) {}
 
     async getCoins(address: string): Promise<Coin[]> {
@@ -153,10 +154,13 @@ export class EsploraProvider implements OnchainProvider {
         addresses: string[],
         callback: (txs: ExplorerTransaction[]) => void
     ): Promise<() => void> {
-        let intervalId: NodeJS.Timeout | null = null;
+        let intervalId: ReturnType<typeof setInterval> | null = null;
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
 
         const poll = async () => {
+            if (this.polling) return;
+            this.polling = true;
+
             // websocket is not reliable, so we will fallback to polling
             const pollingInterval = 5_000; // 5 seconds
 
@@ -173,15 +177,15 @@ export class EsploraProvider implements OnchainProvider {
             const txKey = (tx: ExplorerTransaction) =>
                 `${tx.txid}_${tx.status.block_time}`;
 
+            // create a set of existing transactions to avoid duplicates
+            const existingTxs = new Set(initialTxs.map(txKey));
+
             // polling for new transactions
             intervalId = setInterval(async () => {
                 try {
                     // get current transactions
                     // we will compare with initialTxs to find new ones
                     const currentTxs = await getAllTxs();
-
-                    // create a set of existing transactions to avoid duplicates
-                    const existingTxs = new Set(initialTxs.map(txKey));
 
                     // filter out transactions that are already in initialTxs
                     const newTxs = currentTxs.filter(
@@ -190,7 +194,7 @@ export class EsploraProvider implements OnchainProvider {
 
                     if (newTxs.length > 0) {
                         // Update the tracking set instead of growing the array
-                        initialTxs.push(...newTxs);
+                        newTxs.forEach((tx) => existingTxs.add(txKey(tx)));
                         callback(newTxs);
                     }
                 } catch (error) {
@@ -256,6 +260,7 @@ export class EsploraProvider implements OnchainProvider {
         const stopFunc = () => {
             if (ws && ws.readyState === WebSocket.OPEN) ws.close();
             if (intervalId) clearInterval(intervalId);
+            this.polling = false;
         };
 
         return stopFunc;

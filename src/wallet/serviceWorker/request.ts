@@ -6,6 +6,7 @@ import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
 export namespace Request {
     export type Type =
         | "INIT_WALLET"
+        | "RELOAD_WALLET"
         | "SETTLE"
         | "GET_ADDRESS"
         | "GET_BOARDING_ADDRESS"
@@ -16,8 +17,7 @@ export namespace Request {
         | "SEND_BITCOIN"
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
-        | "CLEAR"
-        | "SIGN";
+        | "CLEAR";
 
     export interface Base {
         type: Type;
@@ -40,13 +40,13 @@ export namespace Request {
     export function isInitWallet(message: Base): message is InitWallet {
         return (
             message.type === "INIT_WALLET" &&
-            "privateKey" in message &&
-            typeof message.privateKey === "string" &&
             "arkServerUrl" in message &&
             typeof message.arkServerUrl === "string" &&
+            "privateKey" in message &&
+            typeof message.privateKey === "string" &&
             ("arkServerPublicKey" in message
-                ? typeof message.arkServerPublicKey === "string" ||
-                  message.arkServerPublicKey === undefined
+                ? message.arkServerPublicKey === undefined ||
+                  typeof message.arkServerPublicKey === "string"
                 : true)
         );
     }
@@ -155,23 +155,15 @@ export namespace Request {
         type: "CLEAR";
     }
 
-    export interface Sign extends Base {
-        type: "SIGN";
-        tx: string;
-        inputIndexes?: number[];
+    export function isClear(message: Base): message is Clear {
+        return message.type === "CLEAR";
     }
 
-    export function isSign(message: Base): message is Sign {
-        return (
-            message.type === "SIGN" &&
-            "tx" in message &&
-            typeof message.tx === "string" &&
-            ("inputIndexes" in message && message.inputIndexes != undefined
-                ? Array.isArray(message.inputIndexes) &&
-                  message.inputIndexes.every(
-                      (index) => typeof index === "number"
-                  )
-                : true)
-        );
+    export interface ReloadWallet extends Base {
+        type: "RELOAD_WALLET";
+    }
+
+    export function isReloadWallet(message: Base): message is ReloadWallet {
+        return message.type === "RELOAD_WALLET";
     }
 }

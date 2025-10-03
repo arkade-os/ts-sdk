@@ -10,7 +10,6 @@ import {
     CSVMultisigTapscript,
 } from "../script/tapscript";
 import { VtxoScript } from "../script/base";
-
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 

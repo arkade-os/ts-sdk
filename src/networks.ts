@@ -1,4 +1,4 @@
-import { NETWORK, TEST_NETWORK } from "@scure/btc-signer";
+import { NETWORK, TEST_NETWORK } from "@scure/btc-signer/utils.js";
 
 export type NetworkName =
     | "bitcoin"
