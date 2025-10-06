@@ -328,7 +328,10 @@ export class RestIndexerProvider implements IndexerProvider {
         return data;
     }
 
-    async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
+    async *getSubscription(
+        subscriptionId: string,
+        abortSignal: AbortSignal
+    ): AsyncIterableIterator<SubscriptionResponse> {
         const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
 
         while (!abortSignal?.aborted) {
