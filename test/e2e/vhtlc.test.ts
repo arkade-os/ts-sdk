@@ -100,9 +100,7 @@ describe("vhtlc", () => {
         expect(spendableVtxosResponse.vtxos).toHaveLength(1);
 
         const info = await arkProvider.getInfo();
-        const rawCheckpointUnrollClosure = hex.decode(
-            info.checkpointExitClosure
-        );
+        const rawCheckpointUnrollClosure = hex.decode(info.checkpointTapscript);
         const checkpointUnrollClosure = CSVMultisigTapscript.decode(
             rawCheckpointUnrollClosure
         );

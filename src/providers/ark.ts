@@ -116,24 +116,25 @@ export interface DeprecatedSigner {
 }
 
 export interface ArkInfo {
-    signerPubkey: string;
-    vtxoTreeExpiry: bigint;
-    unilateralExitDelay: bigint;
-    roundInterval: bigint;
-    network: string;
-    dust: bigint;
-    forfeitAddress: string;
-    marketHour?: MarketHour;
-    version: string;
-    utxoMinAmount: bigint;
-    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
-    vtxoMinAmount: bigint;
-    vtxoMaxAmount: bigint; // -1 means no limit (default)
     boardingExitDelay: bigint;
-    checkpointExitClosure: string;
-    fees: FeeInfo;
+    checkpointTapscript: string;
     deprecatedSigners: DeprecatedSigner[];
     digest: string;
+    dust: bigint;
+    fees: FeeInfo;
+    forfeitAddress: string;
+    forfeitPubkey: string;
+    marketHour?: MarketHour;
+    network: string;
+    roundInterval: bigint;
+    signerPubkey: string;
+    unilateralExitDelay: bigint;
+    utxoMinAmount: bigint;
+    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
+    version: string;
+    vtxoTreeExpiry: bigint;
+    vtxoMinAmount: bigint;
+    vtxoMaxAmount: bigint; // -1 means no limit (default)
 }
 
 export interface SignedIntent {
@@ -220,7 +221,7 @@ export class RestArkProvider implements ArkProvider {
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
-            checkpointExitClosure: fromServer.checkpointTapscript ?? "",
+            checkpointTapscript: fromServer.checkpointTapscript ?? "",
             digest: fromServer.digest ?? "",
             fees: fromServer.fees,
             deprecatedSigners:
