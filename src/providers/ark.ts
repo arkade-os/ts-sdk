@@ -129,12 +129,12 @@ export interface ArkInfo {
     roundInterval: bigint;
     signerPubkey: string;
     unilateralExitDelay: bigint;
-    utxoMinAmount: bigint;
     utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
+    utxoMinAmount: bigint;
     version: string;
-    vtxoTreeExpiry: bigint;
-    vtxoMinAmount: bigint;
     vtxoMaxAmount: bigint; // -1 means no limit (default)
+    vtxoMinAmount: bigint;
+    vtxoTreeExpiry: bigint;
 }
 
 export interface SignedIntent {
