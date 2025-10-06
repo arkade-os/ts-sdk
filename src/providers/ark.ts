@@ -186,7 +186,7 @@ export interface ArkProvider {
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }>;
-    getPendingTxs(proof: string): Promise<PendingTx[]>;
+    getPendingTxs(intent: SignedIntent): Promise<PendingTx[]>;
 }
 
 /**
@@ -567,16 +567,14 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async getPendingTxs(proof: string): Promise<PendingTx[]> {
+    async getPendingTxs(intent: SignedIntent): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({
-                proof,
-            }),
+            body: JSON.stringify({ intent }),
         });
 
         if (!response.ok) {
