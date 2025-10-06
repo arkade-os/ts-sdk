@@ -69,12 +69,23 @@ export async function* eventSourceIterator(
  * Dynamically imports expo/fetch with fallback to standard fetch.
  * @returns A fetch function suitable for SSE streaming
  */
-export async function getExpoFetch(): Promise<typeof fetch> {
+export async function getExpoFetch(
+    options?: { requireExpo?: boolean }
+): Promise<typeof fetch> {
+    const requireExpo = options?.requireExpo ?? false;
+
     try {
         const expoFetchModule = await import("expo/fetch");
         console.debug("Using expo/fetch for streaming");
         return expoFetchModule.fetch as unknown as typeof fetch;
     } catch (error) {
+        if (requireExpo) {
+            throw new Error(
+                "expo/fetch is unavailable in this environment. " +
+                    "Please ensure expo/fetch is installed and properly configured."
+            );
+        }
+
         console.warn(
             "Using standard fetch instead of expo/fetch. " +
                 "Streaming may not be fully supported in some environments.",
