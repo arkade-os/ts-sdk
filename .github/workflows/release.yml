@@ -10,6 +10,8 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # Skip pre-release versions (alpha, beta, rc)
+    if: "!contains(github.ref, '-alpha.') && !contains(github.ref, '-beta.') && !contains(github.ref, '-rc.')"
     steps:
       - uses: actions/checkout@v4
       

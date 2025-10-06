@@ -1,4 +1,5 @@
-import { p2tr, P2TR } from "@scure/btc-signer/payment.js";
+import { Transaction, p2tr } from "@scure/btc-signer";
+import { P2TR } from "@scure/btc-signer/payment.js";
 import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
@@ -7,7 +8,6 @@ import {
     EsploraProvider,
     OnchainProvider,
 } from "../providers/onchain";
-import { Transaction } from "@scure/btc-signer/transaction.js";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 

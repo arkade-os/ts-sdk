@@ -1,12 +1,15 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
-import { Address, OutScript, tapLeafHash } from "@scure/btc-signer/payment.js";
-import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import {
+    SigHash,
+    Transaction,
+    Address,
+    OutScript,
     TaprootControlBlock,
-    TransactionInput,
-    TransactionOutput,
-} from "@scure/btc-signer/psbt.js";
+} from "@scure/btc-signer";
+import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
@@ -25,7 +28,7 @@ import {
     ArkProvider,
     RestArkProvider,
     BatchStartedEvent,
-    Intent,
+    SignedIntent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -51,15 +54,15 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { Bytes, sha256, sha256x2 } from "@scure/btc-signer/utils.js";
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
 import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
-import { BIP322 } from "../bip322";
+import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree, TxTreeNode } from "../tree/txTree";
+import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
 import { InMemoryStorageAdapter } from "../storage/inMemory";
 import {
     WalletRepository,
@@ -668,7 +671,7 @@ export class Wallet implements IWallet {
         const signingPublicKeys: string[] = [];
         if (hasOffchainOutputs) {
             session = this.identity.signerSession();
-            signingPublicKeys.push(hex.encode(session.getPublicKey()));
+            signingPublicKeys.push(hex.encode(await session.getPublicKey()));
         }
 
         const [intent, deleteIntent] = await Promise.all([
@@ -987,7 +990,7 @@ export class Wallet implements IWallet {
     > {
         const utf8IntentId = new TextEncoder().encode(intentId);
         const intentIdHash = sha256(utf8IntentId);
-        const intentIdHashStr = hex.encode(new Uint8Array(intentIdHash));
+        const intentIdHashStr = hex.encode(intentIdHash);
 
         let skip = true;
 
@@ -1046,11 +1049,10 @@ export class Wallet implements IWallet {
 
         session.init(vtxoGraph, sweepTapTreeRoot, sharedOutput.amount);
 
-        await this.arkProvider.submitTreeNonces(
-            event.id,
-            hex.encode(session.getPublicKey()),
-            session.getNonces()
-        );
+        const pubkey = hex.encode(await session.getPublicKey());
+        const nonces = await session.getNonces();
+
+        await this.arkProvider.submitTreeNonces(event.id, pubkey, nonces);
     }
 
     private async handleSettlementSigningNoncesGeneratedEvent(
@@ -1058,11 +1060,12 @@ export class Wallet implements IWallet {
         session: SignerSession
     ) {
         session.setAggregatedNonces(event.treeNonces);
-        const signatures = session.sign();
+        const signatures = await session.sign();
+        const pubkey = hex.encode(await session.getPublicKey());
 
         await this.arkProvider.submitTreeSignatures(
             event.id,
-            hex.encode(session.getPublicKey()),
+            pubkey,
             signatures
         );
     }
@@ -1139,9 +1142,7 @@ export class Wallet implements IWallet {
             }
 
             const connectorLeaf = connectorsLeaves[connectorIndex];
-            const connectorTxId = hex.encode(
-                sha256x2(connectorLeaf.toBytes(true)).reverse()
-            );
+            const connectorTxId = connectorLeaf.id;
             const connectorOutput = connectorLeaf.getOutput(0);
             if (!connectorOutput) {
                 throw new Error("connector output not found");
@@ -1197,18 +1198,16 @@ export class Wallet implements IWallet {
     }
 
     private async makeRegisterIntentSignature(
-        bip322Inputs: ExtendedCoin[],
+        coins: ExtendedCoin[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[]
-    ): Promise<Intent> {
+    ): Promise<SignedIntent> {
         const nowSeconds = Math.floor(Date.now() / 1000);
-        const { inputs, inputTapTrees, finalizer } =
-            this.prepareBIP322Inputs(bip322Inputs);
+        const inputs = this.prepareIntentProofInputs(coins);
 
         const message = {
             type: "register",
-            input_tap_trees: inputTapTrees,
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: nowSeconds,
             expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
@@ -1216,24 +1215,21 @@ export class Wallet implements IWallet {
         };
 
         const encodedMessage = JSON.stringify(message, null, 0);
-        const signature = await this.makeBIP322Signature(
-            encodedMessage,
-            inputs,
-            finalizer,
-            outputs
-        );
+
+        const proof = Intent.create(encodedMessage, inputs, outputs);
+        const signedProof = await this.identity.sign(proof);
 
         return {
-            signature,
+            proof: base64.encode(signedProof.toPSBT()),
             message: encodedMessage,
         };
     }
 
     private async makeDeleteIntentSignature(
-        bip322Inputs: ExtendedCoin[]
-    ): Promise<{ signature: BIP322.Signature; message: string }> {
+        coins: ExtendedCoin[]
+    ): Promise<SignedIntent> {
         const nowSeconds = Math.floor(Date.now() / 1000);
-        const { inputs, finalizer } = this.prepareBIP322Inputs(bip322Inputs);
+        const inputs = this.prepareIntentProofInputs(coins);
 
         const message = {
             type: "delete",
@@ -1242,109 +1238,51 @@ export class Wallet implements IWallet {
 
         const encodedMessage = JSON.stringify(message, null, 0);
 
-        const signature = await this.makeBIP322Signature(
-            encodedMessage,
-            inputs,
-            finalizer
-        );
+        const proof = Intent.create(encodedMessage, inputs, []);
+        const signedProof = await this.identity.sign(proof);
 
         return {
-            signature,
+            proof: base64.encode(signedProof.toPSBT()),
             message: encodedMessage,
         };
     }
 
-    private prepareBIP322Inputs(bip322Inputs: ExtendedCoin[]): {
-        inputs: TransactionInput[];
-        inputTapTrees: string[];
-        finalizer: (tx: BIP322.FullProof) => void;
-    } {
+    private prepareIntentProofInputs(
+        coins: ExtendedCoin[]
+    ): TransactionInput[] {
         const inputs: TransactionInput[] = [];
-        const inputTapTrees: string[] = [];
-        const inputExtraWitnesses: Bytes[][] = [];
 
-        for (const bip322Input of bip322Inputs) {
-            const vtxoScript = VtxoScript.decode(bip322Input.tapTree);
-            const sequence = getSequence(bip322Input);
+        for (const input of coins) {
+            const vtxoScript = VtxoScript.decode(input.tapTree);
+            const sequence = getSequence(input);
+
+            const unknown = [VtxoTaprootTree.encode(input.tapTree)];
+            if (input.extraWitness) {
+                unknown.push(ConditionWitness.encode(input.extraWitness));
+            }
 
             inputs.push({
-                txid: hex.decode(bip322Input.txid),
-                index: bip322Input.vout,
+                txid: hex.decode(input.txid),
+                index: input.vout,
                 witnessUtxo: {
-                    amount: BigInt(bip322Input.value),
+                    amount: BigInt(input.value),
                     script: vtxoScript.pkScript,
                 },
                 sequence,
-                tapLeafScript: [bip322Input.intentTapLeafScript],
+                tapLeafScript: [input.intentTapLeafScript],
+                unknown,
             });
-            inputTapTrees.push(hex.encode(bip322Input.tapTree));
-            inputExtraWitnesses.push(bip322Input.extraWitness || []);
         }
 
-        return {
-            inputs,
-            inputTapTrees,
-            finalizer: finalizeWithExtraWitnesses(inputExtraWitnesses),
-        };
-    }
-
-    private async makeBIP322Signature(
-        message: string,
-        inputs: TransactionInput[],
-        finalizer: (tx: BIP322.FullProof) => void,
-        outputs?: TransactionOutput[]
-    ): Promise<BIP322.Signature> {
-        const proof = BIP322.create(message, inputs, outputs);
-        const signedProof = await this.identity.sign(proof);
-        return BIP322.signature(signedProof, finalizer);
+        return inputs;
     }
 }
 
-function finalizeWithExtraWitnesses(
-    inputExtraWitnesses: Bytes[][]
-): (tx: BIP322.FullProof) => void {
-    return function (tx) {
-        for (let i = 0; i < tx.inputsLength; i++) {
-            try {
-                tx.finalizeIdx(i);
-            } catch (e) {
-                // handle empty witness error
-                if (
-                    e instanceof Error &&
-                    e.message.includes("finalize/taproot: empty witness")
-                ) {
-                    const tapLeaves = tx.getInput(i).tapLeafScript;
-                    if (!tapLeaves || tapLeaves.length <= 0) throw e;
-                    const [cb, s] = tapLeaves[0];
-                    const script = s.slice(0, -1);
-                    tx.updateInput(i, {
-                        finalScriptWitness: [
-                            script,
-                            TaprootControlBlock.encode(cb),
-                        ],
-                    });
-                }
-            }
-
-            const finalScriptWitness = tx.getInput(i).finalScriptWitness;
-            if (!finalScriptWitness) throw new Error("input not finalized");
-
-            // input 0 and 1 spend the same pkscript
-            const extra = inputExtraWitnesses[i === 0 ? 0 : i - 1];
-            if (extra && extra.length > 0) {
-                tx.updateInput(i, {
-                    finalScriptWitness: [...extra, ...finalScriptWitness],
-                });
-            }
-        }
-    };
-}
-
-function getSequence(bip322Input: ExtendedCoin): number | undefined {
+function getSequence(coin: ExtendedCoin): number | undefined {
     let sequence: number | undefined = undefined;
 
     try {
-        const scriptWithLeafVersion = bip322Input.intentTapLeafScript[1];
+        const scriptWithLeafVersion = coin.intentTapLeafScript[1];
         const script = scriptWithLeafVersion.subarray(
             0,
             scriptWithLeafVersion.length - 1

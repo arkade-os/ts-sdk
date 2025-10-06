@@ -1,11 +1,14 @@
-import { Script, Address, p2tr, taprootListToTree } from "@scure/btc-signer";
+import {
+    Script,
+    Address,
+    p2tr,
+    taprootListToTree,
+    TAPROOT_UNSPENDABLE_KEY,
+    NETWORK,
+} from "@scure/btc-signer";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
-import {
-    BTC_NETWORK,
-    Bytes,
-    TAPROOT_UNSPENDABLE_KEY,
-} from "@scure/btc-signer/utils.js";
+import { Bytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { ArkAddress } from "./address";
 import {
@@ -83,7 +86,7 @@ export class VtxoScript {
         return Script.encode(["OP_1", this.tweakedPublicKey]);
     }
 
-    onchainAddress(network: BTC_NETWORK): string {
+    onchainAddress(network: typeof NETWORK): string {
         return Address(network).encode({
             type: "tr",
             pubkey: this.tweakedPublicKey,

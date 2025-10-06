@@ -53,7 +53,7 @@ import {
     SettlementEvent,
     SettlementEventType,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     BatchFinalizationEvent,
@@ -80,6 +80,7 @@ import {
 import {
     hasBoardingTxExpired,
     buildOffchainTx,
+    verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
 } from "./utils/arkTransaction";
@@ -94,7 +95,7 @@ import {
     CosignerPublicKey,
     VtxoTreeExpiry,
 } from "./utils/unknownFields";
-import { BIP322 } from "./bip322";
+import { Intent } from "./intent";
 import { ArkNote } from "./arknote";
 import { networks, Network, NetworkName } from "./networks";
 import {
@@ -175,6 +176,7 @@ export {
 
     // Utils
     buildOffchainTx,
+    verifyTapscriptSignatures,
     waitForIncomingFunds,
     hasBoardingTxExpired,
 
@@ -188,8 +190,8 @@ export {
     WalletRepositoryImpl,
     ContractRepositoryImpl,
 
-    // BIP322
-    BIP322,
+    // Intent proof
+    Intent,
 
     // TxTree
     TxTree,
@@ -241,7 +243,7 @@ export type {
     ArkProvider,
     SettlementEvent,
     ArkInfo,
-    Intent,
+    SignedIntent,
     Output,
     TxNotification,
     ExplorerTransaction,

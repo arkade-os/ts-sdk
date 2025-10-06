@@ -1,12 +1,12 @@
-import { Output, SettlementEvent, ArkProvider } from "../providers/ark";
-import { IndexerProvider } from "../providers/indexer";
-import { OnchainProvider } from "../providers/onchain";
+import { Bytes } from "@scure/btc-signer/utils.js";
+import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { Bytes } from "@scure/btc-signer/utils.js";
 import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
+import { IndexerProvider } from "../providers/indexer";
+import { OnchainProvider } from "../providers/onchain";
 
 /**
  * Configuration options for wallet initialization.
