@@ -314,8 +314,6 @@ describe("VtxoManager - Renewal utilities", () => {
     describe("DEFAULT_RENEWAL_CONFIG", () => {
         it("should have correct default values", () => {
             expect(DEFAULT_RENEWAL_CONFIG.thresholdPercentage).toBe(10);
-            expect(DEFAULT_RENEWAL_CONFIG.checkIntervalMs).toBe(3600000);
-            expect(DEFAULT_RENEWAL_CONFIG.autoRenew).toBe(false);
         });
     });
 

@@ -112,8 +112,8 @@ const settleTxid = await wallet.settle({
 
 VTXOs have an expiration time (batch expiry). The SDK provides the `VtxoManager` class to handle both:
 
-- **Renewal**: Refresh VTXOs before they expire to maintain liquidity
-- **Recovery**: Reclaim swept or expired VTXOs back to the wallet
+- **Renewal**: Renew VTXOs before they expire to maintain unilateral control of the funds.
+- **Recovery**: Reclaim swept or expired VTXOs back to the wallet in case renewal window was missed.
 
 ```typescript
 import { VtxoManager } from '@arkade-os/sdk'
@@ -121,9 +121,7 @@ import { VtxoManager } from '@arkade-os/sdk'
 // Create manager with optional renewal configuration
 const manager = new VtxoManager(wallet, {
   enabled: true,           // Enable expiration monitoring
-  thresholdPercentage: 10, // Alert when 10% of lifetime remains (default)
-  autoRenew: false,        // Future: automatic renewal (default)
-  checkIntervalMs: 3600000 // Future: check interval in ms (default: 1 hour)
+  thresholdPercentage: 10  // Alert when 10% of lifetime remains (default)
 })
 ```
 
@@ -152,11 +150,6 @@ if (expiringVtxos.length > 0) {
 const urgentlyExpiring = await manager.getExpiringVtxos(5)
 ```
 
-**When to renew:**
-
-- When VTXOs approach expiration (before they're swept by the server)
-- To consolidate all VTXOs into a single fresh VTXO
-- To refresh expiration time without external transaction
 
 #### Recovery: Reclaim Swept VTXOs
 
@@ -179,37 +172,6 @@ if (balance.recoverable > 0n) {
 }
 ```
 
-**Recovery Strategy:**
-
-The manager uses a smart recovery strategy to avoid unnecessary liquidity locks:
-
-1. **Always recovers:**
-   - ✅ Swept VTXOs (already taken by the server, must be recovered)
-
-2. **Selectively recovers:**
-   - ✅ Preconfirmed subdust (small amounts worth consolidating)
-
-3. **Never recovers:**
-   - ❌ Settled VTXOs with remaining expiry time (keeps your liquidity accessible)
-
-4. **Subdust handling:**
-   - Subdust VTXOs are only included if the total recoverable amount (regular + subdust) exceeds the dust threshold
-   - This ensures recovery transactions are economically viable
-
-**When to recover:**
-
-- After VTXOs have been swept by the server
-- To consolidate many small (subdust) preconfirmed VTXOs
-- When you see recoverable balance in your wallet
-
-#### Configuration Reference
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| `enabled` | `boolean` | required | Enable expiration monitoring (needed for `getExpiringVtxos()`) |
-| `thresholdPercentage` | `number` | `10` | Percentage of lifetime remaining to trigger "expiring soon" (0-100) |
-| `autoRenew` | `boolean` | `false` | Future: automatically renew when expiring |
-| `checkIntervalMs` | `number` | `3600000` | Future: background check interval (1 hour) |
 
 ### Transaction History
 

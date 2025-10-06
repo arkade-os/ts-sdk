@@ -17,20 +17,6 @@ export interface RenewalConfig {
      * @default 10
      */
     thresholdPercentage?: number;
-
-    /**
-     * Interval in milliseconds for background expiration checks
-     * Only used when a scheduler adapter is provided
-     * @default 3600000 (1 hour)
-     */
-    checkIntervalMs?: number;
-
-    /**
-     * Automatically trigger renewal when expiring VTXOs detected
-     * If false, only notifications are sent
-     * @default false
-     */
-    autoRenew?: boolean;
 }
 
 /**
@@ -39,8 +25,6 @@ export interface RenewalConfig {
 export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
     {
         thresholdPercentage: 10,
-        checkIntervalMs: 3600000, // 1 hour
-        autoRenew: false,
     };
 
 /**
@@ -265,8 +249,7 @@ export function calculateDynamicThreshold(
  * // Initialize with renewal config
  * const manager = new VtxoManager(wallet, {
  *   enabled: true,
- *   thresholdPercentage: 10,
- *   autoRenew: false
+ *   thresholdPercentage: 10
  * });
  *
  * // Check recoverable balance
