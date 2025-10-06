@@ -212,23 +212,16 @@ export class RestArkProvider implements ArkProvider {
         const fromServer = await response.json();
         return {
             ...fromServer,
-            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
-            unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
-            roundInterval: BigInt(fromServer.roundInterval ?? 0),
-            dust: BigInt(fromServer.dust ?? 0),
-            utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
-            utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
-            vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
-            vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
-            digest: fromServer.digest ?? "",
-            fees: fromServer.fees,
             deprecatedSigners:
                 fromServer.deprecatedSigners?.map((signer: any) => ({
                     cutoffDate: BigInt(signer.cutoffDate ?? 0),
                     pubkey: signer.pubkey ?? "",
                 })) ?? [],
+            digest: fromServer.digest ?? "",
+            dust: BigInt(fromServer.dust ?? 0),
+            fees: fromServer.fees,
             marketHour:
                 "marketHour" in fromServer && fromServer.marketHour != null
                     ? {
@@ -244,6 +237,13 @@ export class RestArkProvider implements ArkProvider {
                           ),
                       }
                     : undefined,
+            roundInterval: BigInt(fromServer.roundInterval ?? 0),
+            unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
+            utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
+            utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
+            vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
+            vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
+            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
         };
     }
 
