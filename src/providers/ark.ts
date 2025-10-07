@@ -741,20 +741,22 @@ export class RestArkProvider implements ArkProvider {
     }
 }
 
-function encodeMusig2Nonces(nonces: TreeNonces): string {
+function encodeMusig2Nonces(nonces: TreeNonces): Record<string, string> {
     const noncesObject: Record<string, string> = {};
     for (const [txid, nonce] of nonces) {
         noncesObject[txid] = hex.encode(nonce.pubNonce);
     }
-    return JSON.stringify(noncesObject);
+    return noncesObject;
 }
 
-function encodeMusig2Signatures(signatures: TreePartialSigs): string {
+function encodeMusig2Signatures(
+    signatures: TreePartialSigs
+): Record<string, string> {
     const sigObject: Record<string, string> = {};
     for (const [txid, sig] of signatures) {
         sigObject[txid] = hex.encode(sig.encode());
     }
-    return JSON.stringify(sigObject);
+    return sigObject;
 }
 
 function decodeMusig2Nonces(str: string): TreeNonces {
