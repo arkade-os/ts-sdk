@@ -43,12 +43,23 @@ async function waitForArkServer(maxRetries = 30, retryDelay = 2000) {
     throw new Error("ARK server failed to be ready after maximum retries");
 }
 
-async function checkWalletStatus() {
-    const statusOutput = execSync(`${arkdExec} arkd wallet status`).toString();
-    const initialized = statusOutput.includes("initialized: true");
-    const unlocked = statusOutput.includes("unlocked: true");
-    const synced = statusOutput.includes("synced: true");
-    return { initialized, unlocked, synced };
+async function checkWalletStatus(maxRetries = 30, retryDelay = 2000) {
+    console.log("Checking wallet status...");
+    const cmd = `${arkdExec} arkd wallet status`;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            const statusOutput = execSync(cmd).toString();
+            const initialized = statusOutput.includes("initialized: true");
+            const unlocked = statusOutput.includes("unlocked: true");
+            const synced = statusOutput.includes("synced: true");
+            return { initialized, unlocked, synced };
+        } catch (error) {
+            console.log(
+                `Error checking wallet status (${i + 1}/${maxRetries})...`
+            );
+            await sleep(retryDelay);
+        }
+    }
 }
 
 async function waitForWalletReady(maxRetries = 30, retryDelay = 2000) {
