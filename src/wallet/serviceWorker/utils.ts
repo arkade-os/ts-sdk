@@ -1,3 +1,5 @@
+export const DEFAULT_DB_NAME = "arkade-service-worker";
+
 /**
  * setupServiceWorker sets up the service worker.
  * @param path - the path to the service worker script
@@ -16,7 +18,7 @@ export async function setupServiceWorker(path: string): Promise<ServiceWorker> {
     const registration = await navigator.serviceWorker.register(path);
 
     // force update to ensure the service worker is active
-    registration.update();
+    await registration.update();
 
     const serviceWorker =
         registration.active || registration.waiting || registration.installing;
@@ -43,12 +45,12 @@ export async function setupServiceWorker(path: string): Promise<ServiceWorker> {
         }, 10000);
 
         const cleanup = () => {
-            serviceWorker!.removeEventListener("activate", onActivate);
-            serviceWorker!.removeEventListener("error", onError);
+            navigator.serviceWorker.removeEventListener("activate", onActivate);
+            navigator.serviceWorker.removeEventListener("error", onError);
             clearTimeout(timeout);
         };
 
-        serviceWorker!.addEventListener("activate", onActivate);
-        serviceWorker!.addEventListener("error", onError);
+        navigator.serviceWorker.addEventListener("activate", onActivate);
+        navigator.serviceWorker.addEventListener("error", onError);
     });
 }

@@ -1,4 +1,4 @@
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
 import { hex } from "@scure/base";
 
@@ -24,7 +24,7 @@ type DecodedNode = {
  * TxTree is a graph of bitcoin transactions.
  * It is used to represent batch tree created during settlement session
  */
-export class TxTree implements Iterable<TxTree> {
+export class TxTree {
     constructor(
         readonly root: Transaction,
         readonly children: Map<number, TxTree> = new Map()
@@ -220,11 +220,11 @@ export class TxTree implements Iterable<TxTree> {
         throw new Error(`tx not found: ${txid}`);
     }
 
-    *[Symbol.iterator](): IterableIterator<TxTree> {
-        yield this;
+    *iterator(): Generator<TxTree, void, unknown> {
         for (const child of this.children.values()) {
-            yield* child;
+            yield* child.iterator();
         }
+        yield this;
     }
 }
 

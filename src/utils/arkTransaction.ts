@@ -1,11 +1,15 @@
-import { schnorr } from "@noble/curves/secp256k1";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { DEFAULT_SEQUENCE, Transaction, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { VirtualCoin } from "../wallet";
-import { CLTVMultisigTapscript, decodeTapscript } from "../script/tapscript";
+import { ExtendedCoin, VirtualCoin } from "../wallet";
+import {
+    CLTVMultisigTapscript,
+    decodeTapscript,
+    RelativeTimelock,
+} from "../script/tapscript";
 import {
     EncodedVtxoScript,
     scriptFromTapLeafScript,
@@ -167,6 +171,20 @@ const nLocktimeMinSeconds = 500_000_000n;
 
 function isSeconds(locktime: bigint): boolean {
     return locktime >= nLocktimeMinSeconds;
+}
+
+export function hasBoardingTxExpired(
+    coin: ExtendedCoin,
+    boardingTimelock: RelativeTimelock
+) {
+    if (!coin.status.block_time) return false;
+    if (boardingTimelock.value === 0n) return true;
+    if (boardingTimelock.type !== "blocks") return false; // TODO: handle get chain tip
+
+    // validate expiry in terms of seconds
+    const now = BigInt(Math.floor(Date.now() / 1000));
+    const blockTime = BigInt(Math.floor(coin.status.block_time));
+    return blockTime + boardingTimelock.value <= now;
 }
 
 /**

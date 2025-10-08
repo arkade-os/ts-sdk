@@ -1,24 +1,66 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { Output, SettlementEvent } from "../providers/ark";
+import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
+import { StorageAdapter } from "../storage";
+import { RenewalConfig } from "./vtxo-manager";
+import { IndexerProvider } from "../providers/indexer";
+import { OnchainProvider } from "../providers/onchain";
 
 /**
  * Configuration options for wallet initialization.
  *
- * Defines the parameters required to create and configure a wallet instance,
- * including identity, server URLs, and optional timelock settings.
- * If optional parameters are not provided, the wallet will fetch them from the
- * Ark server.
+ * Supports two configuration modes:
+ * 1. URL-based: Provide arkServerUrl, indexerUrl (optional), and esploraUrl
+ * 2. Provider-based: Provide arkProvider, indexerProvider, and onchainProvider instances
+ *
+ * At least one of the following must be provided:
+ * - arkServerUrl OR arkProvider
+ *
+ * The wallet will use provided URLs to create default providers if custom provider
+ * instances are not supplied. If optional parameters are not provided, the wallet
+ * will fetch configuration from the Ark server.
+ *
+ * @example
+ * ```typescript
+ * // URL-based configuration
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('...'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Provider-based configuration (e.g., for Expo/React Native)
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('...'),
+ *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
+ *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
+ *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ * });
+ * ```
  */
 export interface WalletConfig {
     identity: Identity;
-    arkServerUrl: string;
+    arkServerUrl?: string;
+    indexerUrl?: string;
     esploraUrl?: string;
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
+    storage?: StorageAdapter;
+    arkProvider?: ArkProvider;
+    indexerProvider?: IndexerProvider;
+    onchainProvider?: OnchainProvider;
+    renewalConfig?: RenewalConfig;
+}
+
+/**
+ * Provider class constructor interface for dependency injection.
+ * Ensures provider classes follow the consistent constructor pattern.
+ */
+export interface ProviderClass<T> {
+    new (serverUrl: string): T;
 }
 
 export interface WalletBalance {
@@ -81,6 +123,7 @@ export interface VirtualCoin extends Coin {
     arkTxId?: string;
     createdAt: Date;
     isUnrolled: boolean;
+    isSpent?: boolean;
 }
 
 export enum TxType {
@@ -116,7 +159,7 @@ export type ExtendedVirtualCoin = TapLeaves &
     VirtualCoin & { extraWitness?: Bytes[] };
 
 export function isSpendable(vtxo: VirtualCoin): boolean {
-    return vtxo.spentBy === undefined || vtxo.spentBy === "";
+    return !vtxo.isSpent;
 }
 
 export function isRecoverable(vtxo: VirtualCoin): boolean {
@@ -140,6 +183,7 @@ export type GetVtxosFilter = {
  * operations, and transaction management including sending, settling, and unrolling.
  */
 export interface IWallet {
+    identity: Identity;
     // returns the ark address
     getAddress(): Promise<string>;
     // returns the bitcoin address used to board the ark

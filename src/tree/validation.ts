@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
@@ -111,7 +111,7 @@ export function validateVtxoTxGraph(
     graph.validate();
 
     // iterates over all the nodes of the graph to verify that cosigners public keys are corresponding to the parent output
-    for (const g of graph) {
+    for (const g of graph.iterator()) {
         for (const [childIndex, child] of g.children) {
             const parentOutput = g.root.getOutput(childIndex);
             if (!parentOutput?.script) {

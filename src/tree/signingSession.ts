@@ -1,7 +1,8 @@
 import * as musig2 from "../musig2";
-import { Script, SigHash, Transaction } from "@scure/btc-signer";
+import { Script } from "@scure/btc-signer/script.js";
+import { SigHash, Transaction } from "@scure/btc-signer/transaction.js";
 import { hex } from "@scure/base";
-import { schnorr, secp256k1 } from "@noble/curves/secp256k1";
+import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 import { TxTree } from "./txTree";
@@ -16,11 +17,15 @@ export type TreePartialSigs = Map<string, musig2.PartialSig>;
 // with participants of a settlement. It holds the state of the musig2 nonces and allows to
 // create the partial signatures for each transaction in the vtxo tree
 export interface SignerSession {
-    getPublicKey(): Uint8Array;
-    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void;
-    getNonces(): TreeNonces;
-    setAggregatedNonces(nonces: TreeNonces): void;
-    sign(): TreePartialSigs;
+    getPublicKey(): Promise<Uint8Array>;
+    init(
+        tree: TxTree,
+        scriptRoot: Uint8Array,
+        rootInputAmount: bigint
+    ): Promise<void>;
+    getNonces(): Promise<TreeNonces>;
+    setAggregatedNonces(nonces: TreeNonces): Promise<void>;
+    sign(): Promise<TreePartialSigs>;
 }
 
 export class TreeSignerSession implements SignerSession {
@@ -41,17 +46,21 @@ export class TreeSignerSession implements SignerSession {
         return new TreeSignerSession(secretKey);
     }
 
-    init(tree: TxTree, scriptRoot: Uint8Array, rootInputAmount: bigint): void {
+    async init(
+        tree: TxTree,
+        scriptRoot: Uint8Array,
+        rootInputAmount: bigint
+    ): Promise<void> {
         this.graph = tree;
         this.scriptRoot = scriptRoot;
         this.rootSharedOutputAmount = rootInputAmount;
     }
 
-    getPublicKey(): Uint8Array {
+    async getPublicKey(): Promise<Uint8Array> {
         return secp256k1.getPublicKey(this.secretKey);
     }
 
-    getNonces(): TreeNonces {
+    async getNonces(): Promise<TreeNonces> {
         if (!this.graph) throw ErrMissingVtxoGraph;
         if (!this.myNonces) {
             this.myNonces = this.generateNonces();
@@ -66,19 +75,19 @@ export class TreeSignerSession implements SignerSession {
         return publicNonces;
     }
 
-    setAggregatedNonces(nonces: TreeNonces) {
+    async setAggregatedNonces(nonces: TreeNonces): Promise<void> {
         if (this.aggregateNonces) throw new Error("nonces already set");
         this.aggregateNonces = nonces;
     }
 
-    sign(): TreePartialSigs {
+    async sign(): Promise<TreePartialSigs> {
         if (!this.graph) throw ErrMissingVtxoGraph;
         if (!this.aggregateNonces) throw new Error("nonces not set");
         if (!this.myNonces) throw new Error("nonces not generated");
 
         const sigs: TreePartialSigs = new Map();
 
-        for (const g of this.graph) {
+        for (const g of this.graph.iterator()) {
             const sig = this.signPartial(g);
             sigs.set(g.txid, sig);
         }
@@ -93,7 +102,7 @@ export class TreeSignerSession implements SignerSession {
 
         const publicKey = secp256k1.getPublicKey(this.secretKey);
 
-        for (const g of this.graph) {
+        for (const g of this.graph.iterator()) {
             const nonces = musig2.generateNonces(publicKey);
             myNonces.set(g.txid, nonces);
         }
@@ -169,7 +178,7 @@ export async function validateTreeSigs(
     vtxoTree: TxTree
 ): Promise<void> {
     // Iterate through each level of the tree
-    for (const g of vtxoTree) {
+    for (const g of vtxoTree.iterator()) {
         // Parse the transaction
         const input = g.root.getInput(0);
 

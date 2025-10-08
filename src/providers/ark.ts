@@ -2,6 +2,7 @@ import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
+import { eventSourceIterator } from "./utils";
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -91,25 +92,53 @@ export interface MarketHour {
     roundInterval: bigint;
 }
 
-export interface ArkInfo {
-    signerPubkey: string;
-    vtxoTreeExpiry: bigint;
-    unilateralExitDelay: bigint;
-    roundInterval: bigint;
-    network: string;
-    dust: bigint;
-    forfeitAddress: string;
-    marketHour?: MarketHour;
-    version: string;
-    utxoMinAmount: bigint;
-    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
-    vtxoMinAmount: bigint;
-    vtxoMaxAmount: bigint; // -1 means no limit (default)
-    boardingExitDelay: bigint;
+export interface IntentFeeInfo {
+    offchainInput: string;
+    offchainOutput: string;
+    onchainInput: string;
+    onchainOutput: string;
 }
 
-export interface Intent {
-    signature: string;
+export interface FeeInfo {
+    intentFee: IntentFeeInfo;
+    txFeeRate: string;
+}
+
+export interface PendingTx {
+    arkTxid: string;
+    finalArkTx: string;
+    signedCheckpointTxs: string[];
+}
+
+export interface DeprecatedSigner {
+    cutoffDate: bigint;
+    pubkey: string;
+}
+
+export interface ArkInfo {
+    boardingExitDelay: bigint;
+    checkpointTapscript: string;
+    deprecatedSigners: DeprecatedSigner[];
+    digest: string;
+    dust: bigint;
+    fees: FeeInfo;
+    forfeitAddress: string;
+    forfeitPubkey: string;
+    marketHour?: MarketHour;
+    network: string;
+    roundInterval: bigint;
+    signerPubkey: string;
+    unilateralExitDelay: bigint;
+    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
+    utxoMinAmount: bigint;
+    version: string;
+    vtxoMaxAmount: bigint; // -1 means no limit (default)
+    vtxoMinAmount: bigint;
+    vtxoTreeExpiry: bigint;
+}
+
+export interface SignedIntent {
+    proof: string;
     message: string;
 }
 
@@ -132,8 +161,8 @@ export interface ArkProvider {
         signedCheckpointTxs: string[];
     }>;
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
-    registerIntent(intent: Intent): Promise<string>;
-    deleteIntent(intent: Intent): Promise<void>;
+    registerIntent(intent: SignedIntent): Promise<string>;
+    deleteIntent(intent: SignedIntent): Promise<void>;
     confirmRegistration(intentId: string): Promise<void>;
     submitTreeNonces(
         batchId: string,
@@ -157,6 +186,7 @@ export interface ArkProvider {
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }>;
+    getPendingTxs(intent: SignedIntent): Promise<PendingTx[]>;
 }
 
 /**
@@ -182,15 +212,16 @@ export class RestArkProvider implements ArkProvider {
         const fromServer = await response.json();
         return {
             ...fromServer,
-            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
-            unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
-            roundInterval: BigInt(fromServer.roundInterval ?? 0),
-            dust: BigInt(fromServer.dust ?? 0),
-            utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
-            utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
-            vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
-            vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
+            checkpointTapscript: fromServer.checkpointTapscript ?? "",
+            deprecatedSigners:
+                fromServer.deprecatedSigners?.map((signer: any) => ({
+                    cutoffDate: BigInt(signer.cutoffDate ?? 0),
+                    pubkey: signer.pubkey ?? "",
+                })) ?? [],
+            digest: fromServer.digest ?? "",
+            dust: BigInt(fromServer.dust ?? 0),
+            fees: fromServer.fees,
             marketHour:
                 "marketHour" in fromServer && fromServer.marketHour != null
                     ? {
@@ -206,6 +237,13 @@ export class RestArkProvider implements ArkProvider {
                           ),
                       }
                     : undefined,
+            roundInterval: BigInt(fromServer.roundInterval ?? 0),
+            unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
+            utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
+            utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
+            vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
+            vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
+            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
         };
     }
 
@@ -224,8 +262,8 @@ export class RestArkProvider implements ArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                signedArkTx: signedArkTx,
-                checkpointTxs: checkpointTxs,
+                signedArkTx,
+                checkpointTxs,
             }),
         });
 
@@ -278,7 +316,7 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async registerIntent(intent: Intent): Promise<string> {
+    async registerIntent(intent: SignedIntent): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -287,7 +325,7 @@ export class RestArkProvider implements ArkProvider {
             },
             body: JSON.stringify({
                 intent: {
-                    signature: intent.signature,
+                    proof: intent.proof,
                     message: intent.message,
                 },
             }),
@@ -302,7 +340,7 @@ export class RestArkProvider implements ArkProvider {
         return data.intentId;
     }
 
-    async deleteIntent(intent: Intent): Promise<void> {
+    async deleteIntent(intent: SignedIntent): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -311,7 +349,7 @@ export class RestArkProvider implements ArkProvider {
             },
             body: JSON.stringify({
                 proof: {
-                    signature: intent.signature,
+                    proof: intent.proof,
                     message: intent.message,
                 },
             }),
@@ -424,58 +462,35 @@ export class RestArkProvider implements ArkProvider {
 
         while (!signal?.aborted) {
             try {
-                const response = await fetch(url + queryParams, {
-                    headers: {
-                        Accept: "application/json",
-                    },
-                    signal,
-                });
+                const eventSource = new EventSource(url + queryParams);
 
-                if (!response.ok) {
-                    throw new Error(
-                        `Unexpected status ${response.status} when fetching event stream`
-                    );
-                }
+                // Set up abort handling
+                const abortHandler = () => {
+                    eventSource.close();
+                };
+                signal?.addEventListener("abort", abortHandler);
 
-                if (!response.body) {
-                    throw new Error("Response body is null");
-                }
-
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-
-                while (!signal?.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    // Append new data to buffer and split by newlines
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    // Process all complete lines
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
+                try {
+                    for await (const event of eventSourceIterator(
+                        eventSource
+                    )) {
+                        if (signal?.aborted) break;
 
                         try {
-                            const data = JSON.parse(line);
-                            const event = this.parseSettlementEvent(
-                                data.result
-                            );
-                            if (event) {
-                                yield event;
+                            const data = JSON.parse(event.data);
+                            const settlementEvent =
+                                this.parseSettlementEvent(data);
+                            if (settlementEvent) {
+                                yield settlementEvent;
                             }
                         } catch (err) {
                             console.error("Failed to parse event:", err);
                             throw err;
                         }
                     }
-
-                    // Keep the last partial line in the buffer
-                    buffer = lines[lines.length - 1];
+                } finally {
+                    signal?.removeEventListener("abort", abortHandler);
+                    eventSource.close();
                 }
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
@@ -483,7 +498,6 @@ export class RestArkProvider implements ArkProvider {
                 }
 
                 // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                // these timeouts are set by builtin fetch function
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
@@ -503,52 +517,38 @@ export class RestArkProvider implements ArkProvider {
 
         while (!signal?.aborted) {
             try {
-                const response = await fetch(url, {
-                    headers: {
-                        Accept: "application/json",
-                    },
-                    signal,
-                });
+                const eventSource = new EventSource(url);
 
-                if (!response.ok) {
-                    throw new Error(
-                        `Unexpected status ${response.status} when fetching transaction stream`
-                    );
-                }
+                // Set up abort handling
+                const abortHandler = () => {
+                    eventSource.close();
+                };
+                signal?.addEventListener("abort", abortHandler);
 
-                if (!response.body) {
-                    throw new Error("Response body is null");
-                }
+                try {
+                    for await (const event of eventSourceIterator(
+                        eventSource
+                    )) {
+                        if (signal?.aborted) break;
 
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-
-                while (!signal?.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    // Append new data to buffer and split by newlines
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    // Process all complete lines
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
-
-                        const data = JSON.parse(line);
-                        const txNotification =
-                            this.parseTransactionNotification(data.result);
-                        if (txNotification) {
-                            yield txNotification;
+                        try {
+                            const data = JSON.parse(event.data);
+                            const txNotification =
+                                this.parseTransactionNotification(data);
+                            if (txNotification) {
+                                yield txNotification;
+                            }
+                        } catch (err) {
+                            console.error(
+                                "Failed to parse transaction notification:",
+                                err
+                            );
+                            throw err;
                         }
                     }
-
-                    // Keep the last partial line in the buffer
-                    buffer = lines[lines.length - 1];
+                } finally {
+                    signal?.removeEventListener("abort", abortHandler);
+                    eventSource.close();
                 }
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
@@ -556,20 +556,50 @@ export class RestArkProvider implements ArkProvider {
                 }
 
                 // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                // these timeouts are set by builtin fetch function
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
                 }
 
-                console.error("Address subscription error:", error);
+                console.error("Transaction stream error:", error);
                 throw error;
             }
         }
     }
 
-    private parseSettlementEvent(
-        data: ProtoTypes.EventData
+    async getPendingTxs(intent: SignedIntent): Promise<PendingTx[]> {
+        const url = `${this.serverUrl}/v1/tx/pending`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ intent }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            try {
+                const grpcError = JSON.parse(errorText);
+                // gRPC errors usually have a message and code field
+                throw new Error(
+                    `Failed to get pending transactions: ${grpcError.message || grpcError.error || errorText}`
+                );
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            } catch (_) {
+                // If JSON parse fails, use the raw error text
+                throw new Error(
+                    `Failed to get pending transactions: ${errorText}`
+                );
+            }
+        }
+
+        const data = await response.json();
+        return data.pendingTxs;
+    }
+
+    protected parseSettlementEvent(
+        data: ProtoTypes.GetEventStreamResponse
     ): SettlementEvent | null {
         // Check for BatchStarted event
         if (data.batchStarted) {
@@ -664,12 +694,22 @@ export class RestArkProvider implements ArkProvider {
             };
         }
 
+        // TODO: Handle TreeNoncesEvent when implemented server-side
+        if (data.treeNonces) {
+            return null;
+        }
+
+        // Skip heartbeat events
+        if (data.heartbeat) {
+            return null;
+        }
+
         console.warn("Unknown event type:", data);
         return null;
     }
 
-    private parseTransactionNotification(
-        data: ProtoTypes.TransactionData
+    protected parseTransactionNotification(
+        data: ProtoTypes.GetTransactionsStreamResponse
     ): { commitmentTx?: TxNotification; arkTx?: TxNotification } | null {
         if (data.commitmentTx) {
             return {
@@ -696,25 +736,32 @@ export class RestArkProvider implements ArkProvider {
             };
         }
 
+        // Skip heartbeat events
+        if (data.heartbeat) {
+            return null;
+        }
+
         console.warn("Unknown transaction notification type:", data);
         return null;
     }
 }
 
-function encodeMusig2Nonces(nonces: TreeNonces): string {
+function encodeMusig2Nonces(nonces: TreeNonces): Record<string, string> {
     const noncesObject: Record<string, string> = {};
     for (const [txid, nonce] of nonces) {
         noncesObject[txid] = hex.encode(nonce.pubNonce);
     }
-    return JSON.stringify(noncesObject);
+    return noncesObject;
 }
 
-function encodeMusig2Signatures(signatures: TreePartialSigs): string {
+function encodeMusig2Signatures(
+    signatures: TreePartialSigs
+): Record<string, string> {
     const sigObject: Record<string, string> = {};
     for (const [txid, sig] of signatures) {
         sigObject[txid] = hex.encode(sig.encode());
     }
-    return JSON.stringify(sigObject);
+    return sigObject;
 }
 
 function decodeMusig2Nonces(str: string): TreeNonces {
@@ -734,7 +781,7 @@ namespace ProtoTypes {
     interface BatchStartedEvent {
         id: string;
         intentIdHashes: string[];
-        batchExpiry: string;
+        batchExpiry: number;
     }
 
     interface BatchFailed {
@@ -763,6 +810,13 @@ namespace ProtoTypes {
         treeNonces: string;
     }
 
+    interface TreeNoncesEvent {
+        id: string;
+        topic: string[];
+        txid: string;
+        nonces: Record<string, string>;
+    }
+
     interface TreeTxEvent {
         id: string;
         topic: string[];
@@ -780,6 +834,10 @@ namespace ProtoTypes {
         signature: string;
     }
 
+    interface Heartbeat {
+        // Empty interface for heartbeat events
+    }
+
     export interface VtxoData {
         outpoint: {
             txid: string;
@@ -788,7 +846,7 @@ namespace ProtoTypes {
         amount: string;
         script: string;
         createdAt: string;
-        expiresAt: string;
+        expiresAt: string | null;
         commitmentTxids: string[];
         isPreconfirmed: boolean;
         isSwept: boolean;
@@ -799,6 +857,38 @@ namespace ProtoTypes {
         arkTxid?: string;
     }
 
+    export interface GetEventStreamResponse {
+        batchStarted?: BatchStartedEvent;
+        batchFailed?: BatchFailed;
+        batchFinalization?: BatchFinalizationEvent;
+        batchFinalized?: BatchFinalizedEvent;
+        treeSigningStarted?: TreeSigningStartedEvent;
+        treeNoncesAggregated?: TreeNoncesAggregatedEvent;
+        treeNonces?: TreeNoncesEvent;
+        treeTx?: TreeTxEvent;
+        treeSignature?: TreeSignatureEvent;
+        heartbeat?: Heartbeat;
+    }
+
+    export interface GetTransactionsStreamResponse {
+        commitmentTx?: {
+            txid: string;
+            tx: string;
+            spentVtxos: VtxoData[];
+            spendableVtxos: VtxoData[];
+            checkpointTxs?: Record<string, { txid: string; tx: string }>;
+        };
+        arkTx?: {
+            txid: string;
+            tx: string;
+            spentVtxos: VtxoData[];
+            spendableVtxos: VtxoData[];
+            checkpointTxs?: Record<string, { txid: string; tx: string }>;
+        };
+        heartbeat?: Heartbeat;
+    }
+
+    // Legacy types for backward compatibility
     export interface EventData {
         batchStarted?: BatchStartedEvent;
         batchFailed?: BatchFailed;

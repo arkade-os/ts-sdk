@@ -1,11 +1,11 @@
 # First image used to build the sources
-FROM golang:1.24.6 AS builder
+FROM golang:1.25.1 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION
 
-ARG BRANCH=74f4793
+ARG BRANCH=master
 
 WORKDIR /app
 
@@ -20,7 +20,7 @@ RUN cd arkd/pkg/ark-cli && \
     go build -ldflags="-X 'main.Version=${VERSION}'" -o /app/bin/ark main.go
 
 # Second image, running the arkd executable
-FROM alpine:3.20
+FROM alpine:3.22
 
 RUN apk update && apk upgrade
 

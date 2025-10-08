@@ -8,8 +8,8 @@ describe("Onchain integration tests", () => {
         { timeout: 30000 },
         async () => {
             // Create fresh wallet instances for this test
-            const alice = createTestOnchainWallet();
-            const bob = createTestOnchainWallet();
+            const alice = await createTestOnchainWallet();
+            const bob = await createTestOnchainWallet();
 
             // Initial balance check
             const aliceInitialBalance = await alice.wallet.getBalance();
