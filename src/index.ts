@@ -34,6 +34,7 @@ import {
     TreePartialSigs,
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
+import { VtxoManager } from "./wallet/vtxo-manager";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
@@ -128,6 +129,7 @@ export {
     SingleKey,
     OnchainWallet,
     Ramps,
+    VtxoManager,
 
     // Providers
     ESPLORA_URL,

@@ -476,22 +476,25 @@ export class Worker {
         }
 
         try {
-            let vtxos = await this.getSpendableVtxos();
-            if (!message.filter?.withRecoverable) {
-                if (!this.wallet) throw new Error("Wallet not initialized");
-                // exclude subdust and recoverable if we don't want recoverable
-                const notSubdust = (v: ExtendedVirtualCoin) => {
-                    const dustAmount = this.wallet?.dustAmount;
-                    return dustAmount == null
-                        ? true
-                        : !isSubdust(v, dustAmount);
-                };
-                vtxos = vtxos
-                    .filter(notSubdust)
-                    .filter((v) => !isRecoverable(v));
-            }
+            const vtxos = await this.getSpendableVtxos();
+            const dustAmount = this.wallet.dustAmount;
+            const includeRecoverable = message.filter?.withRecoverable ?? false;
 
-            event.source?.postMessage(Response.vtxos(message.id, vtxos));
+            const filteredVtxos = includeRecoverable
+                ? vtxos
+                : vtxos.filter((v) => {
+                      if (dustAmount != null && isSubdust(v, dustAmount)) {
+                          return false;
+                      }
+                      if (isRecoverable(v)) {
+                          return false;
+                      }
+                      return true;
+                  });
+
+            event.source?.postMessage(
+                Response.vtxos(message.id, filteredVtxos)
+            );
         } catch (error: unknown) {
             console.error("Error getting vtxos:", error);
             const errorMessage =

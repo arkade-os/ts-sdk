@@ -108,26 +108,76 @@ const settleTxid = await wallet.settle({
 })
 ```
 
+### VTXO Management (Renewal & Recovery)
+
+VTXOs have an expiration time (batch expiry). The SDK provides the `VtxoManager` class to handle both:
+
+- **Renewal**: Renew VTXOs before they expire to maintain unilateral control of the funds.
+- **Recovery**: Reclaim swept or expired VTXOs back to the wallet in case renewal window was missed.
+
+```typescript
+import { VtxoManager } from '@arkade-os/sdk'
+
+// Create manager with optional renewal configuration
+const manager = new VtxoManager(wallet, {
+  enabled: true,           // Enable expiration monitoring
+  thresholdPercentage: 10  // Alert when 10% of lifetime remains (default)
+})
+```
+
+#### Renewal: Prevent Expiration
+
+Renew VTXOs before they expire to keep your liquidity accessible. This settles all VTXOs (including recoverable ones) back to your wallet with a fresh expiration time.
+
+```typescript
+// Check which VTXOs are expiring soon
+const expiringVtxos = await manager.getExpiringVtxos()
+if (expiringVtxos.length > 0) {
+  console.log(`${expiringVtxos.length} VTXOs expiring soon`)
+
+  expiringVtxos.forEach(vtxo => {
+    const timeLeft = vtxo.virtualStatus.batchExpiry! - Date.now()
+    const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60))
+    console.log(`VTXO ${vtxo.txid} expires in ${hoursLeft} hours`)
+  })
+
+  // Renew all VTXOs to prevent expiration
+  const txid = await manager.renewVtxos()
+  console.log('Renewed:', txid)
+}
+
+// Override threshold percentage (e.g., renew when 5% of time remains)
+const urgentlyExpiring = await manager.getExpiringVtxos(5)
+```
+
+
+#### Recovery: Reclaim Swept VTXOs
+
+Recover VTXOs that have been swept by the server or consolidate small amounts (subdust).
+
+```typescript
+// Check what's recoverable
+const balance = await manager.getRecoverableBalance()
+console.log(`Recoverable: ${balance.recoverable} sats`)
+console.log(`Subdust: ${balance.subdust} sats`)
+console.log(`Subdust included: ${balance.includesSubdust}`)
+console.log(`VTXO count: ${balance.vtxoCount}`)
+
+if (balance.recoverable > 0n) {
+  // Recover swept VTXOs and preconfirmed subdust
+  const txid = await manager.recoverVtxos((event) => {
+    console.log('Settlement event:', event.type)
+  })
+  console.log('Recovered:', txid)
+}
+```
+
 
 ### Transaction History
 
 ```typescript
 // Get transaction history
 const history = await wallet.getTransactionHistory()
-console.log('History:', history)
-
-// Example history entry:
-{
-  key: {
-    boardingTxid: '...', // for boarding transactions
-    commitmentTxid: '...', // for commitment transactions
-    redeemTxid: '...'    // for regular transactions
-  },
-  type: TxType.TxReceived, // or TxType.TxSent
-  amount: 50000,
-  settled: true,
-  createdAt: 1234567890
-}
 ```
 
 ### Offboarding

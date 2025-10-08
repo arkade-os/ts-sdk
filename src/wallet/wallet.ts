@@ -57,6 +57,7 @@ import {
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
+import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -120,6 +121,12 @@ export type IncomingFunds =
 export class Wallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+    public readonly renewalConfig: Required<
+        Omit<WalletConfig["renewalConfig"], "enabled">
+    > & { enabled: boolean; thresholdPercentage: number };
+
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
@@ -133,9 +140,18 @@ export class Wallet implements IWallet {
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
         readonly dustAmount: bigint,
-        readonly walletRepository: WalletRepository,
-        readonly contractRepository: ContractRepository
-    ) {}
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository,
+        renewalConfig?: WalletConfig["renewalConfig"]
+    ) {
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
+        this.renewalConfig = {
+            enabled: renewalConfig?.enabled ?? false,
+            ...DEFAULT_RENEWAL_CONFIG,
+            ...renewalConfig,
+        };
+    }
 
     static async create(config: WalletConfig): Promise<Wallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
@@ -238,7 +254,8 @@ export class Wallet implements IWallet {
             forfeitOutputScript,
             info.dust,
             walletRepository,
-            contractRepository
+            contractRepository,
+            config.renewalConfig
         );
     }
 

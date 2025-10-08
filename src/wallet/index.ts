@@ -4,6 +4,7 @@ import { Identity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { StorageAdapter } from "../storage";
+import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 
@@ -51,6 +52,7 @@ export interface WalletConfig {
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
+    renewalConfig?: RenewalConfig;
 }
 
 /**
