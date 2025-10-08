@@ -92,22 +92,49 @@ export interface MarketHour {
     roundInterval: bigint;
 }
 
+export interface IntentFeeInfo {
+    offchainInput: string;
+    offchainOutput: string;
+    onchainInput: string;
+    onchainOutput: string;
+}
+
+export interface FeeInfo {
+    intentFee: IntentFeeInfo;
+    txFeeRate: string;
+}
+
+export interface PendingTx {
+    arkTxid: string;
+    finalArkTx: string;
+    signedCheckpointTxs: string[];
+}
+
+export interface DeprecatedSigner {
+    cutoffDate: bigint;
+    pubkey: string;
+}
+
 export interface ArkInfo {
-    signerPubkey: string;
-    vtxoTreeExpiry: bigint;
-    unilateralExitDelay: bigint;
-    roundInterval: bigint;
-    network: string;
-    dust: bigint;
-    forfeitAddress: string;
-    marketHour?: MarketHour;
-    version: string;
-    utxoMinAmount: bigint;
-    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
-    vtxoMinAmount: bigint;
-    vtxoMaxAmount: bigint; // -1 means no limit (default)
     boardingExitDelay: bigint;
-    checkpointExitClosure: string;
+    checkpointTapscript: string;
+    deprecatedSigners: DeprecatedSigner[];
+    digest: string;
+    dust: bigint;
+    fees: FeeInfo;
+    forfeitAddress: string;
+    forfeitPubkey: string;
+    marketHour?: MarketHour;
+    network: string;
+    roundInterval: bigint;
+    signerPubkey: string;
+    unilateralExitDelay: bigint;
+    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
+    utxoMinAmount: bigint;
+    version: string;
+    vtxoMaxAmount: bigint; // -1 means no limit (default)
+    vtxoMinAmount: bigint;
+    vtxoTreeExpiry: bigint;
 }
 
 export interface SignedIntent {
@@ -159,6 +186,7 @@ export interface ArkProvider {
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }>;
+    getPendingTxs(intent: SignedIntent): Promise<PendingTx[]>;
 }
 
 /**
@@ -184,16 +212,16 @@ export class RestArkProvider implements ArkProvider {
         const fromServer = await response.json();
         return {
             ...fromServer,
-            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
-            unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
-            roundInterval: BigInt(fromServer.roundInterval ?? 0),
-            dust: BigInt(fromServer.dust ?? 0),
-            utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
-            utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
-            vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
-            vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
-            checkpointExitClosure: fromServer.checkpointTapscript ?? "",
+            checkpointTapscript: fromServer.checkpointTapscript ?? "",
+            deprecatedSigners:
+                fromServer.deprecatedSigners?.map((signer: any) => ({
+                    cutoffDate: BigInt(signer.cutoffDate ?? 0),
+                    pubkey: signer.pubkey ?? "",
+                })) ?? [],
+            digest: fromServer.digest ?? "",
+            dust: BigInt(fromServer.dust ?? 0),
+            fees: fromServer.fees,
             marketHour:
                 "marketHour" in fromServer && fromServer.marketHour != null
                     ? {
@@ -209,6 +237,13 @@ export class RestArkProvider implements ArkProvider {
                           ),
                       }
                     : undefined,
+            roundInterval: BigInt(fromServer.roundInterval ?? 0),
+            unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
+            utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
+            utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
+            vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
+            vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
+            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
         };
     }
 
@@ -227,8 +262,8 @@ export class RestArkProvider implements ArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                signedArkTx: signedArkTx,
-                checkpointTxs: checkpointTxs,
+                signedArkTx,
+                checkpointTxs,
             }),
         });
 
@@ -532,6 +567,37 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
+    async getPendingTxs(intent: SignedIntent): Promise<PendingTx[]> {
+        const url = `${this.serverUrl}/v1/tx/pending`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ intent }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            try {
+                const grpcError = JSON.parse(errorText);
+                // gRPC errors usually have a message and code field
+                throw new Error(
+                    `Failed to get pending transactions: ${grpcError.message || grpcError.error || errorText}`
+                );
+                // eslint-disable-next-line @typescript-eslint/no-unused-vars
+            } catch (_) {
+                // If JSON parse fails, use the raw error text
+                throw new Error(
+                    `Failed to get pending transactions: ${errorText}`
+                );
+            }
+        }
+
+        const data = await response.json();
+        return data.pendingTxs;
+    }
+
     protected parseSettlementEvent(
         data: ProtoTypes.GetEventStreamResponse
     ): SettlementEvent | null {
@@ -675,20 +741,22 @@ export class RestArkProvider implements ArkProvider {
     }
 }
 
-function encodeMusig2Nonces(nonces: TreeNonces): string {
+function encodeMusig2Nonces(nonces: TreeNonces): Record<string, string> {
     const noncesObject: Record<string, string> = {};
     for (const [txid, nonce] of nonces) {
         noncesObject[txid] = hex.encode(nonce.pubNonce);
     }
-    return JSON.stringify(noncesObject);
+    return noncesObject;
 }
 
-function encodeMusig2Signatures(signatures: TreePartialSigs): string {
+function encodeMusig2Signatures(
+    signatures: TreePartialSigs
+): Record<string, string> {
     const sigObject: Record<string, string> = {};
     for (const [txid, sig] of signatures) {
         sigObject[txid] = hex.encode(sig.encode());
     }
-    return JSON.stringify(sigObject);
+    return sigObject;
 }
 
 function decodeMusig2Nonces(str: string): TreeNonces {
