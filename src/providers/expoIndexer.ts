@@ -1,6 +1,7 @@
 import { RestIndexerProvider, SubscriptionResponse, Vtxo } from "./indexer";
 import { isFetchTimeoutError } from "./ark";
 import { VirtualCoin } from "../wallet";
+import { getExpoFetch, sseStreamIterator } from "./utils";
 
 // Helper function to convert Vtxo to VirtualCoin (same as in indexer.ts)
 function convertVtxo(vtxo: Vtxo): VirtualCoin {
@@ -49,20 +50,16 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
         super(serverUrl);
     }
 
-    async *getSubscription(subscriptionId: string, abortSignal: AbortSignal) {
+    override async *getSubscription(
+        subscriptionId: string,
+        abortSignal: AbortSignal
+    ): AsyncIterableIterator<SubscriptionResponse> {
         // Detect if we're running in React Native/Expo environment
         const isReactNative =
             typeof navigator !== "undefined" &&
             navigator.product === "ReactNative";
 
-        // Dynamic import to avoid bundling expo/fetch in non-Expo environments
-        let expoFetch: typeof fetch = fetch; // Default to standard fetch
-        try {
-            const expoFetchModule = await import("expo/fetch");
-            // expo/fetch returns a compatible fetch function but with different types
-            expoFetch = expoFetchModule.fetch as unknown as typeof fetch;
-            console.debug("Using expo/fetch for indexer subscription");
-        } catch (error) {
+        const expoFetch = await getExpoFetch().catch((error) => {
             // In React Native/Expo, expo/fetch is required for proper streaming support
             if (isReactNative) {
                 throw new Error(
@@ -71,107 +68,45 @@ export class ExpoIndexerProvider extends RestIndexerProvider {
                         "Streaming support may not work with standard fetch in React Native."
                 );
             }
-            // In non-RN environments, fall back to standard fetch but warn about potential streaming issues
-            console.warn(
-                "Using standard fetch instead of expo/fetch. " +
-                    "Streaming may not be fully supported in some environments.",
-                error
-            );
-        }
+            throw error;
+        });
 
         const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
 
         while (!abortSignal.aborted) {
             try {
-                const res = await expoFetch(url, {
-                    headers: {
-                        Accept: "text/event-stream",
-                        "Content-Type": "application/json",
-                    },
-                    signal: abortSignal,
-                });
-
-                if (!res.ok) {
-                    throw new Error(
-                        `Unexpected status ${res.status} when subscribing to address updates`
-                    );
-                }
-
-                // Check if response is the expected content type
-                const contentType = res.headers.get("content-type");
-                if (
-                    contentType &&
-                    !contentType.includes("text/event-stream") &&
-                    !contentType.includes("application/json")
-                ) {
-                    throw new Error(
-                        `Unexpected content-type: ${contentType}. Expected text/event-stream or application/json`
-                    );
-                }
-
-                if (!res.body) {
-                    throw new Error("Response body is null");
-                }
-
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = "";
-
-                while (!abortSignal.aborted) {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                        break;
-                    }
-
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split("\n");
-
-                    for (let i = 0; i < lines.length - 1; i++) {
-                        const line = lines[i].trim();
-                        if (!line) continue;
-
-                        try {
-                            // Parse SSE format: "data: {json}"
-                            if (line.startsWith("data:")) {
-                                const jsonStr = line.substring(5).trim();
-                                if (!jsonStr) continue;
-
-                                const data = JSON.parse(jsonStr);
-                                // Handle new v8 proto format with heartbeat or event
-                                if (data.heartbeat !== undefined) {
-                                    // Skip heartbeat messages
-                                    continue;
-                                }
-                                // Process event messages
-                                if (data.event) {
-                                    yield {
-                                        txid: data.event.txid,
-                                        scripts: data.event.scripts || [],
-                                        newVtxos: (
-                                            data.event.newVtxos || []
-                                        ).map(convertVtxo),
-                                        spentVtxos: (
-                                            data.event.spentVtxos || []
-                                        ).map(convertVtxo),
-                                        sweptVtxos: (
-                                            data.event.sweptVtxos || []
-                                        ).map(convertVtxo),
-                                        tx: data.event.tx,
-                                        checkpointTxs: data.event.checkpointTxs,
-                                    };
-                                }
-                            }
-                        } catch (parseError) {
-                            console.error(
-                                "Failed to parse subscription response:",
-                                parseError
-                            );
-                            throw parseError;
+                yield* sseStreamIterator(
+                    url,
+                    abortSignal,
+                    expoFetch,
+                    { "Content-Type": "application/json" },
+                    (data): SubscriptionResponse | null => {
+                        // Handle new v8 proto format with heartbeat or event
+                        if (data.heartbeat !== undefined) {
+                            // Skip heartbeat messages
+                            return null;
                         }
+                        // Process event messages
+                        if (data.event) {
+                            return {
+                                txid: data.event.txid,
+                                scripts: data.event.scripts || [],
+                                newVtxos: (data.event.newVtxos || []).map(
+                                    convertVtxo
+                                ),
+                                spentVtxos: (data.event.spentVtxos || []).map(
+                                    convertVtxo
+                                ),
+                                sweptVtxos: (data.event.sweptVtxos || []).map(
+                                    convertVtxo
+                                ),
+                                tx: data.event.tx,
+                                checkpointTxs: data.event.checkpointTxs,
+                            };
+                        }
+                        return null;
                     }
-
-                    buffer = lines[lines.length - 1];
-                }
+                );
             } catch (error) {
                 if (error instanceof Error && error.name === "AbortError") {
                     break;
