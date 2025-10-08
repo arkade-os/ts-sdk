@@ -694,6 +694,11 @@ export class RestArkProvider implements ArkProvider {
             };
         }
 
+        // TODO: Handle TreeNoncesEvent when implemented server-side
+        if (data.treeNonces) {
+            return null;
+        }
+
         // Skip heartbeat events
         if (data.heartbeat) {
             return null;
@@ -805,6 +810,13 @@ namespace ProtoTypes {
         treeNonces: string;
     }
 
+    interface TreeNoncesEvent {
+        id: string;
+        topic: string[];
+        txid: string;
+        nonces: Record<string, string>;
+    }
+
     interface TreeTxEvent {
         id: string;
         topic: string[];
@@ -852,6 +864,7 @@ namespace ProtoTypes {
         batchFinalized?: BatchFinalizedEvent;
         treeSigningStarted?: TreeSigningStartedEvent;
         treeNoncesAggregated?: TreeNoncesAggregatedEvent;
+        treeNonces?: TreeNoncesEvent;
         treeTx?: TreeTxEvent;
         treeSignature?: TreeSignatureEvent;
         heartbeat?: Heartbeat;
