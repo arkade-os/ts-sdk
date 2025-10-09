@@ -85,11 +85,12 @@ export type SettlementEvent =
     | TreeTxEvent
     | TreeSignatureEvent;
 
-export interface MarketHour {
-    nextStartTime: bigint;
+export interface ScheduledSession {
+    duration: bigint;
+    fees: FeeInfo;
     nextEndTime: bigint;
+    nextStartTime: bigint;
     period: bigint;
-    roundInterval: bigint;
 }
 
 export interface IntentFeeInfo {
@@ -115,6 +116,8 @@ export interface DeprecatedSigner {
     pubkey: string;
 }
 
+export type ServiceStatus = Record<string, string>;
+
 export interface ArkInfo {
     boardingExitDelay: bigint;
     checkpointTapscript: string;
@@ -124,9 +127,10 @@ export interface ArkInfo {
     fees: FeeInfo;
     forfeitAddress: string;
     forfeitPubkey: string;
-    marketHour?: MarketHour;
     network: string;
-    roundInterval: bigint;
+    scheduledSession: ScheduledSession;
+    serviceStatus: ServiceStatus;
+    sessionDuration: bigint;
     signerPubkey: string;
     unilateralExitDelay: bigint;
     utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
@@ -134,7 +138,6 @@ export interface ArkInfo {
     version: string;
     vtxoMaxAmount: bigint; // -1 means no limit (default)
     vtxoMinAmount: bigint;
-    vtxoTreeExpiry: bigint;
 }
 
 export interface SignedIntent {
@@ -211,7 +214,6 @@ export class RestArkProvider implements ArkProvider {
         }
         const fromServer = await response.json();
         return {
-            ...fromServer,
             boardingExitDelay: BigInt(fromServer.boardingExitDelay ?? 0),
             checkpointTapscript: fromServer.checkpointTapscript ?? "",
             deprecatedSigners:
@@ -222,29 +224,37 @@ export class RestArkProvider implements ArkProvider {
             digest: fromServer.digest ?? "",
             dust: BigInt(fromServer.dust ?? 0),
             fees: fromServer.fees,
-            marketHour:
-                "marketHour" in fromServer && fromServer.marketHour != null
+            forfeitAddress: fromServer.forfeitAddress ?? "",
+            forfeitPubkey: fromServer.forfeitPubkey ?? "",
+            network: fromServer.network ?? "",
+            scheduledSession:
+                "scheduledSession" in fromServer &&
+                fromServer.scheduledSession != null
                     ? {
+                          duration: BigInt(
+                              fromServer.scheduledSession.duration ?? 0
+                          ),
                           nextStartTime: BigInt(
-                              fromServer.marketHour.nextStartTime ?? 0
+                              fromServer.scheduledSession.nextStartTime ?? 0
                           ),
                           nextEndTime: BigInt(
-                              fromServer.marketHour.nextEndTime ?? 0
+                              fromServer.scheduledSession.nextEndTime ?? 0
                           ),
-                          period: BigInt(fromServer.marketHour.period ?? 0),
-                          roundInterval: BigInt(
-                              fromServer.marketHour.roundInterval ?? 0
+                          period: BigInt(
+                              fromServer.scheduledSession.period ?? 0
                           ),
                       }
                     : undefined,
-            roundInterval: BigInt(fromServer.roundInterval ?? 0),
+            serviceStatus: fromServer.serviceStatus ?? {},
+            sessionDuration: BigInt(fromServer.sessionDuration ?? 0),
+            signerPubkey: fromServer.signerPubkey ?? "",
             unilateralExitDelay: BigInt(fromServer.unilateralExitDelay ?? 0),
             utxoMaxAmount: BigInt(fromServer.utxoMaxAmount ?? -1),
             utxoMinAmount: BigInt(fromServer.utxoMinAmount ?? 0),
+            version: fromServer.version ?? "",
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
-            vtxoTreeExpiry: BigInt(fromServer.vtxoTreeExpiry ?? 0),
-        };
+        } as ArkInfo;
     }
 
     async submitTx(
