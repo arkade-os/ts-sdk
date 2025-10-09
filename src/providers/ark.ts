@@ -1,9 +1,5 @@
 import { TxTreeNode } from "../tree/txTree";
-import {
-    Musig2PublicNonce,
-    TreeNonces,
-    TreePartialSigs,
-} from "../tree/signingSession";
+import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator } from "./utils";
