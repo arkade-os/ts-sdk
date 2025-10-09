@@ -96,6 +96,7 @@ describe("Wallet", () => {
                     json: () =>
                         Promise.resolve({
                             signerPubkey: mockServerKeyHex,
+                            forfeitPubkey: mockServerKeyHex,
                             batchExpiry: BigInt(144),
                             unilateralExitDelay: BigInt(144),
                             roundInterval: BigInt(144),
@@ -202,6 +203,7 @@ describe("Wallet", () => {
     describe("getInfos", () => {
         const mockArkInfo = {
             signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
             unilateralExitDelay: BigInt(144),
             roundInterval: BigInt(144),
