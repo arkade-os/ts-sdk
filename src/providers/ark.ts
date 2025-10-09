@@ -1,5 +1,9 @@
 import { TxTreeNode } from "../tree/txTree";
-import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
+import {
+    Musig2PublicNonce,
+    TreeNonces,
+    TreePartialSigs,
+} from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator } from "./utils";
@@ -15,7 +19,7 @@ export enum SettlementEventType {
     BatchFinalized = "batch_finalized",
     BatchFailed = "batch_failed",
     TreeSigningStarted = "tree_signing_started",
-    TreeNoncesAggregated = "tree_nonces_aggregated",
+    TreeNonces = "tree_nonces",
     TreeTx = "tree_tx",
     TreeSignature = "tree_signature",
 }
@@ -45,10 +49,12 @@ export type TreeSigningStartedEvent = {
     unsignedCommitmentTx: string;
 };
 
-export type TreeNoncesAggregatedEvent = {
-    type: SettlementEventType.TreeNoncesAggregated;
+export type TreeNoncesEvent = {
+    type: SettlementEventType.TreeNonces;
     id: string;
-    treeNonces: TreeNonces;
+    topic: string[];
+    txid: string;
+    nonces: TreeNonces; // pubkey -> public nonce
 };
 
 export type BatchStartedEvent = {
@@ -80,7 +86,7 @@ export type SettlementEvent =
     | BatchFinalizedEvent
     | BatchFailedEvent
     | TreeSigningStartedEvent
-    | TreeNoncesAggregatedEvent
+    | TreeNoncesEvent
     | BatchStartedEvent
     | TreeTxEvent
     | TreeSignatureEvent;
@@ -651,12 +657,17 @@ export class RestArkProvider implements ArkProvider {
 
         // Check for TreeNoncesAggregated event
         if (data.treeNoncesAggregated) {
+            // skip treeNoncesAggregated event, deprecated
+            return null;
+        }
+
+        if (data.treeNonces) {
             return {
-                type: SettlementEventType.TreeNoncesAggregated,
-                id: data.treeNoncesAggregated.id,
-                treeNonces: decodeMusig2Nonces(
-                    data.treeNoncesAggregated.treeNonces
-                ),
+                type: SettlementEventType.TreeNonces,
+                id: data.treeNonces.id,
+                topic: data.treeNonces.topic,
+                txid: data.treeNonces.txid,
+                nonces: decodeMusig2Nonces(data.treeNonces.nonces), // pubkey -> public nonce
             };
         }
 
@@ -692,11 +703,6 @@ export class RestArkProvider implements ArkProvider {
                 txid: data.treeSignature.txid,
                 signature: data.treeSignature.signature,
             };
-        }
-
-        // TODO: Handle TreeNoncesEvent when implemented server-side
-        if (data.treeNonces) {
-            return null;
         }
 
         // Skip heartbeat events
