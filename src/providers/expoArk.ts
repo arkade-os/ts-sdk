@@ -4,7 +4,7 @@ import {
     TxNotification,
     isFetchTimeoutError,
 } from "./ark";
-import { getExpoFetch, sseStreamIterator } from "./utils";
+import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 
 /**
  * Expo-compatible Ark provider implementation using expo/fetch for SSE support.
