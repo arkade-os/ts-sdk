@@ -764,8 +764,7 @@ function encodeMusig2Signatures(
     return sigObject;
 }
 
-function decodeMusig2Nonces(str: string): TreeNonces {
-    const noncesObject = JSON.parse(str);
+function decodeMusig2Nonces(noncesObject: Record<string, string>): TreeNonces {
     return new Map(
         Object.entries(noncesObject).map(([txid, nonce]) => {
             if (typeof nonce !== "string") {
@@ -807,7 +806,7 @@ namespace ProtoTypes {
 
     interface TreeNoncesAggregatedEvent {
         id: string;
-        treeNonces: string;
+        treeNonces: Record<string, string>;
     }
 
     interface TreeNoncesEvent {

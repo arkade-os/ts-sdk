@@ -139,6 +139,7 @@ export class Wallet implements IWallet {
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
+        readonly forfeitPubkey: Bytes,
         readonly dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
@@ -197,6 +198,7 @@ export class Wallet implements IWallet {
         const onchainProvider =
             config.onchainProvider || new EsploraProvider(esploraUrl);
 
+        // Generate timelocks
         const exitTimelock: RelativeTimelock = {
             value: info.unilateralExitDelay,
             type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
@@ -205,6 +207,7 @@ export class Wallet implements IWallet {
             value: info.boardingExitDelay,
             type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
         };
+
         // Generate tapscripts for offchain and boarding address
         const serverPubKey = hex.decode(info.signerPubkey).slice(1);
         const bareVtxoTapscript = new DefaultVtxo.Script({
@@ -232,6 +235,7 @@ export class Wallet implements IWallet {
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
+        const forfeitPubkey = hex.decode(info.forfeitPubkey).slice(1);
         const forfeitAddress = Address(network).decode(info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
@@ -252,6 +256,7 @@ export class Wallet implements IWallet {
             boardingTapscript,
             serverUnrollScript,
             forfeitOutputScript,
+            forfeitPubkey,
             info.dust,
             walletRepository,
             contractRepository,
@@ -730,7 +735,7 @@ export class Wallet implements IWallet {
                         const res = await this.handleBatchStartedEvent(
                             event,
                             intentId,
-                            this.arkServerPublicKey,
+                            this.forfeitPubkey,
                             this.forfeitOutputScript
                         );
                         if (!res.skip) {
@@ -977,7 +982,7 @@ export class Wallet implements IWallet {
     private async handleBatchStartedEvent(
         event: BatchStartedEvent,
         intentId: string,
-        serverPubKey: Bytes,
+        forfeitPubKey: Bytes,
         forfeitOutputScript: Bytes
     ): Promise<
         | { skip: true }
@@ -1014,7 +1019,7 @@ export class Wallet implements IWallet {
                 value: event.batchExpiry,
                 type: event.batchExpiry >= 512n ? "seconds" : "blocks",
             },
-            pubkeys: [serverPubKey],
+            pubkeys: [forfeitPubKey],
         }).script;
 
         const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
