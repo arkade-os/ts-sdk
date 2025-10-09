@@ -1,7 +1,7 @@
 import { RestIndexerProvider, SubscriptionResponse, Vtxo } from "./indexer";
 import { isFetchTimeoutError } from "./ark";
 import { VirtualCoin } from "../wallet";
-import { getExpoFetch, sseStreamIterator } from "./utils";
+import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 
 // Helper function to convert Vtxo to VirtualCoin (same as in indexer.ts)
 function convertVtxo(vtxo: Vtxo): VirtualCoin {
