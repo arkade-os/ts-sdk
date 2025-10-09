@@ -1,0 +1,74 @@
+name: CI
+
+on:
+    push:
+        branches: [master, next-version]
+    pull_request:
+        branches: [master, next-version]
+
+jobs:
+    test:
+        runs-on: ubuntu-latest
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+
+            - name: Install pnpm
+              uses: pnpm/action-setup@v2
+              with:
+                  version: 8
+
+            - name: Get pnpm store directory
+              shell: bash
+              run: |
+                  echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+            - name: Setup pnpm cache
+              uses: actions/cache@v3
+              with:
+                  path: ${{ env.STORE_PATH }}
+                  key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+                  restore-keys: |
+                      ${{ runner.os }}-pnpm-store-
+
+            - name: Install dependencies
+              run: pnpm install
+
+            - name: Run Nigiri
+              uses: vulpemventures/nigiri-github-action@v1
+              with:
+                  use_liquid: false
+                  use_ln: false
+
+            - name: Build arkd master
+              run: pnpm run test:build-docker
+
+            - name: Run arkd master
+              run: pnpm run test:up-docker
+
+            - name: Run setup script
+              run: pnpm test:setup-docker
+
+            - name: Run integration tests
+              run: pnpm test:integration-docker
+
+            - name: Capture arkd logs
+              if: failure()
+              run: |
+                  docker logs arkd > arkd.log || true
+                  if [ -f arkd.log ]; then
+                    echo "=== arkd logs ==="
+                    cat arkd.log
+                  fi
+
+            - name: Tear down arkd
+              run: pnpm run test:down-docker
+              if: always()
+
+            - name: Check TypeScript compilation
+              run: pnpm build
