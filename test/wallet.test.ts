@@ -212,10 +212,6 @@ describe("Wallet", () => {
             boardingDescriptorTemplate: "boarding_template",
             vtxoDescriptorTemplates: ["vtxo_template"],
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-            marketHour: {
-                start: 0,
-                end: 24,
-            },
             checkpointTapscript:
                 "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
         };

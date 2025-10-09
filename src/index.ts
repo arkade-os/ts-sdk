@@ -64,7 +64,7 @@ import {
     BatchStartedEvent,
     TreeTxEvent,
     TreeSignatureEvent,
-    MarketHour,
+    ScheduledSession,
 } from "./providers/ark";
 import {
     CLTVMultisigTapscript,
@@ -255,7 +255,7 @@ export type {
     BatchStartedEvent,
     TreeTxEvent,
     TreeSignatureEvent,
-    MarketHour,
+    ScheduledSession,
     PaginationOptions,
     SubscriptionResponse,
     SubscriptionHeartbeat,
