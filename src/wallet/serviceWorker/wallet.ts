@@ -381,6 +381,11 @@ export class ServiceWorkerWallet implements IWallet {
                 const messageHandler = (event: MessageEvent) => {
                     const response = event.data as Response.Base;
 
+                    // Ignore messages that don't match the request ID
+                    if (response.id !== message.id) {
+                        return;
+                    }
+
                     if (!response.success) {
                         navigator.serviceWorker.removeEventListener(
                             "message",
