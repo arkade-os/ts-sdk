@@ -45,14 +45,12 @@ const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
 export interface WalletRepository {
     // VTXO management
     getVtxos(address: string): Promise<ExtendedVirtualCoin[]>;
-    saveVtxo(address: string, vtxo: ExtendedVirtualCoin): Promise<void>;
     saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void>;
     removeVtxo(address: string, vtxoId: string): Promise<void>;
     clearVtxos(address: string): Promise<void>;
 
     // Transaction history
     getTransactionHistory(address: string): Promise<ArkTransaction[]>;
-    saveTransaction(address: string, tx: ArkTransaction): Promise<void>;
     saveTransactions(address: string, txs: ArkTransaction[]): Promise<void>;
     clearTransactions(address: string): Promise<void>;
 
@@ -106,25 +104,6 @@ export class WalletRepositoryImpl implements WalletRepository {
             this.cache.vtxos.set(address, []);
             return [];
         }
-    }
-
-    async saveVtxo(address: string, vtxo: ExtendedVirtualCoin): Promise<void> {
-        const vtxos = await this.getVtxos(address);
-        const existing = vtxos.findIndex(
-            (v) => v.txid === vtxo.txid && v.vout === vtxo.vout
-        );
-
-        if (existing !== -1) {
-            vtxos[existing] = vtxo;
-        } else {
-            vtxos.push(vtxo);
-        }
-
-        this.cache.vtxos.set(address, vtxos.slice());
-        await this.storage.setItem(
-            `vtxos:${address}`,
-            JSON.stringify(vtxos.map(serializeVtxo))
-        );
     }
 
     async saveVtxos(
@@ -193,26 +172,6 @@ export class WalletRepositoryImpl implements WalletRepository {
             this.cache.transactions.set(address, []);
             return [];
         }
-    }
-
-    async saveTransaction(address: string, tx: ArkTransaction): Promise<void> {
-        const transactions = await this.getTransactionHistory(address);
-        const existing = transactions.findIndex((t) => t.key === tx.key);
-
-        if (existing !== -1) {
-            transactions[existing] = tx;
-        } else {
-            transactions.push(tx);
-        }
-
-        // Sort by createdAt descending
-        transactions.sort((a, b) => b.createdAt - a.createdAt);
-
-        this.cache.transactions.set(address, transactions);
-        await this.storage.setItem(
-            `tx:${address}`,
-            JSON.stringify(transactions)
-        );
     }
 
     async saveTransactions(
