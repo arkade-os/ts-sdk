@@ -1,5 +1,12 @@
-import { WalletBalance, VirtualCoin, ArkTransaction, IWallet } from "..";
+import { hex } from "@scure/base";
+import { WalletBalance, VirtualCoin, ArkTransaction, IWallet, Coin } from "..";
+import { ExtendedVirtualCoin } from "../..";
 import { SettlementEvent } from "../../providers/ark";
+
+function getRandomId(): string {
+    const randomValue = crypto.getRandomValues(new Uint8Array(16));
+    return hex.encode(randomValue);
+}
 
 /**
  * Response is the namespace that contains the response types for the service worker.
@@ -20,7 +27,9 @@ export namespace Response {
         | "TRANSACTION_HISTORY"
         | "WALLET_STATUS"
         | "ERROR"
-        | "CLEAR_RESPONSE";
+        | "CLEAR_RESPONSE"
+        | "VTXO_UPDATE"
+        | "UTXO_UPDATE";
 
     export interface Base {
         type: Type;
@@ -332,6 +341,47 @@ export namespace Response {
             type: "WALLET_RELOADED",
             success,
             id,
+        };
+    }
+
+    export interface VtxoUpdate extends Base {
+        type: "VTXO_UPDATE";
+        spentVtxos: ExtendedVirtualCoin[];
+        newVtxos: ExtendedVirtualCoin[];
+    }
+
+    export function isVtxoUpdate(response: Base): response is VtxoUpdate {
+        return response.type === "VTXO_UPDATE";
+    }
+
+    export function vtxoUpdate(
+        newVtxos: ExtendedVirtualCoin[],
+        spentVtxos: ExtendedVirtualCoin[]
+    ): VtxoUpdate {
+        return {
+            type: "VTXO_UPDATE",
+            id: getRandomId(), // spontaneous update, not tied to a request
+            success: true,
+            spentVtxos,
+            newVtxos,
+        };
+    }
+
+    export interface UtxoUpdate extends Base {
+        type: "UTXO_UPDATE";
+        coins: Coin[];
+    }
+
+    export function isUtxoUpdate(response: Base): response is UtxoUpdate {
+        return response.type === "UTXO_UPDATE";
+    }
+
+    export function utxoUpdate(coins: Coin[]): UtxoUpdate {
+        return {
+            type: "UTXO_UPDATE",
+            id: getRandomId(), // spontaneous update, not tied to a request
+            success: true,
+            coins,
         };
     }
 }
