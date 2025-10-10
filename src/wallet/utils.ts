@@ -1,4 +1,10 @@
-import type { ExtendedVirtualCoin, VirtualCoin, Wallet } from "..";
+import type {
+    Coin,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+    VirtualCoin,
+    Wallet,
+} from "..";
 
 export function extendVirtualCoin(
     wallet: Wallet,
@@ -6,6 +12,18 @@ export function extendVirtualCoin(
 ): ExtendedVirtualCoin {
     return {
         ...vtxo,
+        forfeitTapLeafScript: wallet.offchainTapscript.forfeit(),
+        intentTapLeafScript: wallet.offchainTapscript.exit(),
+        tapTree: wallet.offchainTapscript.encode(),
+    };
+}
+
+export function extendCoin(
+    wallet: Wallet,
+    utxo: Coin
+): ExtendedCoin {
+    return {
+        ...utxo,
         forfeitTapLeafScript: wallet.offchainTapscript.forfeit(),
         intentTapLeafScript: wallet.offchainTapscript.exit(),
         tapTree: wallet.offchainTapscript.encode(),

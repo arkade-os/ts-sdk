@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { TapLeafScript } from "../script/base";
 import { StorageAdapter } from "../storage";
-import { ArkTransaction, ExtendedVirtualCoin } from "../wallet";
+import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
 import { TaprootControlBlock } from "@scure/btc-signer";
 
 export interface WalletState {
@@ -28,6 +28,14 @@ const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     extraWitness: v.extraWitness?.map((w) => toHex(w)),
 });
 
+const serializeUtxo = (u: ExtendedCoin) => ({
+    ...u,
+    tapTree: toHex(u.tapTree),
+    forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
+    intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
+    extraWitness: u.extraWitness?.map((w) => toHex(w)),
+})
+
 const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
     const cb = TaprootControlBlock.decode(fromHex(t.cb));
     const s = fromHex(t.s);
@@ -42,6 +50,14 @@ const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
     extraWitness: o.extraWitness?.map((w: string) => fromHex(w)),
 });
 
+const deserializeUtxo = (o: any): ExtendedCoin => ({
+    ...o,
+    tapTree: fromHex(o.tapTree),
+    forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
+    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
+    extraWitness: o.extraWitness?.map((w: string) => fromHex(w)),
+})
+
 export interface WalletRepository {
     // VTXO management
     getVtxos(address: string): Promise<ExtendedVirtualCoin[]>;
@@ -49,6 +65,12 @@ export interface WalletRepository {
     saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void>;
     removeVtxo(address: string, vtxoId: string): Promise<void>;
     clearVtxos(address: string): Promise<void>;
+
+    // UTXO management
+    getUtxos(address: string): Promise<ExtendedCoin[]>;
+    saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void>;
+    removeUtxos(address: string, utxoId: string): Promise<void>;
+    clearUtxos(address: string): Promise<void>;
 
     // Transaction history
     getTransactionHistory(address: string): Promise<ArkTransaction[]>;
@@ -65,6 +87,7 @@ export class WalletRepositoryImpl implements WalletRepository {
     private storage: StorageAdapter;
     private cache: {
         vtxos: Map<string, ExtendedVirtualCoin[]>;
+        utxos: Map<string, ExtendedCoin[]>;
         transactions: Map<string, ArkTransaction[]>;
         walletState: WalletState | null;
         initialized: Set<string>;
@@ -74,6 +97,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         this.storage = storage;
         this.cache = {
             vtxos: new Map(),
+            utxos: new Map(),
             transactions: new Map(),
             walletState: null,
             initialized: new Set(),
@@ -166,6 +190,73 @@ export class WalletRepositoryImpl implements WalletRepository {
     async clearVtxos(address: string): Promise<void> {
         this.cache.vtxos.set(address, []);
         await this.storage.removeItem(`vtxos:${address}`);
+    }
+
+    async getUtxos(address: string): Promise<ExtendedCoin[]> {
+        const cacheKey = `utxos:${address}`;
+
+        if (this.cache.utxos.has(address)) {
+            return this.cache.utxos.get(address)!;
+        }
+
+        const stored = await this.storage.getItem(cacheKey);
+        if (!stored) {
+            this.cache.utxos.set(address, []);
+            return [];
+        }
+
+        try {
+            const parsed = JSON.parse(stored) as ExtendedCoin[];
+            const utxos = parsed.map(deserializeUtxo);
+            this.cache.utxos.set(address, utxos.slice());
+            return utxos.slice();
+        } catch (error) {
+            console.error(
+                `Failed to parse UTXOs for address ${address}:`,
+                error
+            );
+            this.cache.utxos.set(address, []);
+            return [];
+        }
+    }
+
+    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
+        const storedUtxos = await this.getUtxos(address);
+        utxos.forEach(
+            (utxo) => {
+                const existing = storedUtxos.findIndex(
+                    (u) => u.txid === utxo.txid && u.vout === utxo.vout
+                );
+                if (existing !== -1) {
+                    storedUtxos[existing] = utxo;
+                } else {
+                    storedUtxos.push(utxo);
+                }
+            }
+        )
+        this.cache.utxos.set(address, storedUtxos.slice());
+        await this.storage.setItem(
+            `utxos:${address}`,
+            JSON.stringify(storedUtxos.map(serializeUtxo))
+        );
+    }
+
+    async removeUtxos(address: string, utxoId: string): Promise<void> {
+        const utxos = await this.getUtxos(address);
+        const [txid, vout] = utxoId.split(":");
+        const filtered = utxos.filter(
+            (v) => !(v.txid === txid && v.vout === parseInt(vout, 10))
+        );
+        this.cache.utxos.set(address, filtered.slice());
+        await this.storage.setItem(
+            `utxos:${address}`,
+            JSON.stringify(filtered.map(serializeUtxo))
+        );
+    }
+
+    async clearUtxos(address: string): Promise<void> {
+        this.cache.utxos.set(address, []);
+        await this.storage.removeItem(`utxos:${address}`);
     }
 
     async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
