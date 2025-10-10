@@ -380,6 +380,9 @@ export class ServiceWorkerWallet implements IWallet {
             return new Promise((resolve, reject) => {
                 const messageHandler = (event: MessageEvent) => {
                     const response = event.data as Response.Base;
+                    if (response.id !== message.id) {
+                        return;
+                    }
 
                     // Ignore messages that don't match the request ID
                     if (response.id !== message.id) {
