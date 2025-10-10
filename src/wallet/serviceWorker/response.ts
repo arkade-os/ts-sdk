@@ -355,8 +355,8 @@ export namespace Response {
     }
 
     export function vtxoUpdate(
-        spentVtxos: ExtendedVirtualCoin[],
-        newVtxos: ExtendedVirtualCoin[]
+        newVtxos: ExtendedVirtualCoin[],
+        spentVtxos: ExtendedVirtualCoin[]
     ): VtxoUpdate {
         return {
             type: "VTXO_UPDATE",
