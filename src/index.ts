@@ -122,6 +122,7 @@ import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
+import { ArkError, maybeArkError } from "./providers/errors";
 
 export {
     // Wallets
@@ -200,6 +201,10 @@ export {
     P2A,
     Unroll,
     Transaction,
+
+    // Errors
+    ArkError,
+    maybeArkError,
 };
 
 export type {

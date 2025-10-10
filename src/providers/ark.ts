@@ -3,6 +3,7 @@ import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator } from "./utils";
+import { maybeArkError } from "./errors";
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -210,7 +211,9 @@ export class RestArkProvider implements ArkProvider {
         const url = `${this.serverUrl}/v1/info`;
         const response = await fetch(url);
         if (!response.ok) {
-            throw new Error(
+            const errorText = await response.text();
+            handleError(
+                errorText,
                 `Failed to get server info: ${response.statusText}`
             );
         }
@@ -281,19 +284,10 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            try {
-                const grpcError = JSON.parse(errorText);
-                // gRPC errors usually have a message and code field
-                throw new Error(
-                    `Failed to submit virtual transaction: ${grpcError.message || grpcError.error || errorText}`
-                );
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            } catch (_) {
-                // If JSON parse fails, use the raw error text
-                throw new Error(
-                    `Failed to submit virtual transaction: ${errorText}`
-                );
-            }
+            handleError(
+                errorText,
+                `Failed to submit virtual transaction: ${errorText}`
+            );
         }
 
         const data = await response.json();
@@ -322,7 +316,8 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(
+            handleError(
+                errorText,
                 `Failed to finalize offchain transaction: ${errorText}`
             );
         }
@@ -345,7 +340,7 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to register intent: ${errorText}`);
+            handleError(errorText, `Failed to register intent: ${errorText}`);
         }
 
         const data = await response.json();
@@ -369,7 +364,7 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to delete intent: ${errorText}`);
+            handleError(errorText, `Failed to delete intent: ${errorText}`);
         }
     }
 
@@ -387,7 +382,10 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to confirm registration: ${errorText}`);
+            handleError(
+                errorText,
+                `Failed to confirm registration: ${errorText}`
+            );
         }
     }
 
@@ -411,7 +409,10 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to submit tree nonces: ${errorText}`);
+            handleError(
+                errorText,
+                `Failed to submit tree nonces: ${errorText}`
+            );
         }
     }
 
@@ -435,7 +436,10 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            throw new Error(`Failed to submit tree signatures: ${errorText}`);
+            handleError(
+                errorText,
+                `Failed to submit tree signatures: ${errorText}`
+            );
         }
     }
 
@@ -456,7 +460,9 @@ export class RestArkProvider implements ArkProvider {
         });
 
         if (!response.ok) {
-            throw new Error(
+            const errorText = await response.text();
+            handleError(
+                errorText,
                 `Failed to submit forfeit transactions: ${response.statusText}`
             );
         }
@@ -591,19 +597,10 @@ export class RestArkProvider implements ArkProvider {
 
         if (!response.ok) {
             const errorText = await response.text();
-            try {
-                const grpcError = JSON.parse(errorText);
-                // gRPC errors usually have a message and code field
-                throw new Error(
-                    `Failed to get pending transactions: ${grpcError.message || grpcError.error || errorText}`
-                );
-                // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            } catch (_) {
-                // If JSON parse fails, use the raw error text
-                throw new Error(
-                    `Failed to get pending transactions: ${errorText}`
-                );
-            }
+            handleError(
+                errorText,
+                `Failed to get pending transactions: ${errorText}`
+            );
         }
 
         const data = await response.json();
@@ -968,4 +965,10 @@ function mapVtxo(vtxo: ProtoTypes.VtxoData): Vtxo {
         settledBy: vtxo.settledBy,
         arkTxid: vtxo.arkTxid,
     };
+}
+
+function handleError(errorText: string, defaultMessage: string): never {
+    const error = new Error(errorText);
+    const arkError = maybeArkError(error);
+    throw arkError ?? new Error(defaultMessage);
 }

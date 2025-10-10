@@ -9,6 +9,8 @@ import {
     Ramps,
     Coin,
     VirtualCoin,
+    RestArkProvider,
+    ArkError,
 } from "../../src";
 import {
     arkdExec,
@@ -742,5 +744,19 @@ describe("Ark integration tests", () => {
 
         // now bob should be able to settle
         await bob.wallet.settle();
+    });
+
+    it("should parse ark errors", { timeout: 60000 }, async () => {
+        const provider = new RestArkProvider("http://localhost:7070");
+        try {
+            await provider.submitTx("invalid", ["invalid"]);
+        } catch (error) {
+            expect(error).toBeDefined();
+            expect(error).toBeInstanceOf(ArkError);
+            expect(error.message).toContain("INVALID_ARK_PSBT (1)");
+            expect(error.code).toBe(1);
+            expect(error.name).toBe("INVALID_ARK_PSBT");
+            expect(error.metadata).toStrictEqual({ tx: "invalid" });
+        }
     });
 });
