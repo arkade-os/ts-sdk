@@ -360,7 +360,7 @@ export namespace Response {
     ): VtxoUpdate {
         return {
             type: "VTXO_UPDATE",
-            id: getRandomId(),
+            id: getRandomId(), // spontaneous update, not tied to a request
             success: true,
             spentVtxos,
             newVtxos,
@@ -379,7 +379,7 @@ export namespace Response {
     export function utxoUpdate(coins: Coin[]): UtxoUpdate {
         return {
             type: "UTXO_UPDATE",
-            id: getRandomId(),
+            id: getRandomId(), // spontaneous update, not tied to a request
             success: true,
             coins,
         };
