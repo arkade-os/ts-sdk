@@ -497,11 +497,9 @@ export class Wallet implements IWallet {
         const boardingUtxos =
             await this.onchainProvider.getCoins(boardingAddress);
 
-        const utxos = boardingUtxos.map(
-            (utxo) => {
-                return extendCoin(this, utxo)
-            }
-        )
+        const utxos = boardingUtxos.map((utxo) => {
+            return extendCoin(this, utxo);
+        });
 
         // Save boardingUtxos using unified repository
         await this.walletRepository.saveUtxos(boardingAddress, utxos);

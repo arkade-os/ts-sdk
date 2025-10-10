@@ -34,7 +34,7 @@ const serializeUtxo = (u: ExtendedCoin) => ({
     forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
     extraWitness: u.extraWitness?.map((w) => toHex(w)),
-})
+});
 
 const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
     const cb = TaprootControlBlock.decode(fromHex(t.cb));
@@ -56,7 +56,7 @@ const deserializeUtxo = (o: any): ExtendedCoin => ({
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
     extraWitness: o.extraWitness?.map((w: string) => fromHex(w)),
-})
+});
 
 export interface WalletRepository {
     // VTXO management
@@ -222,18 +222,16 @@ export class WalletRepositoryImpl implements WalletRepository {
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
         const storedUtxos = await this.getUtxos(address);
-        utxos.forEach(
-            (utxo) => {
-                const existing = storedUtxos.findIndex(
-                    (u) => u.txid === utxo.txid && u.vout === utxo.vout
-                );
-                if (existing !== -1) {
-                    storedUtxos[existing] = utxo;
-                } else {
-                    storedUtxos.push(utxo);
-                }
+        utxos.forEach((utxo) => {
+            const existing = storedUtxos.findIndex(
+                (u) => u.txid === utxo.txid && u.vout === utxo.vout
+            );
+            if (existing !== -1) {
+                storedUtxos[existing] = utxo;
+            } else {
+                storedUtxos.push(utxo);
             }
-        )
+        });
         this.cache.utxos.set(address, storedUtxos.slice());
         await this.storage.setItem(
             `utxos:${address}`,

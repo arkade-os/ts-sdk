@@ -18,10 +18,7 @@ export function extendVirtualCoin(
     };
 }
 
-export function extendCoin(
-    wallet: Wallet,
-    utxo: Coin
-): ExtendedCoin {
+export function extendCoin(wallet: Wallet, utxo: Coin): ExtendedCoin {
     return {
         ...utxo,
         forfeitTapLeafScript: wallet.offchainTapscript.forfeit(),
