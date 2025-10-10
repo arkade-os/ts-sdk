@@ -24,18 +24,18 @@ export function maybeArkError(error: any): ArkError | undefined {
 
         // search for a valid details object with the correct type
         for (const details of decoded.details) {
-            if (!("@type" in details)) return undefined;
+            if (!("@type" in details)) continue;
             const type = details["@type"];
-            if (type !== "type.googleapis.com/ark.v1.ErrorDetails")
-                return undefined;
+            if (type !== "type.googleapis.com/ark.v1.ErrorDetails") continue;
 
-            if (!("code" in details)) return undefined;
+            if (!("code" in details)) continue;
+
             const code = details.code;
 
-            if (!("message" in details)) return undefined;
+            if (!("message" in details)) continue;
             const message = details.message;
 
-            if (!("name" in details)) return undefined;
+            if (!("name" in details)) continue;
             const name = details.name;
 
             let metadata: Record<string, string> | undefined;
