@@ -147,7 +147,6 @@ export class Worker {
         this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
             async (funds) => {
                 if (funds.type === "vtxo") {
-                    console.log("porco new vtxo funds", funds);
                     const newVtxos =
                         funds.newVtxos.length > 0
                             ? funds.newVtxos.map((vtxo) =>
