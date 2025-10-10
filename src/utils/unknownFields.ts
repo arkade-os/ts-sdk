@@ -15,9 +15,9 @@ export enum ArkPsbtFieldKey {
 
 /**
  * ArkPsbtFieldKeyType is the type of the ark psbt field key.
- * Every ark psbt field has key type 255.
+ * Every ark psbt field has key type 222.
  */
-export const ArkPsbtFieldKeyType = 255;
+export const ArkPsbtFieldKeyType = 222;
 
 /**
  * ArkPsbtFieldCoder is the coder for the ark psbt fields.
