@@ -10,7 +10,8 @@ import { TxTree } from "./txTree";
 export const ErrMissingVtxoGraph = new Error("missing vtxo graph");
 export const ErrMissingAggregateKey = new Error("missing aggregate key");
 
-export type TreeNonces = Map<string, Pick<musig2.Nonces, "pubNonce">>;
+export type Musig2PublicNonce = Pick<musig2.Nonces, "pubNonce">;
+export type TreeNonces = Map<string, Musig2PublicNonce>;
 export type TreePartialSigs = Map<string, musig2.PartialSig>;
 
 // Signer session defines the methods to participate in a cooperative signing process
@@ -24,7 +25,10 @@ export interface SignerSession {
         rootInputAmount: bigint
     ): Promise<void>;
     getNonces(): Promise<TreeNonces>;
-    setAggregatedNonces(nonces: TreeNonces): Promise<void>;
+    aggregatedNonces(
+        txid: string,
+        noncesByPubkey: TreeNonces
+    ): Promise<{ hasAllNonces: boolean }>;
     sign(): Promise<TreePartialSigs>;
 }
 
@@ -75,9 +79,52 @@ export class TreeSignerSession implements SignerSession {
         return publicNonces;
     }
 
-    async setAggregatedNonces(nonces: TreeNonces): Promise<void> {
-        if (this.aggregateNonces) throw new Error("nonces already set");
-        this.aggregateNonces = nonces;
+    async aggregatedNonces(
+        txid: string,
+        noncesByPubkey: TreeNonces
+    ): Promise<{ hasAllNonces: boolean }> {
+        if (!this.graph) throw ErrMissingVtxoGraph;
+        if (!this.aggregateNonces) {
+            this.aggregateNonces = new Map();
+        }
+        if (!this.myNonces) {
+            await this.getNonces(); // generate nonces if not generated yet
+        }
+        if (this.aggregateNonces.has(txid)) {
+            return {
+                hasAllNonces: this.aggregateNonces.size === this.myNonces?.size,
+            };
+        }
+
+        const myNonce = this.myNonces!.get(txid);
+        if (!myNonce) throw new Error(`missing nonce for txid ${txid}`);
+
+        const myPublicKey = await this.getPublicKey();
+        // set my nonce to not rely on server
+        noncesByPubkey.set(hex.encode(myPublicKey.subarray(1)), myNonce);
+
+        const tx = this.graph.find(txid);
+        if (!tx) throw new Error(`missing tx for txid ${txid}`);
+
+        const cosigners = getArkPsbtFields(tx.root, 0, CosignerPublicKey).map(
+            (c) => hex.encode(c.key.subarray(1)) // xonly pubkey
+        );
+
+        const pubNonces: Uint8Array[] = [];
+        for (const cosigner of cosigners) {
+            const nonce = noncesByPubkey.get(cosigner);
+            if (!nonce) {
+                throw new Error(`missing nonce for cosigner ${cosigner}`);
+            }
+            pubNonces.push(nonce.pubNonce);
+        }
+
+        const aggregateNonce = musig2.aggregateNonces(pubNonces);
+        this.aggregateNonces.set(txid, { pubNonce: aggregateNonce });
+
+        return {
+            hasAllNonces: this.aggregateNonces.size === this.myNonces?.size,
+        };
     }
 
     async sign(): Promise<TreePartialSigs> {

@@ -23,12 +23,12 @@ import {
     BatchFinalizationEvent,
     SettlementEvent,
     SettlementEventType,
-    TreeNoncesAggregatedEvent,
     TreeSigningStartedEvent,
     ArkProvider,
     RestArkProvider,
     BatchStartedEvent,
     SignedIntent,
+    TreeNoncesEvent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -745,14 +745,14 @@ export class Wallet implements IWallet {
                             if (!hasOffchainOutputs) {
                                 // if there are no offchain outputs, we don't have to handle musig2 tree signatures
                                 // we can directly advance to the finalization step
-                                step = SettlementEventType.TreeNoncesAggregated;
+                                step = SettlementEventType.TreeNonces;
                             }
                         }
                         break;
                     case SettlementEventType.TreeTx:
                         if (
                             step !== SettlementEventType.BatchStarted &&
-                            step !== SettlementEventType.TreeNoncesAggregated
+                            step !== SettlementEventType.TreeNonces
                         ) {
                             continue;
                         }
@@ -769,7 +769,7 @@ export class Wallet implements IWallet {
                         }
                         break;
                     case SettlementEventType.TreeSignature:
-                        if (step !== SettlementEventType.TreeNoncesAggregated) {
+                        if (step !== SettlementEventType.TreeNonces) {
                             continue;
                         }
                         if (!hasOffchainOutputs) {
@@ -825,7 +825,7 @@ export class Wallet implements IWallet {
                         break;
                     // the musig2 nonces of the vtxo tree transactions are generated
                     // the server expects now the partial musig2 signatures
-                    case SettlementEventType.TreeNoncesAggregated:
+                    case SettlementEventType.TreeNonces:
                         if (step !== SettlementEventType.TreeSigningStarted) {
                             continue;
                         }
@@ -833,17 +833,22 @@ export class Wallet implements IWallet {
                             if (!session) {
                                 throw new Error("Signing session not set");
                             }
-                            await this.handleSettlementSigningNoncesGeneratedEvent(
-                                event,
-                                session
-                            );
+                            const signed =
+                                await this.handleSettlementTreeNoncesEvent(
+                                    event,
+                                    session
+                                );
+                            if (signed) {
+                                step = event.type;
+                            }
+                            break;
                         }
                         step = event.type;
                         break;
                     // the vtxo tree is signed, craft, sign and submit forfeit transactions
                     // if any boarding utxos are involved, the settlement tx is also signed
                     case SettlementEventType.BatchFinalization:
-                        if (step !== SettlementEventType.TreeNoncesAggregated) {
+                        if (step !== SettlementEventType.TreeNonces) {
                             continue;
                         }
 
@@ -1060,11 +1065,17 @@ export class Wallet implements IWallet {
         await this.arkProvider.submitTreeNonces(event.id, pubkey, nonces);
     }
 
-    private async handleSettlementSigningNoncesGeneratedEvent(
-        event: TreeNoncesAggregatedEvent,
+    private async handleSettlementTreeNoncesEvent(
+        event: TreeNoncesEvent,
         session: SignerSession
-    ) {
-        session.setAggregatedNonces(event.treeNonces);
+    ): Promise<boolean> {
+        const { hasAllNonces } = await session.aggregatedNonces(
+            event.txid,
+            event.nonces
+        );
+        // wait to receive and aggregate all nonces before sending signatures
+        if (!hasAllNonces) return false;
+
         const signatures = await session.sign();
         const pubkey = hex.encode(await session.getPublicKey());
 
@@ -1073,6 +1084,7 @@ export class Wallet implements IWallet {
             pubkey,
             signatures
         );
+        return true;
     }
 
     private async handleSettlementFinalizationEvent(

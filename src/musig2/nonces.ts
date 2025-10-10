@@ -17,3 +17,7 @@ export function generateNonces(publicKey: Uint8Array): Nonces {
     const nonces = musig.nonceGen(publicKey);
     return { secNonce: nonces.secret, pubNonce: nonces.public };
 }
+
+export function aggregateNonces(pubNonces: Uint8Array[]): Uint8Array {
+    return musig.nonceAggregate(pubNonces);
+}
