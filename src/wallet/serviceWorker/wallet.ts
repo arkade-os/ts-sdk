@@ -380,6 +380,9 @@ export class ServiceWorkerWallet implements IWallet {
             return new Promise((resolve, reject) => {
                 const messageHandler = (event: MessageEvent) => {
                     const response = event.data as Response.Base;
+                    if (response.id !== message.id) {
+                        return;
+                    }
 
                     if (!response.success) {
                         navigator.serviceWorker.removeEventListener(
