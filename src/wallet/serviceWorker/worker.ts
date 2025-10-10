@@ -147,6 +147,7 @@ export class Worker {
         this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
             async (funds) => {
                 if (funds.type === "vtxo") {
+                    console.log("porco new vtxo funds", funds);
                     const newVtxos =
                         funds.newVtxos.length > 0
                             ? funds.newVtxos.map((vtxo) =>
@@ -170,15 +171,13 @@ export class Worker {
 
                     // notify all clients about the vtxo update
                     this.sendMessageToAllClients(
-                        "VTXO_UPDATE",
-                        JSON.stringify({ newVtxos, spentVtxos })
+                        Response.vtxoUpdate(newVtxos, spentVtxos)
                     );
                 }
                 if (funds.type === "utxo") {
                     // notify all clients about the utxo update
                     this.sendMessageToAllClients(
-                        "UTXO_UPDATE",
-                        JSON.stringify(funds.coins)
+                        Response.utxoUpdate(funds.coins)
                     );
                 }
             }
@@ -682,15 +681,12 @@ export class Worker {
         }
     }
 
-    private async sendMessageToAllClients(type: string, message: any) {
+    private async sendMessageToAllClients(message: any) {
         self.clients
             .matchAll({ includeUncontrolled: true, type: "window" })
             .then((clients) => {
                 clients.forEach((client) => {
-                    client.postMessage({
-                        type,
-                        message,
-                    });
+                    client.postMessage(message);
                 });
             });
     }
