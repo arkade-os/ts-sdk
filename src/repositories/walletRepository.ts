@@ -25,7 +25,7 @@ const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     tapTree: toHex(v.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),
-    extraWitness: v.extraWitness?.map((w) => toHex(w)),
+    extraWitness: v.extraWitness?.map(toHex),
 });
 
 const serializeUtxo = (u: ExtendedCoin) => ({
@@ -33,7 +33,7 @@ const serializeUtxo = (u: ExtendedCoin) => ({
     tapTree: toHex(u.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
-    extraWitness: u.extraWitness?.map((w) => toHex(w)),
+    extraWitness: u.extraWitness?.map(toHex),
 });
 
 const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
@@ -47,7 +47,7 @@ const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
     tapTree: fromHex(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
-    extraWitness: o.extraWitness?.map((w: string) => fromHex(w)),
+    extraWitness: o.extraWitness?.map(fromHex),
 });
 
 const deserializeUtxo = (o: any): ExtendedCoin => ({
@@ -55,7 +55,7 @@ const deserializeUtxo = (o: any): ExtendedCoin => ({
     tapTree: fromHex(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
-    extraWitness: o.extraWitness?.map((w: string) => fromHex(w)),
+    extraWitness: o.extraWitness?.map(fromHex),
 });
 
 export interface WalletRepository {
@@ -69,7 +69,7 @@ export interface WalletRepository {
     // UTXO management
     getUtxos(address: string): Promise<ExtendedCoin[]>;
     saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void>;
-    removeUtxos(address: string, utxoId: string): Promise<void>;
+    removeUtxo(address: string, utxoId: string): Promise<void>;
     clearUtxos(address: string): Promise<void>;
 
     // Transaction history
@@ -239,7 +239,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         );
     }
 
-    async removeUtxos(address: string, utxoId: string): Promise<void> {
+    async removeUtxo(address: string, utxoId: string): Promise<void> {
         const utxos = await this.getUtxos(address);
         const [txid, vout] = utxoId.split(":");
         const filtered = utxos.filter(
