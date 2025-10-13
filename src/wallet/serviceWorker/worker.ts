@@ -2,7 +2,13 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { SingleKey } from "../../identity/singleKey";
-import { ExtendedVirtualCoin, isRecoverable, isSpendable, isSubdust } from "..";
+import {
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+    isRecoverable,
+    isSpendable,
+    isSubdust,
+} from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -73,6 +79,16 @@ export class Worker {
             spendable: allVtxos.filter(isSpendable),
             spent: allVtxos.filter((vtxo) => !isSpendable(vtxo)),
         };
+    }
+
+    /**
+     * Get all utxos from wallet repository
+     */
+    private async getAllUtxos(): Promise<ExtendedCoin[]> {
+        if (!this.wallet) return [];
+        const address = await this.wallet.getBoardingAddress();
+
+        return await this.walletRepository.getUtxos(address);
     }
 
     async start(withServiceWorkerUpdate = true) {
@@ -397,7 +413,7 @@ export class Worker {
         try {
             const [boardingUtxos, spendableVtxos, sweptVtxos] =
                 await Promise.all([
-                    this.wallet.getBoardingUtxos(),
+                    this.getAllUtxos(),
                     this.getSpendableVtxos(),
                     this.getSweptVtxos(),
                 ]);
@@ -527,7 +543,7 @@ export class Worker {
         }
 
         try {
-            const boardingUtxos = await this.wallet.getBoardingUtxos();
+            const boardingUtxos = await this.getAllUtxos();
             event.source?.postMessage(
                 Response.boardingUtxos(message.id, boardingUtxos)
             );
