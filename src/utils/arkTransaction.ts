@@ -2,7 +2,6 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { DEFAULT_SEQUENCE, Transaction, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { Bytes } from "@scure/btc-signer/utils.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { ExtendedCoin, VirtualCoin } from "../wallet";
 import {
@@ -23,8 +22,6 @@ import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 export type ArkTxInput = {
     // the script used to spend the vtxo
     tapLeafScript: TapLeafScript;
-    // the script used to spend the checkpoint vtxo, if not provided, fallback to tapLeafScript
-    checkpointTapLeafScript?: Bytes;
 } & EncodedVtxoScript &
     Pick<VirtualCoin, "txid" | "vout" | "value">;
 
@@ -126,8 +123,7 @@ function buildCheckpointTx(
 ): { tx: Transaction; input: ArkTxInput } {
     // create the checkpoint vtxo script from collaborative closure
     const collaborativeClosure = decodeTapscript(
-        vtxo.checkpointTapLeafScript ??
-            scriptFromTapLeafScript(vtxo.tapLeafScript)
+        scriptFromTapLeafScript(vtxo.tapLeafScript)
     );
 
     // create the checkpoint vtxo script combining collaborative closure and server unroll script
