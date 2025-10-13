@@ -21,7 +21,7 @@ import {
     WalletRepository,
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
-import { extendVirtualCoin } from "../utils";
+import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
 
 /**
@@ -82,9 +82,9 @@ export class Worker {
     }
 
     /**
-     * Get all utxos from wallet repository
+     * Get all boarding utxos from wallet repository
      */
-    private async getAllUtxos(): Promise<ExtendedCoin[]> {
+    private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
         if (!this.wallet) return [];
         const address = await this.wallet.getBoardingAddress();
 
@@ -191,6 +191,21 @@ export class Worker {
                     );
                 }
                 if (funds.type === "utxo") {
+                    const newUtxos = funds.coins.map((utxo) =>
+                        extendCoin(this.wallet!, utxo)
+                    );
+
+                    if (newUtxos.length === 0) return;
+
+                    const boardingAddress =
+                        await this.wallet?.getBoardingAddress()!;
+
+                    // save utxos using unified repository
+                    await this.walletRepository.saveUtxos(
+                        boardingAddress,
+                        newUtxos
+                    );
+
                     // notify all clients about the utxo update
                     this.sendMessageToAllClients(
                         "UTXO_UPDATE",
@@ -413,7 +428,7 @@ export class Worker {
         try {
             const [boardingUtxos, spendableVtxos, sweptVtxos] =
                 await Promise.all([
-                    this.getAllUtxos(),
+                    this.getAllBoardingUtxos(),
                     this.getSpendableVtxos(),
                     this.getSweptVtxos(),
                 ]);
@@ -543,7 +558,7 @@ export class Worker {
         }
 
         try {
-            const boardingUtxos = await this.getAllUtxos();
+            const boardingUtxos = await this.getAllBoardingUtxos();
             event.source?.postMessage(
                 Response.boardingUtxos(message.id, boardingUtxos)
             );
