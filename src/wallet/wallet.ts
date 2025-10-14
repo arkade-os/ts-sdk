@@ -72,7 +72,7 @@ import {
     ContractRepository,
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
-import { extendVirtualCoin } from "./utils";
+import { extendCoin, extendVirtualCoin } from "./utils";
 
 export type IncomingFunds =
     | {
@@ -497,16 +497,14 @@ export class Wallet implements IWallet {
         const boardingUtxos =
             await this.onchainProvider.getCoins(boardingAddress);
 
-        const encodedBoardingTapscript = this.boardingTapscript.encode();
-        const forfeit = this.boardingTapscript.forfeit();
-        const exit = this.boardingTapscript.exit();
+        const utxos = boardingUtxos.map((utxo) => {
+            return extendCoin(this, utxo);
+        });
 
-        return boardingUtxos.map((utxo) => ({
-            ...utxo,
-            forfeitTapLeafScript: forfeit,
-            intentTapLeafScript: exit,
-            tapTree: encodedBoardingTapscript,
-        }));
+        // Save boardingUtxos using unified repository
+        await this.walletRepository.saveUtxos(boardingAddress, utxos);
+
+        return utxos;
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {

@@ -2,7 +2,13 @@
 declare const self: ServiceWorkerGlobalScope;
 
 import { SingleKey } from "../../identity/singleKey";
-import { ExtendedVirtualCoin, isRecoverable, isSpendable, isSubdust } from "..";
+import {
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+    isRecoverable,
+    isSpendable,
+    isSubdust,
+} from "..";
 import { Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -15,7 +21,7 @@ import {
     WalletRepository,
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
-import { extendVirtualCoin } from "../utils";
+import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
 
 /**
@@ -73,6 +79,16 @@ export class Worker {
             spendable: allVtxos.filter(isSpendable),
             spent: allVtxos.filter((vtxo) => !isSpendable(vtxo)),
         };
+    }
+
+    /**
+     * Get all boarding utxos from wallet repository
+     */
+    private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
+        if (!this.wallet) return [];
+        const address = await this.wallet.getBoardingAddress();
+
+        return await this.walletRepository.getUtxos(address);
     }
 
     async start(withServiceWorkerUpdate = true) {
@@ -174,6 +190,21 @@ export class Worker {
                     );
                 }
                 if (funds.type === "utxo") {
+                    const newUtxos = funds.coins.map((utxo) =>
+                        extendCoin(this.wallet!, utxo)
+                    );
+
+                    if (newUtxos.length === 0) return;
+
+                    const boardingAddress =
+                        await this.wallet?.getBoardingAddress()!;
+
+                    // save utxos using unified repository
+                    await this.walletRepository.saveUtxos(
+                        boardingAddress,
+                        newUtxos
+                    );
+
                     // notify all clients about the utxo update
                     this.sendMessageToAllClients(
                         Response.utxoUpdate(funds.coins)
@@ -395,7 +426,7 @@ export class Worker {
         try {
             const [boardingUtxos, spendableVtxos, sweptVtxos] =
                 await Promise.all([
-                    this.wallet.getBoardingUtxos(),
+                    this.getAllBoardingUtxos(),
                     this.getSpendableVtxos(),
                     this.getSweptVtxos(),
                 ]);
@@ -525,7 +556,7 @@ export class Worker {
         }
 
         try {
-            const boardingUtxos = await this.wallet.getBoardingUtxos();
+            const boardingUtxos = await this.getAllBoardingUtxos();
             event.source?.postMessage(
                 Response.boardingUtxos(message.id, boardingUtxos)
             );
