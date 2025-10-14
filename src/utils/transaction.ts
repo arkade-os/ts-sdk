@@ -21,7 +21,7 @@ export class Transaction extends BtcSignerTransaction {
         return BtcSignerTransaction.fromPSBT(psbt_, withArkOpts(opts));
     }
 
-    static fromRaw(raw: Bytes, opts?: TxOpts): BtcSignerTransaction {
+    static fromRaw(raw: Bytes, opts?: TxOpts): Transaction {
         return BtcSignerTransaction.fromRaw(raw, withArkOpts(opts));
     }
 }
