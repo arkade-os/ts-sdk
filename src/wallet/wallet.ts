@@ -723,8 +723,8 @@ export class Wallet implements IWallet {
                 switch (event.type) {
                     // the settlement failed
                     case SettlementEventType.BatchFailed:
-                        // fail if the roundId is the one joined
-                        if (event.id === roundId) {
+                        // fail if the roundId is the one joined OR if we didn't join any round yet
+                        if (event.id === roundId || !roundId) {
                             throw new Error(event.reason);
                         }
                         break;
