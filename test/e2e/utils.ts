@@ -1,4 +1,4 @@
-import { Wallet, SingleKey, OnchainWallet } from "../../src";
+import { Wallet, SingleKey, OnchainWallet, EsploraProvider } from "../../src";
 import { execSync } from "child_process";
 
 export const arkdExec =
@@ -39,6 +39,10 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
     const wallet = await Wallet.create({
         identity,
         arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000", {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
     });
 
     return {
