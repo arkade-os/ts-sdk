@@ -1,4 +1,4 @@
-import { Transaction } from "@scure/btc-signer";
+import { Transaction } from "./utils/transaction";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { P2A } from "./utils/anchor";
 
@@ -10,9 +10,6 @@ export function buildForfeitTx(
     const tx = new Transaction({
         version: 3,
         lockTime: txLocktime,
-        allowUnknownOutputs: true,
-        allowUnknown: true,
-        allowUnknownInputs: true,
     });
 
     let amount = 0n;

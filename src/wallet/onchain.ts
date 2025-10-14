@@ -1,4 +1,4 @@
-import { Transaction, p2tr } from "@scure/btc-signer";
+import { p2tr } from "@scure/btc-signer";
 import { P2TR } from "@scure/btc-signer/payment.js";
 import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
@@ -10,6 +10,7 @@ import {
 } from "../providers/onchain";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
+import { Transaction } from "../utils/transaction";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
@@ -159,9 +160,8 @@ export class OnchainWallet implements AnchorBumper {
         const parentVsize = parent.vsize;
 
         let child = new Transaction({
-            allowUnknownInputs: true,
-            allowLegacyWitnessUtxo: true,
             version: 3,
+            allowLegacyWitnessUtxo: true,
         });
         child.addInput(findP2AOutput(parent)); // throws if not found
 
