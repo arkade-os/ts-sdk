@@ -57,8 +57,8 @@ export interface OnchainProvider {
  * ```
  */
 export class EsploraProvider implements OnchainProvider {
-    readonly pollingInterval: number = 15_000; // 15 seconds
-    readonly forcePolling: boolean = false;
+    readonly pollingInterval: number;
+    readonly forcePolling: boolean;
 
     constructor(
         private baseUrl: string,
@@ -69,12 +69,8 @@ export class EsploraProvider implements OnchainProvider {
             forcePolling?: boolean;
         }
     ) {
-        if (opts?.pollingInterval) {
-            this.pollingInterval = opts.pollingInterval;
-        }
-        if (opts?.forcePolling) {
-            this.forcePolling = opts.forcePolling;
-        }
+        this.pollingInterval = opts?.pollingInterval ?? 15_000;
+        this.forcePolling = opts?.forcePolling ?? false;
     }
 
     async getCoins(address: string): Promise<Coin[]> {
