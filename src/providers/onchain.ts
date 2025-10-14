@@ -57,8 +57,21 @@ export interface OnchainProvider {
  * ```
  */
 export class EsploraProvider implements OnchainProvider {
-    private polling = false;
-    constructor(private baseUrl: string) {}
+    readonly pollingInterval: number;
+    readonly forcePolling: boolean;
+
+    constructor(
+        private baseUrl: string,
+        opts?: {
+            // polling interval in milliseconds
+            pollingInterval?: number;
+            // if true, will force polling even if websocket is available
+            forcePolling?: boolean;
+        }
+    ) {
+        this.pollingInterval = opts?.pollingInterval ?? 15_000;
+        this.forcePolling = opts?.forcePolling ?? false;
+    }
 
     async getCoins(address: string): Promise<Coin[]> {
         const response = await fetch(`${this.baseUrl}/address/${address}/utxo`);
@@ -158,16 +171,11 @@ export class EsploraProvider implements OnchainProvider {
         const wsUrl = this.baseUrl.replace(/^http(s)?:/, "ws$1:") + "/v1/ws";
 
         const poll = async () => {
-            if (this.polling) return;
-            this.polling = true;
-
-            // websocket is not reliable, so we will fallback to polling
-            const pollingInterval = 5_000; // 5 seconds
-
-            const getAllTxs = () => {
-                return Promise.all(
+            const getAllTxs = async () => {
+                const txArrays = await Promise.all(
                     addresses.map((address) => this.getTransactions(address))
-                ).then((txArrays) => txArrays.flat());
+                );
+                return txArrays.flat();
             };
 
             // initial fetch to get existing transactions
@@ -200,10 +208,21 @@ export class EsploraProvider implements OnchainProvider {
                 } catch (error) {
                     console.error("Error in polling mechanism:", error);
                 }
-            }, pollingInterval);
+            }, this.pollingInterval);
         };
 
         let ws: WebSocket | null = null;
+
+        const stopFunc = () => {
+            if (ws) ws.close();
+            if (intervalId) clearInterval(intervalId);
+        };
+
+        if (this.forcePolling) {
+            await poll();
+            return stopFunc;
+        }
+
         try {
             ws = new WebSocket(wsUrl);
             ws.addEventListener("open", () => {
@@ -256,12 +275,6 @@ export class EsploraProvider implements OnchainProvider {
             // if websocket is not available, fallback to polling
             await poll();
         }
-
-        const stopFunc = () => {
-            if (ws && ws.readyState === WebSocket.OPEN) ws.close();
-            if (intervalId) clearInterval(intervalId);
-            this.polling = false;
-        };
 
         return stopFunc;
     }
