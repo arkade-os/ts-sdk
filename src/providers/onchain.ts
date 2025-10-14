@@ -73,7 +73,7 @@ export class EsploraProvider implements OnchainProvider {
             this.pollingInterval = opts.pollingInterval;
         }
         if (opts?.forcePolling) {
-            this.forcePolling = opts?.forcePolling;
+            this.forcePolling = opts.forcePolling;
         }
     }
 
