@@ -9,7 +9,6 @@ import { Identity } from ".";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, sign } from "@noble/secp256k1";
 
-const ZERO_32 = new Uint8Array(32).fill(0);
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
 /**
@@ -63,7 +62,7 @@ export class SingleKey implements Identity {
 
         if (!inputIndexes) {
             try {
-                if (!txCpy.sign(this.key, ALL_SIGHASH, ZERO_32)) {
+                if (!txCpy.sign(this.key, ALL_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -80,7 +79,7 @@ export class SingleKey implements Identity {
         }
 
         for (const inputIndex of inputIndexes) {
-            if (!txCpy.signIdx(this.key, inputIndex, ALL_SIGHASH, ZERO_32)) {
+            if (!txCpy.signIdx(this.key, inputIndex, ALL_SIGHASH)) {
                 throw new Error(`Failed to sign input #${inputIndex}`);
             }
         }
