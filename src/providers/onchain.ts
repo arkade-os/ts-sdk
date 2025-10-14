@@ -214,7 +214,7 @@ export class EsploraProvider implements OnchainProvider {
         let ws: WebSocket | null = null;
 
         const stopFunc = () => {
-            if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+            if (ws) ws.close();
             if (intervalId) clearInterval(intervalId);
         };
 
