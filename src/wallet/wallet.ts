@@ -1112,9 +1112,6 @@ export class Wallet implements IWallet {
 
             // boarding utxo, we need to sign the settlement tx
             if (!vtxo) {
-                hasBoardingUtxos = true;
-
-                const inputIndexes: number[] = [];
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -1133,12 +1130,12 @@ export class Wallet implements IWallet {
                     settlementPsbt.updateInput(i, {
                         tapLeafScript: [input.forfeitTapLeafScript],
                     });
-                    inputIndexes.push(i);
+                    settlementPsbt = await this.identity.sign(settlementPsbt, [
+                        i,
+                    ]);
+                    hasBoardingUtxos = true;
+                    break;
                 }
-                settlementPsbt = await this.identity.sign(
-                    settlementPsbt,
-                    inputIndexes
-                );
 
                 continue;
             }
