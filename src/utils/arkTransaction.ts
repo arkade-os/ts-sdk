@@ -1,6 +1,6 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
-import { DEFAULT_SEQUENCE, Transaction, SigHash } from "@scure/btc-signer";
+import { DEFAULT_SEQUENCE, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
@@ -19,6 +19,7 @@ import {
 import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
+import { Transaction } from "./transaction";
 
 export type ArkTxInput = {
     // the script used to spend the vtxo
@@ -90,8 +91,6 @@ function buildVirtualTx(inputs: ArkTxInput[], outputs: TransactionOutput[]) {
 
     const tx = new Transaction({
         version: 3,
-        allowUnknown: true,
-        allowUnknownOutputs: true,
         lockTime: Number(lockTime),
     });
 

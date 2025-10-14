@@ -1,4 +1,4 @@
-import { Transaction } from "@scure/btc-signer/transaction.js";
+import { Transaction } from "../utils/transaction";
 import { SignerSession } from "../tree/signingSession";
 
 export interface Identity {

@@ -1,5 +1,5 @@
 import { base64, hex } from "@scure/base";
-import { SigHash, Transaction, TaprootControlBlock } from "@scure/btc-signer";
+import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { AnchorBumper } from "../utils/anchor";
@@ -12,6 +12,7 @@ import {
 import { VtxoScript } from "../script/base";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
+import { Transaction } from "../utils/transaction";
 
 export namespace Unroll {
     export enum StepType {
@@ -166,9 +167,7 @@ export namespace Unroll {
                 throw new Error(`Tx ${nextTxToBroadcast.txid} not found`);
             }
 
-            const tx = Transaction.fromPSBT(base64.decode(virtualTxs.txs[0]), {
-                allowUnknownInputs: true,
-            });
+            const tx = Transaction.fromPSBT(base64.decode(virtualTxs.txs[0]));
 
             // finalize the tree transaction
             if (nextTxToBroadcast.type === ChainTxType.TREE) {
@@ -293,7 +292,7 @@ export namespace Unroll {
             );
         }
 
-        const tx = new Transaction({ allowUnknownInputs: true, version: 2 });
+        const tx = new Transaction({ version: 2 });
         for (const input of inputs) {
             tx.addInput(input);
         }

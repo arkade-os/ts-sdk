@@ -1,7 +1,8 @@
-import { OP, Transaction, Script, SigHash } from "@scure/btc-signer";
+import { OP, Script, SigHash } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
+import { Transaction } from "../utils/transaction";
 
 /**
  * Intent proof implementation for Bitcoin message signing.
@@ -116,9 +117,6 @@ function craftToSpendTx(message: string, pkScript: Uint8Array): Transaction {
     const messageHash = hashMessage(message);
     const tx = new Transaction({
         version: 0,
-        allowUnknownOutputs: true,
-        allowUnknown: true,
-        allowUnknownInputs: true,
     });
 
     // add input with zero hash and max index
@@ -151,9 +149,6 @@ function craftToSignTx(
 
     const tx = new Transaction({
         version: 2,
-        allowUnknownOutputs: outputs.length === 0,
-        allowUnknown: true,
-        allowUnknownInputs: true,
         lockTime: 0,
     });
 

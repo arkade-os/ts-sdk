@@ -1,4 +1,4 @@
-import { Transaction } from "@scure/btc-signer/transaction.js";
+import { Transaction } from "./utils/transaction";
 import { SingleKey } from "./identity/singleKey";
 import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";

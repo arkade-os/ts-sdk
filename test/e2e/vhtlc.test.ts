@@ -1,7 +1,6 @@
 import { expect, describe, it, beforeEach } from "vitest";
 import * as bip68 from "bip68";
 import { base64, hex } from "@scure/base";
-import { Transaction } from "@scure/btc-signer";
 import { hash160 } from "@scure/btc-signer/utils.js";
 import {
     buildOffchainTx,
@@ -15,6 +14,7 @@ import {
     setArkPsbtField,
     Unroll,
     VHTLC,
+    Transaction,
 } from "../../src";
 import {
     arkdExec,
@@ -138,9 +138,7 @@ describe("vhtlc", () => {
 
         const finalCheckpoints = await Promise.all(
             signedCheckpointTxs.map(async (c) => {
-                const tx = Transaction.fromPSBT(base64.decode(c), {
-                    allowUnknown: true,
-                });
+                const tx = Transaction.fromPSBT(base64.decode(c));
                 const signedCheckpoint = await bobVHTLCIdentity.sign(tx, [0]);
                 return base64.encode(signedCheckpoint.toPSBT());
             })
@@ -233,7 +231,7 @@ describe("vhtlc", () => {
             }
         }
 
-        const tx = new Transaction({ allowUnknownInputs: true });
+        const tx = new Transaction();
         tx.addInput({
             index: vtxo.vout,
             txid: vtxo.txid,
