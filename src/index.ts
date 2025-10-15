@@ -4,7 +4,12 @@ import { Identity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
-import { VtxoScript, EncodedVtxoScript, TapLeafScript } from "./script/base";
+import {
+    VtxoScript,
+    EncodedVtxoScript,
+    TapLeafScript,
+    TapTreeCoder,
+} from "./script/base";
 import {
     TxType,
     IWallet,
@@ -164,6 +169,7 @@ export {
     ConditionCSVMultisigTapscript,
     ConditionMultisigTapscript,
     CLTVMultisigTapscript,
+    TapTreeCoder,
 
     // Ark PSBT fields
     ArkPsbtFieldKey,

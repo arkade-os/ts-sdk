@@ -25,7 +25,8 @@ export type TapLeafScript = [
     Bytes,
 ];
 
-const TapTreeCoder = PSBTOutput.tapTree[2];
+export const TapTreeCoder: (typeof PSBTOutput.tapTree)[2] =
+    PSBTOutput.tapTree[2];
 
 export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
     return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
@@ -50,6 +51,12 @@ export class VtxoScript {
     }
 
     constructor(readonly scripts: Bytes[]) {
+        // reverse the scripts if the number of scripts is odd
+        // this is to be compatible with arkd algorithm computing taproot tree from list of tapscripts
+        if (scripts.length % 2 !== 0) {
+            scripts.reverse();
+        }
+
         const tapTree = taprootListToTree(
             scripts.map((script) => ({ script, leafVersion: TAP_LEAF_VERSION }))
         );
