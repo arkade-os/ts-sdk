@@ -704,8 +704,8 @@ export class Wallet implements IWallet {
                 topics
             );
 
-            // roundId, sweepTapTreeRoot and forfeitOutputScript are set once the BatchStarted event is received
-            let roundId: string | undefined;
+            // batchId, sweepTapTreeRoot and forfeitOutputScript are set once the BatchStarted event is received
+            let batchId: string | undefined;
             let sweepTapTreeRoot: Uint8Array | undefined;
 
             const vtxoChunks: TxTreeNode[] = [];
@@ -721,11 +721,7 @@ export class Wallet implements IWallet {
                 switch (event.type) {
                     // the settlement failed
                     case SettlementEventType.BatchFailed:
-                        // fail if the roundId is the one joined
-                        if (event.id === roundId) {
-                            throw new Error(event.reason);
-                        }
-                        break;
+                        throw new Error(event.reason);
                     case SettlementEventType.BatchStarted:
                         if (step !== undefined) {
                             continue;
@@ -739,7 +735,7 @@ export class Wallet implements IWallet {
                         if (!res.skip) {
                             step = event.type;
                             sweepTapTreeRoot = res.sweepTapTreeRoot;
-                            roundId = res.roundId;
+                            batchId = res.roundId;
                             if (!hasOffchainOutputs) {
                                 // if there are no offchain outputs, we don't have to handle musig2 tree signatures
                                 // we can directly advance to the finalization step
@@ -875,8 +871,10 @@ export class Wallet implements IWallet {
                         if (step !== SettlementEventType.BatchFinalization) {
                             continue;
                         }
-                        abortController.abort();
-                        return event.commitmentTxid;
+                        if (event.id === batchId) {
+                            abortController.abort();
+                            return event.commitmentTxid;
+                        }
                 }
             }
         } catch (error) {
