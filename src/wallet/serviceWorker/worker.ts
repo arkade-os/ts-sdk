@@ -32,7 +32,7 @@ export class Worker {
     private wallet: Wallet | undefined;
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
-    private incomingFundsSubscription: (() => void) | undefined;
+    private incomingFundsSubscription: (() => Promise<void>) | undefined;
     private walletRepository: WalletRepository;
     private storage: IndexedDBStorageAdapter;
 
@@ -111,7 +111,9 @@ export class Worker {
     }
 
     async clear() {
-        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+        if (this.incomingFundsSubscription) {
+            await this.incomingFundsSubscription();
+        }
 
         // Clear storage - this replaces vtxoRepository.close()
         await this.storage.clear();
@@ -157,7 +159,9 @@ export class Worker {
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
         // unsubscribe previous subscription if any
-        if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+        if (this.incomingFundsSubscription) {
+            await this.incomingFundsSubscription();
+        }
 
         // subscribe for incoming funds and notify all clients when new funds arrive
         this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(

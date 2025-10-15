@@ -894,12 +894,12 @@ export class Wallet implements IWallet {
 
     async notifyIncomingFunds(
         eventCallback: (coins: IncomingFunds) => void
-    ): Promise<() => void> {
+    ): Promise<() => Promise<void>> {
         const arkAddress = await this.getAddress();
         const boardingAddress = await this.getBoardingAddress();
 
-        let onchainStopFunc: () => void;
-        let indexerStopFunc: () => void;
+        let onchainStopFunc: (() => void) | undefined;
+        let indexerStopFunc: (() => void) | undefined;
 
         if (this.onchainProvider && boardingAddress) {
             const findVoutOnTx = (tx: any) => {
@@ -974,9 +974,9 @@ export class Wallet implements IWallet {
             })();
         }
 
-        const stopFunc = () => {
+        const stopFunc = async () => {
             onchainStopFunc?.();
-            indexerStopFunc?.();
+            await indexerStopFunc?.();
         };
 
         return stopFunc;
@@ -1383,13 +1383,13 @@ function selectVirtualCoins(
 export async function waitForIncomingFunds(
     wallet: Wallet
 ): Promise<IncomingFunds> {
-    let stopFunc: (() => void) | undefined;
+    let stopFunc: (() => Promise<void>) | undefined;
 
     const promise = new Promise<IncomingFunds>((resolve) => {
         wallet
             .notifyIncomingFunds((coins: IncomingFunds) => {
                 resolve(coins);
-                if (stopFunc) stopFunc();
+                if (stopFunc) void stopFunc();
             })
             .then((stop) => {
                 stopFunc = stop;
