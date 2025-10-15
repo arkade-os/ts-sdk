@@ -369,11 +369,10 @@ const isExplorerTransaction = (tx: any): tx is ExplorerTransaction => {
         tx.vout.every(
             (vout: any) =>
                 typeof vout.scriptpubkey_address === "string" &&
-                typeof vout.value === "string"
+                typeof vout.value === "number"
         ) &&
         typeof tx.status === "object" &&
-        typeof tx.status.confirmed === "boolean" &&
-        typeof tx.status.block_time === "number"
+        typeof tx.status.confirmed === "boolean"
     );
 };
 
