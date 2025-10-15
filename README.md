@@ -130,22 +130,12 @@ const manager = new VtxoManager(wallet, {
 Renew VTXOs before they expire to keep your liquidity accessible. This settles all VTXOs (including recoverable ones) back to your wallet with a fresh expiration time.
 
 ```typescript
+// Renew all VTXOs to prevent expiration
+const txid = await manager.renewVtxos()
+console.log('Renewed:', txid)
+
 // Check which VTXOs are expiring soon
 const expiringVtxos = await manager.getExpiringVtxos()
-if (expiringVtxos.length > 0) {
-  console.log(`${expiringVtxos.length} VTXOs expiring soon`)
-
-  expiringVtxos.forEach(vtxo => {
-    const timeLeft = vtxo.virtualStatus.batchExpiry! - Date.now()
-    const hoursLeft = Math.floor(timeLeft / (1000 * 60 * 60))
-    console.log(`VTXO ${vtxo.txid} expires in ${hoursLeft} hours`)
-  })
-
-  // Renew all VTXOs to prevent expiration
-  const txid = await manager.renewVtxos()
-  console.log('Renewed:', txid)
-}
-
 // Override threshold percentage (e.g., renew when 5% of time remains)
 const urgentlyExpiring = await manager.getExpiringVtxos(5)
 ```
@@ -156,20 +146,13 @@ const urgentlyExpiring = await manager.getExpiringVtxos(5)
 Recover VTXOs that have been swept by the server or consolidate small amounts (subdust).
 
 ```typescript
+// Recover swept VTXOs and preconfirmed subdust
+const txid = await manager.recoverVtxos((event) => {
+  console.log('Settlement event:', event.type)
+})
+console.log('Recovered:', txid)
 // Check what's recoverable
 const balance = await manager.getRecoverableBalance()
-console.log(`Recoverable: ${balance.recoverable} sats`)
-console.log(`Subdust: ${balance.subdust} sats`)
-console.log(`Subdust included: ${balance.includesSubdust}`)
-console.log(`VTXO count: ${balance.vtxoCount}`)
-
-if (balance.recoverable > 0n) {
-  // Recover swept VTXOs and preconfirmed subdust
-  const txid = await manager.recoverVtxos((event) => {
-    console.log('Settlement event:', event.type)
-  })
-  console.log('Recovered:', txid)
-}
 ```
 
 
