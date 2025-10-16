@@ -127,7 +127,8 @@ const manager = new VtxoManager(wallet, {
 
 #### Renewal: Prevent Expiration
 
-Renew VTXOs before they expire to keep your liquidity accessible. This settles all VTXOs (including recoverable ones) back to your wallet with a fresh expiration time.
+Renew VTXOs before they expire to keep your liquidity accessible.
+This settles all expiring VTXOs (plus recoverable ones) back to your wallet with a fresh expiration time.
 
 ```typescript
 // Renew all VTXOs to prevent expiration

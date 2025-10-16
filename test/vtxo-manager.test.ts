@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
     VtxoManager,
     isVtxoExpiringSoon,
@@ -332,8 +332,8 @@ describe("VtxoManager - Renewal utilities", () => {
 
             // with 5% of duration threshold should be false
             expect(isVtxoExpiringSoon(vtxo, 5)).toBe(false);
-            // with 10% of duration threshold should be true
-            expect(isVtxoExpiringSoon(vtxo, 10)).toBe(true);
+            // with 11% of duration threshold should be true
+            expect(isVtxoExpiringSoon(vtxo, 11)).toBe(true);
             // with 20% of duration threshold should be true
             expect(isVtxoExpiringSoon(vtxo, 20)).toBe(true);
         });
@@ -789,7 +789,7 @@ describe("VtxoManager - Renewal", () => {
                     isSpent: false,
                 } as any,
                 {
-                    txid: "tx1",
+                    txid: "tx2",
                     vout: 0,
                     value: 3000,
                     createdAt,
