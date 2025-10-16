@@ -27,6 +27,10 @@ export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
         thresholdPercentage: 10,
     };
 
+function getDustAmount(wallet: IWallet): bigint {
+    return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : 330n;
+}
+
 /**
  * Filter VTXOs that are recoverable (swept and still spendable, or preconfirmed subdust)
  *
@@ -314,10 +318,7 @@ export class VtxoManager {
         });
 
         // Get dust amount from wallet
-        const dustAmount =
-            "dustAmount" in this.wallet
-                ? (this.wallet.dustAmount as bigint)
-                : 1000n;
+        const dustAmount = getDustAmount(this.wallet);
 
         // Filter recoverable VTXOs and handle subdust logic
         const { vtxosToRecover, includesSubdust, totalAmount } =
@@ -375,10 +376,7 @@ export class VtxoManager {
             withUnrolled: false,
         });
 
-        const dustAmount =
-            "dustAmount" in this.wallet
-                ? (this.wallet.dustAmount as bigint)
-                : 1000n;
+        const dustAmount = getDustAmount(this.wallet);
 
         const { vtxosToRecover, includesSubdust, totalAmount } =
             getRecoverableWithSubdust(allVtxos, dustAmount);
@@ -473,10 +471,7 @@ export class VtxoManager {
         const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
 
         // Get dust amount from wallet
-        const dustAmount =
-            "dustAmount" in this.wallet
-                ? (this.wallet.dustAmount as bigint)
-                : 1000n;
+        const dustAmount = getDustAmount(this.wallet);
 
         // Check if total amount is above dust threshold
         if (BigInt(totalAmount) < dustAmount) {
