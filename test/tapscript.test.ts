@@ -8,6 +8,10 @@ import {
 } from "../src/script/tapscript";
 import { Script } from "@scure/btc-signer/script.js";
 import { hex } from "@scure/base";
+import { VtxoScript } from "../src";
+import { TapTreeCoder } from "../src/script/base";
+import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
+import fixtures from "./fixtures/vtxoscript.json";
 
 const exPubKey1 = Buffer.from(
     "f8352deebdf5658d95875d89656112b1dd150f176c702eea4f91a91527e48e26",
@@ -204,4 +208,21 @@ describe("ConditionMultisigTapscript", () => {
             ConditionMultisigTapscript.decode(new Uint8Array())
         ).toThrow("Failed to decode: script is empty");
     });
+});
+
+describe("VtxoScript", () => {
+    for (const fixture of fixtures) {
+        it(fixture.name, () => {
+            const taptree = TapTreeCoder.encode(
+                fixture.scripts.map((script) => ({
+                    depth: 1,
+                    version: TAP_LEAF_VERSION,
+                    script: hex.decode(script),
+                }))
+            );
+            const script = VtxoScript.decode(taptree);
+            const tapkey = script.pkScript.subarray(2);
+            expect(hex.encode(tapkey)).toBe(fixture.taprootKey);
+        });
+    }
 });
