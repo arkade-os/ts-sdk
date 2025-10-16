@@ -9,7 +9,7 @@ export interface RenewalConfig {
      * Enable automatic renewal monitoring
      * @default false
      */
-    enabled: boolean;
+    enabled?: boolean;
 
     /**
      * Percentage of expiry time to use as threshold (0-100)
@@ -132,106 +132,50 @@ function getRecoverableWithSubdust(
  */
 export function isVtxoExpiringSoon(
     vtxo: ExtendedVirtualCoin,
-    thresholdMs: number
+    percentage: number
 ): boolean {
     const { batchExpiry } = vtxo.virtualStatus;
 
-    // No expiry set means it doesn't expire
     if (!batchExpiry) {
+        return false; // it doesn't expire
+    }
+
+    const now = Date.now();
+
+    if (batchExpiry <= now) {
+        return false; // already expired
+    }
+
+    // It shouldn't happen, but let's be safe
+    if (!vtxo.createdAt) {
         return false;
     }
 
-    const now = Date.now();
-    const timeUntilExpiry = batchExpiry - now;
+    const duration = batchExpiry - vtxo.createdAt.getTime();
+    const softExpiry = batchExpiry - (duration * percentage) / 100;
 
-    return timeUntilExpiry > 0 && timeUntilExpiry <= thresholdMs;
+    return softExpiry > 0 && softExpiry <= now;
 }
 
 /**
- * Filter VTXOs that are expiring soon
+ * Filter VTXOs that are expiring soon or are recoverable/subdust
  *
  * @param vtxos - Array of virtual coins to check
  * @param thresholdMs - Threshold in milliseconds from now
+ * @param dustAmount - Dust threshold amount in satoshis
  * @returns Array of VTXOs expiring within threshold
  */
-export function getExpiringVtxos(
+export function getExpiringAndRecoverableVtxos(
     vtxos: ExtendedVirtualCoin[],
-    thresholdMs: number
+    percentage: number,
+    dustAmount: bigint
 ): ExtendedVirtualCoin[] {
-    return vtxos.filter((vtxo) => isVtxoExpiringSoon(vtxo, thresholdMs));
-}
-
-/**
- * Calculate expiry threshold in milliseconds based on batch expiry and percentage
- *
- * @param batchExpiry - Batch expiry timestamp in milliseconds
- * @param percentage - Percentage of total time (0-100)
- * @returns Threshold timestamp in milliseconds from now
- *
- * @example
- * // VTXO expires in 10 days, threshold is 10%
- * const expiry = Date.now() + 10 * 24 * 60 * 60 * 1000;
- * const threshold = calculateExpiryThreshold(expiry, 10);
- * // Returns 1 day in milliseconds (10% of 10 days)
- */
-export function calculateExpiryThreshold(
-    batchExpiry: number,
-    percentage: number
-): number {
-    if (percentage < 0 || percentage > 100) {
-        throw new Error("Percentage must be between 0 and 100");
-    }
-
-    const now = Date.now();
-    const totalTime = batchExpiry - now;
-
-    if (totalTime <= 0) {
-        // Already expired
-        return 0;
-    }
-
-    // Calculate threshold as percentage of total time
-    return Math.floor((totalTime * percentage) / 100);
-}
-
-/**
- * Get the minimum expiry time from a list of VTXOs
- *
- * @param vtxos - Array of virtual coins
- * @returns Minimum batch expiry timestamp, or undefined if no VTXOs have expiry
- */
-export function getMinimumExpiry(
-    vtxos: ExtendedVirtualCoin[]
-): number | undefined {
-    const expiries = vtxos
-        .map((v) => v.virtualStatus.batchExpiry)
-        .filter((e): e is number => e !== undefined);
-
-    if (expiries.length === 0) {
-        return undefined;
-    }
-
-    return Math.min(...expiries);
-}
-
-/**
- * Calculate dynamic threshold based on the earliest expiring VTXO
- *
- * @param vtxos - Array of virtual coins
- * @param percentage - Percentage of time until expiry (0-100)
- * @returns Threshold in milliseconds, or undefined if no VTXOs have expiry
- */
-export function calculateDynamicThreshold(
-    vtxos: ExtendedVirtualCoin[],
-    percentage: number
-): number | undefined {
-    const minExpiry = getMinimumExpiry(vtxos);
-
-    if (!minExpiry) {
-        return undefined;
-    }
-
-    return calculateExpiryThreshold(minExpiry, percentage);
+    return vtxos.filter(
+        (vtxo) =>
+            isVtxoExpiringSoon(vtxo, percentage) ||
+            isRecoverable(vtxo) ||
+            isSubdust(vtxo, dustAmount)
+    );
 }
 
 /**
@@ -414,29 +358,23 @@ export class VtxoManager {
     async getExpiringVtxos(
         thresholdPercentage?: number
     ): Promise<ExtendedVirtualCoin[]> {
-        if (!this.renewalConfig?.enabled) {
-            return [];
-        }
-
-        const vtxos = await this.wallet.getVtxos();
+        const vtxos = await this.wallet.getVtxos({ withRecoverable: true });
         const percentage =
             thresholdPercentage ??
-            this.renewalConfig.thresholdPercentage ??
+            this.renewalConfig?.thresholdPercentage ??
             DEFAULT_RENEWAL_CONFIG.thresholdPercentage;
 
-        const threshold = calculateDynamicThreshold(vtxos, percentage);
-
-        if (!threshold) {
-            return [];
-        }
-
-        return getExpiringVtxos(vtxos, threshold);
+        return getExpiringAndRecoverableVtxos(
+            vtxos,
+            percentage,
+            getDustAmount(this.wallet)
+        );
     }
 
     /**
-     * Renew VTXOs by settling them back to the wallet's address
+     * Renew expiring VTXOs by settling them back to the wallet's address
      *
-     * This method collects all spendable VTXOs (including recoverable ones) and settles
+     * This method collects all expiring spendable VTXOs (including recoverable ones) and settles
      * them back to the wallet, effectively refreshing their expiration time. This is the
      * primary way to prevent VTXOs from expiring.
      *
@@ -462,7 +400,7 @@ export class VtxoManager {
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
         // Get all VTXOs (including recoverable ones)
-        const vtxos = await this.wallet.getVtxos({ withRecoverable: true });
+        const vtxos = await this.getExpiringVtxos();
 
         if (vtxos.length === 0) {
             throw new Error("No VTXOs available to renew");
