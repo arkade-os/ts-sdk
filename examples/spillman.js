@@ -20,12 +20,11 @@ import {
     networks,
 } from "../dist/esm/index.js";
 import { base64, hex } from "@scure/base";
-import { utils } from "@scure/btc-signer/utils.js";
 import { Transaction } from "@scure/btc-signer/transaction.js";
 import { execSync } from "child_process";
 
 const SERVER_PUBLIC_KEY = hex.decode(
-    "8a9bbb1fb2aa92b9557dd0b39a85f31d204f58b41c62ea112d6ad148a9881285"
+    "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb"
 );
 
 const arkdExec = process.argv[2] || "docker exec -t arkd";
@@ -147,14 +146,9 @@ async function main() {
 
     const infos = await arkProvider.getInfo();
 
-    // Create the server unroll script for checkpoint transactions
-    const serverUnrollScript = CSVMultisigTapscript.encode({
-        pubkeys: [SERVER_PUBLIC_KEY],
-        timelock: {
-            type: infos.unilateralExitDelay < 512 ? "blocks" : "seconds",
-            value: infos.unilateralExitDelay,
-        },
-    });
+    const serverUnrollScript = CSVMultisigTapscript.decode(
+        hex.decode(infos.checkpointTapscript)
+    );
 
     console.log("\nStarting channel updates...");
     // Alice sends 1000 to bob
