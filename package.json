@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/sdk",
-    "version": "0.3.1-alpha.7",
+    "version": "0.2.0",
     "description": "Bitcoin wallet SDK with Taproot and Ark integration",
     "type": "module",
     "main": "./dist/cjs/index.js",
