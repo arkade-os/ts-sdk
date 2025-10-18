@@ -1,7 +1,7 @@
-import { p2tr } from "@scure/btc-signer";
+import { p2tr, TaprootControlBlock } from "@scure/btc-signer";
 import { P2TR } from "@scure/btc-signer/payment.js";
-import { Coin, SendBitcoinParams } from ".";
-import { Identity } from "../identity";
+import { Coin, ExtendedCoin, SendBitcoinParams } from ".";
+import { Identity, SingleKey } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
@@ -11,6 +11,15 @@ import {
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
+import { extendCoin } from "./utils";
+import { VtxoScript } from "../script/base";
+import { hex } from "@scure/base";
+import {
+    ConditionCSVMultisigTapscript,
+    CSVMultisigTapscript,
+} from "../script/tapscript";
+import { BlockTime } from "./unroll";
+import { Wallet } from "./wallet";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
@@ -92,6 +101,8 @@ export class OnchainWallet implements AnchorBumper {
     }
 
     async send(params: SendBitcoinParams): Promise<string> {
+        const chainTip = await this.provider.getChainTip();
+
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }
@@ -109,9 +120,55 @@ export class OnchainWallet implements AnchorBumper {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
+        const txWeightEstimator = TxWeightEstimator.create();
+
+        for (const coin of coins) {
+            // TODO: import ark wallet or find another way to create utxo from coin
+            const arkWallet = await Wallet.create({
+                identity: SingleKey.fromRandomBytes(),
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: this.provider,
+            });
+
+            const utxo = extendCoin(arkWallet, coin);
+
+            const txStatus = await this.provider.getTxStatus(utxo.txid);
+            if (!txStatus.confirmed) {
+                throw new Error(`tx ${utxo.txid} is not confirmed`);
+            }
+
+            const exit = availableUtxoExitPath(
+                { height: txStatus.blockHeight, time: txStatus.blockTime },
+                chainTip,
+                utxo
+            );
+            if (!exit) {
+                throw new Error(
+                    `no available exit path found for vtxo ${utxo.txid}:${utxo.vout}`
+                );
+            }
+
+            const spendingLeaf = VtxoScript.decode(utxo.tapTree).findLeaf(
+                hex.encode(exit.script)
+            );
+            if (!spendingLeaf) {
+                throw new Error(
+                    `spending leaf not found for vtxo ${utxo.txid}:${utxo.vout}`
+                );
+            }
+
+            txWeightEstimator.addTapscriptInput(
+                64,
+                spendingLeaf[1].length,
+                TaprootControlBlock.encode(spendingLeaf[0]).length
+            );
+        }
+
+        txWeightEstimator.addP2TROutput();
+
         // Ensure fee is an integer by rounding up
-        const estimatedFee = Math.ceil(174 * feeRate);
-        const totalNeeded = params.amount + estimatedFee;
+        const estimatedFee = Math.ceil(174 * feeRate); // txWeightEstimator.vsize().fee(BigInt(feeRate));
+        const totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
 
         // Select coins
         const selected = selectCoins(coins, totalNeeded);
@@ -283,4 +340,31 @@ export function selectCoins(
         inputs: selectedCoins,
         changeAmount,
     };
+}
+
+function availableUtxoExitPath(
+    confirmedAt: BlockTime,
+    current: BlockTime,
+    utxo: ExtendedCoin
+): CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type | undefined {
+    const exits = VtxoScript.decode(utxo.tapTree).exitPaths();
+    for (const exit of exits) {
+        if (exit.params.timelock.type === "blocks") {
+            if (
+                current.height >=
+                confirmedAt.height + Number(exit.params.timelock.value)
+            ) {
+                return exit;
+            }
+        } else {
+            if (
+                current.time >=
+                confirmedAt.time + Number(exit.params.timelock.value)
+            ) {
+                return exit;
+            }
+        }
+    }
+
+    return undefined;
 }
