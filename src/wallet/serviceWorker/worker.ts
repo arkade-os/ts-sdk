@@ -190,11 +190,11 @@ export class Worker {
                     );
                 }
                 if (funds.type === "utxo") {
-                    const newUtxos = funds.coins.map((utxo) =>
+                    const utxos = funds.coins.map((utxo) =>
                         extendCoin(this.wallet!, utxo)
                     );
 
-                    if (newUtxos.length === 0) {
+                    if (utxos.length === 0) {
                         this.sendMessageToAllClients(Response.utxoUpdate([]));
                         return;
                     }
@@ -203,15 +203,14 @@ export class Worker {
                         await this.wallet?.getBoardingAddress()!;
 
                     // save utxos using unified repository
+                    await this.walletRepository.clearUtxos(boardingAddress);
                     await this.walletRepository.saveUtxos(
                         boardingAddress,
-                        newUtxos
+                        utxos
                     );
 
                     // notify all clients about the utxo update
-                    this.sendMessageToAllClients(
-                        Response.utxoUpdate(funds.coins)
-                    );
+                    this.sendMessageToAllClients(Response.utxoUpdate(utxos));
                 }
             }
         );
