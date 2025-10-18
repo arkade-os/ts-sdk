@@ -1,5 +1,12 @@
 import { hex } from "@scure/base";
-import { WalletBalance, VirtualCoin, ArkTransaction, IWallet, Coin } from "..";
+import {
+    WalletBalance,
+    VirtualCoin,
+    ArkTransaction,
+    IWallet,
+    Coin,
+    ExtendedCoin,
+} from "..";
 import { ExtendedVirtualCoin } from "../..";
 import { SettlementEvent } from "../../providers/ark";
 
@@ -369,14 +376,14 @@ export namespace Response {
 
     export interface UtxoUpdate extends Base {
         type: "UTXO_UPDATE";
-        coins: Coin[];
+        coins: ExtendedCoin[];
     }
 
     export function isUtxoUpdate(response: Base): response is UtxoUpdate {
         return response.type === "UTXO_UPDATE";
     }
 
-    export function utxoUpdate(coins: Coin[]): UtxoUpdate {
+    export function utxoUpdate(coins: ExtendedCoin[]): UtxoUpdate {
         return {
             type: "UTXO_UPDATE",
             id: getRandomId(), // spontaneous update, not tied to a request

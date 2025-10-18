@@ -185,32 +185,28 @@ export class Worker {
                     ]);
 
                     // notify all clients about the vtxo update
-                    this.sendMessageToAllClients(
+                    await this.sendMessageToAllClients(
                         Response.vtxoUpdate(newVtxos, spentVtxos)
                     );
                 }
                 if (funds.type === "utxo") {
-                    const newUtxos = funds.coins.map((utxo) =>
+                    const utxos = funds.coins.map((utxo) =>
                         extendCoin(this.wallet!, utxo)
                     );
-
-                    if (newUtxos.length === 0) {
-                        this.sendMessageToAllClients(Response.utxoUpdate([]));
-                        return;
-                    }
 
                     const boardingAddress =
                         await this.wallet?.getBoardingAddress()!;
 
                     // save utxos using unified repository
+                    await this.walletRepository.clearUtxos(boardingAddress);
                     await this.walletRepository.saveUtxos(
                         boardingAddress,
-                        newUtxos
+                        utxos
                     );
 
                     // notify all clients about the utxo update
-                    this.sendMessageToAllClients(
-                        Response.utxoUpdate(funds.coins)
+                    await this.sendMessageToAllClients(
+                        Response.utxoUpdate(utxos)
                     );
                 }
             }
