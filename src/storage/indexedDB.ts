@@ -35,6 +35,10 @@ interface ContractRecord {
 }
 
 type JsonArray = Array<Record<string, any>>;
+type AddressRecordDescriptor = {
+    idSuffix: string;
+    extra?: Record<string, any>;
+};
 
 export class IndexedDBStorageAdapter implements StorageAdapter {
     private dbName: string;
@@ -139,19 +143,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
                     STORE_VTXOS,
                     PREFIX_VTXOS,
                     key,
-                    (item) => {
-                        const txid = item?.txid;
-                        const vout = item?.vout;
-                        if (
-                            typeof txid !== "string" ||
-                            typeof vout !== "number"
-                        )
-                            return null;
-                        return {
-                            idSuffix: `${txid}:${vout}`,
-                            extra: { txid, vout },
-                        };
-                    }
+                    (item) => this.buildOutpointDescriptor(item)
                 );
             }
 
@@ -160,19 +152,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
                     STORE_UTXOS,
                     PREFIX_UTXOS,
                     key,
-                    (item) => {
-                        const txid = item?.txid;
-                        const vout = item?.vout;
-                        if (
-                            typeof txid !== "string" ||
-                            typeof vout !== "number"
-                        )
-                            return null;
-                        return {
-                            idSuffix: `${txid}:${vout}`,
-                            extra: { txid, vout },
-                        };
-                    }
+                    (item) => this.buildOutpointDescriptor(item)
                 );
             }
 
@@ -181,11 +161,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
                     STORE_TRANSACTIONS,
                     PREFIX_TRANSACTIONS,
                     key,
-                    (item) => {
-                        const txKey = item?.key;
-                        if (typeof txKey !== "string") return null;
-                        return { idSuffix: txKey, extra: { txKey } };
-                    }
+                    (item) => this.buildTransactionDescriptor(item)
                 );
             }
 
@@ -199,7 +175,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
 
             return await this.getFromFallback(key);
         } catch (error) {
-            console.error(`Failed to get item for key ${key}:`, error);
+            await this.logFailure("getItem", error, key);
             return null;
         }
     }
@@ -212,19 +188,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
                     PREFIX_VTXOS,
                     key,
                     value,
-                    (item) => {
-                        const txid = item?.txid;
-                        const vout = item?.vout;
-                        if (
-                            typeof txid !== "string" ||
-                            typeof vout !== "number"
-                        )
-                            return null;
-                        return {
-                            idSuffix: `${txid}:${vout}`,
-                            extra: { txid, vout },
-                        };
-                    }
+                    (item) => this.buildOutpointDescriptor(item)
                 );
                 return;
             }
@@ -235,19 +199,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
                     PREFIX_UTXOS,
                     key,
                     value,
-                    (item) => {
-                        const txid = item?.txid;
-                        const vout = item?.vout;
-                        if (
-                            typeof txid !== "string" ||
-                            typeof vout !== "number"
-                        )
-                            return null;
-                        return {
-                            idSuffix: `${txid}:${vout}`,
-                            extra: { txid, vout },
-                        };
-                    }
+                    (item) => this.buildOutpointDescriptor(item)
                 );
                 return;
             }
@@ -258,11 +210,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
                     PREFIX_TRANSACTIONS,
                     key,
                     value,
-                    (item) => {
-                        const txKey = item?.key;
-                        if (typeof txKey !== "string") return null;
-                        return { idSuffix: txKey, extra: { txKey } };
-                    }
+                    (item) => this.buildTransactionDescriptor(item)
                 );
                 return;
             }
@@ -279,7 +227,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
 
             await this.writeToFallback(key, value);
         } catch (error) {
-            console.error(`Failed to set item for key ${key}:`, error);
+            await this.logFailure("setItem", error, key);
             throw error;
         }
     }
@@ -330,7 +278,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
 
             await this.deleteFromFallback(key);
         } catch (error) {
-            console.error(`Failed to remove item for key ${key}:`, error);
+            await this.logFailure("removeItem", error, key);
         }
     }
 
@@ -354,8 +302,30 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
             }
             await this.transactionComplete(transaction);
         } catch (error) {
-            console.error("Failed to clear storage:", error);
+            await this.logFailure("clear", error);
         }
+    }
+
+    private buildOutpointDescriptor(
+        item: Record<string, any>
+    ): AddressRecordDescriptor | null {
+        const txid = item?.txid;
+        const vout = item?.vout;
+        if (typeof txid !== "string" || typeof vout !== "number") {
+            return null;
+        }
+        return {
+            idSuffix: `${txid}:${vout}`,
+            extra: { txid, vout },
+        };
+    }
+
+    private buildTransactionDescriptor(
+        item: Record<string, any>
+    ): AddressRecordDescriptor | null {
+        const txKey = item?.key;
+        if (typeof txKey !== "string") return null;
+        return { idSuffix: txKey, extra: { txKey } };
     }
 
     private async getAddressScopedArray(
@@ -365,7 +335,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
         migrationBuilder?: (
             item: Record<string, any>,
             index: number
-        ) => { idSuffix: string; extra?: Record<string, any> } | null
+        ) => AddressRecordDescriptor | null
     ): Promise<string | null> {
         const address = key.slice(prefix.length);
         if (!address) return null;
@@ -404,7 +374,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
         idBuilder: (
             item: Record<string, any>,
             index: number
-        ) => { idSuffix: string; extra?: Record<string, any> } | null
+        ) => AddressRecordDescriptor | null
     ): Promise<void> {
         const address = key.slice(prefix.length);
         if (!address) {
@@ -424,10 +394,7 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
             return;
         }
 
-        const descriptors: Array<{
-            idSuffix: string;
-            extra?: Record<string, any>;
-        }> = [];
+        const descriptors: AddressRecordDescriptor[] = [];
         for (let idx = 0; idx < parsed.length; idx++) {
             const descriptor = idBuilder(parsed[idx], idx);
             if (!descriptor) {
@@ -639,6 +606,11 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
         await this.transactionComplete(transaction);
     }
 
+    /**
+     * Parses contract storage keys shaped as `contract:<contractId>:<entryKey>`.
+     * The entry key portion may contain additional `:` separators.
+     * Returns `null` when the key is not namespaced for contract data.
+     */
     private parseContractKey(
         key: string
     ): { id: string; contractId: string; entryKey: string } | null {
@@ -703,6 +675,45 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
         const store = transaction.objectStore(STORE_FALLBACK);
         store.delete(key);
         await this.transactionComplete(transaction);
+    }
+
+    private async logFailure(
+        operation: string,
+        error: unknown,
+        key?: string
+    ): Promise<void> {
+        try {
+            const context: Record<string, unknown> = { operation };
+            if (key) {
+                const hashed = await this.hashKey(key);
+                if (hashed) {
+                    context.keyHash = hashed;
+                } else {
+                    const [prefix] = key.split(":");
+                    context.keyPrefix = prefix ?? "unknown";
+                }
+            }
+            console.debug("IndexedDB operation failed", context, error);
+        } catch {
+            console.debug("IndexedDB operation failed", { operation }, error);
+        }
+    }
+
+    private async hashKey(key: string): Promise<string | null> {
+        try {
+            const subtle = globalThis.crypto?.subtle;
+            if (!subtle) return null;
+
+            const digest = await subtle.digest(
+                "SHA-256",
+                new TextEncoder().encode(key)
+            );
+            return Array.from(new Uint8Array(digest))
+                .map((byte) => byte.toString(16).padStart(2, "0"))
+                .join("");
+        } catch {
+            return null;
+        }
     }
 
     private transactionComplete(transaction: IDBTransaction): Promise<void> {

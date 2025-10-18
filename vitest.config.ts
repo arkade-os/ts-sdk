@@ -6,7 +6,7 @@ export default defineConfig({
         environment: "node",
         fileParallelism: false,
         reporters: ["verbose"],
-        setupFiles: ["./test/polyfill.js"],
+        setupFiles: ["fake-indexeddb/auto", "./test/polyfill.js"],
         coverage: {
             provider: "v8",
             reporter: ["text", "html"],

@@ -1,4 +1,3 @@
-import "fake-indexeddb/auto";
 import { describe, it, expect } from "vitest";
 import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
 
@@ -14,6 +13,37 @@ const getAllRecords = <T>(store: IDBObjectStore) =>
         const request = store.getAll();
         request.onsuccess = () => resolve(request.result as T[]);
         request.onerror = () => reject(request.error);
+    });
+
+const openDatabase = (dbName: string) =>
+    new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(dbName);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+
+const withDb = async <T>(
+    dbName: string,
+    fn: (db: IDBDatabase) => Promise<T>
+): Promise<T> => {
+    const db = await openDatabase(dbName);
+    try {
+        return await fn(db);
+    } finally {
+        db.close();
+    }
+};
+
+const readStoreRecords = async <T>(
+    dbName: string,
+    storeName: string
+): Promise<T[]> =>
+    withDb(dbName, async (db) => {
+        const tx = db.transaction([storeName], "readonly");
+        const store = tx.objectStore(storeName);
+        const records = await getAllRecords<T>(store);
+        await waitForTransaction(tx);
+        return records;
     });
 
 describe("IndexedDBStorageAdapter", () => {
@@ -41,12 +71,7 @@ describe("IndexedDBStorageAdapter", () => {
         const stored = await adapter.getItem(key);
         expect(stored).toEqual(JSON.stringify(payload));
 
-        const db = await (adapter as any).getDB();
-        const tx = db.transaction(["vtxos"], "readonly");
-        const store = tx.objectStore("vtxos");
-        const records = await getAllRecords<any>(store);
-        await waitForTransaction(tx);
-
+        const records = await readStoreRecords<any>(dbName, "vtxos");
         expect(records).toHaveLength(2);
         expect(records[0]).toMatchObject({
             address: "addr1",
@@ -55,7 +80,6 @@ describe("IndexedDBStorageAdapter", () => {
             order: 0,
         });
 
-        db.close();
         await cleanup(dbName);
     });
 
@@ -71,16 +95,51 @@ describe("IndexedDBStorageAdapter", () => {
 
         await adapter.removeItem(keyA);
 
-        const db = await (adapter as any).getDB();
-        const tx = db.transaction(["vtxos"], "readonly");
-        const store = tx.objectStore("vtxos");
-        const records = await getAllRecords<any>(store);
-        await waitForTransaction(tx);
-
+        const records = await readStoreRecords<any>(dbName, "vtxos");
         expect(records).toHaveLength(1);
         expect(records[0].address).toBe("addrB");
 
-        db.close();
+        await cleanup(dbName);
+    });
+
+    it("removes utxos scoped data while preserving other entries", async () => {
+        const dbName = randomDbName();
+        const adapter = new IndexedDBStorageAdapter(dbName);
+        const keyA = "utxos:addrA";
+        const keyB = "utxos:addrB";
+        const sample = [{ txid: "d".repeat(64), vout: 2 }];
+
+        await adapter.setItem(keyA, JSON.stringify(sample));
+        await adapter.setItem(keyB, JSON.stringify(sample));
+
+        await adapter.removeItem(keyA);
+
+        const records = await readStoreRecords<any>(dbName, "utxos");
+        expect(records).toHaveLength(1);
+        expect(records[0]).toMatchObject({
+            address: "addrB",
+            txid: sample[0].txid,
+            vout: sample[0].vout,
+        });
+
+        await cleanup(dbName);
+    });
+
+    it("removes wallet state", async () => {
+        const dbName = randomDbName();
+        const adapter = new IndexedDBStorageAdapter(dbName);
+
+        const state = { foo: "bar" };
+        await adapter.setItem("wallet:state", JSON.stringify(state));
+        expect(await adapter.getItem("wallet:state")).toEqual(
+            JSON.stringify(state)
+        );
+
+        await adapter.removeItem("wallet:state");
+
+        const records = await readStoreRecords<any>(dbName, "walletState");
+        expect(records).toHaveLength(0);
+
         await cleanup(dbName);
     });
 
@@ -90,34 +149,70 @@ describe("IndexedDBStorageAdapter", () => {
         const key = "tx:addr-migrate";
         const payload = [{ key: "tx-key-1", amount: 1 }];
 
-        const db = await (adapter as any).getDB();
-        const fallbackTx = db.transaction(["storage"], "readwrite");
-        fallbackTx.objectStore("storage").put(JSON.stringify(payload), key);
-        await waitForTransaction(fallbackTx);
+        await adapter.getItem("init");
+
+        await withDb(dbName, async (db) => {
+            const fallbackTx = db.transaction(["storage"], "readwrite");
+            fallbackTx.objectStore("storage").put(JSON.stringify(payload), key);
+            await waitForTransaction(fallbackTx);
+        });
 
         const result = await adapter.getItem(key);
         expect(result).toEqual(JSON.stringify(payload));
 
-        const structuredTx = db.transaction(["transactions"], "readonly");
-        const structuredStore = structuredTx.objectStore("transactions");
-        const structuredRecords = await getAllRecords<any>(structuredStore);
-        await waitForTransaction(structuredTx);
+        await withDb(dbName, async (db) => {
+            const structuredTx = db.transaction(["transactions"], "readonly");
+            const structuredStore = structuredTx.objectStore("transactions");
+            const structuredRecords = await getAllRecords<any>(structuredStore);
+            await waitForTransaction(structuredTx);
+            expect(structuredRecords).toHaveLength(1);
+            expect(structuredRecords[0]).toMatchObject({
+                address: "addr-migrate",
+                txKey: "tx-key-1",
+                order: 0,
+            });
 
-        expect(structuredRecords).toHaveLength(1);
-        expect(structuredRecords[0]).toMatchObject({
-            address: "addr-migrate",
-            txKey: "tx-key-1",
-            order: 0,
+            const fallbackCheckTx = db.transaction(["storage"], "readonly");
+            const fallbackStore = fallbackCheckTx.objectStore("storage");
+            const fallbackEntries = await getAllRecords<any>(fallbackStore);
+            await waitForTransaction(fallbackCheckTx);
+            expect(fallbackEntries).toEqual([]);
         });
 
-        const fallbackCheckTx = db.transaction(["storage"], "readonly");
-        const fallbackStore = fallbackCheckTx.objectStore("storage");
-        const fallbackEntries = await getAllRecords<any>(fallbackStore);
-        await waitForTransaction(fallbackCheckTx);
+        await cleanup(dbName);
+    });
 
-        expect(fallbackEntries).toEqual([]);
+    it("clears all stores", async () => {
+        const dbName = randomDbName();
+        const adapter = new IndexedDBStorageAdapter(dbName);
 
-        db.close();
+        const data = JSON.stringify([{ txid: "e".repeat(64), vout: 0 }]);
+        await adapter.setItem("vtxos:addr-clear", data);
+        await adapter.setItem("utxos:addr-clear", data);
+        await adapter.setItem(
+            "tx:addr-clear",
+            JSON.stringify([{ key: "tx-hash", amount: 1 }])
+        );
+        await adapter.setItem("wallet:state", JSON.stringify({ foo: "bar" }));
+        await adapter.setItem("contract:contractA:entry", "value");
+        await adapter.setItem("misc:key", "value");
+
+        await adapter.clear();
+
+        const storesToCheck: Array<[string, number]> = [
+            ["vtxos", 0],
+            ["utxos", 0],
+            ["transactions", 0],
+            ["walletState", 0],
+            ["contractData", 0],
+            ["storage", 0],
+        ];
+
+        for (const [storeName, expectedLength] of storesToCheck) {
+            const records = await readStoreRecords<any>(dbName, storeName);
+            expect(records).toHaveLength(expectedLength);
+        }
+
         await cleanup(dbName);
     });
 });
