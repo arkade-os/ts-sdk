@@ -65,6 +65,12 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
             request.onerror = () => reject(request.error);
             request.onsuccess = () => {
                 this.db = request.result;
+                this.db.onversionchange = () => {
+                    if (this.db) {
+                        this.db.close();
+                        this.db = null;
+                    }
+                };
                 resolve(this.db);
             };
 
