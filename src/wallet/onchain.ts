@@ -101,14 +101,14 @@ export class OnchainWallet implements AnchorBumper {
     }
 
     async send(params: SendBitcoinParams): Promise<string> {
-        const chainTip = await this.provider.getChainTip();
-
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }
         if (params.amount < OnchainWallet.DUST_AMOUNT) {
             throw new Error("Amount is below dust limit");
         }
+
+        const chainTip = await this.provider.getChainTip();
 
         const coins = await this.getCoins();
         let feeRate = params.feeRate;
@@ -122,14 +122,14 @@ export class OnchainWallet implements AnchorBumper {
 
         const txWeightEstimator = TxWeightEstimator.create();
 
-        for (const coin of coins) {
-            // TODO: import ark wallet or find another way to create utxo from coin
-            const arkWallet = await Wallet.create({
-                identity: SingleKey.fromRandomBytes(),
-                arkServerUrl: "http://localhost:7070",
-                onchainProvider: this.provider,
-            });
+        // TODO: import ark wallet or find another way to create utxo from coin
+        const arkWallet = await Wallet.create({
+            identity: this.identity,
+            arkServerUrl: "http://localhost:7070",
+            onchainProvider: this.provider,
+        });
 
+        for (const coin of coins) {
             const utxo = extendCoin(arkWallet, coin);
 
             const txStatus = await this.provider.getTxStatus(utxo.txid);
