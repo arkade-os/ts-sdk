@@ -4,8 +4,8 @@ import { Coin, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
-    ESPLORA_URL,
-    EsploraProvider,
+    ELECTRUM_WS_URL,
+    ElectrumProvider,
     OnchainProvider,
 } from "../providers/onchain";
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
@@ -60,7 +60,8 @@ export class OnchainWallet implements AnchorBumper {
 
         const network = getNetwork(networkName);
         const onchainProvider =
-            provider || new EsploraProvider(ESPLORA_URL[networkName]);
+            provider ||
+            new ElectrumProvider(ELECTRUM_WS_URL[networkName], networkName);
         const onchainP2TR = p2tr(pubkey, undefined, network);
 
         return new OnchainWallet(

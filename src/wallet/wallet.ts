@@ -15,8 +15,8 @@ import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
-    ESPLORA_URL,
-    EsploraProvider,
+    ELECTRUM_WS_URL,
+    ElectrumProvider,
     OnchainProvider,
 } from "../providers/onchain";
 import {
@@ -188,15 +188,21 @@ export class Wallet implements IWallet {
 
         const info = await arkProvider.getInfo();
 
-        const network = getNetwork(info.network as NetworkName);
+        const networkName = info.network as NetworkName;
+        const network = getNetwork(networkName);
 
-        // Extract esploraUrl from provider if not explicitly provided
-        const esploraUrl =
-            config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
+        const inferredElectrumUrl =
+            config.electrumUrl ||
+            (config.esploraUrl &&
+            (config.esploraUrl.startsWith("ws://") ||
+                config.esploraUrl.startsWith("wss://"))
+                ? config.esploraUrl
+                : undefined) ||
+            ELECTRUM_WS_URL[networkName];
 
-        // Use provided onchainProvider instance or create a new one
         const onchainProvider =
-            config.onchainProvider || new EsploraProvider(esploraUrl);
+            config.onchainProvider ||
+            new ElectrumProvider(inferredElectrumUrl, networkName);
 
         // Generate timelocks
         const exitTimelock: RelativeTimelock = {
