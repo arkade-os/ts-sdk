@@ -144,7 +144,7 @@ export class OnchainWallet implements AnchorBumper {
             );
             if (!exit) {
                 throw new Error(
-                    `no available exit path found for vtxo ${utxo.txid}:${utxo.vout}`
+                    `no available exit path found for utxo ${utxo.txid}:${utxo.vout}`
                 );
             }
 
@@ -153,7 +153,7 @@ export class OnchainWallet implements AnchorBumper {
             );
             if (!spendingLeaf) {
                 throw new Error(
-                    `spending leaf not found for vtxo ${utxo.txid}:${utxo.vout}`
+                    `spending leaf not found for utxo ${utxo.txid}:${utxo.vout}`
                 );
             }
 
@@ -167,7 +167,7 @@ export class OnchainWallet implements AnchorBumper {
         txWeightEstimator.addP2TROutput();
 
         // Ensure fee is an integer by rounding up
-        const estimatedFee = Math.ceil(174 * feeRate); // txWeightEstimator.vsize().fee(BigInt(feeRate));
+        const estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
         const totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
 
         // Select coins
