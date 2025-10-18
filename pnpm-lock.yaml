@@ -44,6 +44,9 @@ importers:
       expo:
         specifier: ~52.0.47
         version: 52.0.47(@babel/core@7.28.4)(@babel/preset-env@7.28.3(@babel/core@7.28.4))(react-native@0.81.4(@babel/core@7.28.4)(react@19.1.1))(react@19.1.1)
+      fake-indexeddb:
+        specifier: ^5.0.2
+        version: 5.0.2
       glob:
         specifier: 11.0.3
         version: 11.0.3
@@ -2122,6 +2125,10 @@ packages:
 
   exponential-backoff@3.1.2:
     resolution: {integrity: sha512-8QxYTVXUkuy7fIIoitQkPwGonB8F3Zj8eEO8Sqg9Zv/bkI7RJAzowee4gr81Hak/dUTpA2Z7VfQgoijjPNlUZA==}
+
+  fake-indexeddb@5.0.2:
+    resolution: {integrity: sha512-cB507r5T3D55DfclY01GLkninZLfU7HXV/mhVRTnTRm5k2u+fY7Fof2dBkr80p5t7G7dlA/G5dI87QiMdPpMCQ==}
+    engines: {node: '>=18'}
 
   fast-glob@3.3.3:
     resolution: {integrity: sha512-7MptL8U0cqcFdzIzwOTHoilX9x5BrNqye7Z/LuC7kCMRio1EMSyqRK3BEAUD7sXRq4iT4AzTVuZdhgQ2TCvYLg==}
@@ -6443,6 +6450,8 @@ snapshots:
       - utf-8-validate
 
   exponential-backoff@3.1.2: {}
+
+  fake-indexeddb@5.0.2: {}
 
   fast-glob@3.3.3:
     dependencies:

@@ -98,6 +98,7 @@
         "esbuild": "^0.25.9",
         "expo": "~52.0.47",
         "eventsource": "4.0.0",
+        "fake-indexeddb": "^5.0.2",
         "glob": "11.0.3",
         "husky": "9.1.7",
         "prettier": "3.6.2",
