@@ -185,7 +185,7 @@ export class Worker {
                     ]);
 
                     // notify all clients about the vtxo update
-                    this.sendMessageToAllClients(
+                    await this.sendMessageToAllClients(
                         Response.vtxoUpdate(newVtxos, spentVtxos)
                     );
                 }
@@ -205,7 +205,9 @@ export class Worker {
                     );
 
                     // notify all clients about the utxo update
-                    this.sendMessageToAllClients(Response.utxoUpdate(utxos));
+                    await this.sendMessageToAllClients(
+                        Response.utxoUpdate(utxos)
+                    );
                 }
             }
         );
