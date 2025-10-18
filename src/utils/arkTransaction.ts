@@ -174,7 +174,7 @@ export function hasBoardingTxExpired(
 ) {
     if (!coin.status.block_time) return false;
     if (boardingTimelock.value === 0n) return true;
-    if (boardingTimelock.type !== "blocks") return false; // TODO: handle get chain tip
+    if (boardingTimelock.type === "blocks") return false; // TODO: handle get chain tip
 
     // validate expiry in terms of seconds
     const now = BigInt(Math.floor(Date.now() / 1000));
