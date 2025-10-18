@@ -194,11 +194,6 @@ export class Worker {
                         extendCoin(this.wallet!, utxo)
                     );
 
-                    if (utxos.length === 0) {
-                        this.sendMessageToAllClients(Response.utxoUpdate([]));
-                        return;
-                    }
-
                     const boardingAddress =
                         await this.wallet?.getBoardingAddress()!;
 
