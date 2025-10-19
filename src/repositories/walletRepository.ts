@@ -44,6 +44,7 @@ const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
 
 const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
     ...o,
+    createdAt: new Date(o.createdAt),
     tapTree: fromHex(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
