@@ -1,5 +1,5 @@
 # First image used to build the sources
-FROM golang:1.25.1 AS builder
+FROM golang:1.25.3 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
