@@ -3,6 +3,7 @@ declare const self: ServiceWorkerGlobalScope;
 
 import { SingleKey } from "../../identity/singleKey";
 import {
+    ArkTransaction,
     ExtendedCoin,
     ExtendedVirtualCoin,
     isRecoverable,
@@ -91,6 +92,38 @@ export class Worker {
         return await this.walletRepository.getUtxos(address);
     }
 
+    private async getTransactionHistory(): Promise<ArkTransaction[]> {
+        if (!this.wallet) return [];
+
+        let txs: ArkTransaction[] = [];
+
+        try {
+            const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
+                await this.wallet.getBoardingTxs();
+
+            const { spendable, spent } = await this.getAllVtxos();
+
+            // convert VTXOs to offchain transactions
+            console.log("getTransactionHistory - vtxosToTxs:", spendable);
+            const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);
+
+            txs = [...boardingTxs, ...offchainTxs];
+
+            // sort transactions by creation time in descending order (newest first)
+            txs.sort(
+                // place createdAt = 0 (unconfirmed txs) first, then descending
+                (a, b) => {
+                    if (a.createdAt === 0) return -1;
+                    if (b.createdAt === 0) return 1;
+                    return b.createdAt - a.createdAt;
+                }
+            );
+        } catch (error: unknown) {
+            console.error("Error getting transaction history:", error);
+        }
+        return txs;
+    }
+
     async start(withServiceWorkerUpdate = true) {
         self.addEventListener(
             "message",
@@ -153,7 +186,7 @@ export class Worker {
         await this.walletRepository.saveVtxos(address, vtxos);
 
         // Get transaction history to cache boarding txs
-        const txs = await this.wallet.getTransactionHistory();
+        const txs = await this.getTransactionHistory();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
         // unsubscribe previous subscription if any
@@ -594,26 +627,7 @@ export class Worker {
         }
 
         try {
-            const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
-                await this.wallet.getBoardingTxs();
-
-            const { spendable, spent } = await this.getAllVtxos();
-
-            // convert VTXOs to offchain transactions
-            const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);
-
-            const txs = [...boardingTxs, ...offchainTxs];
-
-            // sort transactions by creation time in descending order (newest first)
-            txs.sort(
-                // place createdAt = 0 (unconfirmed txs) first, then descending
-                (a, b) => {
-                    if (a.createdAt === 0) return -1;
-                    if (b.createdAt === 0) return 1;
-                    return b.createdAt - a.createdAt;
-                }
-            );
-
+            const txs = await this.getTransactionHistory();
             event.source?.postMessage(
                 Response.transactionHistory(message.id, txs)
             );
