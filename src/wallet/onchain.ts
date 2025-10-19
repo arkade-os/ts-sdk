@@ -18,8 +18,6 @@ import {
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "../script/tapscript";
-import { BlockTime } from "./unroll";
-import { Wallet } from "./wallet";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
@@ -108,8 +106,6 @@ export class OnchainWallet implements AnchorBumper {
             throw new Error("Amount is below dust limit");
         }
 
-        const chainTip = await this.provider.getChainTip();
-
         const coins = await this.getCoins();
         let feeRate = params.feeRate;
         if (!feeRate) {
@@ -122,49 +118,16 @@ export class OnchainWallet implements AnchorBumper {
 
         const txWeightEstimator = TxWeightEstimator.create();
 
-        // TODO: import ark wallet or find another way to create utxo from coin
-        const arkWallet = await Wallet.create({
-            identity: this.identity,
-            arkServerUrl: "http://localhost:7070",
-            onchainProvider: this.provider,
-        });
+        // Select coins to the exact send amount
+        const selectedWithoutFee = selectCoins(coins, params.amount);
 
-        for (const coin of coins) {
-            const utxo = extendCoin(arkWallet, coin);
-
-            const txStatus = await this.provider.getTxStatus(utxo.txid);
-            if (!txStatus.confirmed) {
-                throw new Error(`tx ${utxo.txid} is not confirmed`);
-            }
-
-            const exit = availableUtxoExitPath(
-                { height: txStatus.blockHeight, time: txStatus.blockTime },
-                chainTip,
-                utxo
-            );
-            if (!exit) {
-                throw new Error(
-                    `no available exit path found for utxo ${utxo.txid}:${utxo.vout}`
-                );
-            }
-
-            const spendingLeaf = VtxoScript.decode(utxo.tapTree).findLeaf(
-                hex.encode(exit.script)
-            );
-            if (!spendingLeaf) {
-                throw new Error(
-                    `spending leaf not found for utxo ${utxo.txid}:${utxo.vout}`
-                );
-            }
-
-            txWeightEstimator.addTapscriptInput(
-                64,
-                spendingLeaf[1].length,
-                TaprootControlBlock.encode(spendingLeaf[0]).length
-            );
+        // Add weight of each coin
+        for (const _ of selectedWithoutFee.inputs) {
+            txWeightEstimator.addKeySpendInput();
         }
 
-        txWeightEstimator.addP2TROutput();
+        // We have two P2TR outputs, the send amount and potentially the change amount
+        txWeightEstimator.addP2TROutput().addP2TROutput();
 
         // Ensure fee is an integer by rounding up
         const estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
@@ -195,6 +158,7 @@ export class OnchainWallet implements AnchorBumper {
             BigInt(params.amount),
             this.network
         );
+
         // Add change output if needed
         if (selected.changeAmount > 0n) {
             tx.addOutputAddress(
@@ -340,31 +304,4 @@ export function selectCoins(
         inputs: selectedCoins,
         changeAmount,
     };
-}
-
-function availableUtxoExitPath(
-    confirmedAt: BlockTime,
-    current: BlockTime,
-    utxo: ExtendedCoin
-): CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type | undefined {
-    const exits = VtxoScript.decode(utxo.tapTree).exitPaths();
-    for (const exit of exits) {
-        if (exit.params.timelock.type === "blocks") {
-            if (
-                current.height >=
-                confirmedAt.height + Number(exit.params.timelock.value)
-            ) {
-                return exit;
-            }
-        } else {
-            if (
-                current.time >=
-                confirmedAt.time + Number(exit.params.timelock.value)
-            ) {
-                return exit;
-            }
-        }
-    }
-
-    return undefined;
 }

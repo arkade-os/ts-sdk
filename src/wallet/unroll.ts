@@ -356,7 +356,7 @@ function doWait(
     };
 }
 
-export type BlockTime = {
+type BlockTime = {
     height: number;
     time: number;
 };

@@ -188,14 +188,6 @@ describe("Wallet", () => {
             },
         ];
 
-        const mockChainTip = [
-            {
-                id: hex.encode(new Uint8Array(32).fill(1)),
-                height: 254,
-                mediantime: 17600000,
-            },
-        ];
-
         beforeEach(() => {
             mockFetch.mockReset();
         });
@@ -205,11 +197,6 @@ describe("Wallet", () => {
                 mockIdentity,
                 "mutinynet"
             );
-
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockChainTip),
-            });
 
             await expect(
                 wallet.send({
