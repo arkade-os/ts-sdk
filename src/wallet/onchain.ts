@@ -119,12 +119,21 @@ export class OnchainWallet implements AnchorBumper {
             txWeightEstimator.addKeySpendInput();
         }
 
-        // We have two P2TR outputs, the send amount and potentially the change amount
-        txWeightEstimator.addP2TROutput().addP2TROutput();
+        // Add weight of send amount output
+        txWeightEstimator.addP2TROutput();
 
         // Ensure fee is an integer by rounding up
-        const estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
-        const totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+        let estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
+        let totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+
+        // Select coins
+        const selectedWithFee = selectCoins(coins, totalNeeded);
+
+        if (selectedWithFee.changeAmount > 0n) {
+            txWeightEstimator.addP2TROutput()
+            estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
+            totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+        }
 
         // Select coins
         const selected = selectCoins(coins, totalNeeded);
