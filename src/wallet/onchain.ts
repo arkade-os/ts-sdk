@@ -1,7 +1,7 @@
-import { p2tr, TaprootControlBlock } from "@scure/btc-signer";
+import { p2tr } from "@scure/btc-signer";
 import { P2TR } from "@scure/btc-signer/payment.js";
-import { Coin, ExtendedCoin, SendBitcoinParams } from ".";
-import { Identity, SingleKey } from "../identity";
+import { Coin, SendBitcoinParams } from ".";
+import { Identity } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
@@ -11,13 +11,6 @@ import {
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
-import { extendCoin } from "./utils";
-import { VtxoScript } from "../script/base";
-import { hex } from "@scure/base";
-import {
-    ConditionCSVMultisigTapscript,
-    CSVMultisigTapscript,
-} from "../script/tapscript";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
