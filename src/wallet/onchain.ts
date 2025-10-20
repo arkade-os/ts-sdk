@@ -129,17 +129,32 @@ export class OnchainWallet implements AnchorBumper {
         // Select coins with fees from known inputs and outputs
         const selectedWithFee = selectCoins(coins, totalNeeded);
 
-        if (selectedWithFee.changeAmount > 0n) {
+        const extraInputsFromFee =
+            selectedWithFee.inputs.length - selectedWithoutFee.inputs.length;
+
+        // Add weight of each input introduced by the fee
+        for (let input = 0; input < extraInputsFromFee; input++) {
+            txWeightEstimator.addKeySpendInput();
+        }
+
+        // Refine the total amount needed using fee inputs
+        estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
+        totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+
+        // Change output weight is added only when change is available
+        const isChangeAvailable =
+            selectedWithFee.changeAmount &&
+            selectedWithFee.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT);
+        if (isChangeAvailable) {
             txWeightEstimator.addP2TROutput();
             estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
             totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
         }
 
         // Select coins with fees from all inputs and outputs (including change amount if available)
-        const selected =
-            selectedWithFee.changeAmount > 0n
-                ? selectCoins(coins, totalNeeded)
-                : selectedWithFee;
+        const selected = isChangeAvailable
+            ? selectCoins(coins, totalNeeded)
+            : selectedWithFee;
 
         // Create transaction
         let tx = new Transaction();
@@ -165,7 +180,10 @@ export class OnchainWallet implements AnchorBumper {
         );
 
         // Add change output if needed
-        if (selected.changeAmount > 0n) {
+        if (
+            selected.changeAmount > 0n &&
+            selected.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT)
+        ) {
             tx.addOutputAddress(
                 this.address,
                 selected.changeAmount,
