@@ -122,7 +122,7 @@ export class OnchainWallet implements AnchorBumper {
         // Add weight of send amount output
         txWeightEstimator.addP2TROutput();
 
-        // Ensure fee is an integer by rounding up
+        // Estimating fee from known inputs and outputs. Ensure fee is an integer by rounding up
         let estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
         let totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
 
@@ -133,8 +133,10 @@ export class OnchainWallet implements AnchorBumper {
             selectedWithFee.inputs.length - selectedWithoutFee.inputs.length;
 
         // Add weight of each input introduced by the fee
-        for (let input = 0; input < extraInputsFromFee; input++) {
-            txWeightEstimator.addKeySpendInput();
+        if (extraInputsFromFee > 0) {
+            for (let input = 0; input < extraInputsFromFee; input++) {
+                txWeightEstimator.addKeySpendInput();
+            }
         }
 
         // Refine the total amount needed using fee inputs
@@ -142,19 +144,17 @@ export class OnchainWallet implements AnchorBumper {
         totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
 
         // Change output weight is added only when change is available
-        const isChangeAvailable =
-            selectedWithFee.changeAmount &&
+        const hasChange =
             selectedWithFee.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT);
-        if (isChangeAvailable) {
+
+        if (hasChange) {
             txWeightEstimator.addP2TROutput();
             estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
             totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
         }
 
         // Select coins with fees from all inputs and outputs (including change amount if available)
-        const selected = isChangeAvailable
-            ? selectCoins(coins, totalNeeded)
-            : selectedWithFee;
+        const selected = selectCoins(coins, totalNeeded);
 
         // Create transaction
         let tx = new Transaction();
@@ -180,10 +180,7 @@ export class OnchainWallet implements AnchorBumper {
         );
 
         // Add change output if needed
-        if (
-            selected.changeAmount > 0n &&
-            selected.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT)
-        ) {
+        if (selected.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT)) {
             tx.addOutputAddress(
                 this.address,
                 selected.changeAmount,
