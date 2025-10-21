@@ -185,6 +185,15 @@ export class Worker {
         const address = await this.wallet.getAddress();
         await this.walletRepository.saveVtxos(address, vtxos);
 
+        // Fetch boarding utxos and save using unified repository
+        const boardingAddress = await this.wallet.getBoardingAddress();
+        const coins =
+            await this.wallet.onchainProvider.getCoins(boardingAddress);
+        await this.walletRepository.saveUtxos(
+            boardingAddress,
+            coins.map((utxo) => extendCoin(this.wallet!, utxo))
+        );
+
         // Get transaction history to cache boarding txs
         const txs = await this.getTransactionHistory();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
