@@ -1,8 +1,8 @@
-import { get } from "http";
 import { StorageAdapter } from "../storage";
 
-const getContractKey = (id: string, key: string) => `contract:${id}:${key}`;
-const getCollectionKey = (type: string) => `collection:${type}`;
+const getContractStorageKey = (id: string, key: string) =>
+    `contract:${id}:${key}`;
+const getCollectionStorageKey = (type: string) => `collection:${type}`;
 
 export interface ContractRepository {
     // Generic contract metadata (for SDK users like boltz-swap)
@@ -36,9 +36,9 @@ export class ContractRepositoryImpl implements ContractRepository {
         contractId: string,
         key: string
     ): Promise<T | null> {
-        const storageKey = getContractKey(contractId, key);
-
-        const stored = await this.storage.getItem(storageKey);
+        const stored = await this.storage.getItem(
+            getContractStorageKey(contractId, key)
+        );
         if (!stored) return null;
 
         try {
@@ -58,10 +58,11 @@ export class ContractRepositoryImpl implements ContractRepository {
         key: string,
         data: T
     ): Promise<void> {
-        const storageKey = getContractKey(contractId, key);
-
         try {
-            await this.storage.setItem(storageKey, JSON.stringify(data));
+            await this.storage.setItem(
+                getContractStorageKey(contractId, key),
+                JSON.stringify(data)
+            );
         } catch (error) {
             console.error(
                 `Failed to persist contract data for ${contractId}:${key}:`,
@@ -72,10 +73,10 @@ export class ContractRepositoryImpl implements ContractRepository {
     }
 
     async deleteContractData(contractId: string, key: string): Promise<void> {
-        const storageKey = getContractKey(contractId, key);
-
         try {
-            await this.storage.removeItem(storageKey);
+            await this.storage.removeItem(
+                getContractStorageKey(contractId, key)
+            );
         } catch (error) {
             console.error(
                 `Failed to remove contract data for ${contractId}:${key}:`,
@@ -88,9 +89,9 @@ export class ContractRepositoryImpl implements ContractRepository {
     async getContractCollection<T>(
         contractType: string
     ): Promise<ReadonlyArray<T>> {
-        const storageKey = getCollectionKey(contractType);
-
-        const stored = await this.storage.getItem(storageKey);
+        const stored = await this.storage.getItem(
+            getCollectionStorageKey(contractType)
+        );
         if (!stored) return [];
 
         try {
@@ -139,11 +140,9 @@ export class ContractRepositoryImpl implements ContractRepository {
             newCollection = [...collection, item];
         }
 
-        const storageKey = getCollectionKey(contractType);
-
         try {
             await this.storage.setItem(
-                storageKey,
+                getCollectionStorageKey(contractType),
                 JSON.stringify(newCollection)
             );
         } catch (error) {
@@ -170,10 +169,11 @@ export class ContractRepositoryImpl implements ContractRepository {
         // Build new collection without the specified item
         const filtered = collection.filter((item) => item[idField] !== id);
 
-        const storageKey = getCollectionKey(contractType);
-
         try {
-            await this.storage.setItem(storageKey, JSON.stringify(filtered));
+            await this.storage.setItem(
+                getCollectionStorageKey(contractType),
+                JSON.stringify(filtered)
+            );
         } catch (error) {
             console.error(
                 `Failed to persist contract collection removal for ${contractType}:`,
