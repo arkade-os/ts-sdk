@@ -100,8 +100,7 @@ export class WalletRepositoryImpl implements WalletRepository {
 
         try {
             const parsed = JSON.parse(stored) as ExtendedVirtualCoin[];
-            const vtxos = parsed.map(deserializeVtxo);
-            return vtxos.slice();
+            return parsed.map(deserializeVtxo);
         } catch (error) {
             console.error(
                 `Failed to parse VTXOs for address ${address}:`,
@@ -154,8 +153,7 @@ export class WalletRepositoryImpl implements WalletRepository {
 
         try {
             const parsed = JSON.parse(stored) as ExtendedCoin[];
-            const utxos = parsed.map(deserializeUtxo);
-            return utxos.slice();
+            return parsed.map(deserializeUtxo);
         } catch (error) {
             console.error(
                 `Failed to parse UTXOs for address ${address}:`,
@@ -206,8 +204,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         if (!stored) return [];
 
         try {
-            const transactions = JSON.parse(stored) as ArkTransaction[];
-            return transactions.slice();
+            return JSON.parse(stored) as ArkTransaction[];
         } catch (error) {
             console.error(
                 `Failed to parse transactions for address ${address}:`,
