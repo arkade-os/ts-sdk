@@ -1,4 +1,8 @@
+import { get } from "http";
 import { StorageAdapter } from "../storage";
+
+const getContractKey = (id: string, key: string) => `contract:${id}:${key}`;
+const getCollectionKey = (type: string) => `collection:${type}`;
 
 export interface ContractRepository {
     // Generic contract metadata (for SDK users like boltz-swap)
@@ -23,7 +27,6 @@ export interface ContractRepository {
 
 export class ContractRepositoryImpl implements ContractRepository {
     private storage: StorageAdapter;
-    private cache: Map<string, any> = new Map();
 
     constructor(storage: StorageAdapter) {
         this.storage = storage;
@@ -33,16 +36,13 @@ export class ContractRepositoryImpl implements ContractRepository {
         contractId: string,
         key: string
     ): Promise<T | null> {
-        const storageKey = `contract:${contractId}:${key}`;
-        const cached = this.cache.get(storageKey);
-        if (cached !== undefined) return cached;
+        const storageKey = getContractKey(contractId, key);
 
         const stored = await this.storage.getItem(storageKey);
         if (!stored) return null;
 
         try {
             const data = JSON.parse(stored) as T;
-            this.cache.set(storageKey, data);
             return data;
         } catch (error) {
             console.error(
@@ -58,14 +58,11 @@ export class ContractRepositoryImpl implements ContractRepository {
         key: string,
         data: T
     ): Promise<void> {
-        const storageKey = `contract:${contractId}:${key}`;
+        const storageKey = getContractKey(contractId, key);
 
         try {
-            // First persist to storage, only update cache if successful
             await this.storage.setItem(storageKey, JSON.stringify(data));
-            this.cache.set(storageKey, data);
         } catch (error) {
-            // Storage operation failed, cache remains unchanged
             console.error(
                 `Failed to persist contract data for ${contractId}:${key}:`,
                 error
@@ -75,14 +72,11 @@ export class ContractRepositoryImpl implements ContractRepository {
     }
 
     async deleteContractData(contractId: string, key: string): Promise<void> {
-        const storageKey = `contract:${contractId}:${key}`;
+        const storageKey = getContractKey(contractId, key);
 
         try {
-            // First remove from persistent storage, only delete from cache if successful
             await this.storage.removeItem(storageKey);
-            this.cache.delete(storageKey);
         } catch (error) {
-            // Storage operation failed, cache remains unchanged
             console.error(
                 `Failed to remove contract data for ${contractId}:${key}:`,
                 error
@@ -94,26 +88,19 @@ export class ContractRepositoryImpl implements ContractRepository {
     async getContractCollection<T>(
         contractType: string
     ): Promise<ReadonlyArray<T>> {
-        const storageKey = `collection:${contractType}`;
-        const cached = this.cache.get(storageKey);
-        if (cached !== undefined) return cached;
+        const storageKey = getCollectionKey(contractType);
 
         const stored = await this.storage.getItem(storageKey);
-        if (!stored) {
-            this.cache.set(storageKey, []);
-            return [];
-        }
+        if (!stored) return [];
 
         try {
             const collection = JSON.parse(stored) as T[];
-            this.cache.set(storageKey, collection);
             return collection;
         } catch (error) {
             console.error(
                 `Failed to parse contract collection ${contractType}:`,
                 error
             );
-            this.cache.set(storageKey, []);
             return [];
         }
     }
@@ -152,17 +139,14 @@ export class ContractRepositoryImpl implements ContractRepository {
             newCollection = [...collection, item];
         }
 
-        const storageKey = `collection:${contractType}`;
+        const storageKey = getCollectionKey(contractType);
 
         try {
-            // First persist to storage, only update cache if successful
             await this.storage.setItem(
                 storageKey,
                 JSON.stringify(newCollection)
             );
-            this.cache.set(storageKey, newCollection);
         } catch (error) {
-            // Storage operation failed, cache remains unchanged
             console.error(
                 `Failed to persist contract collection ${contractType}:`,
                 error
@@ -186,14 +170,11 @@ export class ContractRepositoryImpl implements ContractRepository {
         // Build new collection without the specified item
         const filtered = collection.filter((item) => item[idField] !== id);
 
-        const storageKey = `collection:${contractType}`;
+        const storageKey = getCollectionKey(contractType);
 
         try {
-            // First persist to storage, only update cache if successful
             await this.storage.setItem(storageKey, JSON.stringify(filtered));
-            this.cache.set(storageKey, filtered);
         } catch (error) {
-            // Storage operation failed, cache remains unchanged
             console.error(
                 `Failed to persist contract collection removal for ${contractType}:`,
                 error
@@ -204,6 +185,5 @@ export class ContractRepositoryImpl implements ContractRepository {
 
     async clearContractData(): Promise<void> {
         await this.storage.clear();
-        this.cache.clear();
     }
 }
