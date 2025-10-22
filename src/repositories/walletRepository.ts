@@ -9,6 +9,11 @@ export interface WalletState {
     settings?: Record<string, any>;
 }
 
+const getVtxosStorageKey = (address: string) => `vtxos:${address}`;
+const getUtxosStorageKey = (address: string) => `utxos:${address}`;
+const getTransactionsStorageKey = (address: string) => `tx:${address}`;
+const walletStateStorageKey = "wallet:state";
+
 // Utility functions for (de)serializing complex structures
 const toHex = (b: Uint8Array | undefined) => (b ? hex.encode(b) : undefined);
 
@@ -84,49 +89,23 @@ export interface WalletRepository {
 
 export class WalletRepositoryImpl implements WalletRepository {
     private storage: StorageAdapter;
-    private cache: {
-        vtxos: Map<string, ExtendedVirtualCoin[]>;
-        utxos: Map<string, ExtendedCoin[]>;
-        transactions: Map<string, ArkTransaction[]>;
-        walletState: WalletState | null;
-        initialized: Set<string>;
-    };
 
     constructor(storage: StorageAdapter) {
         this.storage = storage;
-        this.cache = {
-            vtxos: new Map(),
-            utxos: new Map(),
-            transactions: new Map(),
-            walletState: null,
-            initialized: new Set(),
-        };
     }
 
     async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        const cacheKey = `vtxos:${address}`;
-
-        if (this.cache.vtxos.has(address)) {
-            return this.cache.vtxos.get(address)!;
-        }
-
-        const stored = await this.storage.getItem(cacheKey);
-        if (!stored) {
-            this.cache.vtxos.set(address, []);
-            return [];
-        }
+        const stored = await this.storage.getItem(getVtxosStorageKey(address));
+        if (!stored) return [];
 
         try {
             const parsed = JSON.parse(stored) as ExtendedVirtualCoin[];
-            const vtxos = parsed.map(deserializeVtxo);
-            this.cache.vtxos.set(address, vtxos.slice());
-            return vtxos.slice();
+            return parsed.map(deserializeVtxo);
         } catch (error) {
             console.error(
                 `Failed to parse VTXOs for address ${address}:`,
                 error
             );
-            this.cache.vtxos.set(address, []);
             return [];
         }
     }
@@ -146,9 +125,8 @@ export class WalletRepositoryImpl implements WalletRepository {
                 storedVtxos.push(vtxo);
             }
         }
-        this.cache.vtxos.set(address, storedVtxos.slice());
         await this.storage.setItem(
-            `vtxos:${address}`,
+            getVtxosStorageKey(address),
             JSON.stringify(storedVtxos.map(serializeVtxo))
         );
     }
@@ -159,43 +137,28 @@ export class WalletRepositoryImpl implements WalletRepository {
         const filtered = vtxos.filter(
             (v) => !(v.txid === txid && v.vout === parseInt(vout, 10))
         );
-
-        this.cache.vtxos.set(address, filtered.slice());
         await this.storage.setItem(
-            `vtxos:${address}`,
+            getVtxosStorageKey(address),
             JSON.stringify(filtered.map(serializeVtxo))
         );
     }
 
     async clearVtxos(address: string): Promise<void> {
-        this.cache.vtxos.set(address, []);
-        await this.storage.removeItem(`vtxos:${address}`);
+        await this.storage.removeItem(getVtxosStorageKey(address));
     }
 
     async getUtxos(address: string): Promise<ExtendedCoin[]> {
-        const cacheKey = `utxos:${address}`;
-
-        if (this.cache.utxos.has(address)) {
-            return this.cache.utxos.get(address)!;
-        }
-
-        const stored = await this.storage.getItem(cacheKey);
-        if (!stored) {
-            this.cache.utxos.set(address, []);
-            return [];
-        }
+        const stored = await this.storage.getItem(getUtxosStorageKey(address));
+        if (!stored) return [];
 
         try {
             const parsed = JSON.parse(stored) as ExtendedCoin[];
-            const utxos = parsed.map(deserializeUtxo);
-            this.cache.utxos.set(address, utxos.slice());
-            return utxos.slice();
+            return parsed.map(deserializeUtxo);
         } catch (error) {
             console.error(
                 `Failed to parse UTXOs for address ${address}:`,
                 error
             );
-            this.cache.utxos.set(address, []);
             return [];
         }
     }
@@ -212,9 +175,8 @@ export class WalletRepositoryImpl implements WalletRepository {
                 storedUtxos.push(utxo);
             }
         });
-        this.cache.utxos.set(address, storedUtxos.slice());
         await this.storage.setItem(
-            `utxos:${address}`,
+            getUtxosStorageKey(address),
             JSON.stringify(storedUtxos.map(serializeUtxo))
         );
     }
@@ -225,41 +187,29 @@ export class WalletRepositoryImpl implements WalletRepository {
         const filtered = utxos.filter(
             (v) => !(v.txid === txid && v.vout === parseInt(vout, 10))
         );
-        this.cache.utxos.set(address, filtered.slice());
         await this.storage.setItem(
-            `utxos:${address}`,
+            getUtxosStorageKey(address),
             JSON.stringify(filtered.map(serializeUtxo))
         );
     }
 
     async clearUtxos(address: string): Promise<void> {
-        this.cache.utxos.set(address, []);
-        await this.storage.removeItem(`utxos:${address}`);
+        await this.storage.removeItem(getUtxosStorageKey(address));
     }
 
     async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        const cacheKey = `tx:${address}`;
+        const storageKey = getTransactionsStorageKey(address);
 
-        if (this.cache.transactions.has(address)) {
-            return this.cache.transactions.get(address)!;
-        }
-
-        const stored = await this.storage.getItem(cacheKey);
-        if (!stored) {
-            this.cache.transactions.set(address, []);
-            return [];
-        }
+        const stored = await this.storage.getItem(storageKey);
+        if (!stored) return [];
 
         try {
-            const transactions = JSON.parse(stored) as ArkTransaction[];
-            this.cache.transactions.set(address, transactions);
-            return transactions.slice();
+            return JSON.parse(stored) as ArkTransaction[];
         } catch (error) {
             console.error(
                 `Failed to parse transactions for address ${address}:`,
                 error
             );
-            this.cache.transactions.set(address, []);
             return [];
         }
     }
@@ -279,48 +229,33 @@ export class WalletRepositoryImpl implements WalletRepository {
                 storedTransactions.push(tx);
             }
         }
-        this.cache.transactions.set(address, storedTransactions);
         await this.storage.setItem(
-            `tx:${address}`,
+            getTransactionsStorageKey(address),
             JSON.stringify(storedTransactions)
         );
     }
 
     async clearTransactions(address: string): Promise<void> {
-        this.cache.transactions.set(address, []);
-        await this.storage.removeItem(`tx:${address}`);
+        await this.storage.removeItem(getTransactionsStorageKey(address));
     }
 
     async getWalletState(): Promise<WalletState | null> {
-        if (
-            this.cache.walletState !== null ||
-            this.cache.initialized.has("walletState")
-        ) {
-            return this.cache.walletState;
-        }
-
-        const stored = await this.storage.getItem("wallet:state");
-        if (!stored) {
-            this.cache.walletState = null;
-            this.cache.initialized.add("walletState");
-            return null;
-        }
+        const stored = await this.storage.getItem(walletStateStorageKey);
+        if (!stored) return null;
 
         try {
             const state = JSON.parse(stored) as WalletState;
-            this.cache.walletState = state;
-            this.cache.initialized.add("walletState");
             return state;
         } catch (error) {
             console.error("Failed to parse wallet state:", error);
-            this.cache.walletState = null;
-            this.cache.initialized.add("walletState");
             return null;
         }
     }
 
     async saveWalletState(state: WalletState): Promise<void> {
-        this.cache.walletState = state;
-        await this.storage.setItem("wallet:state", JSON.stringify(state));
+        await this.storage.setItem(
+            walletStateStorageKey,
+            JSON.stringify(state)
+        );
     }
 }
