@@ -1,11 +1,12 @@
-// This example shows how to create a virtual Spillman Channel
+// This example shows how to create a virtual Spilman Channel
 //
-// The Spillman Taproot Script is a contract that allows two parties to create an unidirectional payment channel.
-// Alice updates the channel state by signing virtual transactions without submitting them to the ark Server.
-// Bob can close the channel at any time by signing the last virtual tx and submitting it to the ark Server.
+// The Spilman Taproot Script is a contract that allows two parties to create a unidirectional payment channel.
+
+// Alice updates the channel state by signing virtual transactions without submitting them to the Arkade Server.
+// Bob can close the channel at any time by signing the last virtual tx and submitting it to the Arkade Server.
 //
 // Usage:
-// node examples/spillman.js
+// node examples/spilman.js
 //
 import {
     SingleKey,
@@ -32,7 +33,7 @@ const arkdExec = process.argv[2] || "docker exec -t arkd";
 const alice = SingleKey.fromRandomBytes();
 const bob = SingleKey.fromRandomBytes();
 
-console.log("Creating Spillman Channel between Alice and Bob");
+console.log("Creating Spilman Channel between Alice and Bob");
 console.log("Alice's public key:", hex.encode(await alice.xOnlyPublicKey()));
 console.log("Bob's public key:", hex.encode(await bob.xOnlyPublicKey()));
 
@@ -90,29 +91,29 @@ async function main() {
         timelock: { type: "blocks", value: 102n },
     }).script;
 
-    const virtualSpillmanChannel = new VtxoScript([
+    const virtualSpilmanChannel = new VtxoScript([
         updateScript,
         refundScript,
         unilateralUpdateScript,
         unilateralRefundScript,
     ]);
 
-    const address = virtualSpillmanChannel
+    const address = virtualSpilmanChannel
         .address(networks.regtest.hrp, SERVER_PUBLIC_KEY)
         .encode();
-    console.log("\nSpillman Channel Address:", address);
+    console.log("\nSpilman Channel Address:", address);
 
-    // Use faucet to fund the Spillman Channel address
+    // Use faucet to fund the Spilman Channel address
     // in a real scenario, it should be funded by Alice herself
     const channelCapacity = 10_000;
     await fundAddress(address, channelCapacity);
 
-    // Get the virtual coins for the Spillman Channel address
+    // Get the virtual coins for the Spilman Channel address
     console.log("Fetching virtual coins...");
     const arkProvider = new RestArkProvider("http://localhost:7070");
     const indexerProvider = new RestIndexerProvider("http://localhost:7070");
     const spendableVtxos = await indexerProvider.getVtxos({
-        scripts: [hex.encode(virtualSpillmanChannel.pkScript)],
+        scripts: [hex.encode(virtualSpilmanChannel.pkScript)],
         spendableOnly: true,
     });
 
@@ -123,10 +124,10 @@ async function main() {
     const vtxo = spendableVtxos.vtxos[0];
     const input = {
         ...vtxo,
-        tapLeafScript: virtualSpillmanChannel.findLeaf(
+        tapLeafScript: virtualSpilmanChannel.findLeaf(
             hex.encode(updateScript)
         ),
-        tapTree: virtualSpillmanChannel.encode(),
+        tapTree: virtualSpilmanChannel.encode(),
     };
 
     console.log("Alice's balance:", vtxo.value, "sats");
@@ -158,11 +159,11 @@ async function main() {
         [
             {
                 amount: BigInt(1000),
-                script: virtualSpillmanChannel.pkScript,
+                script: virtualSpilmanChannel.pkScript,
             },
             {
                 amount: BigInt(channelCapacity - 1000),
-                script: virtualSpillmanChannel.pkScript,
+                script: virtualSpilmanChannel.pkScript,
             },
         ],
         serverUnrollScript
@@ -184,11 +185,11 @@ async function main() {
         [
             {
                 amount: BigInt(1500),
-                script: virtualSpillmanChannel.pkScript,
+                script: virtualSpilmanChannel.pkScript,
             },
             {
                 amount: BigInt(channelCapacity - 1500),
-                script: virtualSpillmanChannel.pkScript,
+                script: virtualSpilmanChannel.pkScript,
             },
         ],
         serverUnrollScript
@@ -261,7 +262,7 @@ async function main() {
             [
                 {
                     amount: BigInt(channelCapacity),
-                    script: virtualSpillmanChannel.pkScript,
+                    script: virtualSpilmanChannel.pkScript,
                 },
             ],
             serverUnrollScript
