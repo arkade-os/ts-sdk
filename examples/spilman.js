@@ -124,9 +124,7 @@ async function main() {
     const vtxo = spendableVtxos.vtxos[0];
     const input = {
         ...vtxo,
-        tapLeafScript: virtualSpilmanChannel.findLeaf(
-            hex.encode(updateScript)
-        ),
+        tapLeafScript: virtualSpilmanChannel.findLeaf(hex.encode(updateScript)),
         tapTree: virtualSpilmanChannel.encode(),
     };
 
