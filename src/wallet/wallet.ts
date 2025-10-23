@@ -555,7 +555,7 @@ export class Wallet implements IWallet {
         }
 
         const tapTree = this.offchainTapscript.encode();
-        let offchainTx = buildOffchainTx(
+        const offchainTx = buildOffchainTx(
             selected.inputs.map((input) => ({
                 ...input,
                 tapLeafScript: selectedLeaf,
@@ -572,7 +572,6 @@ export class Wallet implements IWallet {
                 base64.encode(signedVirtualTx.toPSBT()),
                 offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
-        // TODO persist final virtual tx and checkpoints to repository
 
         // sign the checkpoints
         const finalCheckpoints = await Promise.all(
@@ -585,7 +584,45 @@ export class Wallet implements IWallet {
 
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
-        return arkTxid;
+        try {
+            // mark VTXOs as spent
+            const spentVtxos: ExtendedVirtualCoin[] = [];
+            for (const [inputIndex, input] of selected.inputs.entries()) {
+                const vtxo = extendVirtualCoin(this, input);
+
+                const checkpointB64 = signedCheckpointTxs[inputIndex];
+                const checkpoint = Transaction.fromPSBT(
+                    base64.decode(checkpointB64)
+                );
+
+                spentVtxos.push({
+                    ...vtxo,
+                    virtualStatus: { ...vtxo.virtualStatus, state: "spent" },
+                    spentBy: checkpoint.id,
+                    arkTxId: arkTxid,
+                });
+            }
+
+            const addr = await this.getAddress();
+            await this.walletRepository.saveVtxos(addr, spentVtxos);
+            await this.walletRepository.saveTransactions(addr, [
+                {
+                    key: {
+                        boardingTxid: "",
+                        commitmentTxid: "",
+                        arkTxid: arkTxid,
+                    },
+                    amount: params.amount,
+                    type: TxType.TxSent,
+                    settled: false,
+                    createdAt: Date.now(),
+                },
+            ]);
+        } catch (e) {
+            console.warn("error saving offchain tx to repository", e);
+        } finally {
+            return arkTxid;
+        }
     }
 
     async settle(
