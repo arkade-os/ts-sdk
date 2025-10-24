@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { Wallet, SingleKey, OnchainWallet } from "../src";
+import type { OnchainProvider } from "../src/providers/onchain";
 import type { Coin } from "../src/wallet";
 
 // Mock fetch
@@ -15,6 +16,22 @@ const MockEventSource = vi.fn().mockImplementation((url: string) => ({
     close: vi.fn(),
 }));
 vi.stubGlobal("EventSource", MockEventSource);
+
+function createMockOnchainProvider(
+    overrides: Partial<OnchainProvider> = {}
+): OnchainProvider {
+    const provider: OnchainProvider = {
+        getCoins: vi.fn(async () => []),
+        getFeeRate: vi.fn(async () => 1),
+        broadcastTransaction: vi.fn(async () => "mock-txid"),
+        getTxOutspends: vi.fn(async () => []),
+        getTransactions: vi.fn(async () => []),
+        getTxStatus: vi.fn(async () => ({ confirmed: false })),
+        getChainTip: vi.fn(async () => ({ height: 0, time: 0, hash: "" })),
+        watchAddresses: vi.fn(async () => () => {}),
+    };
+    return { ...provider, ...overrides };
+}
 
 describe("Wallet", () => {
     // Test vector from BIP340
@@ -45,14 +62,14 @@ describe("Wallet", () => {
         ];
 
         it("should calculate balance from coins", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
+            const onchainProvider = createMockOnchainProvider({
+                getCoins: vi.fn(async () => mockUTXOs),
             });
 
             const wallet = await OnchainWallet.create(
                 mockIdentity,
-                "mutinynet"
+                "mutinynet",
+                onchainProvider
             );
 
             const balance = await wallet.getBalance();
@@ -86,9 +103,8 @@ describe("Wallet", () => {
 
             // Setup mocks in the correct order based on actual call sequence:
             // 1. getInfo() call during wallet creation
-            // 2. getBoardingUtxos() -> getCoins() call
-            // 3. getVtxos() -> first vtxos call (spendable)
-            // 4. getVtxos() -> second vtxos call (recoverable)
+            // 2. getVtxos() -> first vtxos call (spendable)
+            // 3. getVtxos() -> second vtxos call (recoverable)
 
             mockFetch
                 .mockResolvedValueOnce({
@@ -109,10 +125,6 @@ describe("Wallet", () => {
                 })
                 .mockResolvedValueOnce({
                     ok: true,
-                    json: () => Promise.resolve(mockUTXOs),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
                     json: () => Promise.resolve(mockServerResponse),
                 })
                 .mockResolvedValueOnce({
@@ -120,9 +132,14 @@ describe("Wallet", () => {
                     json: () => Promise.resolve({ vtxos: [] }),
                 });
 
+            const onchainProvider = createMockOnchainProvider({
+                getCoins: vi.fn(async () => mockUTXOs),
+            });
+
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                onchainProvider,
             });
 
             const balance = await wallet.getBalance();
@@ -151,14 +168,14 @@ describe("Wallet", () => {
         ];
 
         it("should return coins from provider", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
+            const onchainProvider = createMockOnchainProvider({
+                getCoins: vi.fn(async () => mockUTXOs),
             });
 
             const wallet = await OnchainWallet.create(
                 mockIdentity,
-                "mutinynet"
+                "mutinynet",
+                onchainProvider
             );
 
             const coins = await wallet.getCoins();
@@ -181,14 +198,21 @@ describe("Wallet", () => {
             },
         ];
 
+        let onchainProvider: OnchainProvider;
+
         beforeEach(() => {
             mockFetch.mockReset();
+            onchainProvider = createMockOnchainProvider({
+                getCoins: vi.fn(async () => mockUTXOs),
+                broadcastTransaction: vi.fn(async () => "mock-txid"),
+            });
         });
 
         it("should throw error when amount is negative", async () => {
             const wallet = await OnchainWallet.create(
                 mockIdentity,
-                "mutinynet"
+                "mutinynet",
+                onchainProvider
             );
 
             await expect(
@@ -229,6 +253,7 @@ describe("Wallet", () => {
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                onchainProvider: createMockOnchainProvider(),
             });
 
             const address = await wallet.getAddress();

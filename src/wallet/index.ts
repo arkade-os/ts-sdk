@@ -12,7 +12,7 @@ import { OnchainProvider } from "../providers/onchain";
  * Configuration options for wallet initialization.
  *
  * Supports two configuration modes:
- * 1. URL-based: Provide arkServerUrl, indexerUrl (optional), and esploraUrl
+ * 1. URL-based: Provide arkServerUrl, indexerUrl (optional), and electrumUrl
  * 2. Provider-based: Provide arkProvider, indexerProvider, and onchainProvider instances
  *
  * At least one of the following must be provided:
@@ -28,7 +28,7 @@ import { OnchainProvider } from "../providers/onchain";
  * const wallet = await Wallet.create({
  *   identity: SingleKey.fromHex('...'),
  *   arkServerUrl: 'https://ark.example.com',
- *   esploraUrl: 'https://mempool.space/api'
+ *   electrumUrl: 'wss://electrum.blockstream.info:50002'
  * });
  *
  * // Provider-based configuration (e.g., for Expo/React Native)
@@ -36,7 +36,7 @@ import { OnchainProvider } from "../providers/onchain";
  *   identity: SingleKey.fromHex('...'),
  *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
  *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
- *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ *   onchainProvider: new ElectrumProvider('wss://electrum.blockstream.info:50002', 'bitcoin')
  * });
  * ```
  */
@@ -44,6 +44,10 @@ export interface WalletConfig {
     identity: Identity;
     arkServerUrl?: string;
     indexerUrl?: string;
+    electrumUrl?: string;
+    /**
+     * @deprecated Use electrumUrl instead.
+     */
     esploraUrl?: string;
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;

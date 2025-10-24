@@ -48,6 +48,8 @@ import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
 import {
     ESPLORA_URL,
+    ELECTRUM_WS_URL,
+    ElectrumProvider,
     EsploraProvider,
     OnchainProvider,
     ExplorerTransaction,
@@ -139,6 +141,8 @@ export {
 
     // Providers
     ESPLORA_URL,
+    ELECTRUM_WS_URL,
+    ElectrumProvider,
     EsploraProvider,
     RestArkProvider,
     RestIndexerProvider,
