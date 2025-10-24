@@ -1,6 +1,6 @@
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
-import { DEFAULT_SEQUENCE, SigHash } from "@scure/btc-signer";
+import { DEFAULT_SEQUENCE, Script, SigHash } from "@scure/btc-signer";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { ExtendedCoin, VirtualCoin } from "../wallet";
@@ -48,6 +48,15 @@ export function buildOffchainTx(
     outputs: TransactionOutput[],
     serverUnrollScript: CSVMultisigTapscript.Type
 ): OffchainTx {
+    let hasOpReturn = false;
+    for (const [index, output] of outputs.entries()) {
+        if (!output.script) throw new Error(`missing output script ${index}`);
+        const isOpReturn = Script.decode(output.script)[0] === "RETURN";
+        if (!isOpReturn) continue;
+        if (hasOpReturn) throw new Error("multiple OP_RETURN outputs");
+        hasOpReturn = true;
+    }
+
     const checkpoints = inputs.map((input) =>
         buildCheckpointTx(input, serverUnrollScript)
     );
