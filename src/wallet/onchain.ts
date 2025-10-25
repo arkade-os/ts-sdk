@@ -109,11 +109,51 @@ export class OnchainWallet implements AnchorBumper {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
-        // Ensure fee is an integer by rounding up
-        const estimatedFee = Math.ceil(174 * feeRate);
-        const totalNeeded = params.amount + estimatedFee;
+        const txWeightEstimator = TxWeightEstimator.create();
 
-        // Select coins
+        // Select coins to the exact send amount
+        const selectedWithoutFee = selectCoins(coins, params.amount);
+
+        // Add weight of each coin
+        for (const _ of selectedWithoutFee.inputs) {
+            txWeightEstimator.addKeySpendInput();
+        }
+
+        // Add weight of send amount output
+        txWeightEstimator.addP2TROutput();
+
+        // Estimating fee from known inputs and outputs. Ensure fee is an integer by rounding up
+        let estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
+        let totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+
+        // Select coins with fees from known inputs and outputs
+        const selectedWithFee = selectCoins(coins, totalNeeded);
+
+        const extraInputsFromFee =
+            selectedWithFee.inputs.length - selectedWithoutFee.inputs.length;
+
+        // Add weight of each input introduced by the fee
+        if (extraInputsFromFee > 0) {
+            for (let input = 0; input < extraInputsFromFee; input++) {
+                txWeightEstimator.addKeySpendInput();
+            }
+        }
+
+        // Refine the total amount needed using fee inputs
+        estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
+        totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+
+        // Change output weight is added only when change is available
+        const hasChange =
+            selectedWithFee.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT);
+
+        if (hasChange) {
+            txWeightEstimator.addP2TROutput();
+            estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
+            totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+        }
+
+        // Select coins with fees from all inputs and outputs (including change amount if available)
         const selected = selectCoins(coins, totalNeeded);
 
         // Create transaction
@@ -138,8 +178,9 @@ export class OnchainWallet implements AnchorBumper {
             BigInt(params.amount),
             this.network
         );
+
         // Add change output if needed
-        if (selected.changeAmount > 0n) {
+        if (selected.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT)) {
             tx.addOutputAddress(
                 this.address,
                 selected.changeAmount,
