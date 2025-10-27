@@ -100,8 +100,13 @@ export class TxWeightEstimator {
         return this;
     }
 
-    addTxOutput(address: string): TxWeightEstimator {
-        if (address.startsWith("bclq")) {
+    addTxOutput(outputAddress: string): TxWeightEstimator {
+        const address = outputAddress.toLowerCase();
+        if (
+            address.startsWith("bc1q") ||
+            address.startsWith("tb1q") ||
+            address.startsWith("bcrt1q")
+        ) {
             return this.addP2WPKHOutput();
         }
         return this.addP2TROutput();
