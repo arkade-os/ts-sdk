@@ -181,7 +181,7 @@ describe("Wallet", () => {
             },
             {
                 txid: hex.encode(new Uint8Array(32).fill(1)),
-                vout: 0,
+                vout: 1,
                 value: 7000,
                 status: {
                     confirmed: true,
@@ -192,7 +192,7 @@ describe("Wallet", () => {
             },
             {
                 txid: hex.encode(new Uint8Array(32).fill(1)),
-                vout: 0,
+                vout: 2,
                 value: 1000,
                 status: {
                     confirmed: true,
@@ -203,7 +203,7 @@ describe("Wallet", () => {
             },
             {
                 txid: hex.encode(new Uint8Array(32).fill(1)),
-                vout: 0,
+                vout: 3,
                 value: 6500,
                 status: {
                     confirmed: true,
@@ -214,7 +214,7 @@ describe("Wallet", () => {
             },
             {
                 txid: hex.encode(new Uint8Array(32).fill(1)),
-                vout: 0,
+                vout: 4,
                 value: 12000,
                 status: {
                     confirmed: true,
