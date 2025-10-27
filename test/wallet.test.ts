@@ -179,6 +179,50 @@ describe("Wallet", () => {
                     block_time: 1600000000,
                 },
             },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 0,
+                value: 7000,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 0,
+                value: 1000,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 0,
+                value: 6500,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 0,
+                value: 12000,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
         ];
 
         beforeEach(() => {
@@ -197,6 +241,37 @@ describe("Wallet", () => {
                     amount: -1000,
                 })
             ).rejects.toThrow("Amount must be positive");
+        });
+
+        it("should throw error when funds are insufficient", async () => {
+            const mockFeeRate = 3;
+            const mockTxId = hex.encode(new Uint8Array(32).fill(1));
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockUTXOs),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockFeeRate),
+            });
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                text: () => Promise.resolve(mockTxId),
+            });
+
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 1250000,
+                })
+            ).rejects.toThrow("Insufficient funds");
         });
     });
 

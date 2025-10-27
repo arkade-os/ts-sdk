@@ -11,7 +11,6 @@ import {
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
-import { userInfo } from "node:os";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
@@ -110,52 +109,65 @@ export class OnchainWallet implements AnchorBumper {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
-        const txWeightEstimator = TxWeightEstimator.create();
+        let selected: { inputs: Coin[]; changeAmount: bigint } | undefined;
+        let estimatedFee: number = 0;
+        let isEstimatingFee = true;
+        let prevInputsCount = 0;
 
-        // Select coins to the exact send amount
-        const selectedWithoutFee = selectCoins(coins, params.amount);
+        while (isEstimatingFee) {
+            const totalNeeded = params.amount + estimatedFee;
+            const txWeightEstimator = TxWeightEstimator.create();
 
-        // Add weight of each coin
-        for (const _ of selectedWithoutFee.inputs) {
-            txWeightEstimator.addKeySpendInput();
-        }
+            // Select coins
+            selected = selectCoins(coins, totalNeeded);
 
-        // Add weight of send amount output
-        txWeightEstimator.addTxOutput(params.address);
-
-        // Estimating fee from known inputs and outputs. Ensure fee is an integer by rounding up
-        let estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
-        let totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
-
-        // Select coins with fees from known inputs and outputs
-        const selectedWithFee = selectCoins(coins, totalNeeded);
-
-        const extraInputsFromFee =
-            selectedWithFee.inputs.length - selectedWithoutFee.inputs.length;
-
-        // Add weight of each input introduced by the fee
-        if (extraInputsFromFee > 0) {
-            for (let input = 0; input < extraInputsFromFee; input++) {
+            // Add weight of each coin input
+            for (const _ of selected.inputs) {
                 txWeightEstimator.addKeySpendInput();
             }
+
+            // Add weight of the send amount output
+            txWeightEstimator.addTxOutput(params.address);
+
+            const hasChange =
+                selected.changeAmount >= OnchainWallet.DUST_AMOUNT;
+
+            // Add change output weight if change amount is available
+            if (hasChange) {
+                txWeightEstimator.addTxOutput(this.address);
+            }
+
+            // Compute fee using newly generated input/output weights
+            const newFee = Number(
+                txWeightEstimator.vsize().fee(BigInt(feeRate))
+            );
+
+            // Check stability of the selected inputs size against loop count
+            if (prevInputsCount === selected.inputs.length) {
+                estimatedFee = Math.ceil(newFee);
+
+                // Compute the value of the selected inputs
+                const totalInputsValue = selected.inputs.reduce(
+                    (sum, coin) => sum + coin.value,
+                    0
+                );
+
+                // The potential final amount to be used in send tx
+                const totalAmountNeeded = params.amount - estimatedFee;
+
+                // Stop the estimation if the value of selected input covers send amount and fees
+                if (totalInputsValue >= totalAmountNeeded) {
+                    isEstimatingFee = false;
+                }
+            }
+
+            estimatedFee = Math.ceil(newFee);
+            prevInputsCount = selected.inputs.length;
         }
 
-        // Refine the total amount needed using fee inputs
-        estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
-        totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
-
-        // Change output weight is added only when change is available
-        const hasChange =
-            selectedWithFee.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT);
-
-        if (hasChange) {
-            txWeightEstimator.addTxOutput(this.address);
-            estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
-            totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
+        if (!selected) {
+            throw new Error("Fee estimation failed");
         }
-
-        // Select coins with fees from all inputs and outputs (including change amount if available)
-        const selected = selectCoins(coins, totalNeeded);
 
         // Create transaction
         let tx = new Transaction();
