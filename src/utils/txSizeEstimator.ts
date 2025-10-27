@@ -78,10 +78,9 @@ export class TxWeightEstimator {
             leafControlBlockSize;
 
         this.inputCount++;
-        this.inputWitnessSize += leafWitnessSize + controlBlockWitnessSize;
+        this.inputWitnessSize += leafWitnessSize + 1 + controlBlockWitnessSize;
         this.inputSize += TxWeightEstimator.INPUT_SIZE;
         this.hasWitness = true;
-        this.inputCount++;
         return this;
     }
 
