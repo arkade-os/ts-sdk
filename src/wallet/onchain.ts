@@ -153,7 +153,7 @@ export class OnchainWallet implements AnchorBumper {
                 );
 
                 // The potential final amount to be used in send tx
-                const totalAmountNeeded = params.amount - estimatedFee;
+                const totalAmountNeeded = params.amount + estimatedFee;
 
                 // Stop the estimation if the value of selected input covers send amount and fees
                 if (totalInputsValue >= totalAmountNeeded) {
