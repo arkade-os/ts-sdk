@@ -11,6 +11,7 @@ import {
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
+import { userInfo } from "node:os";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
@@ -120,7 +121,7 @@ export class OnchainWallet implements AnchorBumper {
         }
 
         // Add weight of send amount output
-        txWeightEstimator.addP2TROutput();
+        txWeightEstimator.addTxOutput(params.address);
 
         // Estimating fee from known inputs and outputs. Ensure fee is an integer by rounding up
         let estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
@@ -148,7 +149,7 @@ export class OnchainWallet implements AnchorBumper {
             selectedWithFee.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT);
 
         if (hasChange) {
-            txWeightEstimator.addP2TROutput();
+            txWeightEstimator.addTxOutput(this.address);
             estimatedFee = txWeightEstimator.vsize().fee(BigInt(feeRate));
             totalNeeded = Math.ceil(params.amount + Number(estimatedFee));
         }
@@ -209,7 +210,7 @@ export class OnchainWallet implements AnchorBumper {
         const childVsize = TxWeightEstimator.create()
             .addKeySpendInput(true)
             .addP2AInput()
-            .addP2TROutput()
+            .addTxOutput(this.address)
             .vsize().value;
 
         const packageVSize = parentVsize + Number(childVsize);
