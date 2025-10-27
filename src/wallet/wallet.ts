@@ -199,11 +199,11 @@ export class Wallet implements IWallet {
             config.onchainProvider || new EsploraProvider(esploraUrl);
 
         // Generate timelocks
-        const exitTimelock: RelativeTimelock = {
+        const exitTimelock: RelativeTimelock = config.exitTimelock ?? {
             value: info.unilateralExitDelay,
             type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
         };
-        const boardingTimelock: RelativeTimelock = {
+        const boardingTimelock: RelativeTimelock = config.boardingTimelock ?? {
             value: info.boardingExitDelay,
             type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
         };
