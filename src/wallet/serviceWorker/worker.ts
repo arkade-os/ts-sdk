@@ -104,7 +104,6 @@ export class Worker {
             const { spendable, spent } = await this.getAllVtxos();
 
             // convert VTXOs to offchain transactions
-            console.log("getTransactionHistory - vtxosToTxs:", spendable);
             const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);
 
             txs = [...boardingTxs, ...offchainTxs];
