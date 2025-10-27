@@ -14,6 +14,7 @@ import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
 import { OnchainWallet } from "./onchain";
+import { DUST_AMOUNT } from "./utils";
 
 export namespace Unroll {
     export enum StepType {
@@ -310,7 +311,7 @@ export namespace Unroll {
         }
 
         const sendAmount = totalAmount - feeAmount;
-        if (sendAmount < BigInt(OnchainWallet.DUST_AMOUNT)) {
+        if (sendAmount < BigInt(DUST_AMOUNT)) {
             throw new Error("send amount is less than dust amount");
         }
 

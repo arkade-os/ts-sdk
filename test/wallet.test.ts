@@ -256,11 +256,6 @@ describe("Wallet", () => {
                 json: () => Promise.resolve(mockFeeRate),
             });
 
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                text: () => Promise.resolve(mockTxId),
-            });
-
             const wallet = await OnchainWallet.create(
                 mockIdentity,
                 "mutinynet"
@@ -272,6 +267,19 @@ describe("Wallet", () => {
                     amount: 1250000,
                 })
             ).rejects.toThrow("Insufficient funds");
+        });
+
+        it("should throw when amount is below dust", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 545,
+                })
+            ).rejects.toThrow("Amount is below dust limit");
         });
     });
 

@@ -11,6 +11,7 @@ import {
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
+import { DUST_AMOUNT } from "./utils";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
@@ -31,7 +32,6 @@ import { Transaction } from "../utils/transaction";
  */
 export class OnchainWallet implements AnchorBumper {
     static MIN_FEE_RATE = 1; // sat/vbyte
-    static DUST_AMOUNT = 546; // sats
 
     readonly onchainP2TR: P2TR;
     readonly provider: OnchainProvider;
@@ -95,7 +95,7 @@ export class OnchainWallet implements AnchorBumper {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }
-        if (params.amount < OnchainWallet.DUST_AMOUNT) {
+        if (params.amount < DUST_AMOUNT) {
             throw new Error("Amount is below dust limit");
         }
 
@@ -129,8 +129,7 @@ export class OnchainWallet implements AnchorBumper {
             // Add weight of the send amount output
             txWeightEstimator.addTxOutput(params.address);
 
-            const hasChange =
-                selected.changeAmount >= OnchainWallet.DUST_AMOUNT;
+            const hasChange = selected.changeAmount >= BigInt(DUST_AMOUNT);
 
             // Add change output weight if change amount is available
             if (hasChange) {
@@ -193,7 +192,7 @@ export class OnchainWallet implements AnchorBumper {
         );
 
         // Add change output if needed
-        if (selected.changeAmount >= BigInt(OnchainWallet.DUST_AMOUNT)) {
+        if (selected.changeAmount >= BigInt(DUST_AMOUNT)) {
             tx.addOutputAddress(
                 this.address,
                 selected.changeAmount,
