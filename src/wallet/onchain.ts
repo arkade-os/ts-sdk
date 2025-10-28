@@ -150,7 +150,10 @@ export class OnchainWallet implements AnchorBumper {
             );
 
             // Check stability of the selected inputs size against loop count
-            if (prevInputsCount === selected.inputs.length) {
+            if (
+                prevInputsCount === selected.inputs.length &&
+                newFee === estimatedFee
+            ) {
                 estimatedFee = Math.ceil(newFee);
 
                 // Compute the value of the selected inputs
