@@ -109,12 +109,20 @@ export class OnchainWallet implements AnchorBumper {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
+        const MAX_ITERATIONS = 10;
+        let iterations = 0;
         let selected: { inputs: Coin[]; changeAmount: bigint } | undefined;
         let estimatedFee: number = 0;
         let isEstimatingFee = true;
         let prevInputsCount = 0;
 
         while (isEstimatingFee) {
+            if (++iterations >= MAX_ITERATIONS) {
+                throw new Error(
+                    "Failed to estimate fees, selection did not converge"
+                );
+            }
+
             const totalNeeded = params.amount + estimatedFee;
             const txWeightEstimator = TxWeightEstimator.create();
 
