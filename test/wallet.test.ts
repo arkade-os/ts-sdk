@@ -223,7 +223,20 @@ describe("Wallet", () => {
                     block_time: 1600000000,
                 },
             },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 5,
+                value: 1400,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
         ];
+        const mockTxId = hex.encode(new Uint8Array(32).fill(1));
+        const mockFeeRate = 3;
 
         beforeEach(() => {
             mockFetch.mockReset();
@@ -264,7 +277,7 @@ describe("Wallet", () => {
             await expect(
                 wallet.send({
                     address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
-                    amount: 1250000,
+                    amount: 12500000,
                 })
             ).rejects.toThrow("Insufficient funds");
         });
@@ -280,6 +293,60 @@ describe("Wallet", () => {
                     amount: 545,
                 })
             ).rejects.toThrow("Amount is below dust limit");
+        });
+
+        it("should send funds when change amount is below dust", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockUTXOs),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockFeeRate),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                text: () => Promise.resolve(mockTxId),
+            });
+
+            expect(
+                await wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 111500, // With selection of 100000 and 12000, the change is less than dust(546sats)
+                })
+            ).toEqual(mockTxId);
+        });
+
+        it("should send amount with correct fees", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockUTXOs),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockFeeRate),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                text: () => Promise.resolve(mockTxId),
+            });
+
+            expect(
+                await wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 115000,
+                })
+            ).toEqual(mockTxId);
         });
     });
 
