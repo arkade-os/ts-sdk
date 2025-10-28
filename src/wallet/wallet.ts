@@ -1213,14 +1213,13 @@ export class Wallet implements IWallet {
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[]
     ): Promise<SignedIntent> {
-        const nowSeconds = Math.floor(Date.now() / 1000);
         const inputs = this.prepareIntentProofInputs(coins);
 
         const message = {
             type: "register",
             onchain_output_indexes: onchainOutputsIndexes,
-            valid_at: nowSeconds,
-            expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
+            valid_at: 0,
+            expire_at: 0,
             cosigners_public_keys: cosignerPubKeys,
         };
 
@@ -1238,12 +1237,11 @@ export class Wallet implements IWallet {
     private async makeDeleteIntentSignature(
         coins: ExtendedCoin[]
     ): Promise<SignedIntent> {
-        const nowSeconds = Math.floor(Date.now() / 1000);
         const inputs = this.prepareIntentProofInputs(coins);
 
         const message = {
             type: "delete",
-            expire_at: nowSeconds + 2 * 60, // valid for 2 minutes
+            expire_at: 0,
         };
 
         const encodedMessage = JSON.stringify(message, null, 0);
