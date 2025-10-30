@@ -81,4 +81,30 @@ describe("SingleKey", () => {
         // Should export the same hex
         expect(key2.toHex()).toBe(originalHex);
     });
+
+    it("should sign message with schnorr signature", async () => {
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const message = new Uint8Array(32).fill(42); // 32-byte message
+
+        const signature = await key.signMessage(message, "schnorr");
+
+        // Schnorr signatures are 64 bytes
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature).toHaveLength(64);
+    });
+
+    it("should default to schnorr signature when type not specified", async () => {
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const message = new Uint8Array(32).fill(42); // 32-byte message
+
+        const signature = await key.signMessage(message);
+
+        // Should produce schnorr signature by default (64 bytes)
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature).toHaveLength(64);
+    });
 });

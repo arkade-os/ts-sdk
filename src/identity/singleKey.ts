@@ -106,6 +106,6 @@ export class SingleKey implements Identity {
     ): Promise<Uint8Array> {
         if (signatureType === "ecdsa")
             return sign(message, this.key, { prehash: false });
-        return schnorr.sign(message, this.key);
+        return schnorr.signAsync(message, this.key);
     }
 }
