@@ -341,12 +341,10 @@ export function combineTapscriptSigs(
 ) {
     for (let i = 0; i < signedTx.inputsLength; i++) {
         const input = originalTx.getInput(i);
-        const inputFromServer = signedTx.getInput(i);
+        const signedInput = signedTx.getInput(i);
         if (!input.tapScriptSig) throw new Error("No tapScriptSig");
         originalTx.updateInput(i, {
-            tapScriptSig: input.tapScriptSig?.concat(
-                inputFromServer.tapScriptSig!
-            ),
+            tapScriptSig: input.tapScriptSig?.concat(signedInput.tapScriptSig!),
         });
     }
     return originalTx;
