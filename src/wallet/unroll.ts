@@ -26,6 +26,10 @@ export namespace Unroll {
      */
     export type UnrollStep = {
         tx: Transaction;
+        /** The parent transaction hex (P2A anchor) */
+        parentHex: string;
+        /** The child transaction hex */
+        childHex: string;
     };
 
     /**
@@ -58,7 +62,7 @@ export namespace Unroll {
      *
      * The Session class implements an async iterator that processes the unrolling steps:
      * 1. **WAIT**: Waits for a transaction to be confirmed onchain (if it's in mempool)
-     * 2. **UNROLL**: Broadcasts the next transaction in the chain to the blockchain
+     * 2. **UNROLL**: Broadcasts the next transaction in the chain to the blockchain (if broadcast is enabled)
      * 3. **DONE**: Indicates the unrolling process is complete
      *
      * The unrolling process works by traversing the transaction chain from the root (most recent)
@@ -66,44 +70,68 @@ export namespace Unroll {
      *
      * @example
      * ```typescript
+     * // Create a session with broadcasting enabled (default)
      * const session = await Unroll.Session.create(vtxoOutpoint, bumper, explorer, indexer);
      *
      * // iterate over the steps
-     * for await (const doneStep of session) {
-     *   switch (doneStep.type) {
+     * for await (const step of session) {
+     *   switch (step.type) {
      *     case Unroll.StepType.WAIT:
-     *       console.log(`Transaction ${doneStep.txid} confirmed`);
+     *       console.log(`Transaction ${step.txid} confirmed`);
      *       break;
      *     case Unroll.StepType.UNROLL:
-     *       console.log(`Broadcasting transaction ${doneStep.tx.id}`);
+     *       console.log(`Broadcasting transaction ${step.tx.id}`);
      *       break;
      *     case Unroll.StepType.DONE:
-     *       console.log(`Unrolling complete for VTXO ${doneStep.vtxoTxid}`);
+     *       console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
      *       break;
+     *   }
+     * }
+     *
+     * // Create a session without broadcasting to extract transaction hex for backup
+     * const backupSession = await Unroll.Session.create(vtxoOutpoint, bumper, explorer, indexer, false);
+     *
+     * for await (const step of backupSession) {
+     *   if (step.type === Unroll.StepType.UNROLL) {
+     *     console.log(`Parent transaction hex: ${step.parentHex}`);
+     *     console.log(`Child transaction hex: ${step.childHex}`);
+     *     // Save these for later broadcasting or backup
      *   }
      * }
      * ```
      **/
     export class Session implements AsyncIterable<Step> {
+        /**
+         * Whether to broadcast transactions during unrolling.
+         * If false, transactions will be prepared but not broadcasted.
+         * @default true
+         */
+        readonly broadcast: boolean;
+
         constructor(
             readonly toUnroll: Outpoint & { chain: ChainTx[] },
             readonly bumper: AnchorBumper,
             readonly explorer: OnchainProvider,
-            readonly indexer: IndexerProvider
-        ) {}
+            readonly indexer: IndexerProvider,
+            broadcast: boolean = true
+        ) {
+            this.broadcast = broadcast;
+        }
 
         static async create(
             toUnroll: Outpoint,
             bumper: AnchorBumper,
             explorer: OnchainProvider,
-            indexer: IndexerProvider
+            indexer: IndexerProvider,
+            broadcast: boolean = true
         ): Promise<Session> {
             const { chain } = await indexer.getVtxoChain(toUnroll);
             return new Session(
                 { ...toUnroll, chain },
                 bumper,
                 explorer,
-                indexer
+                indexer,
+                broadcast
             );
         }
 
@@ -187,10 +215,15 @@ export namespace Unroll {
                 tx.finalize();
             }
 
+            // Prepare the P2A bump transactions
+            const [parent, child] = await this.bumper.bumpP2A(tx);
+
             return {
                 type: StepType.UNROLL,
                 tx,
-                do: doUnroll(this.bumper, this.explorer, tx),
+                parentHex: parent,
+                childHex: child,
+                do: doUnroll(this.broadcast, this.explorer, parent, child),
             };
         }
 
@@ -207,7 +240,10 @@ export namespace Unroll {
                     await sleep(1_000);
                 }
                 const step = await this.next();
-                await step.do();
+                // Only execute the step if broadcasting is enabled
+                if (this.broadcast) {
+                    await step.do();
+                }
                 yield step;
                 lastStep = step.type;
             } while (lastStep !== StepType.DONE);
@@ -324,13 +360,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 function doUnroll(
-    bumper: AnchorBumper,
+    broadcast: boolean,
     onchainProvider: OnchainProvider,
-    tx: Transaction
+    parent: string,
+    child: string
 ): () => Promise<void> {
     return async () => {
-        const [parent, child] = await bumper.bumpP2A(tx);
-        await onchainProvider.broadcastTransaction(parent, child);
+        if (broadcast) {
+            await onchainProvider.broadcastTransaction(parent, child);
+        }
     };
 }
 
