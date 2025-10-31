@@ -198,12 +198,36 @@ export class Wallet implements IWallet {
         const onchainProvider =
             config.onchainProvider || new EsploraProvider(esploraUrl);
 
-        // Generate timelocks
-        const exitTimelock: RelativeTimelock = {
+        // validate unilateral exit timelock passed in config if any
+        if (config.exitTimelock) {
+            const { value, type } = config.exitTimelock;
+            if (
+                (value < 512n && type !== "blocks") ||
+                (value >= 512n && type !== "seconds")
+            ) {
+                throw new Error("invalid exitTimelock");
+            }
+        }
+
+        // create unilateral exit timelock
+        const exitTimelock: RelativeTimelock = config.exitTimelock ?? {
             value: info.unilateralExitDelay,
             type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
         };
-        const boardingTimelock: RelativeTimelock = {
+
+        // validate boarding timelock passed in config if any
+        if (config.boardingTimelock) {
+            const { value, type } = config.boardingTimelock;
+            if (
+                (value < 512n && type !== "blocks") ||
+                (value >= 512n && type !== "seconds")
+            ) {
+                throw new Error("invalid boardingTimelock");
+            }
+        }
+
+        // create boarding timelock
+        const boardingTimelock: RelativeTimelock = config.boardingTimelock ?? {
             value: info.boardingExitDelay,
             type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
         };
