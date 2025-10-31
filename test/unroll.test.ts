@@ -37,9 +37,9 @@ const createMockIndexer = () => {
     return {
         getVtxoChain: vi.fn(),
         getVirtualTxs: vi.fn().mockResolvedValue({
-            // Use a valid base64 string that doesn't need to be a valid PSBT
-            // since we're mocking Transaction.fromPSBT anyway
-            txs: ["YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXo="],
+            // Use a valid base64 string (doesn't need to be a valid PSBT since we mock Transaction.fromPSBT)
+            // This is just "mock-psbt-data" in base64
+            txs: ["bW9jay1wc2J0LWRhdGE="],
         }),
     } as any;
 };
