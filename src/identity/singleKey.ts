@@ -8,7 +8,7 @@ import { hex } from "@scure/base";
 import { Identity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
-import { schnorr, sign } from "@noble/secp256k1";
+import { schnorr, signAsync } from "@noble/secp256k1";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
@@ -105,7 +105,7 @@ export class SingleKey implements Identity {
         signatureType: "schnorr" | "ecdsa" = "schnorr"
     ): Promise<Uint8Array> {
         if (signatureType === "ecdsa")
-            return sign(message, this.key, { prehash: false });
+            return signAsync(message, this.key, { prehash: false });
         return schnorr.signAsync(message, this.key);
     }
 }
