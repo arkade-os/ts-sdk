@@ -329,3 +329,23 @@ export function verifyTapscriptSignatures(
         );
     }
 }
+
+/**
+ * Merges the signed transaction with the original transaction
+ * @param signedTx signed transaction
+ * @param originalTx original transaction
+ */
+export function combineTapscriptSigs(
+    signedTx: Transaction,
+    originalTx: Transaction
+) {
+    for (let i = 0; i < signedTx.inputsLength; i++) {
+        const input = originalTx.getInput(i);
+        const signedInput = signedTx.getInput(i);
+        if (!input.tapScriptSig) throw new Error("No tapScriptSig");
+        originalTx.updateInput(i, {
+            tapScriptSig: input.tapScriptSig?.concat(signedInput.tapScriptSig!),
+        });
+    }
+    return originalTx;
+}
