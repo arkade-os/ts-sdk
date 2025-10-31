@@ -88,7 +88,6 @@ import {
     verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
-    mergeCheckpoints,
     combineTapscriptSigs,
 } from "./utils/arkTransaction";
 import {
@@ -188,7 +187,6 @@ export {
     verifyTapscriptSignatures,
     waitForIncomingFunds,
     hasBoardingTxExpired,
-    mergeCheckpoints,
     combineTapscriptSigs,
 
     // Arknote
