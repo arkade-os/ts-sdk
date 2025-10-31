@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SingleKey } from "../src/identity/singleKey";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
+import { schnorr, verifyAsync } from "@noble/secp256k1";
 
 describe("SingleKey", () => {
     it("should create random keys with fromRandomBytes", async () => {
@@ -80,5 +81,70 @@ describe("SingleKey", () => {
 
         // Should export the same hex
         expect(key2.toHex()).toBe(originalHex);
+    });
+
+    it("should sign message with schnorr signature", async () => {
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const message = new Uint8Array(32).fill(42); // 32-byte message
+
+        const signature = await key.signMessage(message, "schnorr");
+
+        // Schnorr signatures are 64 bytes
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature).toHaveLength(64);
+
+        // Verify that the signature is correct
+        const publicKey = await key.xOnlyPublicKey();
+        const isValid = await schnorr.verifyAsync(
+            signature,
+            message,
+            publicKey
+        );
+        expect(isValid).toBe(true);
+    });
+
+    it("should default to schnorr signature when type not specified", async () => {
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const message = new Uint8Array(32).fill(42); // 32-byte message
+
+        const signature = await key.signMessage(message);
+
+        // Should produce schnorr signature by default (64 bytes)
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature).toHaveLength(64);
+
+        // Verify that the signature is correct
+        const publicKey = await key.xOnlyPublicKey();
+        const isValid = await schnorr.verifyAsync(
+            signature,
+            message,
+            publicKey
+        );
+        expect(isValid).toBe(true);
+    });
+
+    it("should sign message with ecdsa signature", async () => {
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const message = new Uint8Array(32).fill(42); // 32-byte message
+
+        const signature = await key.signMessage(message, "ecdsa");
+
+        // ECDSA signatures are 64 bytes (compact format)
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature).toHaveLength(64);
+
+        // Verify that the signature is correct
+        // ECDSA uses compressed public key (not x-only)
+        const publicKey = await key.compressedPublicKey();
+        const isValid = await verifyAsync(signature, message, publicKey, {
+            prehash: false,
+        });
+        expect(isValid).toBe(true);
     });
 });
