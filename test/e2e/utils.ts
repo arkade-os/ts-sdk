@@ -1,4 +1,12 @@
-import { Wallet, SingleKey, OnchainWallet, EsploraProvider } from "../../src";
+import { hex } from "@scure/base";
+import {
+    Wallet,
+    SingleKey,
+    OnchainWallet,
+    EsploraProvider,
+    RestIndexerProvider,
+    ArkAddress,
+} from "../../src";
 import { execSync } from "child_process";
 
 export const arkdExec =
@@ -94,10 +102,21 @@ export async function createVtxo(
 
 // before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
 // if not, fund it with 100.000
-export function beforeEachFaucet(): void {
-    const balanceOutput = execCommand(`${arkdExec} ark balance`);
-    const balance = JSON.parse(balanceOutput);
-    const offchainBalance = balance.offchain_balance.total;
+export async function beforeEachFaucet(): Promise<void> {
+    const receiveOutput = execCommand(`${arkdExec} ark receive`);
+    const receive = JSON.parse(receiveOutput);
+    const receiveAddress = receive.offchain_address;
+
+    const { vtxos } = await new RestIndexerProvider(
+        "http://localhost:7070"
+    ).getVtxos({
+        scripts: [hex.encode(ArkAddress.decode(receiveAddress).pkScript)],
+        spendableOnly: true,
+    });
+    const offchainBalance = vtxos.reduce(
+        (sum: number, vtxo) => sum + vtxo.value,
+        0
+    );
 
     if (offchainBalance <= 20_000) {
         const noteStr = execCommand(`${arkdExec} arkd note --amount 100000`);
