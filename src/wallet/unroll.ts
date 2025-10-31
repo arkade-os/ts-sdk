@@ -240,10 +240,7 @@ export namespace Unroll {
                     await sleep(1_000);
                 }
                 const step = await this.next();
-                // Only execute the step if broadcasting is enabled
-                if (this.broadcast) {
-                    await step.do();
-                }
+                await step.do();
                 yield step;
                 lastStep = step.type;
             } while (lastStep !== StepType.DONE);
