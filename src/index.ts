@@ -88,6 +88,8 @@ import {
     verifyTapscriptSignatures,
     ArkTxInput,
     OffchainTx,
+    mergeCheckpoints,
+    mergeTxs,
 } from "./utils/arkTransaction";
 import {
     VtxoTaprootTree,
@@ -186,6 +188,8 @@ export {
     verifyTapscriptSignatures,
     waitForIncomingFunds,
     hasBoardingTxExpired,
+    mergeCheckpoints,
+    mergeTxs,
 
     // Arknote
     ArkNote,
