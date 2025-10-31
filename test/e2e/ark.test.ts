@@ -11,6 +11,7 @@ import {
     VirtualCoin,
     RestArkProvider,
     ArkError,
+    ArkAddress,
 } from "../../src";
 import {
     arkdExec,
@@ -22,6 +23,7 @@ import {
     faucetOnchain,
     waitFor,
 } from "./utils";
+import { hex } from "@scure/base";
 
 describe("Ark integration tests", () => {
     beforeEach(beforeEachFaucet, 20000);
@@ -750,7 +752,7 @@ describe("Ark integration tests", () => {
         const provider = new RestArkProvider("http://localhost:7070");
         try {
             await provider.submitTx("invalid", ["invalid"]);
-        } catch (error) {
+        } catch (error: any) {
             expect(error).toBeDefined();
             expect(error).toBeInstanceOf(ArkError);
             expect(error.message).toContain("INVALID_ARK_PSBT (1)");
@@ -758,5 +760,75 @@ describe("Ark integration tests", () => {
             expect(error.name).toBe("INVALID_ARK_PSBT");
             expect(error.metadata).toStrictEqual({ tx: "invalid" });
         }
+    });
+
+    it("should register and delete intents", { timeout: 60000 }, async () => {
+        const provider = new RestArkProvider("http://localhost:7070");
+
+        // Create fresh wallet instances for this test
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
+        expect(alice).toBeDefined();
+        expect(bob).toBeDefined();
+
+        // Get addresses
+        const bobPubkey = await bob.identity.xOnlyPublicKey();
+        const aliceAddress = await alice.wallet.getAddress();
+        const bobAddress = await bob.wallet.getAddress();
+        expect(aliceAddress).toBeDefined();
+        expect(bobAddress).toBeDefined();
+        expect(bobPubkey).toBeDefined();
+
+        const fundAmount = 10000;
+        execCommand(
+            `${arkdExec} ark send --to ${aliceAddress} --amount ${fundAmount} --password secret`
+        );
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // Check virtual coins after funding
+        const virtualCoins = await alice.wallet.getVtxos();
+        expect(virtualCoins).toHaveLength(1);
+        const vtxo = virtualCoins[0];
+        expect(vtxo.txid).toBeDefined();
+
+        const cosignerPubkeys = [hex.encode(bobPubkey)];
+        const onchainOutputsIndexes: number[] = [];
+        const outputs = [
+            {
+                script: ArkAddress.decode(bobAddress).pkScript,
+                amount: BigInt(5000),
+            },
+        ];
+
+        const intent = await alice.wallet.makeRegisterIntentSignature(
+            virtualCoins,
+            outputs,
+            onchainOutputsIndexes,
+            cosignerPubkeys
+        );
+
+        const deleteIntent =
+            await alice.wallet.makeDeleteIntentSignature(virtualCoins);
+
+        // register intent
+        const registerResponse = await provider.registerIntent(intent);
+        expect(registerResponse).toBeDefined();
+
+        // should fail to register the same intent again
+        try {
+            await provider.registerIntent(intent);
+        } catch (error: any) {
+            expect(error).toBeDefined();
+            expect(error).toBeInstanceOf(ArkError);
+            expect(error.message).toContain("INTERNAL_ERROR (0)");
+            expect(error.message).toContain(
+                "already registered by another intent"
+            );
+            expect(error.code).toBe(0);
+            expect(error.name).toBe("INTERNAL_ERROR");
+        }
+
+        // delete intent
+        await provider.deleteIntent(deleteIntent);
     });
 });

@@ -355,7 +355,7 @@ export class RestArkProvider implements ArkProvider {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify({
-                proof: {
+                intent: {
                     proof: intent.proof,
                     message: intent.message,
                 },
