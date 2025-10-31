@@ -17,6 +17,14 @@ export function vtxosToTxs(
     // All vtxos are received unless:
     // - they resulted from a settlement (either boarding or refresh)
     // - they are the change of a spend tx
+    // - they were spent in a payment (have arkTxId set)
+    // - they resulted from a payment (their txid matches an arkTxId of a spent vtxo)
+
+    // First, collect all arkTxIds from spent vtxos to identify payment transactions
+    const paymentArkTxIds = new Set(
+        spent.filter((v) => v.arkTxId).map((v) => v.arkTxId!)
+    );
+
     let vtxosLeftToCheck = [...spent];
     for (const vtxo of [...spendable, ...spent]) {
         if (
@@ -26,6 +34,18 @@ export function vtxosToTxs(
                 boardingBatchTxids.has(txid)
             )
         ) {
+            continue;
+        }
+
+        // Skip vtxos that were spent in a payment transaction
+        // These will be handled in the sent transaction section below
+        if (vtxo.arkTxId) {
+            continue;
+        }
+
+        // Skip vtxos that resulted from a payment transaction
+        // (their txid matches an arkTxId from a spent vtxo)
+        if (paymentArkTxIds.has(vtxo.txid)) {
             continue;
         }
 
@@ -69,23 +89,19 @@ export function vtxosToTxs(
     // vtxos by settled by or ark txid
     const vtxosByTxid = new Map<string, VirtualCoin[]>();
     for (const v of spent) {
-        if (v.settledBy) {
-            if (!vtxosByTxid.has(v.settledBy)) {
-                vtxosByTxid.set(v.settledBy, []);
-            }
-            const currentVtxos = vtxosByTxid.get(v.settledBy)!;
-            vtxosByTxid.set(v.settledBy, [...currentVtxos, v]);
-        }
+        // Prefer arkTxId over settledBy to avoid duplicates
+        // A vtxo should only be grouped once
+        const groupKey = v.arkTxId || v.settledBy;
 
-        if (!v.arkTxId) {
+        if (!groupKey) {
             continue;
         }
 
-        if (!vtxosByTxid.has(v.arkTxId)) {
-            vtxosByTxid.set(v.arkTxId, []);
+        if (!vtxosByTxid.has(groupKey)) {
+            vtxosByTxid.set(groupKey, []);
         }
-        const currentVtxos = vtxosByTxid.get(v.arkTxId)!;
-        vtxosByTxid.set(v.arkTxId, [...currentVtxos, v]);
+        const currentVtxos = vtxosByTxid.get(groupKey)!;
+        vtxosByTxid.set(groupKey, [...currentVtxos, v]);
     }
 
     for (const [sb, vtxos] of vtxosByTxid) {
@@ -106,7 +122,13 @@ export function vtxosToTxs(
             boardingTxid: "",
             arkTxid: "",
         };
-        if (vtxo.virtualStatus.state === "preconfirmed") {
+
+        // Use the grouping key (sb) as arkTxid if it looks like an arkTxId
+        // (i.e., if the spent vtxos had arkTxId set, use that instead of result vtxo's txid)
+        const isArkTxId = vtxos.some((v) => v.arkTxId === sb);
+        if (isArkTxId) {
+            txKey.arkTxid = sb;
+        } else if (vtxo.virtualStatus.state === "preconfirmed") {
             txKey.arkTxid = vtxo.txid;
         }
 
