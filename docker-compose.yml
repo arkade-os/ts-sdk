@@ -90,6 +90,7 @@ services:
             - ARKD_EVENT_DB_TYPE=badger
             - ARKD_DB_TYPE=sqlite
             - ARKD_ROUND_INTERVAL=10
+            - ARKD_ALLOW_CSV_BLOCK_TYPE=true
         volumes:
             - type: tmpfs
               target: /app/data
