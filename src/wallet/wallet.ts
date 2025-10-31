@@ -1207,7 +1207,7 @@ export class Wallet implements IWallet {
         }
     }
 
-    private async makeRegisterIntentSignature(
+    async makeRegisterIntentSignature(
         coins: ExtendedCoin[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
@@ -1234,7 +1234,7 @@ export class Wallet implements IWallet {
         };
     }
 
-    private async makeDeleteIntentSignature(
+    async makeDeleteIntentSignature(
         coins: ExtendedCoin[]
     ): Promise<SignedIntent> {
         const inputs = this.prepareIntentProofInputs(coins);
