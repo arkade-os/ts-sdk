@@ -350,14 +350,16 @@ function isValidBlocksTip(
     return (
         Array.isArray(tip) &&
         tip.every((t) => {
-            t &&
+            return (
+                t &&
                 typeof t === "object" &&
                 typeof t.id === "string" &&
                 t.id.length > 0 &&
                 typeof t.height === "number" &&
                 t.height >= 0 &&
                 typeof t.mediantime === "number" &&
-                t.mediantime > 0;
+                t.mediantime > 0
+            );
         })
     );
 }
