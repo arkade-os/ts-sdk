@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
+import transactionHistory from "./fixtures/transaction_history.json";
 import { vtxosToTxs } from "../src/utils/transactionHistory";
 import { VirtualCoin, TxType, isSpendable } from "../src/wallet";
-import { RestIndexerProvider } from "../src/providers/indexer";
-import { RestArkProvider } from "../src/providers/ark";
-import { ArkAddress } from "../src/script/address";
-import { hex } from "@scure/base";
 
 describe("vtxosToTxs", () => {
     describe("Bug: duplicate sent transactions for split vtxos", () => {
@@ -221,28 +218,29 @@ describe("vtxosToTxs", () => {
         });
     });
 
-    describe("Real-world integration test", () => {
-        it("should fetch vtxos from indexer and ensure unique arkTxIds", async () => {
-            const indexer = "https://arkade.computer";
-            const arkProvider = new RestArkProvider(indexer);
-            const indexerProvider = new RestIndexerProvider(indexer);
+    for (const [index, { vtxos, expected }] of transactionHistory.entries()) {
+        it(`fixture #${index + 1}`, () => {
+            const spendableVtxos: VirtualCoin[] = [];
+            const spentVtxos: VirtualCoin[] = [];
 
-            const arkAddress =
-                "ark1qq4hfssprtcgnjzf8qlw2f78yvjau5kldfugg29k34y7j96q2w4t56dgc5samkp4k49g5exyjk0z4mvpf2c26mwkqkkg6tswhj6laudxnzekfw";
-            const decoded = ArkAddress.decode(arkAddress);
-
-            const response = await indexerProvider.getVtxos({
-                scripts: [hex.encode(decoded.pkScript)],
-            });
-
-            const spendableVtxos = [];
-            const spentVtxos = [];
-
-            for (const vtxo of response.vtxos) {
-                if (isSpendable(vtxo)) {
-                    spendableVtxos.push(vtxo);
+            for (const vtxo of vtxos) {
+                const virtualCoin: VirtualCoin = {
+                    ...vtxo,
+                    createdAt: new Date(vtxo.createdAt),
+                    virtualStatus: {
+                        state: vtxo.virtualStatus.state as
+                            | "swept"
+                            | "settled"
+                            | "preconfirmed"
+                            | "spent",
+                        commitmentTxIds: vtxo.virtualStatus.commitmentTxIds,
+                        batchExpiry: vtxo.virtualStatus.batchExpiry,
+                    },
+                };
+                if (isSpendable(virtualCoin)) {
+                    spendableVtxos.push(virtualCoin);
                 } else {
-                    spentVtxos.push(vtxo);
+                    spentVtxos.push(virtualCoin);
                 }
             }
 
@@ -265,7 +263,6 @@ describe("vtxosToTxs", () => {
                 }
             );
 
-            console.log(JSON.stringify(Array.from(txs)));
             // Each transaction should have a unique arkTxId
             const arkTxIds = new Set<string>();
             for (const tx of txs) {
@@ -281,6 +278,7 @@ describe("vtxosToTxs", () => {
 
             // Verify we have some transactions
             expect(txs.length).toBeGreaterThan(0);
+            expect(txs).toStrictEqual(expected);
         });
-    });
+    }
 });
