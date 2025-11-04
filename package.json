@@ -96,8 +96,8 @@
         "@types/node": "24.3.1",
         "@vitest/coverage-v8": "3.2.4",
         "esbuild": "^0.25.9",
-        "expo": "~52.0.47",
         "eventsource": "4.0.0",
+        "expo": "~52.0.47",
         "glob": "11.0.3",
         "husky": "9.1.7",
         "prettier": "3.6.2",
@@ -116,7 +116,7 @@
     ],
     "author": "Ark Labs",
     "license": "MIT",
-    "packageManager": "pnpm@9.15.2+sha512.93e57b0126f0df74ce6bff29680394c0ba54ec47246b9cf321f0121d8d9bb03f750a705f24edc3c1180853afd7c2c3b94196d0a3d53d3e069d9e2793ef11f321",
+    "packageManager": "pnpm@10.20.0",
     "engines": {
         "node": ">=20.0.0"
     },
