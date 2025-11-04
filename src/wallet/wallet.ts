@@ -585,8 +585,11 @@ export class Wallet implements IWallet {
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
         try {
-            // mark VTXOs as spent
+            // mark VTXOs as spent and optionally add the change VTXO
             const spentVtxos: ExtendedVirtualCoin[] = [];
+            const commitmentTxIds = new Set<string>();
+            let batchExpiry: number = Number.MAX_SAFE_INTEGER;
+
             for (const [inputIndex, input] of selected.inputs.entries()) {
                 const vtxo = extendVirtualCoin(this, input);
 
@@ -600,10 +603,52 @@ export class Wallet implements IWallet {
                     virtualStatus: { ...vtxo.virtualStatus, state: "spent" },
                     spentBy: checkpoint.id,
                     arkTxId: arkTxid,
+                    isSpent: true,
                 });
+
+                if (vtxo.virtualStatus.commitmentTxIds) {
+                    for (const commitmentTxId of vtxo.virtualStatus
+                        .commitmentTxIds) {
+                        commitmentTxIds.add(commitmentTxId);
+                    }
+                }
+                if (vtxo.virtualStatus.batchExpiry) {
+                    batchExpiry = Math.min(
+                        batchExpiry,
+                        vtxo.virtualStatus.batchExpiry
+                    );
+                }
             }
 
-            const addr = await this.getAddress();
+            const createdAt = Date.now();
+            const addr = this.arkAddress.encode();
+
+            if (
+                selected.changeAmount > 0n &&
+                batchExpiry !== Number.MAX_SAFE_INTEGER
+            ) {
+                const changeVtxo: ExtendedVirtualCoin = {
+                    txid: arkTxid,
+                    vout: outputs.length - 1,
+                    createdAt: new Date(createdAt),
+                    forfeitTapLeafScript: this.offchainTapscript.forfeit(),
+                    intentTapLeafScript: this.offchainTapscript.exit(),
+                    isUnrolled: false,
+                    tapTree: this.offchainTapscript.encode(),
+                    value: Number(selected.changeAmount),
+                    virtualStatus: {
+                        state: "preconfirmed",
+                        commitmentTxIds: Array.from(commitmentTxIds),
+                        batchExpiry,
+                    },
+                    status: {
+                        confirmed: false,
+                    },
+                };
+
+                await this.walletRepository.saveVtxos(addr, [changeVtxo]);
+            }
+
             await this.walletRepository.saveVtxos(addr, spentVtxos);
             await this.walletRepository.saveTransactions(addr, [
                 {
