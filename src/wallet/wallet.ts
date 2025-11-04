@@ -634,6 +634,7 @@ export class Wallet implements IWallet {
                     forfeitTapLeafScript: this.offchainTapscript.forfeit(),
                     intentTapLeafScript: this.offchainTapscript.exit(),
                     isUnrolled: false,
+                    isSpent: false,
                     tapTree: this.offchainTapscript.encode(),
                     value: Number(selected.changeAmount),
                     virtualStatus: {
