@@ -9,6 +9,9 @@ import { Identity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { cbc } from "@noble/ciphers/aes.js";
+import { base64 } from "@scure/base";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
@@ -107,5 +110,21 @@ export class SingleKey implements Identity {
         if (signatureType === "ecdsa")
             return signAsync(message, this.key, { prehash: false });
         return schnorr.signAsync(message, this.key);
+    }
+
+    decrypt(pubkey: string, data: string): string {
+        let [ctb64, ivb64] = data.split("?iv=");
+
+        // produce 33-byte compressed signatures by default
+        let sharedKey = secp256k1
+            .getSharedSecret(this.key, hex.decode(pubkey))
+            .slice(1, 33);
+
+        let iv = base64.decode(ivb64);
+        let ciphertext = base64.decode(ctb64);
+
+        let plaintext = cbc(sharedKey, iv).decrypt(ciphertext);
+
+        return hex.encode(plaintext);
     }
 }
