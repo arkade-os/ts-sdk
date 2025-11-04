@@ -209,7 +209,7 @@ for await (const step of session) {
       console.log(`Waiting for transaction ${step.txid} to be confirmed`);
       break;
     case Unroll.StepType.UNROLL:
-      console.log(`Broadcasting transaction ${step.tx.id}`);
+      console.log(`Transaction ${step.tx.id} unrolled`);
       break;
     case Unroll.StepType.DONE:
       console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
@@ -224,6 +224,26 @@ The unrolling process works by:
 - Broadcasting each transaction that isn't already on-chain
 - Waiting for confirmations between steps
 - Using P2A (Pay-to-Anchor) transactions to pay for fees
+
+Optionally, you can use `session.next()` to control the broadcasting process manually.
+
+```typescript
+const step = await session.next();
+switch (step.type) {
+  case Unroll.StepType.WAIT:
+    await step.do(); // wait for the transaction to be confirmed
+    break;
+  case Unroll.StepType.UNROLL:
+    const [parent, child] = step.pkg;
+    console.log(`Parent: ${parent}`)
+    console.log(`Child: ${child}`)
+    await step.do(); // broadcast the 1C1P package
+    break;
+  case Unroll.StepType.DONE:
+    console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
+    break;
+  }
+```
 
 #### Step 2: Completing the Exit
 
