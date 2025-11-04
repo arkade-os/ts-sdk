@@ -579,7 +579,7 @@ export class Wallet implements IWallet {
         }
 
         const tapTree = this.offchainTapscript.encode();
-        let offchainTx = buildOffchainTx(
+        const offchainTx = buildOffchainTx(
             selected.inputs.map((input) => ({
                 ...input,
                 tapLeafScript: selectedLeaf,
@@ -596,7 +596,6 @@ export class Wallet implements IWallet {
                 base64.encode(signedVirtualTx.toPSBT()),
                 offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
-        // TODO persist final virtual tx and checkpoints to repository
 
         // sign the checkpoints
         const finalCheckpoints = await Promise.all(
@@ -609,7 +608,91 @@ export class Wallet implements IWallet {
 
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
-        return arkTxid;
+        try {
+            // mark VTXOs as spent and optionally add the change VTXO
+            const spentVtxos: ExtendedVirtualCoin[] = [];
+            const commitmentTxIds = new Set<string>();
+            let batchExpiry: number = Number.MAX_SAFE_INTEGER;
+
+            for (const [inputIndex, input] of selected.inputs.entries()) {
+                const vtxo = extendVirtualCoin(this, input);
+
+                const checkpointB64 = signedCheckpointTxs[inputIndex];
+                const checkpoint = Transaction.fromPSBT(
+                    base64.decode(checkpointB64)
+                );
+
+                spentVtxos.push({
+                    ...vtxo,
+                    virtualStatus: { ...vtxo.virtualStatus, state: "spent" },
+                    spentBy: checkpoint.id,
+                    arkTxId: arkTxid,
+                    isSpent: true,
+                });
+
+                if (vtxo.virtualStatus.commitmentTxIds) {
+                    for (const commitmentTxId of vtxo.virtualStatus
+                        .commitmentTxIds) {
+                        commitmentTxIds.add(commitmentTxId);
+                    }
+                }
+                if (vtxo.virtualStatus.batchExpiry) {
+                    batchExpiry = Math.min(
+                        batchExpiry,
+                        vtxo.virtualStatus.batchExpiry
+                    );
+                }
+            }
+
+            const createdAt = Date.now();
+            const addr = this.arkAddress.encode();
+
+            if (
+                selected.changeAmount > 0n &&
+                batchExpiry !== Number.MAX_SAFE_INTEGER
+            ) {
+                const changeVtxo: ExtendedVirtualCoin = {
+                    txid: arkTxid,
+                    vout: outputs.length - 1,
+                    createdAt: new Date(createdAt),
+                    forfeitTapLeafScript: this.offchainTapscript.forfeit(),
+                    intentTapLeafScript: this.offchainTapscript.exit(),
+                    isUnrolled: false,
+                    isSpent: false,
+                    tapTree: this.offchainTapscript.encode(),
+                    value: Number(selected.changeAmount),
+                    virtualStatus: {
+                        state: "preconfirmed",
+                        commitmentTxIds: Array.from(commitmentTxIds),
+                        batchExpiry,
+                    },
+                    status: {
+                        confirmed: false,
+                    },
+                };
+
+                await this.walletRepository.saveVtxos(addr, [changeVtxo]);
+            }
+
+            await this.walletRepository.saveVtxos(addr, spentVtxos);
+            await this.walletRepository.saveTransactions(addr, [
+                {
+                    key: {
+                        boardingTxid: "",
+                        commitmentTxid: "",
+                        arkTxid: arkTxid,
+                    },
+                    amount: params.amount,
+                    type: TxType.TxSent,
+                    settled: false,
+                    createdAt: Date.now(),
+                },
+            ]);
+        } catch (e) {
+            console.warn("error saving offchain tx to repository", e);
+        } finally {
+            return arkTxid;
+        }
     }
 
     async settle(
