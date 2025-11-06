@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { hex } from "@scure/base";
-import { Wallet, SingleKey, OnchainWallet } from "../src";
+import { Wallet, SingleKey, OnchainWallet, RestArkProvider } from "../src";
 import type { Coin } from "../src/wallet";
 
 // Mock fetch
@@ -201,6 +201,10 @@ describe("Wallet", () => {
     });
 
     describe("getInfos", () => {
+        beforeEach(() => {
+            mockFetch.mockReset();
+        });
+
         const mockArkInfo = {
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
@@ -209,11 +213,16 @@ describe("Wallet", () => {
             roundInterval: BigInt(144),
             network: "mutinynet",
             dust: BigInt(1000),
-            boardingDescriptorTemplate: "boarding_template",
-            vtxoDescriptorTemplates: ["vtxo_template"],
             forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
                 "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            fees: {
+                intentFee: {
+                    onchainInput: "1000",
+                    onchainOutput: "1000",
+                },
+                txFeeRate: "100",
+            },
         };
 
         it("should initialize with ark provider when configured", async () => {
@@ -236,6 +245,18 @@ describe("Wallet", () => {
 
             const boardingAddress = await wallet.getBoardingAddress();
             expect(boardingAddress).toBeDefined();
+        });
+
+        it("should convert intentFee.onchainInput and intentFee.onchainOutput to bigint", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockArkInfo),
+            });
+
+            const provider = new RestArkProvider("http://localhost:7070");
+            const info = await provider.getInfo();
+            expect(info.fees.intentFee.onchainInput).toBe(BigInt(1000));
+            expect(info.fees.intentFee.onchainOutput).toBe(BigInt(1000));
         });
     });
 });
