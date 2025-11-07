@@ -1,5 +1,5 @@
 import { ExtendedCoin, IWallet } from ".";
-import { SettlementEvent } from "../providers/ark";
+import { FeeInfo, SettlementEvent } from "../providers/ark";
 
 /**
  * Ramps is a class wrapping IWallet.settle method to provide a more convenient interface for onboarding and offboarding operations.
@@ -74,11 +74,13 @@ export class Ramps {
      * Offboard vtxos, or "collaborative exit" vtxos to onchain address.
      *
      * @param destinationAddress - The destination address to offboard to.
+     * @param feeInfo - The fee info to deduct from the offboard amount.
      * @param amount - The amount to offboard. If not provided, the total amount of vtxos will be offboarded.
      * @param eventCallback - The callback to receive settlement events. optional.
      */
     async offboard(
         destinationAddress: string,
+        feeInfo: FeeInfo,
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void
     ): ReturnType<IWallet["settle"]> {
@@ -100,6 +102,14 @@ export class Ramps {
         }
 
         amount = amount ?? totalAmount;
+        const fees = feeInfo.intentFee.onchainOutput;
+        if (fees > amount) {
+            throw new Error(
+                `can't deduct fees from offboard amount (${fees} > ${amount})`
+            );
+        }
+
+        amount -= fees;
 
         const outputs = [
             {

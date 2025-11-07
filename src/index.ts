@@ -70,6 +70,7 @@ import {
     TreeTxEvent,
     TreeSignatureEvent,
     ScheduledSession,
+    FeeInfo,
 } from "./providers/ark";
 import {
     CLTVMultisigTapscript,
@@ -255,6 +256,7 @@ export type {
     OnchainProvider,
     ArkProvider,
     SettlementEvent,
+    FeeInfo,
     ArkInfo,
     SignedIntent,
     Output,

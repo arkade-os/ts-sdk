@@ -171,7 +171,13 @@ Collaborative exit or "offboarding" allows you to withdraw your virtual funds to
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
 
-const exitTxid = await new Ramps(wallet).offboard(onchainAddress);
+// Get fee information from the server
+const info = await wallet.arkProvider.getInfo();
+
+const exitTxid = await new Ramps(wallet).offboard(
+  onchainAddress,
+  info.fees
+);
 ```
 
 ### Unilateral Exit

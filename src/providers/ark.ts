@@ -99,8 +99,8 @@ export interface ScheduledSession {
 export interface IntentFeeInfo {
     offchainInput: string;
     offchainOutput: string;
-    onchainInput: string;
-    onchainOutput: string;
+    onchainInput: bigint;
+    onchainOutput: bigint;
 }
 
 export interface FeeInfo {
@@ -228,7 +228,18 @@ export class RestArkProvider implements ArkProvider {
                 })) ?? [],
             digest: fromServer.digest ?? "",
             dust: BigInt(fromServer.dust ?? 0),
-            fees: fromServer.fees,
+            fees: {
+                intentFee: {
+                    ...fromServer.fees?.intentFee,
+                    onchainInput: BigInt(
+                        fromServer.fees?.intentFee?.onchainInput ?? 0
+                    ),
+                    onchainOutput: BigInt(
+                        fromServer.fees?.intentFee?.onchainOutput ?? 0
+                    ),
+                },
+                txFeeRate: fromServer?.fees?.txFeeRate ?? "",
+            },
             forfeitAddress: fromServer.forfeitAddress ?? "",
             forfeitPubkey: fromServer.forfeitPubkey ?? "",
             network: fromServer.network ?? "",

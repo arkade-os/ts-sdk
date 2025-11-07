@@ -473,8 +473,11 @@ describe("Ark integration tests", () => {
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
+        const feeInfo = await alice.wallet.arkProvider.getInfo();
+
         const exitTxid = await new Ramps(alice.wallet).offboard(
-            onchainAlice.wallet.address
+            onchainAlice.wallet.address,
+            feeInfo.fees
         );
 
         expect(exitTxid).toBeDefined();
