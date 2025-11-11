@@ -1061,7 +1061,10 @@ export class Wallet implements IWallet {
             (async () => {
                 try {
                     for await (const update of subscription) {
-                        if (update.newVtxos?.length > 0) {
+                        if (
+                            update.newVtxos?.length > 0 ||
+                            update.spentVtxos?.length > 0
+                        ) {
                             eventCallback({
                                 type: "vtxo",
                                 newVtxos: update.newVtxos.map((vtxo) =>
