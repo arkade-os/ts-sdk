@@ -4,6 +4,7 @@ import {
     isVtxoExpiringSoon,
     DEFAULT_RENEWAL_CONFIG,
     getExpiringAndRecoverableVtxos,
+    DEFAULT_THRESHOLD_MS,
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedVirtualCoin } from "../src/wallet";
 
@@ -309,7 +310,9 @@ describe("VtxoManager - Recovery", () => {
 describe("VtxoManager - Renewal utilities", () => {
     describe("DEFAULT_RENEWAL_CONFIG", () => {
         it("should have correct default values", () => {
-            expect(DEFAULT_RENEWAL_CONFIG.thresholdMs).toBe(86400000);
+            expect(DEFAULT_RENEWAL_CONFIG.thresholdMs).toBe(
+                DEFAULT_THRESHOLD_MS
+            );
         });
     });
 
@@ -578,14 +581,14 @@ describe("VtxoManager - Renewal", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 2 * 86400000, // in 2 days, not expiring soon with default threshold
+                        batchExpiry: now + 4 * 86400000, // in 4 days, not expiring soon with default threshold
                     },
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet);
 
-            const expiring = await manager.getExpiringVtxos(3 * 86400000); // Override to 3 days
+            const expiring = await manager.getExpiringVtxos(6 * 86400000); // Override to 3 days
 
             expect(expiring).toHaveLength(1);
             expect(expiring[0].txid).toBe("vtxo1");
@@ -609,12 +612,12 @@ describe("VtxoManager - Renewal", () => {
                     value: 5000,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 2 * 86_400_000, // 2 days, 86_400_000ms = 1 day
+                        batchExpiry: now + 6 * 86_400_000, // 6 days, 86_400_000ms = 1 day
                     },
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
-            // No thresholdMs in config, should use DEFAULT_RENEWAL_CONFIG.thresholdMs (86400000)
+            // No thresholdMs in config, should use DEFAULT_RENEWAL_CONFIG.thresholdMs (3 days)
             const manager = new VtxoManager(wallet);
 
             const expiring = await manager.getExpiringVtxos();

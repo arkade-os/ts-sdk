@@ -1,6 +1,8 @@
 import { ExtendedVirtualCoin, IWallet, isRecoverable, isSubdust } from ".";
 import { SettlementEvent } from "../providers/ark";
 
+export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
 /**
  * Configuration options for automatic VTXO renewal
  */
@@ -24,7 +26,7 @@ export interface RenewalConfig {
  */
 export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
     {
-        thresholdMs: 24 * 60 * 60 * 1000, // 24 hours
+        thresholdMs: DEFAULT_THRESHOLD_MS, // 3 days
     };
 
 function getDustAmount(wallet: IWallet): bigint {
@@ -134,9 +136,8 @@ export function isVtxoExpiringSoon(
     vtxo: ExtendedVirtualCoin,
     thresholdMs: number // in milliseconds
 ): boolean {
-    if (thresholdMs <= 100) {
-        throw new Error("Threshold must be greater than 100 milliseconds");
-    }
+    const realThresholdMs =
+        thresholdMs <= 100 ? DEFAULT_THRESHOLD_MS : thresholdMs;
 
     const { batchExpiry } = vtxo.virtualStatus;
 
@@ -146,7 +147,7 @@ export function isVtxoExpiringSoon(
 
     if (batchExpiry <= now) return false; // already expired
 
-    return batchExpiry - now <= thresholdMs;
+    return batchExpiry - now <= realThresholdMs;
 }
 
 /**
