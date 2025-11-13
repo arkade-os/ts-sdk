@@ -121,7 +121,7 @@ import { VtxoManager } from '@arkade-os/sdk'
 // Create manager with optional renewal configuration
 const manager = new VtxoManager(wallet, {
   enabled: true,                   // Enable expiration monitoring
-  thresholdMs: 24 * 60 * 60 * 1000 // Alert when 2h hours % of lifetime remains (default)
+  thresholdMs: 24 * 60 * 60 * 1000 // Alert when 24h hours % of lifetime remains (default)
 })
 ```
 
