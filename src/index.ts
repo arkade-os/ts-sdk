@@ -39,7 +39,7 @@ import {
     TreePartialSigs,
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
-import { VtxoManager } from "./wallet/vtxo-manager";
+import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
@@ -189,6 +189,7 @@ export {
     waitForIncomingFunds,
     hasBoardingTxExpired,
     combineTapscriptSigs,
+    isVtxoExpiringSoon,
 
     // Arknote
     ArkNote,
