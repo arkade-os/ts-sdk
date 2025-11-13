@@ -1,6 +1,8 @@
 import { ExtendedVirtualCoin, IWallet, isRecoverable, isSubdust } from ".";
 import { SettlementEvent } from "../providers/ark";
 
+export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
 /**
  * Configuration options for automatic VTXO renewal
  */
@@ -12,11 +14,11 @@ export interface RenewalConfig {
     enabled?: boolean;
 
     /**
-     * Percentage of expiry time to use as threshold (0-100)
-     * E.g., 10 means renew when 10% of time until expiry remains
-     * @default 10
+     * Threshold in milliseconds to use as threshold for renewal
+     * E.g., 86400000 means renew when 24 hours until expiry remains
+     * @default 86400000 (24 hours)
      */
-    thresholdPercentage?: number;
+    thresholdMs?: number;
 }
 
 /**
@@ -24,7 +26,7 @@ export interface RenewalConfig {
  */
 export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
     {
-        thresholdPercentage: 10,
+        thresholdMs: DEFAULT_THRESHOLD_MS, // 3 days
     };
 
 function getDustAmount(wallet: IWallet): bigint {
@@ -132,29 +134,20 @@ function getRecoverableWithSubdust(
  */
 export function isVtxoExpiringSoon(
     vtxo: ExtendedVirtualCoin,
-    percentage: number
+    thresholdMs: number // in milliseconds
 ): boolean {
+    const realThresholdMs =
+        thresholdMs <= 100 ? DEFAULT_THRESHOLD_MS : thresholdMs;
+
     const { batchExpiry } = vtxo.virtualStatus;
 
-    if (!batchExpiry) {
-        return false; // it doesn't expire
-    }
+    if (!batchExpiry) return false; // it doesn't expire
 
     const now = Date.now();
 
-    if (batchExpiry <= now) {
-        return false; // already expired
-    }
+    if (batchExpiry <= now) return false; // already expired
 
-    // It shouldn't happen, but let's be safe
-    if (!vtxo.createdAt) {
-        return false;
-    }
-
-    const duration = batchExpiry - vtxo.createdAt.getTime();
-    const softExpiry = batchExpiry - (duration * percentage) / 100;
-
-    return softExpiry > 0 && softExpiry <= now;
+    return batchExpiry - now <= realThresholdMs;
 }
 
 /**
@@ -167,12 +160,12 @@ export function isVtxoExpiringSoon(
  */
 export function getExpiringAndRecoverableVtxos(
     vtxos: ExtendedVirtualCoin[],
-    percentage: number,
+    thresholdMs: number,
     dustAmount: bigint
 ): ExtendedVirtualCoin[] {
     return vtxos.filter(
         (vtxo) =>
-            isVtxoExpiringSoon(vtxo, percentage) ||
+            isVtxoExpiringSoon(vtxo, thresholdMs) ||
             isRecoverable(vtxo) ||
             isSubdust(vtxo, dustAmount)
     );
@@ -197,7 +190,7 @@ export function getExpiringAndRecoverableVtxos(
  * // Initialize with renewal config
  * const manager = new VtxoManager(wallet, {
  *   enabled: true,
- *   thresholdPercentage: 10
+ *   thresholdMs: 86400000
  * });
  *
  * // Check recoverable balance
@@ -343,12 +336,12 @@ export class VtxoManager {
     /**
      * Get VTXOs that are expiring soon based on renewal configuration
      *
-     * @param thresholdPercentage - Optional override for threshold percentage (0-100)
+     * @param thresholdMs - Optional override for threshold in milliseconds
      * @returns Array of expiring VTXOs, empty array if renewal is disabled or no VTXOs expiring
      *
      * @example
      * ```typescript
-     * const manager = new VtxoManager(wallet, { enabled: true, thresholdPercentage: 10 });
+     * const manager = new VtxoManager(wallet, { enabled: true, thresholdMs: 86400000 });
      * const expiringVtxos = await manager.getExpiringVtxos();
      * if (expiringVtxos.length > 0) {
      *   console.log(`${expiringVtxos.length} VTXOs expiring soon`);
@@ -356,17 +349,17 @@ export class VtxoManager {
      * ```
      */
     async getExpiringVtxos(
-        thresholdPercentage?: number
+        thresholdMs?: number
     ): Promise<ExtendedVirtualCoin[]> {
         const vtxos = await this.wallet.getVtxos({ withRecoverable: true });
-        const percentage =
-            thresholdPercentage ??
-            this.renewalConfig?.thresholdPercentage ??
-            DEFAULT_RENEWAL_CONFIG.thresholdPercentage;
+        const threshold =
+            thresholdMs ??
+            this.renewalConfig?.thresholdMs ??
+            DEFAULT_RENEWAL_CONFIG.thresholdMs;
 
         return getExpiringAndRecoverableVtxos(
             vtxos,
-            percentage,
+            threshold,
             getDustAmount(this.wallet)
         );
     }

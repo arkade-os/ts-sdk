@@ -120,8 +120,8 @@ import { VtxoManager } from '@arkade-os/sdk'
 
 // Create manager with optional renewal configuration
 const manager = new VtxoManager(wallet, {
-  enabled: true,           // Enable expiration monitoring
-  thresholdPercentage: 10  // Alert when 10% of lifetime remains (default)
+  enabled: true,                   // Enable expiration monitoring
+  thresholdMs: 24 * 60 * 60 * 1000 // Alert when 24h hours % of lifetime remains (default)
 })
 ```
 
@@ -137,8 +137,8 @@ console.log('Renewed:', txid)
 
 // Check which VTXOs are expiring soon
 const expiringVtxos = await manager.getExpiringVtxos()
-// Override threshold percentage (e.g., renew when 5% of time remains)
-const urgentlyExpiring = await manager.getExpiringVtxos(5)
+// Override thresholdMs (e.g., renew when 5 seconds of time remains)
+const urgentlyExpiring = await manager.getExpiringVtxos(5_000)
 ```
 
 
