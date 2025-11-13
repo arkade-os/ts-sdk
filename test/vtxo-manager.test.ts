@@ -309,7 +309,7 @@ describe("VtxoManager - Recovery", () => {
 describe("VtxoManager - Renewal utilities", () => {
     describe("DEFAULT_RENEWAL_CONFIG", () => {
         it("should have correct default values", () => {
-            expect(DEFAULT_RENEWAL_CONFIG.thresholdPercentage).toBe(10);
+            expect(DEFAULT_RENEWAL_CONFIG.thresholdMs).toBe(86400000);
         });
     });
 
@@ -324,18 +324,18 @@ describe("VtxoManager - Renewal utilities", () => {
                 createdAt,
                 virtualStatus: {
                     state: "settled",
-                    batchExpiry: now + 10000, // expires in 10 seconds
+                    batchExpiry: now + 10_000, // expires in 10 seconds
                 },
             } as ExtendedVirtualCoin;
 
             // duration = 10s + 90s = 100s
 
-            // with 5% of duration threshold should be false
-            expect(isVtxoExpiringSoon(vtxo, 5)).toBe(false);
-            // with 11% of duration threshold should be true
-            expect(isVtxoExpiringSoon(vtxo, 11)).toBe(true);
-            // with 20% of duration threshold should be true
-            expect(isVtxoExpiringSoon(vtxo, 20)).toBe(true);
+            // with 5 seconds of duration threshold should be false
+            expect(isVtxoExpiringSoon(vtxo, 5_000)).toBe(false);
+            // with 11 seconds of duration threshold should be true
+            expect(isVtxoExpiringSoon(vtxo, 11_000)).toBe(true);
+            // with 20 seconds of duration threshold should be true
+            expect(isVtxoExpiringSoon(vtxo, 20_000)).toBe(true);
         });
 
         it("should return false for VTXO with no expiry", () => {
@@ -352,8 +352,8 @@ describe("VtxoManager - Renewal utilities", () => {
                 },
             } as ExtendedVirtualCoin;
 
-            const percentage = 10; // 10% of duration
-            expect(isVtxoExpiringSoon(vtxo, percentage)).toBe(false);
+            const thresholdMs = 10_000; // 10 seconds threshold
+            expect(isVtxoExpiringSoon(vtxo, thresholdMs)).toBe(false);
         });
 
         it("should return false for already expired VTXO", () => {
@@ -368,8 +368,8 @@ describe("VtxoManager - Renewal utilities", () => {
                 },
             } as ExtendedVirtualCoin;
 
-            const percentage = 10; // 10% of duration
-            expect(isVtxoExpiringSoon(vtxo, percentage)).toBe(false);
+            const thresholdMs = 10_000; // 10 seconds threshold
+            expect(isVtxoExpiringSoon(vtxo, thresholdMs)).toBe(false);
         });
     });
 
@@ -385,7 +385,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 5000, // expiring soon
+                        batchExpiry: now + 5_000, // expiring soon
                     },
                 } as ExtendedVirtualCoin,
                 {
@@ -395,7 +395,7 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 20000, // not expiring soon
+                        batchExpiry: now + 20_000, // not expiring soon
                     },
                 } as ExtendedVirtualCoin,
                 {
@@ -405,16 +405,16 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 8000, // expiring soon
+                        batchExpiry: now + 8_000, // expiring soon
                     },
                 } as ExtendedVirtualCoin,
             ];
 
-            const percentage = 10; // 10% of duration threshold
+            const thresholdMs = 10_000; // 10 seconds threshold
             const dustAmount = 330n; // dust threshold
             const expiring = getExpiringAndRecoverableVtxos(
                 vtxos,
-                percentage,
+                thresholdMs,
                 dustAmount
             );
 
@@ -439,10 +439,10 @@ describe("VtxoManager - Renewal utilities", () => {
                 } as ExtendedVirtualCoin,
             ];
 
-            const percentage = 10; // 10% of duration
+            const thresholdMs = 10_000; // 10 seconds threshold
             const expiring = getExpiringAndRecoverableVtxos(
                 vtxos,
-                percentage,
+                thresholdMs,
                 330n
             );
 
@@ -480,16 +480,16 @@ describe("VtxoManager - Renewal utilities", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 8000, // expiring soon
+                        batchExpiry: now + 8_000, // expiring soon
                     },
                 } as ExtendedVirtualCoin,
             ];
 
-            const percentage = 10; // 10% of duration threshold
+            const thresholdMs = 10_000; // 10 seconds threshold
             const dustAmount = 330n; // dust threshold
             const expiring = getExpiringAndRecoverableVtxos(
                 vtxos,
-                percentage,
+                thresholdMs,
                 dustAmount
             );
 
@@ -540,7 +540,7 @@ describe("VtxoManager - Renewal", () => {
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, {
-                thresholdPercentage: 50, // 50%
+                thresholdMs: 100_000, // 100 seconds
             });
 
             const expiring = await manager.getExpiringVtxos();
@@ -567,7 +567,7 @@ describe("VtxoManager - Renewal", () => {
             expect(expiring).toEqual([]);
         });
 
-        it("should override threshold percentage parameter", async () => {
+        it("should override thresholdMs parameter", async () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
             const vtxos: ExtendedVirtualCoin[] = [
@@ -578,14 +578,14 @@ describe("VtxoManager - Renewal", () => {
                     createdAt,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 20_000, // in 20 seconds, not expiring soon if 5% threshold
+                        batchExpiry: now + 2 * 86400000, // in 2 days, not expiring soon with default threshold
                     },
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet);
 
-            const expiring = await manager.getExpiringVtxos(100); // Override to 100%
+            const expiring = await manager.getExpiringVtxos(3 * 86400000); // Override to 3 days
 
             expect(expiring).toHaveLength(1);
             expect(expiring[0].txid).toBe("vtxo1");
@@ -600,7 +600,7 @@ describe("VtxoManager - Renewal", () => {
             expect(expiring).toEqual([]);
         });
 
-        it("should use default threshold percentage when not specified", async () => {
+        it("should use default thresholdMs when not specified", async () => {
             const now = Date.now();
             const vtxos: ExtendedVirtualCoin[] = [
                 {
@@ -609,19 +609,16 @@ describe("VtxoManager - Renewal", () => {
                     value: 5000,
                     virtualStatus: {
                         state: "settled",
-                        batchExpiry: now + 100, // 100ms
+                        batchExpiry: now + 2 * 86_400_000, // 2 days, 86_400_000ms = 1 day
                     },
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);
-            // No thresholdPercentage in config, should use DEFAULT_RENEWAL_CONFIG.thresholdPercentage (10)
+            // No thresholdMs in config, should use DEFAULT_RENEWAL_CONFIG.thresholdMs (86400000)
             const manager = new VtxoManager(wallet);
 
             const expiring = await manager.getExpiringVtxos();
 
-            // 10% of 100ms = 10ms threshold, vtxo1 expires in 100ms > 10ms, so NOT expiring
-            // We need it to be expiring, so the test expectations were wrong
-            // Let's verify it uses the default but check the actual behavior
             expect(expiring).toEqual([]);
         });
 
@@ -681,7 +678,7 @@ describe("VtxoManager - Renewal", () => {
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, {
-                thresholdPercentage: 10,
+                thresholdMs: 10_000,
             });
 
             const expiring = await manager.getExpiringVtxos();

@@ -125,7 +125,7 @@ export class Wallet implements IWallet {
     public readonly contractRepository: ContractRepository;
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
-    > & { enabled: boolean; thresholdPercentage: number };
+    > & { enabled: boolean; thresholdMs: number };
 
     private constructor(
         readonly identity: Identity,
