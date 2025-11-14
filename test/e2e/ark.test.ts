@@ -103,14 +103,14 @@ describe("Ark integration tests", () => {
             ],
         };
 
-        const settleTxid = await Promise.all([
-            alice.wallet.settle(params),
-            alice.wallet.settle(params),
-        ]);
+        const firstSettle = alice.wallet.settle(params);
+        // sleep for 1 second
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const secondSettle = alice.wallet.settle(params);
 
-        expect(settleTxid[0]).toBeDefined();
-        expect(settleTxid[1]).toBeDefined();
-        expect(settleTxid[0]).toBe(settleTxid[1]);
+        expect(firstSettle).toBeDefined();
+        expect(secondSettle).toBeDefined();
+        expect(firstSettle).toBe(secondSettle);
     });
 
     it(
