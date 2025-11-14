@@ -44,7 +44,7 @@ export function vtxosToTxs(
         }
 
         const txKey: TxKey = {
-            commitmentTxid: vtxo.spentBy || "",
+            commitmentTxid: "",
             boardingTxid: "",
             arkTxid: "",
         };
@@ -55,6 +55,9 @@ export function vtxosToTxs(
             if (vtxo.spentBy) {
                 settled = true;
             }
+        } else {
+            txKey.commitmentTxid =
+                vtxo.virtualStatus.commitmentTxIds?.[0] || "";
         }
 
         txs.push({
@@ -102,12 +105,15 @@ export function vtxosToTxs(
         const vtxo = getVtxo(resultedVtxos, vtxos);
 
         const txKey: TxKey = {
-            commitmentTxid: vtxo.virtualStatus.commitmentTxIds?.[0] || "",
+            commitmentTxid: "",
             boardingTxid: "",
             arkTxid: "",
         };
         if (vtxo.virtualStatus.state === "preconfirmed") {
-            txKey.arkTxid = vtxo.txid;
+            txKey.arkTxid = resultedAmount === 0 ? vtxo.arkTxId! : vtxo.txid;
+        } else {
+            txKey.commitmentTxid =
+                vtxo.virtualStatus.commitmentTxIds?.[0] || "";
         }
 
         txs.push({
