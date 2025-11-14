@@ -75,6 +75,48 @@ describe("Ark integration tests", () => {
         expect(settleTxid).toBeDefined();
     });
 
+    it("should prevent concurrent settle", { timeout: 60000 }, async () => {
+        // Create fresh wallet instance for this test
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        expect(aliceOffchainAddress).toBeDefined();
+
+        const fundAmount = 1000;
+        execCommand(
+            `${arkdExec} ark send --to ${aliceOffchainAddress} --amount ${fundAmount} --password secret`
+        );
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const virtualCoins = await alice.wallet.getVtxos();
+        expect(virtualCoins).toHaveLength(1);
+        const vtxo = virtualCoins[0];
+        expect(vtxo.txid).toBeDefined();
+
+        const params = {
+            inputs: [vtxo],
+            outputs: [
+                {
+                    address: aliceOffchainAddress!,
+                    amount: BigInt(fundAmount),
+                },
+            ],
+        };
+
+        const firstSettle = alice.wallet.settle(params);
+        // sleep for 1 second
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const secondSettle = alice.wallet.settle(params);
+        const [firstSettleTxid, secondSettleTxid] = await Promise.all([
+            firstSettle,
+            secondSettle,
+        ]);
+
+        expect(firstSettleTxid).toBeDefined();
+        expect(secondSettleTxid).toBeDefined();
+        expect(firstSettleTxid).toBe(secondSettleTxid);
+    });
+
     it(
         "should settle 2 clients in the same batch",
         { timeout: 60000 },
