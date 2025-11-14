@@ -127,6 +127,8 @@ export class Wallet implements IWallet {
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
 
+    private settleInProgress: Promise<string> | null = null;
+
     private constructor(
         readonly identity: Identity,
         readonly network: Network,
@@ -696,6 +698,24 @@ export class Wallet implements IWallet {
     }
 
     async settle(
+        params?: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string> {
+        if (this.settleInProgress !== null) {
+            return this.settleInProgress;
+        }
+
+        const settlePromise = this.executeSettle(params, eventCallback);
+        this.settleInProgress = settlePromise;
+
+        try {
+            return settlePromise;
+        } finally {
+            this.settleInProgress = null;
+        }
+    }
+
+    private async executeSettle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
