@@ -73,6 +73,7 @@ import {
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin } from "./utils";
+import { ArkError } from "../providers/errors";
 
 export type IncomingFunds =
     | {
@@ -794,7 +795,7 @@ export class Wallet implements IWallet {
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
-        const intentId = await this.arkProvider.registerIntent(intent);
+        const intentId = await this.safeRegisterIntent(intent);
 
         const abortController = new AbortController();
         // listen to settlement events
@@ -990,7 +991,9 @@ export class Wallet implements IWallet {
             try {
                 // delete the intent to not be stuck in the queue
                 await this.arkProvider.deleteIntent(deleteIntent);
-            } catch {}
+            } catch (error) {
+                console.error("failed to delete intent: ", error);
+            }
             throw error;
         }
 
@@ -1314,6 +1317,32 @@ export class Wallet implements IWallet {
                     ? base64.encode(settlementPsbt.toPSBT())
                     : undefined
             );
+        }
+    }
+
+    async safeRegisterIntent(intent: SignedIntent): Promise<string> {
+        try {
+            return this.arkProvider.registerIntent(intent);
+        } catch (error) {
+            // catch the "already registered by another intent" error
+            if (
+                error instanceof ArkError &&
+                error.code === 0 &&
+                error.message.includes("duplicated input")
+            ) {
+                // delete all intents spending one of the wallet coins
+                const allSpendableCoins = await this.getVtxos({
+                    withRecoverable: true,
+                });
+                const deleteIntent =
+                    await this.makeDeleteIntentSignature(allSpendableCoins);
+                await this.arkProvider.deleteIntent(deleteIntent);
+
+                // try again
+                return this.arkProvider.registerIntent(intent);
+            }
+
+            throw error;
         }
     }
 
