@@ -267,22 +267,14 @@ describe("vtxosToTxs", () => {
             );
 
             // Each transaction should have a unique arkTxId
-            const arkTxIds = new Map<string, any>();
-            for (const tx of txs) {
-                if (!tx.key.arkTxid) continue;
-                if (arkTxIds.has(tx.key.arkTxid)) {
-                    console.log(
-                        "Duplicate arkTxId found: ",
-                        tx,
-                        arkTxIds.get(tx.key.arkTxid)
-                    );
-                }
-                arkTxIds.set(tx.key.arkTxid, tx);
-            }
+            const arkTxIds = new Set<string>();
+            const txsWithArkTxId = txs.filter((tx) => tx.key.arkTxid);
+            txsWithArkTxId.map((tx) => arkTxIds.add(tx.key.arkTxid));
+            expect(arkTxIds.size).toBe(txsWithArkTxId.length);
 
             // Verify we have some transactions
-            // expect(txs.length).toBeGreaterThan(0);
-            // expect(txs).toStrictEqual(expected);
+            expect(txs.length).toBeGreaterThan(0);
+            expect(txs).toStrictEqual(expected);
         });
     }
 });
