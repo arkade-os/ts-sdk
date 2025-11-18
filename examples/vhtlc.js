@@ -73,7 +73,7 @@ async function main() {
     // onchain paths:
     //   unilateralClaim: (Bob + preimage after 1 blocks)
     //   unilateralRefund: (Bob + Alice + Ark Server after 2 blocks)
-    //   unilateralRefundWithoutReceiver: (Bob + Ark Server after 3 blocks)
+    //   unilateralRefundWithoutReceiver: (Alice + Ark Server after 3 blocks)
     //
     //   onchain paths are locked by relative TimeLocks. Their value determines the priority of the paths.
     //   - unilateralClaim's timelock should be the smaller one, the secret reveal has always max priority.
