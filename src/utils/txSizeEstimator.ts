@@ -8,7 +8,7 @@ export class TxWeightEstimator {
     static readonly INPUT_SIZE = 32 + 4 + 1 + 4;
     static readonly BASE_CONTROL_BLOCK_SIZE = 1 + 32;
     static readonly OUTPUT_SIZE = 8 + 1;
-    static readonly P2WKH_OUTPUT_SIZE = 1 + 1 + 20;
+    static readonly P2WPKH_OUTPUT_SIZE = 1 + 1 + 20;
     static readonly BASE_TX_SIZE = 8 + 2; // Version + LockTime
     static readonly WITNESS_HEADER_SIZE = 2; // Flag + Marker
     static readonly WITNESS_SCALE_FACTOR = 4;
@@ -78,25 +78,37 @@ export class TxWeightEstimator {
             leafControlBlockSize;
 
         this.inputCount++;
-        this.inputWitnessSize += leafWitnessSize + controlBlockWitnessSize;
+        this.inputWitnessSize += leafWitnessSize + 1 + controlBlockWitnessSize;
         this.inputSize += TxWeightEstimator.INPUT_SIZE;
         this.hasWitness = true;
-        this.inputCount++;
         return this;
     }
 
-    addP2WKHOutput(): TxWeightEstimator {
+    private addP2WPKHOutput(): TxWeightEstimator {
         this.outputCount++;
         this.outputSize +=
-            TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2WKH_OUTPUT_SIZE;
+            TxWeightEstimator.OUTPUT_SIZE +
+            TxWeightEstimator.P2WPKH_OUTPUT_SIZE;
         return this;
     }
 
-    addP2TROutput(): TxWeightEstimator {
+    private addP2TROutput(): TxWeightEstimator {
         this.outputCount++;
         this.outputSize +=
             TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2TR_OUTPUT_SIZE;
         return this;
+    }
+
+    addTxOutput(outputAddress: string): TxWeightEstimator {
+        const address = outputAddress.toLowerCase();
+        if (
+            address.startsWith("bc1q") ||
+            address.startsWith("tb1q") ||
+            address.startsWith("bcrt1q")
+        ) {
+            return this.addP2WPKHOutput();
+        }
+        return this.addP2TROutput();
     }
 
     vsize(): VSize {
