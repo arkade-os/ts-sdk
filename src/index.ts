@@ -31,6 +31,7 @@ import {
     GetVtxosFilter,
     TapLeaves,
 } from "./wallet";
+import { Batch } from "./wallet/batch";
 import { Wallet, waitForIncomingFunds, IncomingFunds } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
@@ -111,7 +112,7 @@ import {
     IndexerTxType,
     ChainTxType,
     PageResponse,
-    Batch,
+    BatchInfo,
     ChainTx,
     CommitmentTx,
     TxHistoryRecord,
@@ -215,6 +216,7 @@ export {
     // Errors
     ArkError,
     maybeArkError,
+    Batch,
 };
 
 export type {
@@ -245,7 +247,7 @@ export type {
     // Indexer types
     IndexerProvider,
     PageResponse,
-    Batch,
+    BatchInfo,
     ChainTx,
     CommitmentTx,
     TxHistoryRecord,
