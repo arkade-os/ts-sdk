@@ -1,13 +1,7 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import {
-    SigHash,
-    Transaction,
-    Address,
-    OutScript,
-    TaprootControlBlock,
-} from "@scure/btc-signer";
+import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { vtxosToTxs } from "../utils/transactionHistory";
@@ -22,7 +16,6 @@ import {
 import {
     BatchFinalizationEvent,
     SettlementEvent,
-    SettlementEventType,
     TreeSigningStartedEvent,
     ArkProvider,
     RestArkProvider,
@@ -61,7 +54,7 @@ import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
-import { TxTree, TxTreeNode } from "../tree/txTree";
+import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
 import { InMemoryStorageAdapter } from "../storage/inMemory";
 import {
@@ -74,6 +67,7 @@ import {
 } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
+import { Batch } from "./batch";
 
 export type IncomingFunds =
     | {
@@ -797,207 +791,40 @@ export class Wallet implements IWallet {
 
         const intentId = await this.safeRegisterIntent(intent);
 
+        const topics = [
+            ...signingPublicKeys,
+            ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
+        ];
+
+        const handler = this.createBatchHandler(
+            intentId,
+            params.inputs,
+            session
+        );
+
         const abortController = new AbortController();
-        // listen to settlement events
+
         try {
-            let step: SettlementEventType | undefined;
-
-            const topics = [
-                ...signingPublicKeys,
-                ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
-            ];
-
-            const settlementStream = this.arkProvider.getEventStream(
+            const stream = this.arkProvider.getEventStream(
                 abortController.signal,
                 topics
             );
 
-            // batchId, sweepTapTreeRoot and forfeitOutputScript are set once the BatchStarted event is received
-            let batchId: string | undefined;
-            let sweepTapTreeRoot: Uint8Array | undefined;
-
-            const vtxoChunks: TxTreeNode[] = [];
-            const connectorsChunks: TxTreeNode[] = [];
-
-            let vtxoGraph: TxTree | undefined;
-            let connectorsGraph: TxTree | undefined;
-
-            for await (const event of settlementStream) {
-                if (eventCallback) {
-                    eventCallback(event);
-                }
-                switch (event.type) {
-                    // the settlement failed
-                    case SettlementEventType.BatchFailed:
-                        throw new Error(event.reason);
-                    case SettlementEventType.BatchStarted:
-                        if (step !== undefined) {
-                            continue;
-                        }
-                        const res = await this.handleBatchStartedEvent(
-                            event,
-                            intentId,
-                            this.forfeitPubkey,
-                            this.forfeitOutputScript
-                        );
-                        if (!res.skip) {
-                            step = event.type;
-                            sweepTapTreeRoot = res.sweepTapTreeRoot;
-                            batchId = res.roundId;
-                            if (!hasOffchainOutputs) {
-                                // if there are no offchain outputs, we don't have to handle musig2 tree signatures
-                                // we can directly advance to the finalization step
-                                step = SettlementEventType.TreeNonces;
-                            }
-                        }
-                        break;
-                    case SettlementEventType.TreeTx:
-                        if (
-                            step !== SettlementEventType.BatchStarted &&
-                            step !== SettlementEventType.TreeNonces
-                        ) {
-                            continue;
-                        }
-                        // index 0 = vtxo tree
-                        if (event.batchIndex === 0) {
-                            vtxoChunks.push(event.chunk);
-                            // index 1 = connectors tree
-                        } else if (event.batchIndex === 1) {
-                            connectorsChunks.push(event.chunk);
-                        } else {
-                            throw new Error(
-                                `Invalid batch index: ${event.batchIndex}`
-                            );
-                        }
-                        break;
-                    case SettlementEventType.TreeSignature:
-                        if (step !== SettlementEventType.TreeNonces) {
-                            continue;
-                        }
-                        if (!hasOffchainOutputs) {
-                            continue;
-                        }
-
-                        if (!vtxoGraph) {
-                            throw new Error(
-                                "Vtxo graph not set, something went wrong"
-                            );
-                        }
-
-                        // index 0 = vtxo graph
-                        if (event.batchIndex === 0) {
-                            const tapKeySig = hex.decode(event.signature);
-                            vtxoGraph.update(event.txid, (tx) => {
-                                tx.updateInput(0, {
-                                    tapKeySig,
-                                });
-                            });
-                        }
-                        break;
-                    // the server has started the signing process of the vtxo tree transactions
-                    // the server expects the partial musig2 nonces for each tx
-                    case SettlementEventType.TreeSigningStarted:
-                        if (step !== SettlementEventType.BatchStarted) {
-                            continue;
-                        }
-                        if (hasOffchainOutputs) {
-                            if (!session) {
-                                throw new Error("Signing session not set");
-                            }
-                            if (!sweepTapTreeRoot) {
-                                throw new Error("Sweep tap tree root not set");
-                            }
-
-                            if (vtxoChunks.length === 0) {
-                                throw new Error(
-                                    "unsigned vtxo graph not received"
-                                );
-                            }
-
-                            vtxoGraph = TxTree.create(vtxoChunks);
-
-                            await this.handleSettlementSigningEvent(
-                                event,
-                                sweepTapTreeRoot,
-                                session,
-                                vtxoGraph
-                            );
-                        }
-                        step = event.type;
-                        break;
-                    // the musig2 nonces of the vtxo tree transactions are generated
-                    // the server expects now the partial musig2 signatures
-                    case SettlementEventType.TreeNonces:
-                        if (step !== SettlementEventType.TreeSigningStarted) {
-                            continue;
-                        }
-                        if (hasOffchainOutputs) {
-                            if (!session) {
-                                throw new Error("Signing session not set");
-                            }
-                            const signed =
-                                await this.handleSettlementTreeNoncesEvent(
-                                    event,
-                                    session
-                                );
-                            if (signed) {
-                                step = event.type;
-                            }
-                            break;
-                        }
-                        step = event.type;
-                        break;
-                    // the vtxo tree is signed, craft, sign and submit forfeit transactions
-                    // if any boarding utxos are involved, the settlement tx is also signed
-                    case SettlementEventType.BatchFinalization:
-                        if (step !== SettlementEventType.TreeNonces) {
-                            continue;
-                        }
-
-                        if (!this.forfeitOutputScript) {
-                            throw new Error("Forfeit output script not set");
-                        }
-
-                        if (connectorsChunks.length > 0) {
-                            connectorsGraph = TxTree.create(connectorsChunks);
-                            validateConnectorsTxGraph(
-                                event.commitmentTx,
-                                connectorsGraph
-                            );
-                        }
-
-                        await this.handleSettlementFinalizationEvent(
-                            event,
-                            params.inputs,
-                            this.forfeitOutputScript,
-                            connectorsGraph
-                        );
-                        step = event.type;
-                        break;
-                    // the settlement is done, last event to be received
-                    case SettlementEventType.BatchFinalized:
-                        if (step !== SettlementEventType.BatchFinalization) {
-                            continue;
-                        }
-                        if (event.id === batchId) {
-                            abortController.abort();
-                            return event.commitmentTxid;
-                        }
-                }
-            }
+            return await Batch.join(stream, handler, {
+                abortController,
+                skipVtxoTreeSigning: !hasOffchainOutputs,
+                eventCallback: eventCallback
+                    ? (event) => Promise.resolve(eventCallback(event))
+                    : undefined,
+            });
         } catch (error) {
+            // delete the intent to not be stuck in the queue
+            await this.arkProvider.deleteIntent(deleteIntent).catch(() => {});
+            throw error;
+        } finally {
             // close the stream
             abortController.abort();
-            try {
-                // delete the intent to not be stuck in the queue
-                await this.arkProvider.deleteIntent(deleteIntent);
-            } catch (error) {
-                console.error("failed to delete intent: ", error);
-            }
-            throw error;
         }
-
-        throw new Error("Settlement failed");
     }
 
     async notifyIncomingFunds(
@@ -1091,109 +918,6 @@ export class Wallet implements IWallet {
         };
 
         return stopFunc;
-    }
-
-    private async handleBatchStartedEvent(
-        event: BatchStartedEvent,
-        intentId: string,
-        forfeitPubKey: Bytes,
-        forfeitOutputScript: Bytes
-    ): Promise<
-        | { skip: true }
-        | {
-              roundId: string;
-              sweepTapTreeRoot: Uint8Array;
-              forfeitOutputScript: Bytes;
-              skip: false;
-          }
-    > {
-        const utf8IntentId = new TextEncoder().encode(intentId);
-        const intentIdHash = sha256(utf8IntentId);
-        const intentIdHashStr = hex.encode(intentIdHash);
-
-        let skip = true;
-
-        // check if our intent ID hash matches any in the event
-        for (const idHash of event.intentIdHashes) {
-            if (idHash === intentIdHashStr) {
-                if (!this.arkProvider) {
-                    throw new Error("Ark provider not configured");
-                }
-                await this.arkProvider.confirmRegistration(intentId);
-                skip = false;
-            }
-        }
-
-        if (skip) {
-            return { skip };
-        }
-
-        const sweepTapscript = CSVMultisigTapscript.encode({
-            timelock: {
-                value: event.batchExpiry,
-                type: event.batchExpiry >= 512n ? "seconds" : "blocks",
-            },
-            pubkeys: [forfeitPubKey],
-        }).script;
-
-        const sweepTapTreeRoot = tapLeafHash(sweepTapscript);
-
-        return {
-            roundId: event.id,
-            sweepTapTreeRoot,
-            forfeitOutputScript,
-            skip: false,
-        };
-    }
-
-    // validates the vtxo tree, creates a signing session and generates the musig2 nonces
-    private async handleSettlementSigningEvent(
-        event: TreeSigningStartedEvent,
-        sweepTapTreeRoot: Uint8Array,
-        session: SignerSession,
-        vtxoGraph: TxTree
-    ) {
-        // validate the unsigned vtxo tree
-        const commitmentTx = Transaction.fromPSBT(
-            base64.decode(event.unsignedCommitmentTx)
-        );
-        validateVtxoTxGraph(vtxoGraph, commitmentTx, sweepTapTreeRoot);
-
-        // TODO check if our registered outputs are in the vtxo tree
-
-        const sharedOutput = commitmentTx.getOutput(0);
-        if (!sharedOutput?.amount) {
-            throw new Error("Shared output not found");
-        }
-
-        session.init(vtxoGraph, sweepTapTreeRoot, sharedOutput.amount);
-
-        const pubkey = hex.encode(await session.getPublicKey());
-        const nonces = await session.getNonces();
-
-        await this.arkProvider.submitTreeNonces(event.id, pubkey, nonces);
-    }
-
-    private async handleSettlementTreeNoncesEvent(
-        event: TreeNoncesEvent,
-        session: SignerSession
-    ): Promise<boolean> {
-        const { hasAllNonces } = await session.aggregatedNonces(
-            event.txid,
-            event.nonces
-        );
-        // wait to receive and aggregate all nonces before sending signatures
-        if (!hasAllNonces) return false;
-
-        const signatures = await session.sign();
-        const pubkey = hex.encode(await session.getPublicKey());
-
-        await this.arkProvider.submitTreeSignatures(
-            event.id,
-            pubkey,
-            signatures
-        );
-        return true;
     }
 
     private async handleSettlementFinalizationEvent(
@@ -1320,9 +1044,163 @@ export class Wallet implements IWallet {
         }
     }
 
+    /**
+     * @implements Batch.Handler interface.
+     * @param intentId - The intent ID.
+     * @param inputs - The inputs of the intent.
+     * @param session - The musig2 signing session, if not provided, the signing will be skipped.
+     */
+    createBatchHandler(
+        intentId: string,
+        inputs: ExtendedCoin[],
+        session?: SignerSession
+    ): Batch.Handler {
+        let sweepTapTreeRoot: Uint8Array | undefined;
+        return {
+            onBatchStarted: async (
+                event: BatchStartedEvent
+            ): Promise<{ skip: boolean }> => {
+                const utf8IntentId = new TextEncoder().encode(intentId);
+                const intentIdHash = sha256(utf8IntentId);
+                const intentIdHashStr = hex.encode(intentIdHash);
+
+                let skip = true;
+
+                // check if our intent ID hash matches any in the event
+                for (const idHash of event.intentIdHashes) {
+                    if (idHash === intentIdHashStr) {
+                        if (!this.arkProvider) {
+                            throw new Error("Ark provider not configured");
+                        }
+                        await this.arkProvider.confirmRegistration(intentId);
+                        skip = false;
+                    }
+                }
+
+                if (skip) {
+                    return { skip };
+                }
+
+                const sweepTapscript = CSVMultisigTapscript.encode({
+                    timelock: {
+                        value: event.batchExpiry,
+                        type: event.batchExpiry >= 512n ? "seconds" : "blocks",
+                    },
+                    pubkeys: [this.forfeitPubkey],
+                }).script;
+
+                sweepTapTreeRoot = tapLeafHash(sweepTapscript);
+
+                return { skip: false };
+            },
+            onTreeSigningStarted: async (
+                event: TreeSigningStartedEvent,
+                vtxoTree: TxTree
+            ): Promise<{ skip: boolean }> => {
+                if (!session) {
+                    return { skip: true };
+                }
+                if (!sweepTapTreeRoot) {
+                    throw new Error("Sweep tap tree root not set");
+                }
+
+                const xOnlyPublicKeys = event.cosignersPublicKeys.map((k) =>
+                    k.slice(2)
+                );
+                const signerPublicKey = await session.getPublicKey();
+                const xonlySignerPublicKey = signerPublicKey.subarray(1);
+
+                if (
+                    !xOnlyPublicKeys.includes(hex.encode(xonlySignerPublicKey))
+                ) {
+                    // not a cosigner, skip the signing
+                    return { skip: true };
+                }
+
+                // validate the unsigned vtxo tree
+                const commitmentTx = Transaction.fromPSBT(
+                    base64.decode(event.unsignedCommitmentTx)
+                );
+                validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
+
+                // TODO check if our registered outputs are in the vtxo tree
+
+                const sharedOutput = commitmentTx.getOutput(0);
+                if (!sharedOutput?.amount) {
+                    throw new Error("Shared output not found");
+                }
+
+                await session.init(
+                    vtxoTree,
+                    sweepTapTreeRoot,
+                    sharedOutput.amount
+                );
+
+                const pubkey = hex.encode(await session.getPublicKey());
+                const nonces = await session.getNonces();
+
+                await this.arkProvider.submitTreeNonces(
+                    event.id,
+                    pubkey,
+                    nonces
+                );
+
+                return { skip: false };
+            },
+            onTreeNonces: async (
+                event: TreeNoncesEvent
+            ): Promise<{ fullySigned: boolean }> => {
+                if (!session) {
+                    return { fullySigned: true }; // Signing complete (no signing needed)
+                }
+
+                const { hasAllNonces } = await session.aggregatedNonces(
+                    event.txid,
+                    event.nonces
+                );
+
+                // wait to receive and aggregate all nonces before sending signatures
+                if (!hasAllNonces) return { fullySigned: false };
+
+                const signatures = await session.sign();
+                const pubkey = hex.encode(await session.getPublicKey());
+
+                await this.arkProvider.submitTreeSignatures(
+                    event.id,
+                    pubkey,
+                    signatures
+                );
+                return { fullySigned: true };
+            },
+            onBatchFinalization: async (
+                event: BatchFinalizationEvent,
+                _?: TxTree,
+                connectorTree?: TxTree
+            ): Promise<void> => {
+                if (!this.forfeitOutputScript) {
+                    throw new Error("Forfeit output script not set");
+                }
+
+                if (connectorTree) {
+                    validateConnectorsTxGraph(
+                        event.commitmentTx,
+                        connectorTree
+                    );
+                }
+
+                await this.handleSettlementFinalizationEvent(
+                    event,
+                    inputs,
+                    this.forfeitOutputScript,
+                    connectorTree
+                );
+            },
+        };
+    }
+
     async safeRegisterIntent(intent: SignedIntent): Promise<string> {
         try {
-            return this.arkProvider.registerIntent(intent);
+            return await this.arkProvider.registerIntent(intent);
         } catch (error) {
             // catch the "already registered by another intent" error
             if (
