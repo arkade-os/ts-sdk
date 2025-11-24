@@ -1417,16 +1417,10 @@ export class Wallet implements IWallet {
 
     /**
      * Finalizes pending transactions by retrieving them from the server and finalizing each one.
-     * Optionally filters VTXOs by creation date to only process transactions created after a specified time.
-     *
-     * @param createdAfter - Optional timestamp to filter VTXOs created after this date
      * @param vtxos - Optional list of VTXOs to use instead of retrieving them from the server
      * @returns Array of transaction IDs that were finalized
      */
-    async finalizePendingTxs(
-        vtxos?: ExtendedVirtualCoin[],
-        createdAfter?: Date
-    ): Promise<string[]> {
+    async finalizePendingTxs(vtxos?: ExtendedVirtualCoin[]): Promise<string[]> {
         if (!vtxos || vtxos.length === 0) {
             // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
             const scripts = [hex.encode(this.offchainTapscript.pkScript)];
@@ -1438,14 +1432,6 @@ export class Wallet implements IWallet {
                     vtxo.virtualStatus.state !== "swept" &&
                     vtxo.virtualStatus.state !== "settled"
             );
-
-            // filter by creation date if provided
-            if (createdAfter) {
-                const createdAfterTimestamp = createdAfter.getTime();
-                fetchedVtxos = fetchedVtxos.filter(
-                    (vtxo) => vtxo.createdAt.getTime() >= createdAfterTimestamp
-                );
-            }
 
             if (fetchedVtxos.length === 0) {
                 return [];
