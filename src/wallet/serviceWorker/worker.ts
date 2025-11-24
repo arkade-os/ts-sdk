@@ -171,6 +171,10 @@ export class Worker {
             return;
         }
 
+        // recover pending transactions
+        const finalizedPendingTxs = await this.wallet.finalizePendingTxs();
+        console.info("finalized pending transactions: ", finalizedPendingTxs);
+
         // Get public key script and set the initial vtxos state
         const script = hex.encode(this.wallet.offchainTapscript.pkScript);
         const response = await this.indexerProvider.getVtxos({
