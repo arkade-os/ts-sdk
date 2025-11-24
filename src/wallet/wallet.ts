@@ -29,6 +29,7 @@ import {
     BatchStartedEvent,
     SignedIntent,
     TreeNoncesEvent,
+    PendingTx,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -1420,7 +1421,9 @@ export class Wallet implements IWallet {
      * @param vtxos - Optional list of VTXOs to use instead of retrieving them from the server
      * @returns Array of transaction IDs that were finalized
      */
-    async finalizePendingTxs(vtxos?: ExtendedVirtualCoin[]): Promise<string[]> {
+    async finalizePendingTxs(
+        vtxos?: ExtendedVirtualCoin[]
+    ): Promise<{ finalized: string[]; pendingTxs: PendingTx[] }> {
         if (!vtxos || vtxos.length === 0) {
             // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
             const scripts = [hex.encode(this.offchainTapscript.pkScript)];
@@ -1434,7 +1437,7 @@ export class Wallet implements IWallet {
             );
 
             if (fetchedVtxos.length === 0) {
-                return [];
+                return { finalized: [], pendingTxs: [] };
             }
 
             vtxos = fetchedVtxos.map((v) => extendVirtualCoin(this, v));
@@ -1470,7 +1473,7 @@ export class Wallet implements IWallet {
             }
         }
 
-        return txids;
+        return { finalized: txids, pendingTxs };
     }
 
     private prepareIntentProofInputs(

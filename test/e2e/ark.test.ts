@@ -851,8 +851,10 @@ describe("Ark integration tests", () => {
         const vtxo = vtxos[0];
 
         // should be empty initially
-        const finalizedPendingTxs = await alice.wallet.finalizePendingTxs();
-        expect(finalizedPendingTxs).toHaveLength(0);
+        const { finalized, pendingTxs } =
+            await alice.wallet.finalizePendingTxs();
+        expect(finalized).toHaveLength(0);
+        expect(pendingTxs).toHaveLength(0);
 
         const arkProvider = new RestArkProvider("http://localhost:7070");
         const serverInfo = await arkProvider.getInfo();
@@ -901,9 +903,11 @@ describe("Ark integration tests", () => {
             }
         })();
 
-        const finalizedTxIds = await alice.wallet.finalizePendingTxs();
-        expect(finalizedTxIds).toHaveLength(1);
-        expect(finalizedTxIds[0]).toBe(arkTxid);
+        const res = await alice.wallet.finalizePendingTxs();
+        expect(res.finalized).toHaveLength(1);
+        expect(res.finalized[0]).toBe(arkTxid);
+        expect(res.pendingTxs).toHaveLength(1);
+        expect(res.pendingTxs[0].arkTxid).toBe(arkTxid);
 
         await incomingFundsPromise;
 
