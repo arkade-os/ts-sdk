@@ -180,15 +180,22 @@ export class Worker {
             extendVirtualCoin(this.wallet!, vtxo)
         );
 
-        // recover pending transactions
-        const finalizedPendingTxs = await this.wallet.finalizePendingTxs(
-            vtxos.filter(
-                (vtxo) =>
-                    vtxo.virtualStatus.state !== "swept" &&
-                    vtxo.virtualStatus.state !== "settled"
-            )
-        );
-        console.info("finalized pending transactions: ", finalizedPendingTxs);
+        try {
+            // recover pending transactions
+            const finalizedPendingTxs = await this.wallet.finalizePendingTxs(
+                vtxos.filter(
+                    (vtxo) =>
+                        vtxo.virtualStatus.state !== "swept" &&
+                        vtxo.virtualStatus.state !== "settled"
+                )
+            );
+            console.info(
+                "finalized pending transactions: ",
+                finalizedPendingTxs
+            );
+        } catch (error: unknown) {
+            console.error("Error recovering pending transactions:", error);
+        }
 
         // Get wallet address and save vtxos using unified repository
         const address = await this.wallet.getAddress();
