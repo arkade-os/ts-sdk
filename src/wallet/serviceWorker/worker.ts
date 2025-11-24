@@ -182,16 +182,15 @@ export class Worker {
 
         try {
             // recover pending transactions
-            const { finalized, pendingTxs } =
-                await this.wallet.finalizePendingTxs(
-                    vtxos.filter(
-                        (vtxo) =>
-                            vtxo.virtualStatus.state !== "swept" &&
-                            vtxo.virtualStatus.state !== "settled"
-                    )
-                );
+            const { finalized, pending } = await this.wallet.finalizePendingTxs(
+                vtxos.filter(
+                    (vtxo) =>
+                        vtxo.virtualStatus.state !== "swept" &&
+                        vtxo.virtualStatus.state !== "settled"
+                )
+            );
             console.info(
-                `Recovered ${finalized.length}/${pendingTxs.length} pending transactions: ${finalized.join(", ")}`
+                `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
             );
         } catch (error: unknown) {
             console.error("Error recovering pending transactions:", error);

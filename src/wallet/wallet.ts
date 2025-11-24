@@ -1423,7 +1423,9 @@ export class Wallet implements IWallet {
      */
     async finalizePendingTxs(
         vtxos?: ExtendedVirtualCoin[]
-    ): Promise<{ finalized: string[]; pendingTxs: PendingTx[] }> {
+    ): Promise<{ finalized: string[]; pending: string[] }> {
+        const MAX_INPUTS_PER_INTENT = 20;
+
         if (!vtxos || vtxos.length === 0) {
             // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
             const scripts = [hex.encode(this.offchainTapscript.pkScript)];
@@ -1437,43 +1439,49 @@ export class Wallet implements IWallet {
             );
 
             if (fetchedVtxos.length === 0) {
-                return { finalized: [], pendingTxs: [] };
+                return { finalized: [], pending: [] };
             }
 
             vtxos = fetchedVtxos.map((v) => extendVirtualCoin(this, v));
         }
+        const finalized: string[] = [];
+        const pending: string[] = [];
 
-        const intent = await this.makeGetPendingTxIntentSignature(vtxos);
-        const pendingTxs = await this.arkProvider.getPendingTxs(intent);
+        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_INTENT) {
+            const batch = vtxos.slice(i, i + MAX_INPUTS_PER_INTENT);
+            const intent = await this.makeGetPendingTxIntentSignature(batch);
+            const pendingTxs = await this.arkProvider.getPendingTxs(intent);
 
-        // finalize each transaction by signing the checkpoints
-        const txids: string[] = [];
-        for (const pendingTx of pendingTxs) {
-            try {
-                // sign the checkpoints
-                const finalCheckpoints = await Promise.all(
-                    pendingTx.signedCheckpointTxs.map(async (c) => {
-                        const tx = Transaction.fromPSBT(base64.decode(c));
-                        const signedCheckpoint = await this.identity.sign(tx);
-                        return base64.encode(signedCheckpoint.toPSBT());
-                    })
-                );
+            // finalize each transaction by signing the checkpoints
+            for (const pendingTx of pendingTxs) {
+                pending.push(pendingTx.arkTxid);
+                try {
+                    // sign the checkpoints
+                    const finalCheckpoints = await Promise.all(
+                        pendingTx.signedCheckpointTxs.map(async (c) => {
+                            const tx = Transaction.fromPSBT(base64.decode(c));
+                            const signedCheckpoint =
+                                await this.identity.sign(tx);
+                            return base64.encode(signedCheckpoint.toPSBT());
+                        })
+                    );
 
-                await this.arkProvider.finalizeTx(
-                    pendingTx.arkTxid,
-                    finalCheckpoints
-                );
-                txids.push(pendingTx.arkTxid);
-            } catch (error) {
-                console.error(
-                    `Failed to finalize transaction ${pendingTx.arkTxid}:`,
-                    error
-                );
-                // continue with other transactions even if one fails
+                    await this.arkProvider.finalizeTx(
+                        pendingTx.arkTxid,
+                        finalCheckpoints
+                    );
+                    finalized.push(pendingTx.arkTxid);
+                } catch (error) {
+                    console.error(
+                        `Failed to finalize transaction ${pendingTx.arkTxid}:`,
+                        error
+                    );
+                    // continue with other transactions even if one fails
+                }
             }
         }
 
-        return { finalized: txids, pendingTxs };
+        return { finalized, pending };
     }
 
     private prepareIntentProofInputs(
