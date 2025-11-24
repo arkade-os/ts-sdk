@@ -636,6 +636,7 @@ describe("VtxoManager - Renewal", () => {
                         state: "settled",
                         batchExpiry: now - 1000, // Already expired
                     },
+                    isSpent: true,
                 } as ExtendedVirtualCoin,
             ];
             const wallet = createMockWallet(vtxos);

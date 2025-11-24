@@ -163,7 +163,13 @@ export function isSpendable(vtxo: VirtualCoin): boolean {
 }
 
 export function isRecoverable(vtxo: VirtualCoin): boolean {
-    return vtxo.virtualStatus.state === "swept" && isSpendable(vtxo);
+    if (!isSpendable(vtxo)) return false; // already spent, not recoverable
+    const isSwept = vtxo.virtualStatus.state === "swept";
+    if (isSwept) return true; // swept by server, recoverable
+    const expiryDate = vtxo.virtualStatus.batchExpiry;
+    if (!expiryDate) return false; // no expiry found, not recoverable (should never happen)
+    const now = Date.now();
+    return expiryDate <= now; // recoverable if expired
 }
 
 export function isSubdust(vtxo: VirtualCoin, dust: bigint): boolean {
