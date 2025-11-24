@@ -1420,29 +1420,41 @@ export class Wallet implements IWallet {
      * Optionally filters VTXOs by creation date to only process transactions created after a specified time.
      *
      * @param createdAfter - Optional timestamp to filter VTXOs created after this date
+     * @param vtxos - Optional list of VTXOs to use instead of retrieving them from the server
      * @returns Array of transaction IDs that were finalized
      */
-    async finalizePendingTxs(createdAfter?: Date): Promise<string[]> {
-        // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
-        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
-        let { vtxos } = await this.indexerProvider.getVtxos({ scripts });
-        vtxos = vtxos.filter((vtxo) => vtxo.virtualStatus.state !== "swept");
-
-        // filter by creation date if provided
-        if (createdAfter) {
-            const createdAfterTimestamp = createdAfter.getTime();
-            vtxos = vtxos.filter(
-                (vtxo) => vtxo.createdAt.getTime() >= createdAfterTimestamp
+    async finalizePendingTxs(
+        vtxos?: ExtendedVirtualCoin[],
+        createdAfter?: Date
+    ): Promise<string[]> {
+        if (!vtxos || vtxos.length === 0) {
+            // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
+            const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+            let { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos({
+                scripts,
+            });
+            fetchedVtxos = fetchedVtxos.filter(
+                (vtxo) =>
+                    vtxo.virtualStatus.state !== "swept" &&
+                    vtxo.virtualStatus.state !== "settled"
             );
+
+            // filter by creation date if provided
+            if (createdAfter) {
+                const createdAfterTimestamp = createdAfter.getTime();
+                fetchedVtxos = fetchedVtxos.filter(
+                    (vtxo) => vtxo.createdAt.getTime() >= createdAfterTimestamp
+                );
+            }
+
+            if (fetchedVtxos.length === 0) {
+                return [];
+            }
+
+            vtxos = fetchedVtxos.map((v) => extendVirtualCoin(this, v));
         }
 
-        if (vtxos.length === 0) {
-            return [];
-        }
-
-        const intent = await this.makeGetPendingTxIntentSignature(
-            vtxos.map((v) => extendVirtualCoin(this, v))
-        );
+        const intent = await this.makeGetPendingTxIntentSignature(vtxos);
         const pendingTxs = await this.arkProvider.getPendingTxs(intent);
 
         // finalize each transaction by signing the checkpoints
