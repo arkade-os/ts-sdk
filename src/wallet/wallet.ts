@@ -1394,6 +1394,87 @@ export class Wallet implements IWallet {
         };
     }
 
+    async makeGetPendingTxIntentSignature(
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<SignedIntent> {
+        const inputs = this.prepareIntentProofInputs(vtxos);
+
+        const message = {
+            type: "get-pending-tx",
+            expire_at: 0,
+        };
+
+        const encodedMessage = JSON.stringify(message, null, 0);
+
+        const proof = Intent.create(encodedMessage, inputs, []);
+        const signedProof = await this.identity.sign(proof);
+
+        return {
+            proof: base64.encode(signedProof.toPSBT()),
+            message: encodedMessage,
+        };
+    }
+
+    /**
+     * Finalizes pending transactions by retrieving them from the server and finalizing each one.
+     * Optionally filters VTXOs by creation date to only process transactions created after a specified time.
+     *
+     * @param createdAfter - Optional timestamp to filter VTXOs created after this date
+     * @returns Array of transaction IDs that were finalized
+     */
+    async finalizePendingTxs(createdAfter?: Date): Promise<string[]> {
+        // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
+        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+        let { vtxos } = await this.indexerProvider.getVtxos({ scripts });
+        vtxos = vtxos.filter((vtxo) => vtxo.virtualStatus.state !== "swept");
+
+        // filter by creation date if provided
+        if (createdAfter) {
+            const createdAfterTimestamp = createdAfter.getTime();
+            vtxos = vtxos.filter(
+                (vtxo) => vtxo.createdAt.getTime() >= createdAfterTimestamp
+            );
+        }
+
+        if (vtxos.length === 0) {
+            return [];
+        }
+
+        const intent = await this.makeGetPendingTxIntentSignature(
+            vtxos.map((v) => extendVirtualCoin(this, v))
+        );
+        const pendingTxs = await this.arkProvider.getPendingTxs(intent);
+
+        // finalize each transaction by signing the checkpoints
+        const txids: string[] = [];
+        for (const pendingTx of pendingTxs) {
+            try {
+                // sign the checkpoints
+                const finalCheckpoints = await Promise.all(
+                    pendingTx.signedCheckpointTxs.map(async (c) => {
+                        const tx = Transaction.fromPSBT(base64.decode(c));
+                        const signedCheckpoint = await this.identity.sign(tx);
+                        return base64.encode(signedCheckpoint.toPSBT());
+                    })
+                );
+
+                await this.arkProvider.finalizeTx(
+                    pendingTx.arkTxid,
+                    finalCheckpoints
+                );
+                txids.push(pendingTx.arkTxid);
+            } catch (error) {
+                console.error(
+                    `Failed to finalize transaction ${pendingTx.arkTxid}:`,
+                    error
+                );
+                // continue with other transactions even if one fails
+            }
+        }
+
+        return txids;
+    }
+
     private prepareIntentProofInputs(
         coins: ExtendedCoin[]
     ): TransactionInput[] {
