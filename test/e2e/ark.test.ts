@@ -12,6 +12,8 @@ import {
     RestArkProvider,
     ArkError,
     ArkAddress,
+    buildOffchainTx,
+    CSVMultisigTapscript,
 } from "../../src";
 import {
     arkdExec,
@@ -23,7 +25,7 @@ import {
     faucetOnchain,
     waitFor,
 } from "./utils";
-import { hex } from "@scure/base";
+import { hex, base64 } from "@scure/base";
 
 describe("Ark integration tests", () => {
     beforeEach(beforeEachFaucet, 20000);
@@ -833,5 +835,83 @@ describe("Ark integration tests", () => {
 
         // delete intent
         await provider.deleteIntent(deleteIntent);
+    });
+
+    it("should finalize pending transactions", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceOffchainAddress = await alice.wallet.getAddress();
+        expect(aliceOffchainAddress).toBeDefined();
+
+        const fundAmount = 21000; // 0.00021 BTC
+        faucetOffchain(aliceOffchainAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const vtxos = await alice.wallet.getVtxos();
+        expect(vtxos.length).toBeGreaterThan(0);
+        const vtxo = vtxos[0];
+
+        // should be empty initially
+        const { finalized, pending } = await alice.wallet.finalizePendingTxs();
+        expect(finalized).toHaveLength(0);
+        expect(pending).toHaveLength(0);
+
+        const arkProvider = new RestArkProvider("http://localhost:7070");
+        const serverInfo = await arkProvider.getInfo();
+        const checkpointTapscript = CSVMultisigTapscript.decode(
+            hex.decode(serverInfo.checkpointTapscript)
+        );
+
+        // build an offchain transaction manually
+        const { arkTx, checkpoints } = buildOffchainTx(
+            [
+                {
+                    ...vtxo,
+                    tapLeafScript: vtxo.forfeitTapLeafScript,
+                },
+            ],
+            [
+                {
+                    script: alice.wallet.offchainTapscript.pkScript,
+                    amount: BigInt(fundAmount),
+                },
+            ],
+            checkpointTapscript
+        );
+
+        const signedArkTx = await alice.identity.sign(arkTx);
+
+        // submit the transaction (but don't finalize it yet - this creates a pending tx)
+        const { arkTxid } = await arkProvider.submitTx(
+            base64.encode(signedArkTx.toPSBT()),
+            checkpoints.map((c) => base64.encode(c.toPSBT()))
+        );
+        expect(arkTxid).toBeDefined();
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        let incomingFunds: VirtualCoin[] = [];
+        let incomingErr: Error | null = null;
+        const incomingFundsPromise = (async () => {
+            try {
+                const result = await waitForIncomingFunds(alice.wallet);
+                if (result.type === "vtxo") {
+                    incomingFunds = result.newVtxos;
+                }
+            } catch (err) {
+                incomingErr = err as Error;
+            }
+        })();
+
+        const res = await alice.wallet.finalizePendingTxs();
+        expect(res.finalized).toHaveLength(1);
+        expect(res.finalized[0]).toBe(arkTxid);
+        expect(res.pending).toHaveLength(1);
+        expect(res.pending[0]).toBe(arkTxid);
+
+        await incomingFundsPromise;
+
+        expect(incomingErr).toBeNull();
+        expect(incomingFunds).toHaveLength(1);
+        expect(incomingFunds[0].txid).toBe(arkTxid);
     });
 });
