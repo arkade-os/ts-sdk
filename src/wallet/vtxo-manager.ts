@@ -1,4 +1,11 @@
-import { ExtendedVirtualCoin, IWallet, isRecoverable, isSubdust } from ".";
+import {
+    ExtendedVirtualCoin,
+    IWallet,
+    isExpired,
+    isRecoverable,
+    isSpendable,
+    isSubdust,
+} from ".";
 import { SettlementEvent } from "../providers/ark";
 
 export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
@@ -51,6 +58,11 @@ function getRecoverableVtxos(
     return vtxos.filter((vtxo) => {
         // Always recover swept VTXOs
         if (isRecoverable(vtxo)) {
+            return true;
+        }
+
+        // also include vtxos that are not swept but expired
+        if (isSpendable(vtxo) && isExpired(vtxo)) {
             return true;
         }
 
@@ -167,6 +179,7 @@ export function getExpiringAndRecoverableVtxos(
         (vtxo) =>
             isVtxoExpiringSoon(vtxo, thresholdMs) ||
             isRecoverable(vtxo) ||
+            (isSpendable(vtxo) && isExpired(vtxo)) ||
             isSubdust(vtxo, dustAmount)
     );
 }
