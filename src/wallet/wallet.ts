@@ -388,8 +388,7 @@ export class Wallet implements IWallet {
         // all recoverable vtxos are spendable by definition
         if (!filter.withRecoverable) {
             vtxos = vtxos.filter(
-                (vtxo) =>
-                    !isRecoverable(vtxo) && !isExpired(vtxo)
+                (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
             );
         }
 
