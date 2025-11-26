@@ -389,8 +389,7 @@ export class Wallet implements IWallet {
         if (!filter.withRecoverable) {
             vtxos = vtxos.filter(
                 (vtxo) =>
-                    !isRecoverable(vtxo) ||
-                    (isSpendable(vtxo) && isExpired(vtxo))
+                    !isRecoverable(vtxo) && !isExpired(vtxo)
             );
         }
 
