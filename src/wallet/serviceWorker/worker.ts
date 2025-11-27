@@ -6,6 +6,7 @@ import {
     ArkTransaction,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
@@ -178,7 +179,23 @@ export class Worker {
         });
         const vtxos = response.vtxos.map((vtxo) =>
             extendVirtualCoin(this.wallet!, vtxo)
-        ) as ExtendedVirtualCoin[];
+        );
+
+        try {
+            // recover pending transactions
+            const { finalized, pending } = await this.wallet.finalizePendingTxs(
+                vtxos.filter(
+                    (vtxo) =>
+                        vtxo.virtualStatus.state !== "swept" &&
+                        vtxo.virtualStatus.state !== "settled"
+                )
+            );
+            console.info(
+                `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
+            );
+        } catch (error: unknown) {
+            console.error("Error recovering pending transactions:", error);
+        }
 
         // Get wallet address and save vtxos using unified repository
         const address = await this.wallet.getAddress();
@@ -556,6 +573,9 @@ export class Worker {
                           return false;
                       }
                       if (isRecoverable(v)) {
+                          return false;
+                      }
+                      if (isExpired(v)) {
                           return false;
                       }
                       return true;

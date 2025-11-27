@@ -22,6 +22,7 @@ import {
     BatchStartedEvent,
     SignedIntent,
     TreeNoncesEvent,
+    PendingTx,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -36,6 +37,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
@@ -380,7 +382,9 @@ export class Wallet implements IWallet {
 
         // all recoverable vtxos are spendable by definition
         if (!filter.withRecoverable) {
-            vtxos = vtxos.filter((vtxo) => !isRecoverable(vtxo));
+            vtxos = vtxos.filter(
+                (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
+            );
         }
 
         if (filter.withUnrolled) {
@@ -1270,6 +1274,95 @@ export class Wallet implements IWallet {
             proof: base64.encode(signedProof.toPSBT()),
             message: encodedMessage,
         };
+    }
+
+    async makeGetPendingTxIntentSignature(
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<SignedIntent> {
+        const inputs = this.prepareIntentProofInputs(vtxos);
+
+        const message = {
+            type: "get-pending-tx",
+            expire_at: 0,
+        };
+
+        const encodedMessage = JSON.stringify(message, null, 0);
+
+        const proof = Intent.create(encodedMessage, inputs, []);
+        const signedProof = await this.identity.sign(proof);
+
+        return {
+            proof: base64.encode(signedProof.toPSBT()),
+            message: encodedMessage,
+        };
+    }
+
+    /**
+     * Finalizes pending transactions by retrieving them from the server and finalizing each one.
+     * @param vtxos - Optional list of VTXOs to use instead of retrieving them from the server
+     * @returns Array of transaction IDs that were finalized
+     */
+    async finalizePendingTxs(
+        vtxos?: ExtendedVirtualCoin[]
+    ): Promise<{ finalized: string[]; pending: string[] }> {
+        const MAX_INPUTS_PER_INTENT = 20;
+
+        if (!vtxos || vtxos.length === 0) {
+            // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
+            const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+            let { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos({
+                scripts,
+            });
+            fetchedVtxos = fetchedVtxos.filter(
+                (vtxo) =>
+                    vtxo.virtualStatus.state !== "swept" &&
+                    vtxo.virtualStatus.state !== "settled"
+            );
+
+            if (fetchedVtxos.length === 0) {
+                return { finalized: [], pending: [] };
+            }
+
+            vtxos = fetchedVtxos.map((v) => extendVirtualCoin(this, v));
+        }
+        const finalized: string[] = [];
+        const pending: string[] = [];
+
+        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_INTENT) {
+            const batch = vtxos.slice(i, i + MAX_INPUTS_PER_INTENT);
+            const intent = await this.makeGetPendingTxIntentSignature(batch);
+            const pendingTxs = await this.arkProvider.getPendingTxs(intent);
+
+            // finalize each transaction by signing the checkpoints
+            for (const pendingTx of pendingTxs) {
+                pending.push(pendingTx.arkTxid);
+                try {
+                    // sign the checkpoints
+                    const finalCheckpoints = await Promise.all(
+                        pendingTx.signedCheckpointTxs.map(async (c) => {
+                            const tx = Transaction.fromPSBT(base64.decode(c));
+                            const signedCheckpoint =
+                                await this.identity.sign(tx);
+                            return base64.encode(signedCheckpoint.toPSBT());
+                        })
+                    );
+
+                    await this.arkProvider.finalizeTx(
+                        pendingTx.arkTxid,
+                        finalCheckpoints
+                    );
+                    finalized.push(pendingTx.arkTxid);
+                } catch (error) {
+                    console.error(
+                        `Failed to finalize transaction ${pendingTx.arkTxid}:`,
+                        error
+                    );
+                    // continue with other transactions even if one fails
+                }
+            }
+        }
+
+        return { finalized, pending };
     }
 
     private prepareIntentProofInputs(
