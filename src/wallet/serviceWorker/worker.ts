@@ -6,6 +6,7 @@ import {
     ArkTransaction,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
@@ -572,6 +573,9 @@ export class Worker {
                           return false;
                       }
                       if (isRecoverable(v)) {
+                          return false;
+                      }
+                      if (isExpired(v)) {
                           return false;
                       }
                       return true;

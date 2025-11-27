@@ -44,6 +44,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
@@ -387,7 +388,9 @@ export class Wallet implements IWallet {
 
         // all recoverable vtxos are spendable by definition
         if (!filter.withRecoverable) {
-            vtxos = vtxos.filter((vtxo) => !isRecoverable(vtxo));
+            vtxos = vtxos.filter(
+                (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
+            );
         }
 
         if (filter.withUnrolled) {
