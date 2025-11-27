@@ -11,6 +11,8 @@ export interface Identity {
     ): Promise<Uint8Array>;
     // if inputIndexes is not provided, try to sign all inputs
     sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
+    // decrypt data encrypted with the corresponding public key
+    decrypt(pubkey: string, data: string): string;
 }
 
 export * from "./singleKey";
