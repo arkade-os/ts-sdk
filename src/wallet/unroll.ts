@@ -26,6 +26,7 @@ export namespace Unroll {
      */
     export type UnrollStep = {
         tx: Transaction;
+        pkg: [parent: string, child: string];
     };
 
     /**
@@ -187,10 +188,12 @@ export namespace Unroll {
                 tx.finalize();
             }
 
+            const pkg = await this.bumper.bumpP2A(tx);
             return {
                 type: StepType.UNROLL,
                 tx,
-                do: doUnroll(this.bumper, this.explorer, tx),
+                pkg,
+                do: doUnroll(this.explorer, pkg),
             };
         }
 
@@ -324,14 +327,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 function doUnroll(
-    bumper: AnchorBumper,
     onchainProvider: OnchainProvider,
-    tx: Transaction
+    pkg: Unroll.UnrollStep["pkg"]
 ): () => Promise<void> {
-    return async () => {
-        const [parent, child] = await bumper.bumpP2A(tx);
-        await onchainProvider.broadcastTransaction(parent, child);
-    };
+    return () =>
+        onchainProvider.broadcastTransaction(...pkg).then(() => undefined);
 }
 
 function doWait(
