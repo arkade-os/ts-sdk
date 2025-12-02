@@ -661,7 +661,6 @@ export class Wallet implements IWallet {
                     vout: outputs.length - 1,
                     createdAt: new Date(createdAt),
                     forfeitTapLeafScript: this.offchainTapscript.forfeit(),
-                    intentTapLeafScript: this.offchainTapscript.exit(),
                     isUnrolled: false,
                     isSpent: false,
                     tapTree: this.offchainTapscript.encode(),
@@ -1509,7 +1508,7 @@ export class Wallet implements IWallet {
                     script: vtxoScript.pkScript,
                 },
                 sequence,
-                tapLeafScript: [input.intentTapLeafScript],
+                tapLeafScript: [input.forfeitTapLeafScript],
                 unknown,
             });
         }
@@ -1522,7 +1521,7 @@ function getSequence(coin: ExtendedCoin): number | undefined {
     let sequence: number | undefined = undefined;
 
     try {
-        const scriptWithLeafVersion = coin.intentTapLeafScript[1];
+        const scriptWithLeafVersion = coin.forfeitTapLeafScript[1];
         const script = scriptWithLeafVersion.subarray(
             0,
             scriptWithLeafVersion.length - 1

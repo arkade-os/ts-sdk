@@ -37,7 +37,6 @@ const createMockVtxo = (
         createdAt: new Date(),
         isUnrolled: false,
         forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
-        intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
         tapTree: new Uint8Array(),
     } as any;
 };

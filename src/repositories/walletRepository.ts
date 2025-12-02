@@ -29,7 +29,6 @@ const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     ...v,
     tapTree: toHex(v.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
-    intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),
     extraWitness: v.extraWitness?.map(toHex),
 });
 
@@ -37,7 +36,6 @@ const serializeUtxo = (u: ExtendedCoin) => ({
     ...u,
     tapTree: toHex(u.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
-    intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
     extraWitness: u.extraWitness?.map(toHex),
 });
 
@@ -52,7 +50,6 @@ const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
     createdAt: new Date(o.createdAt),
     tapTree: fromHex(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
-    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
     extraWitness: o.extraWitness?.map(fromHex),
 });
 
@@ -60,7 +57,6 @@ const deserializeUtxo = (o: any): ExtendedCoin => ({
     ...o,
     tapTree: fromHex(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
-    intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
     extraWitness: o.extraWitness?.map(fromHex),
 });
 
