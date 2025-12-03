@@ -91,6 +91,45 @@ export class OnchainWallet implements AnchorBumper {
         return onchainTotal;
     }
 
+    private estimateFeesAndSelectCoins(
+        coins: Coin[],
+        amount: number,
+        feeRate: number,
+        recipientAddress: string
+    ): { inputs: Coin[]; changeAmount: bigint; fee: number } {
+        const MAX_ITERATIONS = 10;
+        let fee = 0;
+
+        for (let i = 0; i < MAX_ITERATIONS; i++) {
+            const totalNeeded = amount + fee;
+
+            const selected = selectCoins(coins, totalNeeded);
+
+            const estimator = TxWeightEstimator.create();
+
+            for (const _ of selected.inputs) {
+                estimator.addKeySpendInput();
+            }
+
+            estimator.addOutputAddress(recipientAddress, this.network);
+
+            if (selected.changeAmount >= BigInt(DUST_AMOUNT)) {
+                estimator.addOutputAddress(this.address, this.network);
+            }
+
+            const newFee = Number(estimator.vsize().value) * feeRate;
+            const roundedNewFee = Math.ceil(newFee);
+
+            if (roundedNewFee <= fee) {
+                return { ...selected, fee: roundedNewFee };
+            }
+
+            fee = roundedNewFee;
+        }
+
+        throw new Error("Fee estimation failed: could not converge");
+    }
+
     async send(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
@@ -109,73 +148,14 @@ export class OnchainWallet implements AnchorBumper {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
-        const MAX_ITERATIONS = 10;
-        let iterations = 0;
-        let selected: { inputs: Coin[]; changeAmount: bigint } | undefined;
-        let estimatedFee: number = 0;
-        let isEstimatingFee = true;
-        let prevInputsCount = 0;
+        const { inputs, changeAmount } = this.estimateFeesAndSelectCoins(
+            coins,
+            params.amount,
+            feeRate,
+            params.address
+        );
 
-        while (isEstimatingFee) {
-            if (++iterations >= MAX_ITERATIONS) {
-                throw new Error(
-                    "Failed to estimate fees, selection did not converge"
-                );
-            }
-
-            const totalNeeded = params.amount + estimatedFee;
-            const txWeightEstimator = TxWeightEstimator.create();
-
-            // Select coins
-            selected = selectCoins(coins, totalNeeded);
-
-            // Add weight of each coin input
-            for (const _ of selected.inputs) {
-                txWeightEstimator.addKeySpendInput();
-            }
-
-            // Add weight of the send amount output
-            txWeightEstimator.addTxOutput(params.address);
-
-            const hasChange = selected.changeAmount >= BigInt(DUST_AMOUNT);
-
-            // Add change output weight if change amount is available
-            if (hasChange) {
-                txWeightEstimator.addTxOutput(this.address);
-            }
-
-            // Compute fee using newly generated input/output weights
-            const newFee = Number(
-                txWeightEstimator.vsize().fee(BigInt(feeRate))
-            );
-
-            // Check stability of the selected inputs size against loop count
-            if (
-                prevInputsCount === selected.inputs.length &&
-                newFee === estimatedFee
-            ) {
-                estimatedFee = Math.ceil(newFee);
-
-                // Compute the value of the selected inputs
-                const totalInputsValue = selected.inputs.reduce(
-                    (sum, coin) => sum + coin.value,
-                    0
-                );
-
-                // The potential final amount to be used in send tx
-                const totalAmountNeeded = params.amount + estimatedFee;
-
-                // Stop the estimation if the value of selected input covers send amount and fees
-                if (totalInputsValue >= totalAmountNeeded) {
-                    isEstimatingFee = false;
-                }
-            }
-
-            estimatedFee = Math.ceil(newFee);
-            prevInputsCount = selected.inputs.length;
-        }
-
-        if (!selected) {
+        if (!inputs) {
             throw new Error("Fee estimation failed");
         }
 
@@ -183,7 +163,7 @@ export class OnchainWallet implements AnchorBumper {
         let tx = new Transaction();
 
         // Add inputs
-        for (const input of selected.inputs) {
+        for (const input of inputs) {
             tx.addInput({
                 txid: input.txid,
                 index: input.vout,
@@ -202,13 +182,11 @@ export class OnchainWallet implements AnchorBumper {
             this.network
         );
 
-        // Add change output if needed
-        if (selected.changeAmount >= BigInt(DUST_AMOUNT)) {
-            tx.addOutputAddress(
-                this.address,
-                selected.changeAmount,
-                this.network
-            );
+        // Prevent oscillation loops when change falls just below the dust limit.
+        // If removing the change output reduces the fee below our budget,
+        // we accept the valid transaction state to guarantee convergence.
+        if (changeAmount >= BigInt(DUST_AMOUNT)) {
+            tx.addOutputAddress(this.address, changeAmount, this.network);
         }
 
         // Sign inputs and Finalize
@@ -232,7 +210,7 @@ export class OnchainWallet implements AnchorBumper {
         const childVsize = TxWeightEstimator.create()
             .addKeySpendInput(true)
             .addP2AInput()
-            .addTxOutput(this.address)
+            .addOutputAddress(this.address, this.network)
             .vsize().value;
 
         const packageVSize = parentVsize + Number(childVsize);
