@@ -120,6 +120,9 @@ export class OnchainWallet implements AnchorBumper {
             const newFee = Number(estimator.vsize().value) * feeRate;
             const roundedNewFee = Math.ceil(newFee);
 
+            // Prevent oscillation loops when change falls just below the dust limit.
+            // If removing the change output reduces the fee below our budget,
+            // we accept the valid transaction state to guarantee convergence.
             if (roundedNewFee <= fee) {
                 return { ...selected, fee: roundedNewFee };
             }
@@ -182,9 +185,6 @@ export class OnchainWallet implements AnchorBumper {
             this.network
         );
 
-        // Prevent oscillation loops when change falls just below the dust limit.
-        // If removing the change output reduces the fee below our budget,
-        // we accept the valid transaction state to guarantee convergence.
         if (changeAmount >= BigInt(DUST_AMOUNT)) {
             tx.addOutputAddress(this.address, changeAmount, this.network);
         }

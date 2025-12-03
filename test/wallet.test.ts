@@ -355,6 +355,120 @@ describe("Wallet", () => {
                 })
             ).toEqual(mockTxId);
         });
+
+        it("should calculate different tx sizes for Segwit vs Taproot", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            const coins: Coin[] = [
+                {
+                    txid: hex.encode(new Uint8Array(32).fill(1)),
+                    vout: 0,
+                    value: 100_000_000,
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_hash: "",
+                        block_time: 0,
+                    },
+                },
+            ];
+            const feeRate = 10;
+
+            const mockCalls = () => {
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve(coins),
+                });
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve(feeRate),
+                });
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    text: () => Promise.resolve("txid_mock"),
+                });
+            };
+
+            // 1. Send to Native Segwit Address (tb1q...)
+            // We expect a smaller output size (~31 bytes)
+            const segwitAddr = "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx";
+            mockCalls();
+            await wallet.send({ address: segwitAddr, amount: 50_000 });
+
+            // Extract the hex from the broadcast call (3rd call, 2nd arg is init object with body)
+            const segwitTxHex = mockFetch.mock.calls[2][1].body;
+            const segwitSize = segwitTxHex.length / 2;
+
+            mockFetch.mockReset();
+
+            // 2. Send to Taproot Address (Wallet Address is P2TR)
+            // We expect a larger output size (~43 bytes)
+            const taprootAddr = wallet.address;
+            mockCalls();
+            await wallet.send({ address: taprootAddr, amount: 50_000 });
+
+            const taprootTxHex = mockFetch.mock.calls[2][1].body;
+            const taprootSize = taprootTxHex.length / 2;
+
+            expect(segwitSize).toBeLessThan(taprootSize);
+        });
+
+        it("should resolve oscillation when change is near dust limit", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            const feeRate = 10;
+            // Calculations for the edge case:
+            // Tx with 1 input, 1 output (no change) ≈ 111 vBytes. Fee ≈ 1110.
+            // Tx with 1 input, 2 outputs (change) ≈ 154 vBytes. Fee ≈ 1540.
+            // Difference (cost of change output) ≈ 430 sats.
+            // Dust limit = 546 sats.
+            // We need: Remaining Amount (after fee) to be > 546 BUT < (546 + 430).
+            // Let's target Remaining = 800.
+
+            const sendAmount = 50_000;
+            const approxFeeNoChange = 1110;
+            const inputAmount = sendAmount + approxFeeNoChange + 800;
+
+            const coins: Coin[] = [
+                {
+                    txid: hex.encode(new Uint8Array(32).fill(2)),
+                    vout: 0,
+                    value: inputAmount,
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_hash: "",
+                        block_time: 0,
+                    },
+                },
+            ];
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(coins),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(feeRate),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                text: () => Promise.resolve("txid_mock"),
+            });
+
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: sendAmount,
+                })
+            ).resolves.toBeDefined();
+        });
     });
 
     describe("getInfos", () => {
