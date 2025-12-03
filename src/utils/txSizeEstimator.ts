@@ -1,6 +1,16 @@
+import { Address, OutScript } from "@scure/btc-signer";
+import { Network } from "../networks";
+
 export type VSize = {
     value: bigint;
     fee(feeRate: bigint): bigint;
+};
+
+const getVarIntSize = (n: number): number => {
+    if (n < 0xfd) return 1;
+    if (n < 0xffff) return 3;
+    if (n < 0xffffffff) return 5;
+    return 9;
 };
 
 export class TxWeightEstimator {
@@ -99,26 +109,23 @@ export class TxWeightEstimator {
         return this;
     }
 
-    addTxOutput(outputAddress: string): TxWeightEstimator {
-        const address = outputAddress.toLowerCase();
-        if (
-            address.startsWith("bc1q") ||
-            address.startsWith("tb1q") ||
-            address.startsWith("bcrt1q")
-        ) {
-            return this.addP2WPKHOutput();
-        }
-        return this.addP2TROutput();
+    /**
+     * Adds an output by decoding the address to get the exact script size.
+     * Cost = 8 bytes (amount) + varint(scriptLen) + scriptLen
+     */
+    addOutputAddress(address: string, network: Network): TxWeightEstimator {
+        // Decode address to get internal Payment object (works for Legacy, Segwit, Taproot)
+        const payment = Address(network).decode(address);
+        // Encode payment to get the actual Script bytes
+        const script = OutScript.encode(payment);
+        const scriptLen = script.length;
+
+        this.outputCount++;
+        this.outputSize += 8 + getVarIntSize(scriptLen) + scriptLen;
+        return this;
     }
 
     vsize(): VSize {
-        const getVarIntSize = (n: number): number => {
-            if (n < 0xfd) return 1;
-            if (n < 0xffff) return 3;
-            if (n < 0xffffffff) return 5;
-            return 9;
-        };
-
         const inputCount = getVarIntSize(this.inputCount);
         const outputCount = getVarIntSize(this.outputCount);
 
