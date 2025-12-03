@@ -13,7 +13,7 @@ export function extendVirtualCoin(
     return {
         ...vtxo,
         forfeitTapLeafScript: wallet.offchainTapscript.forfeit(),
-        intentTapLeafScript: wallet.offchainTapscript.exit(),
+        intentTapLeafScript: wallet.offchainTapscript.forfeit(),
         tapTree: wallet.offchainTapscript.encode(),
     };
 }
@@ -22,7 +22,7 @@ export function extendCoin(wallet: Wallet, utxo: Coin): ExtendedCoin {
     return {
         ...utxo,
         forfeitTapLeafScript: wallet.boardingTapscript.forfeit(),
-        intentTapLeafScript: wallet.boardingTapscript.exit(),
+        intentTapLeafScript: wallet.boardingTapscript.forfeit(),
         tapTree: wallet.boardingTapscript.encode(),
     };
 }
