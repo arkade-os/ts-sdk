@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SingleKey } from "../src/identity/singleKey";
+import { SingleKey, ReadonlySingleKey } from "../src/identity/singleKey";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
 
@@ -146,5 +146,116 @@ describe("SingleKey", () => {
             prehash: false,
         });
         expect(isValid).toBe(true);
+    });
+
+    describe("toReadonly", () => {
+        it("should convert SingleKey to ReadonlySingleKey", async () => {
+            const privateKeyHex =
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+            const key = SingleKey.fromHex(privateKeyHex);
+
+            const readonlyKey = await key.toReadonly();
+
+            // Should be instance of ReadonlySingleKey
+            expect(readonlyKey).toBeInstanceOf(ReadonlySingleKey);
+
+            // Should have the same public keys
+            const xOnlyPubKey = await key.xOnlyPublicKey();
+            const readonlyXOnlyPubKey = await readonlyKey.xOnlyPublicKey();
+            expect(Array.from(xOnlyPubKey)).toEqual(
+                Array.from(readonlyXOnlyPubKey)
+            );
+
+            const compressedPubKey = await key.compressedPublicKey();
+            const readonlyCompressedPubKey =
+                await readonlyKey.compressedPublicKey();
+            expect(Array.from(compressedPubKey)).toEqual(
+                Array.from(readonlyCompressedPubKey)
+            );
+        });
+    });
+});
+
+describe("ReadonlySingleKey", () => {
+    it("should create from compressed public key", async () => {
+        // First create a regular key to get its public key
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const compressedPubKey = await key.compressedPublicKey();
+
+        // Create readonly key from public key
+        const readonlyKey = ReadonlySingleKey.fromPublicKey(compressedPubKey);
+
+        // Should be instance of ReadonlySingleKey
+        expect(readonlyKey).toBeInstanceOf(ReadonlySingleKey);
+
+        // Should have the same public keys
+        const xOnlyPubKey = await key.xOnlyPublicKey();
+        const readonlyXOnlyPubKey = await readonlyKey.xOnlyPublicKey();
+        expect(Array.from(xOnlyPubKey)).toEqual(
+            Array.from(readonlyXOnlyPubKey)
+        );
+
+        const readonlyCompressedPubKey =
+            await readonlyKey.compressedPublicKey();
+        expect(Array.from(compressedPubKey)).toEqual(
+            Array.from(readonlyCompressedPubKey)
+        );
+    });
+
+    it("should throw error for invalid public key length", () => {
+        const invalidPubKey = new Uint8Array(32); // 32 bytes instead of 33
+
+        expect(() => ReadonlySingleKey.fromPublicKey(invalidPubKey)).toThrow(
+            "Invalid public key length"
+        );
+    });
+
+    it("should return correct x-only public key (without prefix)", async () => {
+        // Create a key with known public key
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const compressedPubKey = await key.compressedPublicKey();
+
+        const readonlyKey = ReadonlySingleKey.fromPublicKey(compressedPubKey);
+        const xOnlyPubKey = await readonlyKey.xOnlyPublicKey();
+
+        // x-only should be 32 bytes (without the 02/03 prefix)
+        expect(xOnlyPubKey).toHaveLength(32);
+
+        // x-only should be the compressed key without the first byte
+        expect(Array.from(xOnlyPubKey)).toEqual(
+            Array.from(compressedPubKey.slice(1))
+        );
+    });
+
+    it("should not have signing methods", () => {
+        const compressedPubKey = new Uint8Array(33).fill(2);
+        compressedPubKey[0] = 0x02; // Set prefix
+        const readonlyKey = ReadonlySingleKey.fromPublicKey(compressedPubKey);
+
+        // Should not have sign or signMessage methods
+        expect((readonlyKey as any).sign).toBeUndefined();
+        expect((readonlyKey as any).signMessage).toBeUndefined();
+        expect((readonlyKey as any).toHex).toBeUndefined();
+    });
+
+    it("should work with different public key prefixes", async () => {
+        const privateKeyHex =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        const key = SingleKey.fromHex(privateKeyHex);
+        const compressedPubKey = await key.compressedPublicKey();
+
+        // Should work with both 0x02 and 0x03 prefixes
+        expect(compressedPubKey[0]).toBeGreaterThanOrEqual(2);
+        expect(compressedPubKey[0]).toBeLessThanOrEqual(3);
+
+        const readonlyKey = ReadonlySingleKey.fromPublicKey(compressedPubKey);
+        const xOnlyPubKey = await readonlyKey.xOnlyPublicKey();
+
+        expect(xOnlyPubKey).toHaveLength(32);
+        expect(xOnlyPubKey).toBeInstanceOf(Uint8Array);
     });
 });
