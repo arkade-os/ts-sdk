@@ -88,6 +88,25 @@ export type IncomingFunds =
           spentVtxos: ExtendedVirtualCoin[];
       };
 
+/**
+ * Type guard interface for identities that support conversion to readonly.
+ */
+interface HasToReadonly {
+    toReadonly(): Promise<ReadonlyIdentity>;
+}
+
+/**
+ * Type guard function to check if an identity has a toReadonly method.
+ */
+function hasToReadonly(identity: unknown): identity is HasToReadonly {
+    return (
+        typeof identity === "object" &&
+        identity !== null &&
+        "toReadonly" in identity &&
+        typeof (identity as any).toReadonly === "function"
+    );
+}
+
 export class ReadonlyWallet implements IReadonlyWallet {
     protected constructor(
         readonly identity: ReadonlyIdentity,
@@ -102,12 +121,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
         public readonly contractRepository: ContractRepository
     ) {}
 
-    static async create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet> {
-        const pubkey = await config.identity.xOnlyPublicKey();
-        if (!pubkey) {
-            throw new Error("Invalid configured public key");
-        }
-
+    /**
+     * Private helper to set up shared wallet configuration.
+     * Extracts common logic used by both ReadonlyWallet.create() and Wallet.create().
+     */
+    private static async setupWalletConfig(
+        config: ReadonlyWalletConfig,
+        pubkey: Uint8Array
+    ) {
         // Use provided arkProvider instance or create a new one from arkServerUrl
         const arkProvider =
             config.arkProvider ||
@@ -196,37 +217,46 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Save tapscripts
         const offchainTapscript = bareVtxoTapscript;
 
-        // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
-        let serverUnrollScript: CSVMultisigTapscript.Type;
-        try {
-            const raw = hex.decode(info.checkpointTapscript);
-            serverUnrollScript = CSVMultisigTapscript.decode(raw);
-        } catch (e) {
-            throw new Error("Invalid checkpointTapscript from server");
-        }
-
-        // parse the server forfeit address
-        // server is expecting funds to be sent to this address
-        const forfeitPubkey = hex.decode(info.forfeitPubkey).slice(1);
-        const forfeitAddress = Address(network).decode(info.forfeitAddress);
-        const forfeitOutputScript = OutScript.encode(forfeitAddress);
-
         // Set up storage and repositories
         const storage = config.storage || new InMemoryStorageAdapter();
         const walletRepository = new WalletRepositoryImpl(storage);
         const contractRepository = new ContractRepositoryImpl(storage);
 
-        return new ReadonlyWallet(
-            config.identity,
-            network,
-            onchainProvider,
+        return {
+            arkProvider,
             indexerProvider,
+            onchainProvider,
+            network,
+            networkName: info.network as NetworkName,
             serverPubKey,
             offchainTapscript,
             boardingTapscript,
-            info.dust,
+            dustAmount: info.dust,
             walletRepository,
-            contractRepository
+            contractRepository,
+            info,
+        };
+    }
+
+    static async create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet> {
+        const pubkey = await config.identity.xOnlyPublicKey();
+        if (!pubkey) {
+            throw new Error("Invalid configured public key");
+        }
+
+        const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
+
+        return new ReadonlyWallet(
+            config.identity,
+            setup.network,
+            setup.onchainProvider,
+            setup.indexerProvider,
+            setup.serverPubKey,
+            setup.offchainTapscript,
+            setup.boardingTapscript,
+            setup.dustAmount,
+            setup.walletRepository,
+            setup.contractRepository
         );
     }
 
@@ -341,10 +371,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        if (!this.indexerProvider) {
-            return [];
-        }
-
         const response = await this.indexerProvider.getVtxos({
             scripts: [hex.encode(this.offchainTapscript.pkScript)],
         });
@@ -512,6 +538,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 export class Wallet extends ReadonlyWallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
+    override readonly identity: Identity;
+
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
@@ -559,98 +587,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             throw new Error("Invalid configured public key");
         }
 
-        // Use provided arkProvider instance or create a new one from arkServerUrl
-        const arkProvider =
-            config.arkProvider ||
-            (() => {
-                if (!config.arkServerUrl) {
-                    throw new Error(
-                        "Either arkProvider or arkServerUrl must be provided"
-                    );
-                }
-                return new RestArkProvider(config.arkServerUrl);
-            })();
+        const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        // Extract arkServerUrl from provider if not explicitly provided
-        const arkServerUrl =
-            config.arkServerUrl || (arkProvider as RestArkProvider).serverUrl;
-
-        if (!arkServerUrl) {
-            throw new Error("Could not determine arkServerUrl from provider");
-        }
-
-        // Use provided indexerProvider instance or create a new one
-        // indexerUrl defaults to arkServerUrl if not provided
-        const indexerUrl = config.indexerUrl || arkServerUrl;
-        const indexerProvider =
-            config.indexerProvider || new RestIndexerProvider(indexerUrl);
-
-        const info = await arkProvider.getInfo();
-
-        const network = getNetwork(info.network as NetworkName);
-
-        // Extract esploraUrl from provider if not explicitly provided
-        const esploraUrl =
-            config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
-
-        // Use provided onchainProvider instance or create a new one
-        const onchainProvider =
-            config.onchainProvider || new EsploraProvider(esploraUrl);
-
-        // validate unilateral exit timelock passed in config if any
-        if (config.exitTimelock) {
-            const { value, type } = config.exitTimelock;
-            if (
-                (value < 512n && type !== "blocks") ||
-                (value >= 512n && type !== "seconds")
-            ) {
-                throw new Error("invalid exitTimelock");
-            }
-        }
-
-        // create unilateral exit timelock
-        const exitTimelock: RelativeTimelock = config.exitTimelock ?? {
-            value: info.unilateralExitDelay,
-            type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
-        };
-
-        // validate boarding timelock passed in config if any
-        if (config.boardingTimelock) {
-            const { value, type } = config.boardingTimelock;
-            if (
-                (value < 512n && type !== "blocks") ||
-                (value >= 512n && type !== "seconds")
-            ) {
-                throw new Error("invalid boardingTimelock");
-            }
-        }
-
-        // create boarding timelock
-        const boardingTimelock: RelativeTimelock = config.boardingTimelock ?? {
-            value: info.boardingExitDelay,
-            type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
-        };
-
-        // Generate tapscripts for offchain and boarding address
-        const serverPubKey = hex.decode(info.signerPubkey).slice(1);
-        const bareVtxoTapscript = new DefaultVtxo.Script({
-            pubKey: pubkey,
-            serverPubKey,
-            csvTimelock: exitTimelock,
-        });
-        const boardingTapscript = new DefaultVtxo.Script({
-            pubKey: pubkey,
-            serverPubKey,
-            csvTimelock: boardingTimelock,
-        });
-
-        // Save tapscripts
-        const offchainTapscript = bareVtxoTapscript;
-
+        // Compute Wallet-specific forfeit and unroll scripts
         // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
         let serverUnrollScript: CSVMultisigTapscript.Type;
         try {
-            const raw = hex.decode(info.checkpointTapscript);
+            const raw = hex.decode(setup.info.checkpointTapscript);
             serverUnrollScript = CSVMultisigTapscript.decode(raw);
         } catch (e) {
             throw new Error("Invalid checkpointTapscript from server");
@@ -658,31 +601,28 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         // parse the server forfeit address
         // server is expecting funds to be sent to this address
-        const forfeitPubkey = hex.decode(info.forfeitPubkey).slice(1);
-        const forfeitAddress = Address(network).decode(info.forfeitAddress);
+        const forfeitPubkey = hex.decode(setup.info.forfeitPubkey).slice(1);
+        const forfeitAddress = Address(setup.network).decode(
+            setup.info.forfeitAddress
+        );
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
-
-        // Set up storage and repositories
-        const storage = config.storage || new InMemoryStorageAdapter();
-        const walletRepository = new WalletRepositoryImpl(storage);
-        const contractRepository = new ContractRepositoryImpl(storage);
 
         return new Wallet(
             config.identity,
-            network,
-            info.network as NetworkName,
-            onchainProvider,
-            arkProvider,
-            indexerProvider,
-            serverPubKey,
-            offchainTapscript,
-            boardingTapscript,
+            setup.network,
+            setup.networkName,
+            setup.onchainProvider,
+            setup.arkProvider,
+            setup.indexerProvider,
+            setup.serverPubKey,
+            setup.offchainTapscript,
+            setup.boardingTapscript,
             serverUnrollScript,
             forfeitOutputScript,
             forfeitPubkey,
-            info.dust,
-            walletRepository,
-            contractRepository,
+            setup.dustAmount,
+            setup.walletRepository,
+            setup.contractRepository,
             config.renewalConfig
         );
     }
@@ -705,18 +645,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * ```
      */
     async toReadonly(): Promise<ReadonlyWallet> {
-        // Check if the identity has a toReadonly method (duck typing)
-        let readonlyIdentity: ReadonlyIdentity;
-
-        if (
-            "toReadonly" in this.identity &&
-            typeof (this.identity as any).toReadonly === "function"
-        ) {
-            readonlyIdentity = await (this.identity as any).toReadonly();
-        } else {
-            // If the identity doesn't have toReadonly, use it as-is since Identity extends ReadonlyIdentity
-            readonlyIdentity = this.identity;
-        }
+        // Check if the identity has a toReadonly method using type guard
+        const readonlyIdentity: ReadonlyIdentity = hasToReadonly(this.identity)
+            ? await this.identity.toReadonly()
+            : this.identity; // Identity extends ReadonlyIdentity, so this is safe
 
         return new ReadonlyWallet(
             readonlyIdentity,
