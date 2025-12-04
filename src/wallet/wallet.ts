@@ -30,18 +30,20 @@ import {
     validateConnectorsTxGraph,
     validateVtxoTxGraph,
 } from "../tree/validation";
-import { Identity } from "../identity";
+import { Identity, ReadonlyIdentity } from "../identity";
 import {
     ArkTransaction,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    IReadonlyWallet,
     isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
     IWallet,
+    ReadonlyWalletConfig,
     SendBitcoinParams,
     SettleParams,
     TxType,
@@ -86,76 +88,21 @@ export type IncomingFunds =
           spentVtxos: ExtendedVirtualCoin[];
       };
 
-/**
- * Main wallet implementation for Bitcoin transactions with Ark protocol support.
- * The wallet does not store any data locally and relies on Ark and onchain
- * providers to fetch UTXOs and VTXOs.
- *
- * @example
- * ```typescript
- * // Create a wallet with URL configuration
- * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('your_private_key'),
- *   arkServerUrl: 'https://ark.example.com',
- *   esploraUrl: 'https://mempool.space/api'
- * });
- *
- * // Or with custom provider instances (e.g., for Expo/React Native)
- * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('your_private_key'),
- *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
- *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
- *   esploraUrl: 'https://mempool.space/api'
- * });
- *
- * // Get addresses
- * const arkAddress = await wallet.getAddress();
- * const boardingAddress = await wallet.getBoardingAddress();
- *
- * // Send bitcoin
- * const txid = await wallet.sendBitcoin({
- *   address: 'tb1...',
- *   amount: 50000
- * });
- * ```
- */
-export class Wallet implements IWallet {
-    static MIN_FEE_RATE = 1; // sats/vbyte
-
-    public readonly walletRepository: WalletRepository;
-    public readonly contractRepository: ContractRepository;
-    public readonly renewalConfig: Required<
-        Omit<WalletConfig["renewalConfig"], "enabled">
-    > & { enabled: boolean; thresholdMs: number };
-
-    private constructor(
-        readonly identity: Identity,
+export class ReadonlyWallet implements IReadonlyWallet {
+    protected constructor(
+        readonly identity: ReadonlyIdentity,
         readonly network: Network,
-        readonly networkName: NetworkName,
         readonly onchainProvider: OnchainProvider,
-        readonly arkProvider: ArkProvider,
         readonly indexerProvider: IndexerProvider,
         readonly arkServerPublicKey: Bytes,
         readonly offchainTapscript: DefaultVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
-        readonly serverUnrollScript: CSVMultisigTapscript.Type,
-        readonly forfeitOutputScript: Bytes,
-        readonly forfeitPubkey: Bytes,
         readonly dustAmount: bigint,
-        walletRepository: WalletRepository,
-        contractRepository: ContractRepository,
-        renewalConfig?: WalletConfig["renewalConfig"]
-    ) {
-        this.walletRepository = walletRepository;
-        this.contractRepository = contractRepository;
-        this.renewalConfig = {
-            enabled: renewalConfig?.enabled ?? false,
-            ...DEFAULT_RENEWAL_CONFIG,
-            ...renewalConfig,
-        };
-    }
+        public readonly walletRepository: WalletRepository,
+        public readonly contractRepository: ContractRepository
+    ) {}
 
-    static async create(config: WalletConfig): Promise<Wallet> {
+    static async create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
             throw new Error("Invalid configured public key");
@@ -269,23 +216,17 @@ export class Wallet implements IWallet {
         const walletRepository = new WalletRepositoryImpl(storage);
         const contractRepository = new ContractRepositoryImpl(storage);
 
-        return new Wallet(
+        return new ReadonlyWallet(
             config.identity,
             network,
-            info.network as NetworkName,
             onchainProvider,
-            arkProvider,
             indexerProvider,
             serverPubKey,
             offchainTapscript,
             boardingTapscript,
-            serverUnrollScript,
-            forfeitOutputScript,
-            forfeitPubkey,
             info.dust,
             walletRepository,
-            contractRepository,
-            config.renewalConfig
+            contractRepository
         );
     }
 
@@ -375,7 +316,7 @@ export class Wallet implements IWallet {
         return extendedVtxos;
     }
 
-    private async getVirtualCoins(
+    protected async getVirtualCoins(
         filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
     ): Promise<VirtualCoin[]> {
         const scripts = [hex.encode(this.offchainTapscript.pkScript)];
@@ -532,6 +473,263 @@ export class Wallet implements IWallet {
         await this.walletRepository.saveUtxos(boardingAddress, utxos);
 
         return utxos;
+    }
+}
+
+/**
+ * Main wallet implementation for Bitcoin transactions with Ark protocol support.
+ * The wallet does not store any data locally and relies on Ark and onchain
+ * providers to fetch UTXOs and VTXOs.
+ *
+ * @example
+ * ```typescript
+ * // Create a wallet with URL configuration
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('your_private_key'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Or with custom provider instances (e.g., for Expo/React Native)
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('your_private_key'),
+ *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
+ *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Get addresses
+ * const arkAddress = await wallet.getAddress();
+ * const boardingAddress = await wallet.getBoardingAddress();
+ *
+ * // Send bitcoin
+ * const txid = await wallet.sendBitcoin({
+ *   address: 'tb1...',
+ *   amount: 50000
+ * });
+ * ```
+ */
+export class Wallet extends ReadonlyWallet implements IWallet {
+    static MIN_FEE_RATE = 1; // sats/vbyte
+
+    public readonly renewalConfig: Required<
+        Omit<WalletConfig["renewalConfig"], "enabled">
+    > & { enabled: boolean; thresholdMs: number };
+
+    protected constructor(
+        identity: Identity,
+        network: Network,
+        readonly networkName: NetworkName,
+        onchainProvider: OnchainProvider,
+        readonly arkProvider: ArkProvider,
+        indexerProvider: IndexerProvider,
+        arkServerPublicKey: Bytes,
+        offchainTapscript: DefaultVtxo.Script,
+        boardingTapscript: DefaultVtxo.Script,
+        readonly serverUnrollScript: CSVMultisigTapscript.Type,
+        readonly forfeitOutputScript: Bytes,
+        readonly forfeitPubkey: Bytes,
+        dustAmount: bigint,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository,
+        renewalConfig?: WalletConfig["renewalConfig"]
+    ) {
+        super(
+            identity,
+            network,
+            onchainProvider,
+            indexerProvider,
+            arkServerPublicKey,
+            offchainTapscript,
+            boardingTapscript,
+            dustAmount,
+            walletRepository,
+            contractRepository
+        );
+        this.renewalConfig = {
+            enabled: renewalConfig?.enabled ?? false,
+            ...DEFAULT_RENEWAL_CONFIG,
+            ...renewalConfig,
+        };
+    }
+
+    static async create(config: WalletConfig): Promise<Wallet> {
+        const pubkey = await config.identity.xOnlyPublicKey();
+        if (!pubkey) {
+            throw new Error("Invalid configured public key");
+        }
+
+        // Use provided arkProvider instance or create a new one from arkServerUrl
+        const arkProvider =
+            config.arkProvider ||
+            (() => {
+                if (!config.arkServerUrl) {
+                    throw new Error(
+                        "Either arkProvider or arkServerUrl must be provided"
+                    );
+                }
+                return new RestArkProvider(config.arkServerUrl);
+            })();
+
+        // Extract arkServerUrl from provider if not explicitly provided
+        const arkServerUrl =
+            config.arkServerUrl || (arkProvider as RestArkProvider).serverUrl;
+
+        if (!arkServerUrl) {
+            throw new Error("Could not determine arkServerUrl from provider");
+        }
+
+        // Use provided indexerProvider instance or create a new one
+        // indexerUrl defaults to arkServerUrl if not provided
+        const indexerUrl = config.indexerUrl || arkServerUrl;
+        const indexerProvider =
+            config.indexerProvider || new RestIndexerProvider(indexerUrl);
+
+        const info = await arkProvider.getInfo();
+
+        const network = getNetwork(info.network as NetworkName);
+
+        // Extract esploraUrl from provider if not explicitly provided
+        const esploraUrl =
+            config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
+
+        // Use provided onchainProvider instance or create a new one
+        const onchainProvider =
+            config.onchainProvider || new EsploraProvider(esploraUrl);
+
+        // validate unilateral exit timelock passed in config if any
+        if (config.exitTimelock) {
+            const { value, type } = config.exitTimelock;
+            if (
+                (value < 512n && type !== "blocks") ||
+                (value >= 512n && type !== "seconds")
+            ) {
+                throw new Error("invalid exitTimelock");
+            }
+        }
+
+        // create unilateral exit timelock
+        const exitTimelock: RelativeTimelock = config.exitTimelock ?? {
+            value: info.unilateralExitDelay,
+            type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+        };
+
+        // validate boarding timelock passed in config if any
+        if (config.boardingTimelock) {
+            const { value, type } = config.boardingTimelock;
+            if (
+                (value < 512n && type !== "blocks") ||
+                (value >= 512n && type !== "seconds")
+            ) {
+                throw new Error("invalid boardingTimelock");
+            }
+        }
+
+        // create boarding timelock
+        const boardingTimelock: RelativeTimelock = config.boardingTimelock ?? {
+            value: info.boardingExitDelay,
+            type: info.boardingExitDelay < 512n ? "blocks" : "seconds",
+        };
+
+        // Generate tapscripts for offchain and boarding address
+        const serverPubKey = hex.decode(info.signerPubkey).slice(1);
+        const bareVtxoTapscript = new DefaultVtxo.Script({
+            pubKey: pubkey,
+            serverPubKey,
+            csvTimelock: exitTimelock,
+        });
+        const boardingTapscript = new DefaultVtxo.Script({
+            pubKey: pubkey,
+            serverPubKey,
+            csvTimelock: boardingTimelock,
+        });
+
+        // Save tapscripts
+        const offchainTapscript = bareVtxoTapscript;
+
+        // the serverUnrollScript is the one used to create output scripts of the checkpoint transactions
+        let serverUnrollScript: CSVMultisigTapscript.Type;
+        try {
+            const raw = hex.decode(info.checkpointTapscript);
+            serverUnrollScript = CSVMultisigTapscript.decode(raw);
+        } catch (e) {
+            throw new Error("Invalid checkpointTapscript from server");
+        }
+
+        // parse the server forfeit address
+        // server is expecting funds to be sent to this address
+        const forfeitPubkey = hex.decode(info.forfeitPubkey).slice(1);
+        const forfeitAddress = Address(network).decode(info.forfeitAddress);
+        const forfeitOutputScript = OutScript.encode(forfeitAddress);
+
+        // Set up storage and repositories
+        const storage = config.storage || new InMemoryStorageAdapter();
+        const walletRepository = new WalletRepositoryImpl(storage);
+        const contractRepository = new ContractRepositoryImpl(storage);
+
+        return new Wallet(
+            config.identity,
+            network,
+            info.network as NetworkName,
+            onchainProvider,
+            arkProvider,
+            indexerProvider,
+            serverPubKey,
+            offchainTapscript,
+            boardingTapscript,
+            serverUnrollScript,
+            forfeitOutputScript,
+            forfeitPubkey,
+            info.dust,
+            walletRepository,
+            contractRepository,
+            config.renewalConfig
+        );
+    }
+
+    /**
+     * Convert this wallet to a readonly wallet.
+     *
+     * @returns A readonly wallet with the same configuration but readonly identity
+     * @example
+     * ```typescript
+     * const wallet = await Wallet.create({ identity: SingleKey.fromHex('...'), ... });
+     * const readonlyWallet = await wallet.toReadonly();
+     *
+     * // Can query balance and addresses
+     * const balance = await readonlyWallet.getBalance();
+     * const address = await readonlyWallet.getAddress();
+     *
+     * // But cannot send transactions (type error)
+     * // readonlyWallet.sendBitcoin(...); // TypeScript error
+     * ```
+     */
+    async toReadonly(): Promise<ReadonlyWallet> {
+        // Check if the identity has a toReadonly method (duck typing)
+        let readonlyIdentity: ReadonlyIdentity;
+
+        if (
+            "toReadonly" in this.identity &&
+            typeof (this.identity as any).toReadonly === "function"
+        ) {
+            readonlyIdentity = await (this.identity as any).toReadonly();
+        } else {
+            // If the identity doesn't have toReadonly, use it as-is since Identity extends ReadonlyIdentity
+            readonlyIdentity = this.identity;
+        }
+
+        return new ReadonlyWallet(
+            readonlyIdentity,
+            this.network,
+            this.onchainProvider,
+            this.indexerProvider,
+            this.arkServerPublicKey,
+            this.offchainTapscript,
+            this.boardingTapscript,
+            this.dustAmount,
+            this.walletRepository,
+            this.contractRepository
+        );
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {

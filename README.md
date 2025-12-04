@@ -25,12 +25,89 @@ const identity = SingleKey.fromHex('your_private_key_hex')
 const wallet = await Wallet.create({
   identity,
   // Esplora API, can be left empty - mempool.space API will be used
-  esploraUrl: 'https://mutinynet.com/api', 
+  esploraUrl: 'https://mutinynet.com/api',
   arkServerUrl: 'https://mutinynet.arkade.sh',
   // Optional: specify storage adapter (defaults to InMemoryStorageAdapter)
   // storage: new LocalStorageAdapter() // for browser persistence
 })
 ```
+
+### Readonly Wallets (Watch-Only)
+
+The SDK supports readonly wallets that allow you to query wallet state without exposing private keys. This is useful for:
+
+- **Watch-only wallets**: Monitor addresses and balances without transaction capabilities
+- **Public interfaces**: Display wallet information safely in public-facing applications
+- **Separate concerns**: Keep signing operations isolated from query operations
+
+#### Creating a Readonly Wallet
+
+```typescript
+import { ReadonlySingleKey, ReadonlyWallet } from '@arkade-os/sdk'
+
+// Create a readonly identity from a public key
+const identity = SingleKey.fromHex('your_private_key_hex')
+const publicKey = await identity.compressedPublicKey()
+const readonlyIdentity = ReadonlySingleKey.fromPublicKey(publicKey)
+
+// Create a readonly wallet
+const readonlyWallet = await ReadonlyWallet.create({
+  identity: readonlyIdentity,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+
+// Query operations work normally
+const address = await readonlyWallet.getAddress()
+const balance = await readonlyWallet.getBalance()
+const vtxos = await readonlyWallet.getVtxos()
+const history = await readonlyWallet.getTransactionHistory()
+
+// Transaction methods are not available (TypeScript will prevent this)
+// await readonlyWallet.sendBitcoin(...) // ❌ Type error!
+```
+
+#### Converting Wallets to Readonly
+
+```typescript
+import { Wallet, SingleKey } from '@arkade-os/sdk'
+
+// Create a full wallet
+const identity = SingleKey.fromHex('your_private_key_hex')
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+
+// Convert to readonly wallet (safe to share)
+const readonlyWallet = await wallet.toReadonly()
+
+// The readonly wallet can query but not transact
+const balance = await readonlyWallet.getBalance()
+```
+
+#### Converting Identity to Readonly
+
+```typescript
+import { SingleKey } from '@arkade-os/sdk'
+
+// Full identity
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+// Convert to readonly (no signing capability)
+const readonlyIdentity = await identity.toReadonly()
+
+// Use in readonly wallet
+const readonlyWallet = await ReadonlyWallet.create({
+  identity: readonlyIdentity,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+```
+
+**Benefits:**
+- ✅ Type-safe: Transaction methods don't exist on readonly types
+- ✅ Secure: Private keys never leave the signing environment
+- ✅ Flexible: Convert between full and readonly wallets as needed
+- ✅ Same API: Query operations work identically on both wallet types
 
 ### Receiving Bitcoin
 

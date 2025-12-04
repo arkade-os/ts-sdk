@@ -5,7 +5,7 @@ import {
 } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { Identity } from ".";
+import { Identity, ReadonlyIdentity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
@@ -107,5 +107,39 @@ export class SingleKey implements Identity {
         if (signatureType === "ecdsa")
             return signAsync(message, this.key, { prehash: false });
         return schnorr.signAsync(message, this.key);
+    }
+
+    async toReadonly(): Promise<ReadonlySingleKey> {
+        return new ReadonlySingleKey(await this.compressedPublicKey());
+    }
+}
+
+export class ReadonlySingleKey implements ReadonlyIdentity {
+    constructor(private readonly publicKey: Uint8Array) {
+        if (publicKey.length !== 33) {
+            throw new Error("Invalid public key length");
+        }
+    }
+
+    /**
+     * Create a ReadonlySingleKey from a compressed public key.
+     *
+     * @param publicKey - 33-byte compressed public key (02/03 prefix + 32-byte x coordinate)
+     * @returns A new ReadonlySingleKey instance
+     * @example
+     * ```typescript
+     * const pubkey = new Uint8Array(33); // your compressed public key
+     * const readonlyKey = ReadonlySingleKey.fromPublicKey(pubkey);
+     * ```
+     */
+    static fromPublicKey(publicKey: Uint8Array): ReadonlySingleKey {
+        return new ReadonlySingleKey(publicKey);
+    }
+
+    xOnlyPublicKey(): Promise<Uint8Array> {
+        return Promise.resolve(this.publicKey.slice(1));
+    }
+    compressedPublicKey(): Promise<Uint8Array> {
+        return Promise.resolve(this.publicKey);
     }
 }

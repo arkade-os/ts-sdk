@@ -1,6 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
-import { Identity } from "../identity";
+import { Identity, ReadonlyIdentity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { StorageAdapter } from "../storage";
@@ -9,7 +9,7 @@ import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 
 /**
- * Configuration options for wallet initialization.
+ * Base configuration options shared by all wallet types.
  *
  * Supports two configuration modes:
  * 1. URL-based: Provide arkServerUrl, indexerUrl (optional), and esploraUrl
@@ -21,6 +21,56 @@ import { OnchainProvider } from "../providers/onchain";
  * The wallet will use provided URLs to create default providers if custom provider
  * instances are not supplied. If optional parameters are not provided, the wallet
  * will fetch configuration from the Ark server.
+ */
+export interface BaseWalletConfig {
+    arkServerUrl?: string;
+    indexerUrl?: string;
+    esploraUrl?: string;
+    arkServerPublicKey?: string;
+    boardingTimelock?: RelativeTimelock;
+    exitTimelock?: RelativeTimelock;
+    storage?: StorageAdapter;
+    arkProvider?: ArkProvider;
+    indexerProvider?: IndexerProvider;
+    onchainProvider?: OnchainProvider;
+}
+
+/**
+ * Configuration options for readonly wallet initialization.
+ *
+ * Use this config when you only need to query wallet state (balance, addresses, transactions)
+ * without the ability to send transactions. This is useful for:
+ * - Watch-only wallets
+ * - Monitoring addresses
+ * - Safe sharing of wallet state without private key exposure
+ *
+ * @example
+ * ```typescript
+ * // URL-based configuration
+ * const wallet = await ReadonlyWallet.create({
+ *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   esploraUrl: 'https://mempool.space/api'
+ * });
+ *
+ * // Provider-based configuration (e.g., for Expo/React Native)
+ * const wallet = await ReadonlyWallet.create({
+ *   identity: ReadonlySingleKey.fromPublicKey(pubkey),
+ *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
+ *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
+ *   onchainProvider: new EsploraProvider('https://mempool.space/api')
+ * });
+ * ```
+ */
+export interface ReadonlyWalletConfig extends BaseWalletConfig {
+    identity: ReadonlyIdentity;
+}
+
+/**
+ * Configuration options for full wallet initialization.
+ *
+ * This config provides full wallet capabilities including sending transactions,
+ * settling VTXOs, and all readonly operations.
  *
  * @example
  * ```typescript
@@ -38,20 +88,20 @@ import { OnchainProvider } from "../providers/onchain";
  *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
  *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
+ *
+ * // With renewal configuration
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('...'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   renewalConfig: {
+ *     enabled: true,
+ *     thresholdMs: 86400000, // 24 hours
+ *   }
+ * });
  * ```
  */
-export interface WalletConfig {
+export interface WalletConfig extends ReadonlyWalletConfig {
     identity: Identity;
-    arkServerUrl?: string;
-    indexerUrl?: string;
-    esploraUrl?: string;
-    arkServerPublicKey?: string;
-    boardingTimelock?: RelativeTimelock;
-    exitTimelock?: RelativeTimelock;
-    storage?: StorageAdapter;
-    arkProvider?: ArkProvider;
-    indexerProvider?: IndexerProvider;
-    onchainProvider?: OnchainProvider;
     renewalConfig?: RenewalConfig;
 }
 
@@ -196,8 +246,26 @@ export type GetVtxosFilter = {
  * It provides methods for address management, balance checking, virtual UTXO
  * operations, and transaction management including sending, settling, and unrolling.
  */
-export interface IWallet {
+export interface IWallet extends IReadonlyWallet {
     identity: Identity;
+
+    // Transaction operations
+    sendBitcoin(params: SendBitcoinParams): Promise<string>;
+    settle(
+        params?: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string>;
+}
+
+/**
+ * Readonly wallet interface for Bitcoin transactions with Ark protocol support.
+ *
+ * This interface defines the contract that all wallet implementations must follow.
+ * It provides methods for address management, balance checking, virtual UTXO
+ * operations, and transaction management including sending, settling, and unrolling.
+ */
+export interface IReadonlyWallet {
+    identity: ReadonlyIdentity;
     // returns the ark address
     getAddress(): Promise<string>;
     // returns the bitcoin address used to board the ark
@@ -206,11 +274,4 @@ export interface IWallet {
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
-
-    // Transaction operations
-    sendBitcoin(params: SendBitcoinParams): Promise<string>;
-    settle(
-        params?: SettleParams,
-        eventCallback?: (event: SettlementEvent) => void
-    ): Promise<string>;
 }
