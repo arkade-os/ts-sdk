@@ -118,10 +118,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
     ) {}
 
     /**
-     * Private helper to set up shared wallet configuration.
+     * Protected helper to set up shared wallet configuration.
      * Extracts common logic used by both ReadonlyWallet.create() and Wallet.create().
      */
-    private static async setupWalletConfig(
+    protected static async setupWalletConfig(
         config: ReadonlyWalletConfig,
         pubkey: Uint8Array
     ) {
@@ -570,6 +570,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             walletRepository,
             contractRepository
         );
+        this.identity = identity;
         this.renewalConfig = {
             enabled: renewalConfig?.enabled ?? false,
             ...DEFAULT_RENEWAL_CONFIG,
