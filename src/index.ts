@@ -1,6 +1,6 @@
 import { Transaction } from "./utils/transaction";
-import { SingleKey } from "./identity/singleKey";
-import { Identity } from "./identity";
+import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
+import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -13,7 +13,10 @@ import {
 import {
     TxType,
     IWallet,
+    IReadonlyWallet,
+    BaseWalletConfig,
     WalletConfig,
+    ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
     Coin,
@@ -32,7 +35,12 @@ import {
     TapLeaves,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
-import { Wallet, waitForIncomingFunds, IncomingFunds } from "./wallet/wallet";
+import {
+    Wallet,
+    ReadonlyWallet,
+    waitForIncomingFunds,
+    IncomingFunds,
+} from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
     SignerSession,
@@ -135,7 +143,9 @@ import { ArkError, maybeArkError } from "./providers/errors";
 export {
     // Wallets
     Wallet,
+    ReadonlyWallet,
     SingleKey,
+    ReadonlySingleKey,
     OnchainWallet,
     Ramps,
     VtxoManager,
@@ -222,8 +232,12 @@ export {
 export type {
     // Types and Interfaces
     Identity,
+    ReadonlyIdentity,
     IWallet,
+    IReadonlyWallet,
+    BaseWalletConfig,
     WalletConfig,
+    ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
     Coin,
