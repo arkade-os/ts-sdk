@@ -27,7 +27,7 @@ export interface PageResponse {
     total: number;
 }
 
-export interface Batch {
+export interface BatchInfo {
     totalOutputAmount: string;
     totalOutputVtxos: number;
     expiresAt: string;
@@ -44,7 +44,7 @@ export interface ChainTx {
 export interface CommitmentTx {
     startedAt: string;
     endedAt: string;
-    batches: { [key: string]: Batch };
+    batches: { [key: string]: BatchInfo };
     totalInputAmount: string;
     totalInputVtxos: number;
     totalOutputAmount: string;
@@ -589,7 +589,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
 
 // Unexported namespace for type guards only
 namespace Response {
-    function isBatch(data: any): data is Batch {
+    function isBatchInfo(data: any): data is BatchInfo {
         return (
             typeof data === "object" &&
             typeof data.totalOutputAmount === "string" &&
@@ -620,7 +620,7 @@ namespace Response {
             typeof data.totalOutputAmount === "string" &&
             typeof data.totalOutputVtxos === "number" &&
             typeof data.batches === "object" &&
-            Object.values(data.batches).every(isBatch)
+            Object.values(data.batches).every(isBatchInfo)
         );
     }
 
