@@ -6,6 +6,8 @@ import type {
     Wallet,
 } from "..";
 
+export const DUST_AMOUNT = 546; // sats
+
 export function extendVirtualCoin(
     wallet: Wallet,
     vtxo: VirtualCoin
