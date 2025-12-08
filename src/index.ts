@@ -132,6 +132,8 @@ import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
 
+export * from "./arkfee";
+
 export {
     // Wallets
     Wallet,
