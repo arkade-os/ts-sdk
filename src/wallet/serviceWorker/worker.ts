@@ -469,6 +469,13 @@ export class Worker {
                 event.source?.postMessage(
                     Response.settleSuccess(message.id, txid)
                 );
+            } else {
+                event.source?.postMessage(
+                    Response.error(
+                        message.id,
+                        "Operation not supported in readonly mode"
+                    )
+                );
             }
         } catch (error: unknown) {
             console.error("Error settling:", error);
@@ -506,6 +513,13 @@ export class Worker {
             if (txid) {
                 event.source?.postMessage(
                     Response.sendBitcoinSuccess(message.id, txid)
+                );
+            } else {
+                event.source?.postMessage(
+                    Response.error(
+                        message.id,
+                        "Operation not supported in readonly mode"
+                    )
                 );
             }
         } catch (error: unknown) {
