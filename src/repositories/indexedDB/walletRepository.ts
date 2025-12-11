@@ -33,19 +33,23 @@ import {
 export class IndexedDBWalletRepository implements WalletRepository {
     private db: IDBDatabase | null = null;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(
+        private readonly dbName: string = DEFAULT_DB_NAME,
+        private readonly withMigration = true
+    ) {}
 
     static async create(
-        dbName: string = DEFAULT_DB_NAME
+        dbName: string = DEFAULT_DB_NAME,
+        withMigration = true
     ): Promise<IndexedDBWalletRepository> {
-        const repository = new IndexedDBWalletRepository(dbName);
+        const repository = new IndexedDBWalletRepository(dbName, withMigration);
         await repository.getDB();
         return repository;
     }
 
     private async getDB(): Promise<IDBDatabase> {
         if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName);
+        this.db = await openDatabase(this.dbName, this.withMigration);
         return this.db;
     }
 
