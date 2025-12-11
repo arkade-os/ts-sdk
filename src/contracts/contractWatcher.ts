@@ -59,7 +59,11 @@ interface ContractState {
 /**
  * Connection state for the watcher.
  */
-type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecting";
+type ConnectionState =
+    | "disconnected"
+    | "connecting"
+    | "connected"
+    | "reconnecting";
 
 /**
  * Watches multiple contracts for VTXO changes with resilient connection handling.
@@ -92,7 +96,9 @@ type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecti
  * ```
  */
 export class ContractWatcher {
-    private config: Required<Omit<ContractWatcherConfig, "contractRepository">> &
+    private config: Required<
+        Omit<ContractWatcherConfig, "contractRepository">
+    > &
         Pick<ContractWatcherConfig, "contractRepository">;
     private contracts: Map<string, ContractState> = new Map();
     private scriptToContract: Map<string, string> = new Map(); // script -> contractId
@@ -176,7 +182,10 @@ export class ContractWatcher {
     /**
      * Set a contract's active state.
      */
-    async setContractActive(contractId: string, active: boolean): Promise<void> {
+    async setContractActive(
+        contractId: string,
+        active: boolean
+    ): Promise<void> {
         const state = this.contracts.get(contractId);
         if (state) {
             state.contract.state = active ? "active" : "inactive";
@@ -567,7 +576,8 @@ export class ContractWatcher {
 
         // Calculate delay with exponential backoff
         const delay = Math.min(
-            this.config.reconnectDelayMs * Math.pow(2, this.reconnectAttempts - 1),
+            this.config.reconnectDelayMs *
+                Math.pow(2, this.reconnectAttempts - 1),
             this.config.maxReconnectDelayMs
         );
 
@@ -592,7 +602,10 @@ export class ContractWatcher {
         this.failsafePollIntervalId = setInterval(() => {
             if (this.isWatching) {
                 this.pollAllContracts().catch((error) => {
-                    console.error("ContractWatcher failsafe poll failed:", error);
+                    console.error(
+                        "ContractWatcher failsafe poll failed:",
+                        error
+                    );
                 });
             }
         }, this.config.failsafePollIntervalMs);
@@ -655,13 +668,23 @@ export class ContractWatcher {
 
                 // Emit events
                 if (newVtxos.length > 0) {
-                    this.emitVtxoEvent(contractId, newVtxos, "vtxo_received", now);
+                    this.emitVtxoEvent(
+                        contractId,
+                        newVtxos,
+                        "vtxo_received",
+                        now
+                    );
                 }
 
                 if (spentVtxos.length > 0) {
                     // Note: We can't distinguish spent vs swept from polling alone
                     // The subscription provides more accurate event types
-                    this.emitVtxoEvent(contractId, spentVtxos, "vtxo_spent", now);
+                    this.emitVtxoEvent(
+                        contractId,
+                        spentVtxos,
+                        "vtxo_spent",
+                        now
+                    );
                 }
             }
         } catch (error) {
@@ -690,10 +713,11 @@ export class ContractWatcher {
             return;
         }
 
-        this.subscriptionId = await this.config.indexerProvider.subscribeForScripts(
-            activeScripts,
-            this.subscriptionId
-        );
+        this.subscriptionId =
+            await this.config.indexerProvider.subscribeForScripts(
+                activeScripts,
+                this.subscriptionId
+            );
     }
 
     /**
@@ -743,15 +767,30 @@ export class ContractWatcher {
         const scripts = update.scripts || [];
 
         if (update.newVtxos?.length) {
-            this.processSubscriptionVtxos(update.newVtxos, scripts, "vtxo_received", timestamp);
+            this.processSubscriptionVtxos(
+                update.newVtxos,
+                scripts,
+                "vtxo_received",
+                timestamp
+            );
         }
 
         if (update.spentVtxos?.length) {
-            this.processSubscriptionVtxos(update.spentVtxos, scripts, "vtxo_spent", timestamp);
+            this.processSubscriptionVtxos(
+                update.spentVtxos,
+                scripts,
+                "vtxo_spent",
+                timestamp
+            );
         }
 
         if (update.sweptVtxos?.length) {
-            this.processSubscriptionVtxos(update.sweptVtxos, scripts, "vtxo_swept", timestamp);
+            this.processSubscriptionVtxos(
+                update.sweptVtxos,
+                scripts,
+                "vtxo_swept",
+                timestamp
+            );
         }
     }
 

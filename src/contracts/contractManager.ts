@@ -38,7 +38,10 @@ export interface ContractManagerConfig {
     getDefaultAddress: () => Promise<string>;
 
     /** Function to execute a sweep transaction */
-    executeSweep?: (vtxos: ContractVtxo[], destination: string) => Promise<string>;
+    executeSweep?: (
+        vtxos: ContractVtxo[],
+        destination: string
+    ) => Promise<string>;
 
     /** Function to get current block height (optional) */
     getCurrentBlockHeight?: () => Promise<number>;
@@ -53,7 +56,10 @@ export interface ContractManagerConfig {
 /**
  * Parameters for creating a new contract.
  */
-export type CreateContractParams = Omit<Contract, "id" | "createdAt" | "state"> & {
+export type CreateContractParams = Omit<
+    Contract,
+    "id" | "createdAt" | "state"
+> & {
     /** Optional ID override (auto-generated if not provided) */
     id?: string;
     /** Initial state (defaults to "active") */
@@ -182,7 +188,9 @@ export class ContractManager {
 
         // Validate that a handler exists for this contract type
         if (!contractHandlers.has(params.type)) {
-            throw new Error(`No handler registered for contract type '${params.type}'`);
+            throw new Error(
+                `No handler registered for contract type '${params.type}'`
+            );
         }
 
         // Use provided ID or default to script (scripts are unique identifiers)
@@ -340,7 +348,8 @@ export class ContractManager {
     ): Promise<Contract> {
         this.ensureInitialized();
 
-        const existing = await this.config.contractRepository.getContractById(id);
+        const existing =
+            await this.config.contractRepository.getContractById(id);
         if (!existing) {
             throw new Error(`Contract ${id} not found`);
         }
@@ -400,7 +409,10 @@ export class ContractManager {
             ...data,
         };
 
-        await this.config.contractRepository.updateContractData(id, updatedData);
+        await this.config.contractRepository.updateContractData(
+            id,
+            updatedData
+        );
 
         // Update in watcher
         const updatedContract: Contract = {
@@ -453,7 +465,10 @@ export class ContractManager {
      */
     async getContractBalance(contractId: string): Promise<ContractBalance> {
         this.ensureInitialized();
-        return this.watcher.getContractBalance(contractId, this.config.extendVtxo);
+        return this.watcher.getContractBalance(
+            contractId,
+            this.config.extendVtxo
+        );
     }
 
     /**
@@ -534,7 +549,10 @@ export class ContractManager {
         collaborative: boolean = true,
         walletPubKey?: string
     ): boolean {
-        return this.getSpendablePaths(contractId, collaborative, walletPubKey).length > 0;
+        return (
+            this.getSpendablePaths(contractId, collaborative, walletPubKey)
+                .length > 0
+        );
     }
 
     /**

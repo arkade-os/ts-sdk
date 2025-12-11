@@ -2,7 +2,12 @@ import { hex } from "@scure/base";
 import * as bip68 from "bip68";
 import { VHTLC } from "../../script/vhtlc";
 import { RelativeTimelock } from "../../script/tapscript";
-import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
+import {
+    Contract,
+    ContractHandler,
+    PathContext,
+    PathSelection,
+} from "../types";
 
 /**
  * Typed parameters for VHTLC contracts.
@@ -83,7 +88,10 @@ function resolveRole(
  * - unilateralRefund: Sender + Receiver after CSV delay
  * - unilateralRefundWithoutReceiver: Sender after CSV delay
  */
-export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Script> = {
+export const VHTLCContractHandler: ContractHandler<
+    VHTLCContractParams,
+    VHTLC.Script
+> = {
     type: "vhtlc",
 
     createScript(params: Record<string, string>): VHTLC.Script {
@@ -98,9 +106,15 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
             server: hex.encode(params.server),
             hash: hex.encode(params.preimageHash),
             refundLocktime: params.refundLocktime.toString(),
-            claimDelay: timelockToSequence(params.unilateralClaimDelay).toString(),
-            refundDelay: timelockToSequence(params.unilateralRefundDelay).toString(),
-            refundNoReceiverDelay: timelockToSequence(params.unilateralRefundWithoutReceiverDelay).toString(),
+            claimDelay: timelockToSequence(
+                params.unilateralClaimDelay
+            ).toString(),
+            refundDelay: timelockToSequence(
+                params.unilateralRefundDelay
+            ).toString(),
+            refundNoReceiverDelay: timelockToSequence(
+                params.unilateralRefundWithoutReceiverDelay
+            ).toString(),
         };
     },
 
@@ -112,8 +126,12 @@ export const VHTLCContractHandler: ContractHandler<VHTLCContractParams, VHTLC.Sc
             preimageHash: hex.decode(params.hash),
             refundLocktime: BigInt(params.refundLocktime),
             unilateralClaimDelay: sequenceToTimelock(Number(params.claimDelay)),
-            unilateralRefundDelay: sequenceToTimelock(Number(params.refundDelay)),
-            unilateralRefundWithoutReceiverDelay: sequenceToTimelock(Number(params.refundNoReceiverDelay)),
+            unilateralRefundDelay: sequenceToTimelock(
+                Number(params.refundDelay)
+            ),
+            unilateralRefundWithoutReceiverDelay: sequenceToTimelock(
+                Number(params.refundNoReceiverDelay)
+            ),
         };
     },
 

@@ -58,7 +58,9 @@ class ContractHandlerRegistry {
     getOrThrow(type: string): ContractHandler<any> {
         const handler = this.get(type);
         if (!handler) {
-            throw new Error(`No contract handler registered for type '${type}'`);
+            throw new Error(
+                `No contract handler registered for type '${type}'`
+            );
         }
         return handler;
     }

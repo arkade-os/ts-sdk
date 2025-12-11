@@ -39,7 +39,9 @@ export function encodeArkContract(contract: Contract): string {
     // Add runtime data if present
     if (contract.data) {
         for (const [key, value] of Object.entries(contract.data)) {
-            parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+            parts.push(
+                `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+            );
         }
     }
 
@@ -83,7 +85,9 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
     for (const part of parts) {
         const eqIndex = part.indexOf("=");
         if (eqIndex === -1) {
-            throw new Error(`Invalid arkcontract string: malformed part '${part}'`);
+            throw new Error(
+                `Invalid arkcontract string: malformed part '${part}'`
+            );
         }
 
         const key = decodeURIComponent(part.substring(0, eqIndex));
@@ -136,12 +140,17 @@ export function contractFromArkContract(
         expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
-): Omit<Contract, "script" | "address"> & { script?: string; address?: string } {
+): Omit<Contract, "script" | "address"> & {
+    script?: string;
+    address?: string;
+} {
     const parsed = decodeArkContract(encoded);
     const handler = contractHandlers.get(parsed.type);
 
     if (!handler) {
-        throw new Error(`No handler registered for contract type '${parsed.type}'`);
+        throw new Error(
+            `No handler registered for contract type '${parsed.type}'`
+        );
     }
 
     // Separate params from runtime data

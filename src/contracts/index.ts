@@ -24,7 +24,10 @@ export type { ContractWatcherConfig } from "./contractWatcher";
 
 // Contract sweeper
 export { ContractSweeper } from "./contractSweeper";
-export type { ContractSweeperDeps, SweepEventCallback } from "./contractSweeper";
+export type {
+    ContractSweeperDeps,
+    SweepEventCallback,
+} from "./contractSweeper";
 
 // Contract manager
 export { ContractManager } from "./contractManager";

@@ -1588,7 +1588,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * Returns true if the repository implements ContractManagerRepository methods.
      */
     supportsContractManager(): boolean {
-        const repo = this.contractRepository as unknown as Record<string, unknown>;
+        const repo = this.contractRepository as unknown as Record<
+            string,
+            unknown
+        >;
         return (
             typeof repo.getContracts === "function" &&
             typeof repo.saveContract === "function" &&
@@ -1629,8 +1632,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         if (!this.supportsContractManager()) {
             throw new Error(
                 "ContractManager requires a ContractManagerRepository. " +
-                "The provided ContractRepository does not implement the required methods. " +
-                "Use ContractRepositoryImpl or implement ContractManagerRepository."
+                    "The provided ContractRepository does not implement the required methods. " +
+                    "Use ContractRepositoryImpl or implement ContractManagerRepository."
             );
         }
         if (this._contractManager) {
@@ -1641,10 +1644,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         this._contractManager = new ContractManager({
             indexerProvider: this.indexerProvider,
-            contractRepository: this.contractRepository as ContractManagerRepository,
+            contractRepository: this
+                .contractRepository as ContractManagerRepository,
             extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
             getDefaultAddress: () => this.getAddress(),
-            executeSweep: async (vtxos: ContractVtxo[], destination: string) => {
+            executeSweep: async (
+                vtxos: ContractVtxo[],
+                destination: string
+            ) => {
                 // Use settle to sweep VTXOs to the destination
                 return self.sweepContractVtxos(vtxos, destination);
             },
@@ -1738,9 +1745,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @param callback - Event callback
      * @returns Stop function
      */
-    async watchContracts(
-        callback: ContractEventCallback
-    ): Promise<() => void> {
+    async watchContracts(callback: ContractEventCallback): Promise<() => void> {
         const manager = await this.getContractManager();
         return manager.startWatching(callback);
     }

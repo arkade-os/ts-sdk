@@ -12,12 +12,7 @@
 // Usage:
 // node examples/contract-manager.js [arkdExec]
 //
-import {
-    SingleKey,
-    Wallet,
-    VHTLC,
-    networks,
-} from "../dist/esm/index.js";
+import { SingleKey, Wallet, VHTLC, networks } from "../dist/esm/index.js";
 import { hash160, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { execSync } from "child_process";
@@ -111,7 +106,9 @@ async function main() {
         if (event.vtxos?.length) {
             console.log(`  VTXOs: ${event.vtxos.length}`);
             for (const vtxo of event.vtxos) {
-                console.log(`    - ${vtxo.txid}:${vtxo.vout} (${vtxo.value} sats)`);
+                console.log(
+                    `    - ${vtxo.txid}:${vtxo.vout} (${vtxo.value} sats)`
+                );
             }
         }
     });
@@ -134,7 +131,11 @@ async function main() {
 
     // Check spendable paths (Alice is sender, no preimage yet)
     console.log("\nChecking spendable paths for Alice (sender)...");
-    let paths = manager.getSpendablePaths(contract.id, true, hex.encode(alicePubKey));
+    let paths = manager.getSpendablePaths(
+        contract.id,
+        true,
+        hex.encode(alicePubKey)
+    );
     console.log("Spendable paths:", paths.length);
     if (paths.length === 0) {
         console.log("  (No paths available yet - refund timelock not reached)");
@@ -150,7 +151,9 @@ async function main() {
     });
 
     // Now check Bob's spendable paths
-    console.log("\nChecking spendable paths for Bob (receiver with preimage)...");
+    console.log(
+        "\nChecking spendable paths for Bob (receiver with preimage)..."
+    );
     paths = manager.getSpendablePaths(contract.id, true, hex.encode(bobPubKey));
     console.log("Spendable paths:", paths.length);
     for (const path of paths) {
@@ -169,7 +172,9 @@ async function main() {
     for (const [contractId, bal] of allBalances) {
         const c = await manager.getContract(contractId);
         const label = c?.label || contractId;
-        console.log(`  ${label}: ${bal.spendable} sats (${bal.vtxoCount} VTXOs)`);
+        console.log(
+            `  ${label}: ${bal.spendable} sats (${bal.vtxoCount} VTXOs)`
+        );
     }
 
     // List all contracts

@@ -40,9 +40,7 @@ const createMockIndexerProvider = (): IndexerProvider => ({
 });
 
 // Helper to create a mock VTXO
-const createMockVtxo = (
-    overrides: Partial<VirtualCoin> = {}
-): VirtualCoin => ({
+const createMockVtxo = (overrides: Partial<VirtualCoin> = {}): VirtualCoin => ({
     txid: hex.encode(new Uint8Array(32).fill(1)),
     vout: 0,
     value: 100000,
@@ -85,14 +83,20 @@ describe("Contracts", () => {
 
         it("should have default strategy registered", () => {
             expect(registry.has("default")).toBe(true);
-            expect(registry.get("default")).toBeInstanceOf(DefaultSpendingStrategy);
+            expect(registry.get("default")).toBeInstanceOf(
+                DefaultSpendingStrategy
+            );
         });
 
         it("should have HTLC strategies registered", () => {
             expect(registry.has("htlc-claim")).toBe(true);
             expect(registry.has("htlc-refund")).toBe(true);
-            expect(registry.get("htlc-claim")).toBeInstanceOf(HTLCClaimStrategy);
-            expect(registry.get("htlc-refund")).toBeInstanceOf(HTLCRefundStrategy);
+            expect(registry.get("htlc-claim")).toBeInstanceOf(
+                HTLCClaimStrategy
+            );
+            expect(registry.get("htlc-refund")).toBeInstanceOf(
+                HTLCRefundStrategy
+            );
         });
 
         it("should throw when registering duplicate strategy", () => {
@@ -314,8 +318,10 @@ describe("Contracts", () => {
             await repository.saveContract(activeContract);
             await repository.saveContract(inactiveContract);
 
-            const activeContracts = await repository.getContractsByState("active");
-            const inactiveContracts = await repository.getContractsByState("inactive");
+            const activeContracts =
+                await repository.getContractsByState("active");
+            const inactiveContracts =
+                await repository.getContractsByState("inactive");
 
             expect(activeContracts).toHaveLength(1);
             expect(activeContracts[0].id).toBe("active-1");
@@ -391,9 +397,8 @@ describe("Contracts", () => {
             };
 
             await repository.saveContract(contract);
-            const retrieved = await repository.getContractByScript(
-                "unique-script-hex"
-            );
+            const retrieved =
+                await repository.getContractByScript("unique-script-hex");
 
             expect(retrieved?.id).toBe("test-1");
         });
@@ -602,7 +607,9 @@ describe("Contracts", () => {
                 spendingData: { hashlock: "abc" },
             });
 
-            await manager.updateSpendingData(contract.id, { preimage: "secret" });
+            await manager.updateSpendingData(contract.id, {
+                preimage: "secret",
+            });
 
             const updated = await manager.getContract(contract.id);
             expect(updated?.spendingData).toEqual({

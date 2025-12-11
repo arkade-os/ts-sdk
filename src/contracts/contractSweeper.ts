@@ -95,7 +95,10 @@ export class ContractSweeper {
     private isRunning = false;
     private eventCallback?: SweepEventCallback;
 
-    constructor(deps: ContractSweeperDeps, config: Partial<SweeperConfig> = {}) {
+    constructor(
+        deps: ContractSweeperDeps,
+        config: Partial<SweeperConfig> = {}
+    ) {
         this.deps = deps;
         this.config = { ...DEFAULT_CONFIG, ...config };
     }
@@ -209,7 +212,8 @@ export class ContractSweeper {
 
             // Group for batching or process individually
             if (this.config.batchSweeps) {
-                const result = await this.executeBatchedSweep(spendableByContract);
+                const result =
+                    await this.executeBatchedSweep(spendableByContract);
                 if (result) {
                     results.push(result);
                 }
@@ -272,7 +276,10 @@ export class ContractSweeper {
 
         const results: SweepResult[] = [];
         for (const [contractId, vtxos] of spendableByContract) {
-            const result = await this.executeSingleContractSweep(contractId, vtxos);
+            const result = await this.executeSingleContractSweep(
+                contractId,
+                vtxos
+            );
             if (result) {
                 results.push(result);
             }
@@ -338,15 +345,16 @@ export class ContractSweeper {
             const paths = handler.getSpendablePaths(script, contract, context);
 
             // Only include VTXOs if there are spendable paths
-            const spendable = paths.length > 0
-                ? vtxos.filter((vtxo) => {
-                    try {
-                        return isSpendable(vtxo);
-                    } catch {
-                        return false;
-                    }
-                })
-                : [];
+            const spendable =
+                paths.length > 0
+                    ? vtxos.filter((vtxo) => {
+                          try {
+                              return isSpendable(vtxo);
+                          } catch {
+                              return false;
+                          }
+                      })
+                    : [];
 
             if (spendable.length > 0) {
                 result.set(contract.id, spendable);
@@ -407,7 +415,8 @@ export class ContractSweeper {
             this.eventCallback?.({
                 type: "sweep_failed",
                 contractIds: [contractId],
-                error: error instanceof Error ? error : new Error(String(error)),
+                error:
+                    error instanceof Error ? error : new Error(String(error)),
             });
             return null;
         }
@@ -470,7 +479,8 @@ export class ContractSweeper {
             this.eventCallback?.({
                 type: "sweep_failed",
                 contractIds,
-                error: error instanceof Error ? error : new Error(String(error)),
+                error:
+                    error instanceof Error ? error : new Error(String(error)),
             });
             return null;
         }

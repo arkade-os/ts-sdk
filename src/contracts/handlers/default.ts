@@ -2,7 +2,12 @@ import { hex } from "@scure/base";
 import * as bip68 from "bip68";
 import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
-import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
+import {
+    Contract,
+    ContractHandler,
+    PathContext,
+    PathSelection,
+} from "../types";
 
 /**
  * Convert RelativeTimelock to BIP68 sequence number.
@@ -45,7 +50,10 @@ export interface DefaultContractParams {
  * - forfeit: (Alice + Server) multisig for collaborative spending
  * - exit: (Alice) + CSV timelock for unilateral exit
  */
-export const DefaultContractHandler: ContractHandler<DefaultContractParams, DefaultVtxo.Script> = {
+export const DefaultContractHandler: ContractHandler<
+    DefaultContractParams,
+    DefaultVtxo.Script
+> = {
     type: "default",
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {

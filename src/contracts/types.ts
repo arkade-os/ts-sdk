@@ -175,7 +175,7 @@ export interface PathContext {
  */
 export interface ContractHandler<
     P = Record<string, unknown>,
-    S extends VtxoScript = VtxoScript
+    S extends VtxoScript = VtxoScript,
 > {
     /** The contract type this handler manages */
     readonly type: string;

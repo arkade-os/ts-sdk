@@ -27,7 +27,6 @@ export interface ContractRepository {
         id: T[K],
         idField: K
     ): Promise<void>;
-
 }
 
 /**
@@ -74,10 +73,7 @@ export interface ContractManagerRepository extends ContractRepository {
     /**
      * Update a contract's runtime data.
      */
-    updateContractData(
-        id: string,
-        data: Record<string, string>
-    ): Promise<void>;
+    updateContractData(id: string, data: Record<string, string>): Promise<void>;
 
     // VTXO management for contracts
 
@@ -262,9 +258,8 @@ export class ContractRepositoryImpl implements ContractManagerRepository {
     // Contract entity management methods
 
     async getContracts(): Promise<Contract[]> {
-        const contracts = await this.getContractCollection<Contract>(
-            CONTRACTS_COLLECTION
-        );
+        const contracts =
+            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
         return [...contracts];
     }
 
