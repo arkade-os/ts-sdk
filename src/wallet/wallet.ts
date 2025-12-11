@@ -348,14 +348,28 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
+        // Use ContractManager if available (single source of truth for VTXOs)
+        if (this.supportsContractManager() && this._contractManager) {
+            const vtxosMap = await this._contractManager.getContractVtxos({
+                contractIds: [this.defaultContractId],
+                activeOnly: false,
+                includeSpent: filter?.withUnrolled ?? false,
+            });
+
+            let vtxos = vtxosMap.get(this.defaultContractId) || [];
+
+            // Apply filter for recoverable
+            if (!filter?.withRecoverable) {
+                vtxos = vtxos.filter(
+                    (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
+                );
+            }
+
+            return vtxos;
+        }
+
+        // Fallback: direct API call
         const address = await this.getAddress();
-
-        // Try to get from cache first first (optional fast path)
-        // const cachedVtxos = await this.walletRepository.getVtxos(address);
-        // if (cachedVtxos.length) return cachedVtxos;
-
-        // For now, always fetch fresh data from provider and update cache
-        // In future, we can add cache invalidation logic based on timestamps
         const vtxos = await this.getVirtualCoins(filter);
         const extendedVtxos = vtxos.map((vtxo) =>
             extendVirtualCoin(this, vtxo)
@@ -1594,8 +1608,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         >;
         return (
             typeof repo.getContracts === "function" &&
-            typeof repo.saveContract === "function" &&
-            typeof repo.getContractVtxos === "function"
+            typeof repo.saveContract === "function"
         );
     }
 
@@ -1646,6 +1659,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this
                 .contractRepository as ContractManagerRepository,
+            walletRepository: this.walletRepository,
             extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
             getDefaultAddress: () => this.getAddress(),
             executeSweep: async (

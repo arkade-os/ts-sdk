@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 import { IndexerProvider } from "../providers/indexer";
 import { ContractManagerRepository } from "../repositories/contractRepository";
+import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
     ContractVtxo,
@@ -30,6 +31,9 @@ export interface ContractManagerConfig {
 
     /** The contract repository for persistence */
     contractRepository: ContractManagerRepository;
+
+    /** The wallet repository for VTXO storage (single source of truth) */
+    walletRepository?: WalletRepository;
 
     /** Function to extend VirtualCoin to ExtendedVirtualCoin */
     extendVtxo: (vtxo: VirtualCoin) => ExtendedVirtualCoin;
@@ -120,10 +124,10 @@ export class ContractManager {
     constructor(config: ContractManagerConfig) {
         this.config = config;
 
-        // Create watcher with repository for VTXO caching
+        // Create watcher with wallet repository for VTXO caching
         this.watcher = new ContractWatcher({
             indexerProvider: config.indexerProvider,
-            contractRepository: config.contractRepository,
+            walletRepository: config.walletRepository,
             ...config.watcherConfig,
         });
 
@@ -231,7 +235,10 @@ export class ContractManager {
      */
     async getContractByScript(script: string): Promise<Contract | null> {
         this.ensureInitialized();
-        return this.config.contractRepository.getContractByScript(script);
+        const contracts = await this.config.contractRepository.getContracts({
+            script,
+        });
+        return contracts[0] || null;
     }
 
     /**
@@ -256,7 +263,7 @@ export class ContractManager {
      */
     async getContractsByState(state: ContractState): Promise<Contract[]> {
         this.ensureInitialized();
-        return this.config.contractRepository.getContractsByState(state);
+        return this.config.contractRepository.getContracts({ state });
     }
 
     /**
@@ -348,8 +355,10 @@ export class ContractManager {
     ): Promise<Contract> {
         this.ensureInitialized();
 
-        const existing =
-            await this.config.contractRepository.getContractById(id);
+        const contracts = await this.config.contractRepository.getContracts({
+            id,
+        });
+        const existing = contracts[0];
         if (!existing) {
             throw new Error(`Contract ${id} not found`);
         }
@@ -371,7 +380,16 @@ export class ContractManager {
     async setContractState(id: string, state: ContractState): Promise<void> {
         this.ensureInitialized();
 
-        await this.config.contractRepository.updateContractState(id, state);
+        const contracts = await this.config.contractRepository.getContracts({
+            id,
+        });
+        const contract = contracts[0];
+        if (!contract) {
+            throw new Error(`Contract ${id} not found`);
+        }
+
+        const updated: Contract = { ...contract, state };
+        await this.config.contractRepository.saveContract(updated);
         await this.watcher.setContractActive(id, state === "active");
     }
 
@@ -404,21 +422,15 @@ export class ContractManager {
             throw new Error(`Contract ${id} not found`);
         }
 
-        const updatedData = {
-            ...contract.data,
-            ...data,
-        };
-
-        await this.config.contractRepository.updateContractData(
-            id,
-            updatedData
-        );
-
-        // Update in watcher
         const updatedContract: Contract = {
             ...contract,
-            data: updatedData,
+            data: {
+                ...contract.data,
+                ...data,
+            },
         };
+
+        await this.config.contractRepository.saveContract(updatedContract);
         await this.watcher.updateContract(updatedContract);
     }
 

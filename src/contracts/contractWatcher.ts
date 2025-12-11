@@ -1,6 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
-import { ContractManagerRepository } from "../repositories/contractRepository";
+import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
     ContractVtxo,
@@ -17,8 +17,8 @@ export interface ContractWatcherConfig {
     /** The indexer provider to use for subscriptions and queries */
     indexerProvider: IndexerProvider;
 
-    /** The contract repository for VTXO persistence (optional) */
-    contractRepository?: ContractManagerRepository;
+    /** The wallet repository for VTXO persistence (optional) */
+    walletRepository?: WalletRepository;
 
     /**
      * Interval for failsafe polling (ms).
@@ -97,9 +97,9 @@ type ConnectionState =
  */
 export class ContractWatcher {
     private config: Required<
-        Omit<ContractWatcherConfig, "contractRepository">
+        Omit<ContractWatcherConfig, "walletRepository">
     > &
-        Pick<ContractWatcherConfig, "contractRepository">;
+        Pick<ContractWatcherConfig, "walletRepository">;
     private contracts: Map<string, ContractState> = new Map();
     private scriptToContract: Map<string, string> = new Map(); // script -> contractId
     private subscriptionId?: string;
@@ -269,18 +269,24 @@ export class ContractWatcher {
         }
 
         const result = new Map<string, ContractVtxo[]>();
-        const repo = this.config.contractRepository;
+        const repo = this.config.walletRepository;
 
         // Try cache first for all contracts (if not forcing refresh)
         const contractsNeedingFetch: ContractState[] = [];
 
         if (!refresh && repo) {
             for (const state of contractsToQuery) {
-                const cached = await repo.getContractVtxos(state.contract.id);
+                // Use contract address as cache key
+                const cached = await repo.getVtxos(state.contract.address);
                 if (cached.length > 0) {
+                    // Convert to ContractVtxo with contractId
+                    const contractVtxos: ContractVtxo[] = cached.map((v) => ({
+                        ...v,
+                        contractId: state.contract.id,
+                    }));
                     const filtered = includeSpent
-                        ? cached
-                        : cached.filter((v) => !v.isSpent);
+                        ? contractVtxos
+                        : contractVtxos.filter((v) => !v.isSpent);
                     result.set(state.contract.id, filtered);
                 } else {
                     contractsNeedingFetch.push(state);
@@ -302,7 +308,13 @@ export class ContractWatcher {
             for (const [contractId, vtxos] of fetched) {
                 result.set(contractId, vtxos);
                 if (repo) {
-                    await repo.saveContractVtxos(contractId, vtxos);
+                    const contract = contractsNeedingFetch.find(
+                        (s) => s.contract.id === contractId
+                    )?.contract;
+                    if (contract) {
+                        // Save using contract address as key
+                        await repo.saveVtxos(contract.address, vtxos);
+                    }
                 }
             }
         }
