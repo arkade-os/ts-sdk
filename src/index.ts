@@ -30,6 +30,7 @@ import {
     TxKey,
     GetVtxosFilter,
     TapLeaves,
+    StorageConfig,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import { Wallet, waitForIncomingFunds, IncomingFunds } from "./wallet/wallet";
@@ -131,6 +132,8 @@ import { Unroll } from "./wallet/unroll";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
+import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
+import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 
 export {
     // Wallets
@@ -201,6 +204,8 @@ export {
     // Repositories
     WalletRepositoryImpl,
     ContractRepositoryImpl,
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
 
     // Intent proof
     Intent,
@@ -309,4 +314,7 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Storage
+    StorageConfig,
 };

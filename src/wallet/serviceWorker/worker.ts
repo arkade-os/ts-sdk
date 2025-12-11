@@ -10,8 +10,9 @@ import {
     isRecoverable,
     isSpendable,
     isSubdust,
+    StorageConfig,
 } from "..";
-import { Wallet } from "../wallet";
+import { processStorageConfig, Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
@@ -25,6 +26,7 @@ import {
 } from "../../repositories/walletRepository";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
+import { ContractRepository } from "../../repositories/contractRepository";
 
 /**
  * Worker is a class letting to interact with ServiceWorkerWallet from the client
@@ -36,17 +38,18 @@ export class Worker {
     private indexerProvider: IndexerProvider | undefined;
     private incomingFundsSubscription: (() => void) | undefined;
     private walletRepository: WalletRepository;
-    private storage: IndexedDBStorageAdapter;
+    private contractRepository: ContractRepository;
 
     constructor(
-        readonly dbName: string = DEFAULT_DB_NAME,
-        readonly dbVersion: number = 1,
+        storage: StorageConfig = new IndexedDBStorageAdapter(DEFAULT_DB_NAME),
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
     ) {
-        this.storage = new IndexedDBStorageAdapter(dbName, dbVersion);
-        this.walletRepository = new WalletRepositoryImpl(this.storage);
+        const { walletRepository, contractRepository } =
+            processStorageConfig(storage);
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
     }
 
     /**
@@ -145,12 +148,6 @@ export class Worker {
 
     async clear() {
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
-
-        // Clear storage - this replaces vtxoRepository.close()
-        await this.storage.clear();
-
-        // Reset in-memory caches by recreating the repository
-        this.walletRepository = new WalletRepositoryImpl(this.storage);
 
         this.wallet = undefined;
         this.arkProvider = undefined;
@@ -307,7 +304,10 @@ export class Worker {
                 identity,
                 arkServerUrl,
                 arkServerPublicKey,
-                storage: this.storage, // Use unified storage for wallet too
+                storage: {
+                    walletRepository: this.walletRepository,
+                    contractRepository: this.contractRepository,
+                },
             });
 
             event.source?.postMessage(Response.walletInitialized(message.id));

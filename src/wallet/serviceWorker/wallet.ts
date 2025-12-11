@@ -7,6 +7,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    StorageConfig,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -19,6 +20,7 @@ import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
 import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
+import { processStorageConfig } from "../wallet";
 
 export type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -73,9 +75,8 @@ interface ServiceWorkerWalletOptions {
     arkServerPublicKey?: string;
     arkServerUrl: string;
     esploraUrl?: string;
-    dbName?: string;
-    dbVersion?: number;
     identity: PrivateKeyIdentity;
+    storage?: StorageConfig;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -105,14 +106,9 @@ export class ServiceWorkerWallet implements IWallet {
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
         // Default to IndexedDB for service worker context
-        const storage = new IndexedDBStorageAdapter(
-            options.dbName || DEFAULT_DB_NAME,
-            options.dbVersion
+        const { walletRepository, contractRepository } = processStorageConfig(
+            options.storage ?? new IndexedDBStorageAdapter(DEFAULT_DB_NAME)
         );
-
-        // Create repositories
-        const walletRepo = new WalletRepositoryImpl(storage);
-        const contractRepo = new ContractRepositoryImpl(storage);
 
         // Extract identity and check if it can expose private key
         const identity = isPrivateKeyIdentity(options.identity)
@@ -131,8 +127,8 @@ export class ServiceWorkerWallet implements IWallet {
         const wallet = new ServiceWorkerWallet(
             options.serviceWorker,
             identity,
-            walletRepo,
-            contractRepo
+            walletRepository,
+            contractRepository
         );
 
         // Initialize the service worker with the config
