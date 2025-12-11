@@ -7,6 +7,8 @@ import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import { ContractWatcherConfig } from "../contracts/contractWatcher";
+import { SweeperConfig } from "../contracts/types";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -103,6 +105,16 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
 export interface WalletConfig extends ReadonlyWalletConfig {
     identity: Identity;
     renewalConfig?: RenewalConfig;
+    /**
+     * Configuration for the ContractManager's watcher.
+     * Controls reconnection behavior and failsafe polling.
+     */
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /**
+     * Configuration for the ContractManager's sweeper.
+     * Controls automatic sweeping of spendable contract VTXOs.
+     */
+    sweeperConfig?: Partial<SweeperConfig>;
 }
 
 /**

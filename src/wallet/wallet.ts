@@ -71,11 +71,24 @@ import {
 } from "../repositories/walletRepository";
 import {
     ContractRepository,
+    ContractManagerRepository,
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
+import {
+    ContractManager,
+    ContractManagerConfig,
+    CreateContractParams,
+} from "../contracts/contractManager";
+import {
+    Contract,
+    ContractVtxo,
+    ContractEvent,
+    ContractEventCallback,
+    SweeperConfig,
+} from "../contracts/types";
 
 export type IncomingFunds =
     | {
@@ -265,6 +278,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.network.hrp,
             this.arkServerPublicKey
         );
+    }
+
+    /**
+     * Get the contract ID for the wallet's default address.
+     * This is the pkScript hex, used to identify the wallet in ContractManager.
+     */
+    get defaultContractId(): string {
+        return hex.encode(this.offchainTapscript.pkScript);
     }
 
     async getAddress(): Promise<string> {
@@ -1556,6 +1577,207 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         return inputs;
+    }
+
+    // ========================================================================
+    // Contract Management
+    // ========================================================================
+
+    /**
+     * Check if the wallet's ContractRepository supports ContractManager functionality.
+     * Returns true if the repository implements ContractManagerRepository methods.
+     */
+    supportsContractManager(): boolean {
+        const repo = this.contractRepository as unknown as Record<string, unknown>;
+        return (
+            typeof repo.getContracts === "function" &&
+            typeof repo.saveContract === "function" &&
+            typeof repo.getContractVtxos === "function"
+        );
+    }
+
+    /**
+     * Get the ContractManager for managing contracts including the wallet's default address.
+     *
+     * The ContractManager handles:
+     * - The wallet's default receiving address (as a "default" contract)
+     * - External contracts (Boltz swaps, HTLCs, etc.)
+     * - Multi-contract watching with resilient connections
+     * - Automatic sweeping of spendable contract VTXOs
+     *
+     * @example
+     * ```typescript
+     * const manager = await wallet.getContractManager();
+     *
+     * // Create a contract for a Boltz swap
+     * const contract = await manager.createContract({
+     *   label: "Boltz Swap",
+     *   type: "vhtlc",
+     *   params: { ... },
+     *   script: swapScript,
+     *   address: swapAddress,
+     *   autoSweep: true,
+     * });
+     *
+     * // Start watching for events (includes wallet's default address)
+     * const stop = await manager.startWatching((event) => {
+     *   console.log(`${event.type} on ${event.contractId}`);
+     * });
+     * ```
+     */
+    async getContractManager(): Promise<ContractManager> {
+        if (!this.supportsContractManager()) {
+            throw new Error(
+                "ContractManager requires a ContractManagerRepository. " +
+                "The provided ContractRepository does not implement the required methods. " +
+                "Use ContractRepositoryImpl or implement ContractManagerRepository."
+            );
+        }
+        if (this._contractManager) {
+            return this._contractManager;
+        }
+
+        const self = this;
+
+        this._contractManager = new ContractManager({
+            indexerProvider: this.indexerProvider,
+            contractRepository: this.contractRepository as ContractManagerRepository,
+            extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
+            getDefaultAddress: () => this.getAddress(),
+            executeSweep: async (vtxos: ContractVtxo[], destination: string) => {
+                // Use settle to sweep VTXOs to the destination
+                return self.sweepContractVtxos(vtxos, destination);
+            },
+            watcherConfig: this.watcherConfig,
+            sweeperConfig: this.sweeperConfig,
+        });
+
+        await this._contractManager.initialize();
+
+        // Register the wallet's default address as a contract
+        // This ensures it's watched alongside any external contracts
+        // Contract ID defaults to script, so no need to specify id explicitly
+        await this._contractManager.createContract({
+            type: "default",
+            params: {},
+            script: this.defaultContractId,
+            address: await this.getAddress(),
+            state: "active",
+        });
+
+        return this._contractManager;
+    }
+
+    /**
+     * Register an external contract to watch.
+     *
+     * Convenience method that delegates to ContractManager.
+     *
+     * @param params - Contract parameters
+     * @returns The created contract
+     */
+    async registerContract(params: CreateContractParams): Promise<Contract> {
+        const manager = await this.getContractManager();
+        return manager.createContract(params);
+    }
+
+    /**
+     * Get all registered contracts.
+     */
+    async getContracts(): Promise<Contract[]> {
+        const manager = await this.getContractManager();
+        return manager.getAllContracts();
+    }
+
+    /**
+     * Get active contracts only.
+     */
+    async getActiveContracts(): Promise<Contract[]> {
+        const manager = await this.getContractManager();
+        return manager.getActiveContracts();
+    }
+
+    /**
+     * Get a contract by ID.
+     */
+    async getContractById(id: string): Promise<Contract | null> {
+        const manager = await this.getContractManager();
+        return manager.getContract(id);
+    }
+
+    /**
+     * Deactivate a contract (stop watching it).
+     */
+    async deactivateContract(contractId: string): Promise<void> {
+        const manager = await this.getContractManager();
+        await manager.deactivateContract(contractId);
+    }
+
+    /**
+     * Update a contract's runtime data (e.g., set preimage for HTLC).
+     */
+    async updateContractData(
+        contractId: string,
+        data: Record<string, string>
+    ): Promise<void> {
+        const manager = await this.getContractManager();
+        await manager.updateContractData(contractId, data);
+    }
+
+    /**
+     * Get VTXOs for all active contracts.
+     */
+    async getContractVtxos(): Promise<Map<string, ContractVtxo[]>> {
+        const manager = await this.getContractManager();
+        return manager.getContractVtxos({ activeOnly: true });
+    }
+
+    /**
+     * Start watching for contract events.
+     *
+     * @param callback - Event callback
+     * @returns Stop function
+     */
+    async watchContracts(
+        callback: ContractEventCallback
+    ): Promise<() => void> {
+        const manager = await this.getContractManager();
+        return manager.startWatching(callback);
+    }
+
+    /**
+     * Sweep all eligible contract VTXOs to the wallet's default address.
+     */
+    async sweepAllContracts(): Promise<string[]> {
+        const manager = await this.getContractManager();
+        const results = await manager.sweepAll();
+        return results.map((r) => r.txid);
+    }
+
+    /**
+     * Internal method to sweep contract VTXOs via settlement.
+     * Used by the ContractSweeper.
+     */
+    private async sweepContractVtxos(
+        vtxos: ContractVtxo[],
+        destination: string
+    ): Promise<string> {
+        if (vtxos.length === 0) {
+            throw new Error("No VTXOs to sweep");
+        }
+
+        const totalValue = vtxos.reduce((sum, v) => sum + v.value, 0);
+
+        // Use settle to move the VTXOs
+        return this.settle({
+            inputs: vtxos,
+            outputs: [
+                {
+                    address: destination,
+                    amount: BigInt(totalValue),
+                },
+            ],
+        });
     }
 }
 

@@ -1,8 +1,12 @@
 import { StorageAdapter } from "../storage";
+import { Contract, ContractState, ContractVtxo } from "../contracts/types";
 
 const getContractStorageKey = (id: string, key: string) =>
     `contract:${id}:${key}`;
 const getCollectionStorageKey = (type: string) => `collection:${type}`;
+
+/** Storage key for the contracts collection */
+const CONTRACTS_COLLECTION = "ark_contracts";
 
 export interface ContractRepository {
     // Generic contract metadata (for SDK users like boltz-swap)
@@ -23,9 +27,77 @@ export interface ContractRepository {
         id: T[K],
         idField: K
     ): Promise<void>;
+
 }
 
-export class ContractRepositoryImpl implements ContractRepository {
+/**
+ * Extended repository interface for ContractManager functionality.
+ * Implementations must provide these methods to use ContractManager.
+ */
+export interface ContractManagerRepository extends ContractRepository {
+    // Contract entity management (for Ark contracts with addresses)
+    /**
+     * Get all stored contracts.
+     */
+    getContracts(): Promise<Contract[]>;
+
+    /**
+     * Get contracts filtered by state.
+     */
+    getContractsByState(state: ContractState): Promise<Contract[]>;
+
+    /**
+     * Get a contract by ID.
+     */
+    getContractById(id: string): Promise<Contract | null>;
+
+    /**
+     * Get a contract by its script.
+     */
+    getContractByScript(script: string): Promise<Contract | null>;
+
+    /**
+     * Save or update a contract.
+     */
+    saveContract(contract: Contract): Promise<void>;
+
+    /**
+     * Delete a contract by ID.
+     */
+    deleteContract(id: string): Promise<void>;
+
+    /**
+     * Update a contract's state.
+     */
+    updateContractState(id: string, state: ContractState): Promise<void>;
+
+    /**
+     * Update a contract's runtime data.
+     */
+    updateContractData(
+        id: string,
+        data: Record<string, string>
+    ): Promise<void>;
+
+    // VTXO management for contracts
+
+    /**
+     * Get cached VTXOs for a contract.
+     */
+    getContractVtxos(contractId: string): Promise<ContractVtxo[]>;
+
+    /**
+     * Save VTXOs for a contract.
+     */
+    saveContractVtxos(contractId: string, vtxos: ContractVtxo[]): Promise<void>;
+
+    /**
+     * Clear VTXOs for a contract.
+     */
+    clearContractVtxos(contractId: string): Promise<void>;
+}
+
+export class ContractRepositoryImpl implements ContractManagerRepository {
     private storage: StorageAdapter;
 
     constructor(storage: StorageAdapter) {
@@ -185,5 +257,125 @@ export class ContractRepositoryImpl implements ContractRepository {
 
     async clearContractData(): Promise<void> {
         await this.storage.clear();
+    }
+
+    // Contract entity management methods
+
+    async getContracts(): Promise<Contract[]> {
+        const contracts = await this.getContractCollection<Contract>(
+            CONTRACTS_COLLECTION
+        );
+        return [...contracts];
+    }
+
+    async getContractsByState(state: ContractState): Promise<Contract[]> {
+        const contracts = await this.getContracts();
+        return contracts.filter((c) => c.state === state);
+    }
+
+    async getContractById(id: string): Promise<Contract | null> {
+        const contracts = await this.getContracts();
+        return contracts.find((c) => c.id === id) || null;
+    }
+
+    async getContractByScript(script: string): Promise<Contract | null> {
+        const contracts = await this.getContracts();
+        return contracts.find((c) => c.script === script) || null;
+    }
+
+    async saveContract(contract: Contract): Promise<void> {
+        await this.saveToContractCollection(
+            CONTRACTS_COLLECTION,
+            contract,
+            "id"
+        );
+    }
+
+    async deleteContract(id: string): Promise<void> {
+        await this.removeFromContractCollection<Contract, "id">(
+            CONTRACTS_COLLECTION,
+            id,
+            "id"
+        );
+    }
+
+    async updateContractState(id: string, state: ContractState): Promise<void> {
+        const contract = await this.getContractById(id);
+        if (!contract) {
+            throw new Error(`Contract ${id} not found`);
+        }
+
+        const updated: Contract = { ...contract, state };
+        await this.saveContract(updated);
+    }
+
+    async updateContractData(
+        id: string,
+        data: Record<string, string>
+    ): Promise<void> {
+        const contract = await this.getContractById(id);
+        if (!contract) {
+            throw new Error(`Contract ${id} not found`);
+        }
+
+        const updated: Contract = {
+            ...contract,
+            data: {
+                ...contract.data,
+                ...data,
+            },
+        };
+        await this.saveContract(updated);
+    }
+
+    // VTXO management methods
+
+    async getContractVtxos(contractId: string): Promise<ContractVtxo[]> {
+        const stored = await this.storage.getItem(
+            getContractStorageKey(contractId, "vtxos")
+        );
+        if (!stored) return [];
+
+        try {
+            return JSON.parse(stored) as ContractVtxo[];
+        } catch (error) {
+            console.error(
+                `Failed to parse VTXOs for contract ${contractId}:`,
+                error
+            );
+            return [];
+        }
+    }
+
+    async saveContractVtxos(
+        contractId: string,
+        vtxos: ContractVtxo[]
+    ): Promise<void> {
+        try {
+            await this.storage.setItem(
+                getContractStorageKey(contractId, "vtxos"),
+                JSON.stringify(vtxos)
+            );
+        } catch (error) {
+            console.error(
+                `Failed to persist VTXOs for contract ${contractId}:`,
+                error
+            );
+            throw error;
+        }
+    }
+
+    async clearContractVtxos(contractId: string): Promise<void> {
+        try {
+            await this.storage.removeItem(
+                getContractStorageKey(contractId, "vtxos")
+            );
+        } catch (error) {
+            console.error(
+                `Failed to clear VTXOs for contract ${contractId}:`,
+                error
+            );
+            throw error;
+        }
     }
 }
