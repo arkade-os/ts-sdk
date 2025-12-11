@@ -44,6 +44,7 @@ import {
     IWallet,
     SendBitcoinParams,
     SettleParams,
+    StorageConfig,
     TxType,
     VirtualCoin,
     WalletBalance,
@@ -260,10 +261,9 @@ export class Wallet implements IWallet {
         const forfeitAddress = Address(network).decode(info.forfeitAddress);
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
-        // Set up storage and repositories
-        const storage = config.storage || new InMemoryStorageAdapter();
-        const walletRepository = new WalletRepositoryImpl(storage);
-        const contractRepository = new ContractRepositoryImpl(storage);
+        const { walletRepository, contractRepository } = processStorageConfig(
+            config.storage ?? new InMemoryStorageAdapter()
+        );
 
         return new Wallet(
             config.identity,
@@ -1503,4 +1503,20 @@ export async function waitForIncomingFunds(
     });
 
     return promise;
+}
+
+export function processStorageConfig(config: StorageConfig): {
+    walletRepository: WalletRepository;
+    contractRepository: ContractRepository;
+} {
+    // custom repositories
+    if ("walletRepository" in config && "contractRepository" in config) {
+        return config;
+    }
+
+    // storage adapter
+    return {
+        walletRepository: new WalletRepositoryImpl(config),
+        contractRepository: new ContractRepositoryImpl(config),
+    };
 }

@@ -7,6 +7,7 @@ import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import { ContractRepository, WalletRepository } from "../repositories";
 
 /**
  * Configuration options for wallet initialization.
@@ -48,12 +49,19 @@ export interface WalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
-    storage?: StorageAdapter;
+    storage?: StorageConfig;
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
     renewalConfig?: RenewalConfig;
 }
+
+export type StorageConfig =
+    | StorageAdapter
+    | {
+          walletRepository: WalletRepository;
+          contractRepository: ContractRepository;
+      };
 
 /**
  * Provider class constructor interface for dependency injection.
