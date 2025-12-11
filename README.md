@@ -46,7 +46,7 @@ The SDK supports readonly wallets that allow you to query wallet state without e
 import { ReadonlySingleKey, ReadonlyWallet } from '@arkade-os/sdk'
 
 // Create a readonly identity from a public key
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = SingleKey.fromHex('your_public_key_hex')
 const publicKey = await identity.compressedPublicKey()
 const readonlyIdentity = ReadonlySingleKey.fromPublicKey(publicKey)
 
