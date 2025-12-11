@@ -54,7 +54,10 @@ import {
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import {
+    ServiceWorkerWallet,
+    ServiceWorkerReadonlyWallet,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -182,6 +185,7 @@ export {
     setupServiceWorker,
     Worker,
     ServiceWorkerWallet,
+    ServiceWorkerReadonlyWallet,
     Request,
     Response,
 

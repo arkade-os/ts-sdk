@@ -500,6 +500,99 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         return utxos;
     }
+
+    async notifyIncomingFunds(
+        eventCallback: (coins: IncomingFunds) => void
+    ): Promise<() => void> {
+        const arkAddress = await this.getAddress();
+        const boardingAddress = await this.getBoardingAddress();
+
+        let onchainStopFunc: () => void;
+        let indexerStopFunc: () => void;
+
+        if (this.onchainProvider && boardingAddress) {
+            const findVoutOnTx = (tx: any) => {
+                return tx.vout.findIndex(
+                    (v: any) => v.scriptpubkey_address === boardingAddress
+                );
+            };
+            onchainStopFunc = await this.onchainProvider.watchAddresses(
+                [boardingAddress],
+                (txs) => {
+                    // find all utxos belonging to our boarding address
+                    const coins: Coin[] = txs
+                        // filter txs where address is in output
+                        .filter((tx) => findVoutOnTx(tx) !== -1)
+                        // return utxo as Coin
+                        .map((tx) => {
+                            const { txid, status } = tx;
+                            const vout = findVoutOnTx(tx);
+                            const value = Number(tx.vout[vout].value);
+                            return { txid, vout, value, status };
+                        });
+
+                    // and notify via callback
+                    eventCallback({
+                        type: "utxo",
+                        coins,
+                    });
+                }
+            );
+        }
+
+        if (this.indexerProvider && arkAddress) {
+            const offchainScript = this.offchainTapscript;
+
+            const subscriptionId =
+                await this.indexerProvider.subscribeForScripts([
+                    hex.encode(offchainScript.pkScript),
+                ]);
+
+            const abortController = new AbortController();
+            const subscription = this.indexerProvider.getSubscription(
+                subscriptionId,
+                abortController.signal
+            );
+
+            indexerStopFunc = async () => {
+                abortController.abort();
+                await this.indexerProvider?.unsubscribeForScripts(
+                    subscriptionId
+                );
+            };
+
+            // Handle subscription updates asynchronously without blocking
+            (async () => {
+                try {
+                    for await (const update of subscription) {
+                        if (
+                            update.newVtxos?.length > 0 ||
+                            update.spentVtxos?.length > 0
+                        ) {
+                            eventCallback({
+                                type: "vtxo",
+                                newVtxos: update.newVtxos.map((vtxo) =>
+                                    extendVirtualCoin(this, vtxo)
+                                ),
+                                spentVtxos: update.spentVtxos.map((vtxo) =>
+                                    extendVirtualCoin(this, vtxo)
+                                ),
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error("Subscription error:", error);
+                }
+            })();
+        }
+
+        const stopFunc = () => {
+            onchainStopFunc?.();
+            indexerStopFunc?.();
+        };
+
+        return stopFunc;
+    }
 }
 
 /**
@@ -964,99 +1057,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // close the stream
             abortController.abort();
         }
-    }
-
-    async notifyIncomingFunds(
-        eventCallback: (coins: IncomingFunds) => void
-    ): Promise<() => void> {
-        const arkAddress = await this.getAddress();
-        const boardingAddress = await this.getBoardingAddress();
-
-        let onchainStopFunc: () => void;
-        let indexerStopFunc: () => void;
-
-        if (this.onchainProvider && boardingAddress) {
-            const findVoutOnTx = (tx: any) => {
-                return tx.vout.findIndex(
-                    (v: any) => v.scriptpubkey_address === boardingAddress
-                );
-            };
-            onchainStopFunc = await this.onchainProvider.watchAddresses(
-                [boardingAddress],
-                (txs) => {
-                    // find all utxos belonging to our boarding address
-                    const coins: Coin[] = txs
-                        // filter txs where address is in output
-                        .filter((tx) => findVoutOnTx(tx) !== -1)
-                        // return utxo as Coin
-                        .map((tx) => {
-                            const { txid, status } = tx;
-                            const vout = findVoutOnTx(tx);
-                            const value = Number(tx.vout[vout].value);
-                            return { txid, vout, value, status };
-                        });
-
-                    // and notify via callback
-                    eventCallback({
-                        type: "utxo",
-                        coins,
-                    });
-                }
-            );
-        }
-
-        if (this.indexerProvider && arkAddress) {
-            const offchainScript = this.offchainTapscript;
-
-            const subscriptionId =
-                await this.indexerProvider.subscribeForScripts([
-                    hex.encode(offchainScript.pkScript),
-                ]);
-
-            const abortController = new AbortController();
-            const subscription = this.indexerProvider.getSubscription(
-                subscriptionId,
-                abortController.signal
-            );
-
-            indexerStopFunc = async () => {
-                abortController.abort();
-                await this.indexerProvider?.unsubscribeForScripts(
-                    subscriptionId
-                );
-            };
-
-            // Handle subscription updates asynchronously without blocking
-            (async () => {
-                try {
-                    for await (const update of subscription) {
-                        if (
-                            update.newVtxos?.length > 0 ||
-                            update.spentVtxos?.length > 0
-                        ) {
-                            eventCallback({
-                                type: "vtxo",
-                                newVtxos: update.newVtxos.map((vtxo) =>
-                                    extendVirtualCoin(this, vtxo)
-                                ),
-                                spentVtxos: update.spentVtxos.map((vtxo) =>
-                                    extendVirtualCoin(this, vtxo)
-                                ),
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.error("Subscription error:", error);
-                }
-            })();
-        }
-
-        const stopFunc = () => {
-            onchainStopFunc?.();
-            indexerStopFunc?.();
-        };
-
-        return stopFunc;
     }
 
     private async handleSettlementFinalizationEvent(

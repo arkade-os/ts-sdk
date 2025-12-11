@@ -32,7 +32,7 @@ export namespace Request {
 
     export interface InitWallet extends Base {
         type: "INIT_WALLET";
-        privateKey: string;
+        key: { privateKey: string } | { publicKey: string };
         arkServerUrl: string;
         arkServerPublicKey?: string;
     }
@@ -42,8 +42,6 @@ export namespace Request {
             message.type === "INIT_WALLET" &&
             "arkServerUrl" in message &&
             typeof message.arkServerUrl === "string" &&
-            "privateKey" in message &&
-            typeof message.privateKey === "string" &&
             ("arkServerPublicKey" in message
                 ? message.arkServerPublicKey === undefined ||
                   typeof message.arkServerPublicKey === "string"

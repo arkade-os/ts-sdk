@@ -2,7 +2,7 @@ import type { Coin, ExtendedCoin, ExtendedVirtualCoin, VirtualCoin } from "..";
 import { ReadonlyWallet } from "./wallet";
 
 export function extendVirtualCoin(
-    wallet: ReadonlyWallet,
+    wallet: { offchainTapscript: ReadonlyWallet["offchainTapscript"] },
     vtxo: VirtualCoin
 ): ExtendedVirtualCoin {
     return {
@@ -13,7 +13,10 @@ export function extendVirtualCoin(
     };
 }
 
-export function extendCoin(wallet: ReadonlyWallet, utxo: Coin): ExtendedCoin {
+export function extendCoin(
+    wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
+    utxo: Coin
+): ExtendedCoin {
     return {
         ...utxo,
         forfeitTapLeafScript: wallet.boardingTapscript.forfeit(),

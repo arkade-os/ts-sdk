@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
+
 declare const self: ServiceWorkerGlobalScope;
 
-import { SingleKey } from "../../identity/singleKey";
+import { ReadonlySingleKey, SingleKey } from "../../identity/singleKey";
 import {
     ArkTransaction,
     ExtendedCoin,
@@ -11,7 +12,7 @@ import {
     isSpendable,
     isSubdust,
 } from "..";
-import { Wallet } from "../wallet";
+import { ReadonlyWallet, Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
@@ -26,12 +27,97 @@ import {
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
 
+class ReadonlyHandler {
+    constructor(protected readonly wallet: ReadonlyWallet) {}
+
+    get offchainTapscript() {
+        return this.wallet.offchainTapscript;
+    }
+    get boardingTapscript() {
+        return this.wallet.boardingTapscript;
+    }
+    get onchainProvider() {
+        return this.wallet.onchainProvider;
+    }
+    get dustAmount() {
+        return this.wallet.dustAmount;
+    }
+    get identity() {
+        return this.wallet.identity;
+    }
+
+    notifyIncomingFunds(
+        ...args: Parameters<ReadonlyWallet["notifyIncomingFunds"]>
+    ) {
+        return this.wallet.notifyIncomingFunds(...args);
+    }
+
+    getAddress() {
+        return this.wallet.getAddress();
+    }
+
+    getBoardingAddress() {
+        return this.wallet.getBoardingAddress();
+    }
+
+    getBoardingTxs() {
+        return this.wallet.getBoardingTxs();
+    }
+
+    async handleReload(
+        _: ExtendedVirtualCoin[]
+    ): Promise<Awaited<ReturnType<Wallet["finalizePendingTxs"]>> | undefined> {
+        return undefined;
+    }
+
+    async handleSettle(
+        ..._: Parameters<Wallet["settle"]>
+    ): Promise<Awaited<ReturnType<Wallet["settle"]>> | undefined> {
+        return undefined;
+    }
+
+    async handleSendBitcoin(
+        ..._: Parameters<Wallet["sendBitcoin"]>
+    ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
+        return undefined;
+    }
+}
+
+class Handler extends ReadonlyHandler {
+    constructor(protected readonly wallet: Wallet) {
+        super(wallet);
+    }
+
+    async handleReload(vtxos: ExtendedVirtualCoin[]) {
+        return this.wallet.finalizePendingTxs(
+            vtxos.filter(
+                (vtxo) =>
+                    vtxo.virtualStatus.state !== "swept" &&
+                    vtxo.virtualStatus.state !== "settled"
+            )
+        );
+    }
+
+    async handleSettle(...args: Parameters<Wallet["settle"]>) {
+        return this.wallet.settle(...args);
+    }
+
+    async handleSendBitcoin(
+        ...args: Parameters<Wallet["sendBitcoin"]>
+    ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
+        return this.wallet.sendBitcoin(...args);
+    }
+}
+
 /**
- * Worker is a class letting to interact with ServiceWorkerWallet from the client
- * it aims to be run in a service worker context
+ * Worker is a class letting to interact with ServiceWorkerWallet and ServiceWorkerReadonlyWallet from
+ * the client; it aims to be run in a service worker context.
+ *
+ * The messages requiring a Wallet rather than a ReadonlyWallet result in no-op
+ * without errors.
  */
 export class Worker {
-    private wallet: Wallet | undefined;
+    private handler: ReadonlyHandler | undefined;
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private incomingFundsSubscription: (() => void) | undefined;
@@ -53,8 +139,8 @@ export class Worker {
      * Get spendable vtxos for the current wallet address
      */
     private async getSpendableVtxos() {
-        if (!this.wallet) return [];
-        const address = await this.wallet.getAddress();
+        if (!this.handler) return [];
+        const address = await this.handler.getAddress();
         const allVtxos = await this.walletRepository.getVtxos(address);
         return allVtxos.filter(isSpendable);
     }
@@ -63,8 +149,8 @@ export class Worker {
      * Get swept vtxos for the current wallet address
      */
     private async getSweptVtxos() {
-        if (!this.wallet) return [];
-        const address = await this.wallet.getAddress();
+        if (!this.handler) return [];
+        const address = await this.handler.getAddress();
         const allVtxos = await this.walletRepository.getVtxos(address);
         return allVtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
     }
@@ -73,8 +159,8 @@ export class Worker {
      * Get all vtxos categorized by type
      */
     private async getAllVtxos() {
-        if (!this.wallet) return { spendable: [], spent: [] };
-        const address = await this.wallet.getAddress();
+        if (!this.handler) return { spendable: [], spent: [] };
+        const address = await this.handler.getAddress();
         const allVtxos = await this.walletRepository.getVtxos(address);
 
         return {
@@ -87,20 +173,20 @@ export class Worker {
      * Get all boarding utxos from wallet repository
      */
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
-        if (!this.wallet) return [];
-        const address = await this.wallet.getBoardingAddress();
+        if (!this.handler) return [];
+        const address = await this.handler.getBoardingAddress();
 
         return await this.walletRepository.getUtxos(address);
     }
 
     private async getTransactionHistory(): Promise<ArkTransaction[]> {
-        if (!this.wallet) return [];
+        if (!this.handler) return [];
 
         let txs: ArkTransaction[] = [];
 
         try {
             const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
-                await this.wallet.getBoardingTxs();
+                await this.handler.getBoardingTxs();
 
             const { spendable, spent } = await this.getAllVtxos();
 
@@ -152,7 +238,7 @@ export class Worker {
         // Reset in-memory caches by recreating the repository
         this.walletRepository = new WalletRepositoryImpl(this.storage);
 
-        this.wallet = undefined;
+        this.handler = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
     }
@@ -163,51 +249,52 @@ export class Worker {
 
     private async onWalletInitialized() {
         if (
-            !this.wallet ||
+            !this.handler ||
             !this.arkProvider ||
             !this.indexerProvider ||
-            !this.wallet.offchainTapscript ||
-            !this.wallet.boardingTapscript
+            !this.handler.offchainTapscript ||
+            !this.handler.boardingTapscript
         ) {
             return;
         }
 
         // Get public key script and set the initial vtxos state
-        const script = hex.encode(this.wallet.offchainTapscript.pkScript);
+        const script = hex.encode(this.handler.offchainTapscript.pkScript);
         const response = await this.indexerProvider.getVtxos({
             scripts: [script],
         });
         const vtxos = response.vtxos.map((vtxo) =>
-            extendVirtualCoin(this.wallet!, vtxo)
+            extendVirtualCoin(this.handler!, vtxo)
         );
 
         try {
             // recover pending transactions
-            const { finalized, pending } = await this.wallet.finalizePendingTxs(
-                vtxos.filter(
-                    (vtxo) =>
-                        vtxo.virtualStatus.state !== "swept" &&
-                        vtxo.virtualStatus.state !== "settled"
-                )
-            );
-            console.info(
-                `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
-            );
+            const result = await this.handler.handleReload(vtxos);
+            if (result) {
+                const { finalized, pending } = result;
+                console.info(
+                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
+                );
+            } else {
+                console.info(
+                    "Readonly wallet, no pending transactions to recover"
+                );
+            }
         } catch (error: unknown) {
             console.error("Error recovering pending transactions:", error);
         }
 
         // Get wallet address and save vtxos using unified repository
-        const address = await this.wallet.getAddress();
+        const address = await this.handler.getAddress();
         await this.walletRepository.saveVtxos(address, vtxos);
 
         // Fetch boarding utxos and save using unified repository
-        const boardingAddress = await this.wallet.getBoardingAddress();
+        const boardingAddress = await this.handler.getBoardingAddress();
         const coins =
-            await this.wallet.onchainProvider.getCoins(boardingAddress);
+            await this.handler.onchainProvider.getCoins(boardingAddress);
         await this.walletRepository.saveUtxos(
             boardingAddress,
-            coins.map((utxo) => extendCoin(this.wallet!, utxo))
+            coins.map((utxo) => extendCoin(this.handler!, utxo))
         );
 
         // Get transaction history to cache boarding txs
@@ -218,19 +305,19 @@ export class Worker {
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
 
         // subscribe for incoming funds and notify all clients when new funds arrive
-        this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
+        this.incomingFundsSubscription = await this.handler.notifyIncomingFunds(
             async (funds) => {
                 if (funds.type === "vtxo") {
                     const newVtxos =
                         funds.newVtxos.length > 0
                             ? funds.newVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.wallet!, vtxo)
+                                  extendVirtualCoin(this.handler!, vtxo)
                               )
                             : [];
                     const spentVtxos =
                         funds.spentVtxos.length > 0
                             ? funds.spentVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.wallet!, vtxo)
+                                  extendVirtualCoin(this.handler!, vtxo)
                               )
                             : [];
 
@@ -249,11 +336,11 @@ export class Worker {
                 }
                 if (funds.type === "utxo") {
                     const utxos = funds.coins.map((utxo) =>
-                        extendCoin(this.wallet!, utxo)
+                        extendCoin(this.handler!, utxo)
                     );
 
                     const boardingAddress =
-                        await this.wallet?.getBoardingAddress()!;
+                        await this.handler?.getBoardingAddress()!;
 
                     // save utxos using unified repository
                     await this.walletRepository.clearUtxos(boardingAddress);
@@ -281,37 +368,61 @@ export class Worker {
     }
 
     private async handleInitWallet(event: ExtendableMessageEvent) {
-        const message = event.data;
-        if (!Request.isInitWallet(message)) {
-            console.error("Invalid INIT_WALLET message format", message);
+        if (!Request.isInitWallet(event.data)) {
+            console.error("Invalid INIT_WALLET message format", event.data);
             event.source?.postMessage(
-                Response.error(message.id, "Invalid INIT_WALLET message format")
+                Response.error(
+                    event.data.id,
+                    "Invalid INIT_WALLET message format"
+                )
             );
             return;
         }
 
-        if (!message.privateKey) {
-            const err = "Missing privateKey";
-            event.source?.postMessage(Response.error(message.id, err));
-            console.error(err);
-            return;
-        }
+        const message = event.data;
+        const { arkServerPublicKey, arkServerUrl } = message;
+        this.arkProvider = new RestArkProvider(arkServerUrl);
+        this.indexerProvider = new RestIndexerProvider(arkServerUrl);
 
         try {
-            const { arkServerPublicKey, arkServerUrl, privateKey } = message;
-            const identity = SingleKey.fromHex(privateKey);
-            this.arkProvider = new RestArkProvider(arkServerUrl);
-            this.indexerProvider = new RestIndexerProvider(arkServerUrl);
-
-            this.wallet = await Wallet.create({
-                identity,
-                arkServerUrl,
-                arkServerPublicKey,
-                storage: this.storage, // Use unified storage for wallet too
-            });
-
-            event.source?.postMessage(Response.walletInitialized(message.id));
-            await this.onWalletInitialized();
+            if (
+                "privateKey" in message.key &&
+                typeof message.key.privateKey === "string"
+            ) {
+                const {
+                    key: { privateKey },
+                } = message;
+                const identity = SingleKey.fromHex(privateKey);
+                const wallet = await Wallet.create({
+                    identity,
+                    arkServerUrl,
+                    arkServerPublicKey,
+                    storage: this.storage, // Use unified storage for wallet too
+                });
+                this.handler = new Handler(wallet);
+            } else if (
+                "publicKey" in message.key &&
+                typeof message.key.publicKey === "string"
+            ) {
+                const {
+                    key: { publicKey },
+                } = message;
+                const identity = ReadonlySingleKey.fromPublicKey(
+                    hex.decode(publicKey)
+                );
+                const wallet = await ReadonlyWallet.create({
+                    identity,
+                    arkServerUrl,
+                    arkServerPublicKey,
+                    storage: this.storage, // Use unified storage for wallet too
+                });
+                this.handler = new ReadonlyHandler(wallet);
+            } else {
+                const err = "Missing privateKey or publicKey in key object";
+                event.source?.postMessage(Response.error(message.id, err));
+                console.error(err);
+                return;
+            }
         } catch (error: unknown) {
             console.error("Error initializing wallet:", error);
             const errorMessage =
@@ -319,7 +430,11 @@ export class Worker {
                     ? error.message
                     : "Unknown error occurred";
             event.source?.postMessage(Response.error(message.id, errorMessage));
+            return;
         }
+
+        event.source?.postMessage(Response.walletInitialized(message.id));
+        await this.onWalletInitialized();
     }
 
     private async handleSettle(event: ExtendableMessageEvent) {
@@ -333,7 +448,7 @@ export class Worker {
         }
 
         try {
-            if (!this.wallet) {
+            if (!this.handler) {
                 console.error("Wallet not initialized");
                 event.source?.postMessage(
                     Response.error(message.id, "Wallet not initialized")
@@ -341,11 +456,20 @@ export class Worker {
                 return;
             }
 
-            const txid = await this.wallet.settle(message.params, (e) => {
-                event.source?.postMessage(Response.settleEvent(message.id, e));
-            });
+            const txid = await this.handler.handleSettle(
+                message.params,
+                (e) => {
+                    event.source?.postMessage(
+                        Response.settleEvent(message.id, e)
+                    );
+                }
+            );
 
-            event.source?.postMessage(Response.settleSuccess(message.id, txid));
+            if (txid) {
+                event.source?.postMessage(
+                    Response.settleSuccess(message.id, txid)
+                );
+            }
         } catch (error: unknown) {
             console.error("Error settling:", error);
             const errorMessage =
@@ -369,7 +493,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.error(message.id, "Wallet not initialized")
@@ -378,10 +502,12 @@ export class Worker {
         }
 
         try {
-            const txid = await this.wallet.sendBitcoin(message.params);
-            event.source?.postMessage(
-                Response.sendBitcoinSuccess(message.id, txid)
-            );
+            const txid = await this.handler.handleSendBitcoin(message.params);
+            if (txid) {
+                event.source?.postMessage(
+                    Response.sendBitcoinSuccess(message.id, txid)
+                );
+            }
         } catch (error: unknown) {
             console.error("Error sending bitcoin:", error);
             const errorMessage =
@@ -402,7 +528,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.error(message.id, "Wallet not initialized")
@@ -411,7 +537,7 @@ export class Worker {
         }
 
         try {
-            const address = await this.wallet.getAddress();
+            const address = await this.handler.getAddress();
             event.source?.postMessage(Response.address(message.id, address));
         } catch (error: unknown) {
             console.error("Error getting address:", error);
@@ -439,7 +565,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.error(message.id, "Wallet not initialized")
@@ -448,7 +574,7 @@ export class Worker {
         }
 
         try {
-            const address = await this.wallet.getBoardingAddress();
+            const address = await this.handler.getBoardingAddress();
             event.source?.postMessage(
                 Response.boardingAddress(message.id, address)
             );
@@ -472,7 +598,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.error(message.id, "Wallet not initialized")
@@ -553,7 +679,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.error(message.id, "Wallet not initialized")
@@ -563,7 +689,7 @@ export class Worker {
 
         try {
             const vtxos = await this.getSpendableVtxos();
-            const dustAmount = this.wallet.dustAmount;
+            const dustAmount = this.handler.dustAmount;
             const includeRecoverable = message.filter?.withRecoverable ?? false;
 
             const filteredVtxos = includeRecoverable
@@ -607,7 +733,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.error(message.id, "Wallet not initialized")
@@ -646,7 +772,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.error(message.id, "Wallet not initialized")
@@ -679,11 +805,15 @@ export class Worker {
             return;
         }
 
-        const pubKey = this.wallet
-            ? await this.wallet.identity.xOnlyPublicKey()
+        const pubKey = this.handler
+            ? await this.handler.identity.xOnlyPublicKey()
             : undefined;
         event.source?.postMessage(
-            Response.walletStatus(message.id, this.wallet !== undefined, pubKey)
+            Response.walletStatus(
+                message.id,
+                this.handler !== undefined,
+                pubKey
+            )
         );
     }
 
@@ -775,7 +905,7 @@ export class Worker {
             return;
         }
 
-        if (!this.wallet) {
+        if (!this.handler) {
             console.error("Wallet not initialized");
             event.source?.postMessage(
                 Response.walletReloaded(message.id, false)
