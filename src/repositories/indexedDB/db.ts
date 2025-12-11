@@ -78,7 +78,8 @@ const dbCache = new Map<string, IDBDatabase>();
  * Opens an IndexedDB database with shared upgrade handling for both wallet and contract repositories.
  */
 export async function openDatabase(
-    dbName: string = DEFAULT_DB_NAME
+    dbName: string = DEFAULT_DB_NAME,
+    withMigration = false
 ): Promise<IDBDatabase> {
     // Return cached instance if available
     if (dbCache.has(dbName)) {
@@ -108,7 +109,9 @@ export async function openDatabase(
         };
 
         request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
-            handleUpgrade(event);
+            if (withMigration) {
+                handleUpgrade(event);
+            }
         };
     });
 }
