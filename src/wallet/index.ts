@@ -7,6 +7,7 @@ import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import { ContractRepository, WalletRepository } from "../repositories";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -102,8 +103,25 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  */
 export interface WalletConfig extends ReadonlyWalletConfig {
     identity: Identity;
+    arkServerUrl?: string;
+    indexerUrl?: string;
+    esploraUrl?: string;
+    arkServerPublicKey?: string;
+    boardingTimelock?: RelativeTimelock;
+    exitTimelock?: RelativeTimelock;
+    storage?: StorageConfig;
+    arkProvider?: ArkProvider;
+    indexerProvider?: IndexerProvider;
+    onchainProvider?: OnchainProvider;
     renewalConfig?: RenewalConfig;
 }
+
+export type StorageConfig =
+    | StorageAdapter
+    | {
+          walletRepository: WalletRepository;
+          contractRepository: ContractRepository;
+      };
 
 /**
  * Provider class constructor interface for dependency injection.
