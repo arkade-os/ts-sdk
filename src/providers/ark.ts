@@ -4,6 +4,7 @@ import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator } from "./utils";
 import { maybeArkError } from "./errors";
+import { Intent } from "../intent";
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -145,7 +146,7 @@ export interface ArkInfo {
 
 export interface SignedIntent {
     proof: string;
-    message: string;
+    message: Intent.Message;
 }
 
 export interface TxNotification {
@@ -344,7 +345,10 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 intent: {
                     proof: intent.proof,
-                    message: intent.message,
+                    message:
+                        typeof intent.message === "string"
+                            ? intent.message
+                            : Intent.encodeMessage(intent.message),
                 },
             }),
         });
@@ -368,7 +372,10 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 intent: {
                     proof: intent.proof,
-                    message: intent.message,
+                    message:
+                        typeof intent.message === "string"
+                            ? intent.message
+                            : Intent.encodeMessage(intent.message),
                 },
             }),
         });

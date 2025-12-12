@@ -30,9 +30,18 @@ import {
     TxKey,
     GetVtxosFilter,
     TapLeaves,
+    isSpendable,
+    isSubdust,
+    isRecoverable,
+    isExpired,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
-import { Wallet, waitForIncomingFunds, IncomingFunds } from "./wallet/wallet";
+import {
+    Wallet,
+    waitForIncomingFunds,
+    IncomingFunds,
+    getSequence,
+} from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
     SignerSession,
@@ -131,6 +140,11 @@ import { Unroll } from "./wallet/unroll";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
+import {
+    validateVtxoTxGraph,
+    validateConnectorsTxGraph,
+} from "./tree/validation";
+import { buildForfeitTx } from "./forfeit";
 
 export {
     // Wallets
@@ -216,7 +230,17 @@ export {
     // Errors
     ArkError,
     maybeArkError,
+
+    // Batch session
     Batch,
+    validateVtxoTxGraph,
+    validateConnectorsTxGraph,
+    buildForfeitTx,
+    isRecoverable,
+    isSpendable,
+    isSubdust,
+    isExpired,
+    getSequence,
 };
 
 export type {
