@@ -1649,13 +1649,38 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     "Use ContractRepositoryImpl or implement ContractManagerRepository."
             );
         }
+
+        // Return existing manager if already initialized
         if (this._contractManager) {
             return this._contractManager;
         }
 
+        // If initialization is in progress, wait for it
+        if (this._contractManagerInitializing) {
+            return this._contractManagerInitializing;
+        }
+
+        // Start initialization and store the promise
+        this._contractManagerInitializing = this.initializeContractManager();
+
+        try {
+            const manager = await this._contractManagerInitializing;
+            this._contractManager = manager;
+            return manager;
+        } catch (error) {
+            // Clear the initializing promise so subsequent calls can retry
+            this._contractManagerInitializing = undefined;
+            throw error;
+        } finally {
+            // Clear the initializing promise after completion
+            this._contractManagerInitializing = undefined;
+        }
+    }
+
+    private async initializeContractManager(): Promise<ContractManager> {
         const self = this;
 
-        this._contractManager = new ContractManager({
+        const manager = new ContractManager({
             indexerProvider: this.indexerProvider,
             contractRepository: this
                 .contractRepository as ContractManagerRepository,
@@ -1673,12 +1698,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             sweeperConfig: this.sweeperConfig,
         });
 
-        await this._contractManager.initialize();
+        await manager.initialize();
 
         // Register the wallet's default address as a contract
         // This ensures it's watched alongside any external contracts
         // Contract ID defaults to script, so no need to specify id explicitly
-        await this._contractManager.createContract({
+        await manager.createContract({
             type: "default",
             params: {},
             script: this.defaultContractId,
@@ -1686,7 +1711,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             state: "active",
         });
 
-        return this._contractManager;
+        return manager;
     }
 
     /**

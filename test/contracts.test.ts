@@ -4,20 +4,9 @@ import {
     ContractManager,
     ContractWatcher,
     ContractSweeper,
-    SpendingStrategyRegistry,
-    DefaultSpendingStrategy,
-    HTLCClaimStrategy,
-    HTLCRefundStrategy,
-    createHTLCContract,
-    createDefaultContract,
+    contractHandlers,
 } from "../src/contracts";
-import type {
-    Contract,
-    ContractVtxo,
-    ContractState,
-    SpendContext,
-    SweeperConfig,
-} from "../src/contracts";
+import type { Contract, ContractVtxo, ContractState } from "../src/contracts";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 import { ContractRepositoryImpl } from "../src/repositories/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
@@ -74,200 +63,23 @@ const createMockContractVtxo = (
 });
 
 describe("Contracts", () => {
-    describe("SpendingStrategyRegistry", () => {
-        let registry: SpendingStrategyRegistry;
-
-        beforeEach(() => {
-            registry = new SpendingStrategyRegistry();
+    describe("ContractHandlers", () => {
+        it("should have default handler registered", () => {
+            expect(contractHandlers.has("default")).toBe(true);
+            const handler = contractHandlers.get("default");
+            expect(handler).toBeDefined();
+            expect(handler?.type).toBe("default");
         });
 
-        it("should have default strategy registered", () => {
-            expect(registry.has("default")).toBe(true);
-            expect(registry.get("default")).toBeInstanceOf(
-                DefaultSpendingStrategy
-            );
+        it("should have VHTLC handler registered", () => {
+            expect(contractHandlers.has("vhtlc")).toBe(true);
+            const handler = contractHandlers.get("vhtlc");
+            expect(handler).toBeDefined();
+            expect(handler?.type).toBe("vhtlc");
         });
 
-        it("should have HTLC strategies registered", () => {
-            expect(registry.has("htlc-claim")).toBe(true);
-            expect(registry.has("htlc-refund")).toBe(true);
-            expect(registry.get("htlc-claim")).toBeInstanceOf(
-                HTLCClaimStrategy
-            );
-            expect(registry.get("htlc-refund")).toBeInstanceOf(
-                HTLCRefundStrategy
-            );
-        });
-
-        it("should throw when registering duplicate strategy", () => {
-            expect(() => {
-                registry.register({
-                    type: "default",
-                    strategy: new DefaultSpendingStrategy(),
-                });
-            }).toThrow("already registered");
-        });
-
-        it("should return undefined for unregistered strategy", () => {
-            expect(registry.get("custom")).toBeUndefined();
-        });
-
-        it("should throw on getOrThrow for unregistered strategy", () => {
-            expect(() => registry.getOrThrow("custom")).toThrow(
-                "No spending strategy registered"
-            );
-        });
-
-        it("should list registered types", () => {
-            const types = registry.getRegisteredTypes();
-            expect(types).toContain("default");
-            expect(types).toContain("htlc-claim");
-            expect(types).toContain("htlc-refund");
-        });
-    });
-
-    describe("DefaultSpendingStrategy", () => {
-        const strategy = new DefaultSpendingStrategy();
-        const mockContract: Contract = {
-            id: "test-contract",
-            script: "mock-script",
-            address: "mock-address",
-            state: "active",
-            createdAt: Date.now(),
-            spendingStrategy: "default",
-        };
-
-        it("should allow spending unspent VTXO", () => {
-            const vtxo = createMockContractVtxo("test-contract", {
-                isSpent: false,
-            });
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            expect(strategy.canSpend(vtxo, mockContract, context)).toBe(true);
-        });
-
-        it("should not allow spending spent VTXO", () => {
-            const vtxo = createMockContractVtxo("test-contract", {
-                isSpent: true,
-            });
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            expect(strategy.canSpend(vtxo, mockContract, context)).toBe(false);
-        });
-
-        it("should prepare spend with forfeit tap leaf", () => {
-            const vtxo = createMockContractVtxo("test-contract");
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            const prepared = strategy.prepareSpend(vtxo, mockContract, context);
-            expect(prepared.tapLeafScript).toBe(vtxo.forfeitTapLeafScript);
-        });
-    });
-
-    describe("HTLCClaimStrategy", () => {
-        const strategy = new HTLCClaimStrategy();
-
-        const createHTLCContract = (): Contract => ({
-            id: "htlc-contract",
-            script: "mock-script",
-            address: "mock-address",
-            state: "active",
-            createdAt: Date.now(),
-            spendingStrategy: "htlc-claim",
-            spendingData: {
-                hashlock: "abc123",
-                preimage: "secret",
-                timelock: Math.floor(Date.now() / 1000) + 3600, // 1 hour from now
-            },
-        });
-
-        it("should allow claiming when preimage is available and not expired", () => {
-            const contract = createHTLCContract();
-            const vtxo = createMockContractVtxo("htlc-contract");
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            expect(strategy.canSpend(vtxo, contract, context)).toBe(true);
-        });
-
-        it("should not allow claiming without preimage", () => {
-            const contract = createHTLCContract();
-            contract.spendingData = {
-                ...contract.spendingData,
-                preimage: undefined,
-            };
-            const vtxo = createMockContractVtxo("htlc-contract");
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            expect(strategy.canSpend(vtxo, contract, context)).toBe(false);
-        });
-
-        it("should not allow claiming after timelock expired", () => {
-            const contract = createHTLCContract();
-            contract.spendingData = {
-                ...contract.spendingData,
-                timelock: Math.floor(Date.now() / 1000) - 3600, // 1 hour ago
-            };
-            const vtxo = createMockContractVtxo("htlc-contract");
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            expect(strategy.canSpend(vtxo, contract, context)).toBe(false);
-        });
-    });
-
-    describe("HTLCRefundStrategy", () => {
-        const strategy = new HTLCRefundStrategy();
-
-        const createHTLCContract = (timelockOffset: number): Contract => ({
-            id: "htlc-contract",
-            script: "mock-script",
-            address: "mock-address",
-            state: "active",
-            createdAt: Date.now(),
-            spendingStrategy: "htlc-refund",
-            spendingData: {
-                hashlock: "abc123",
-                timelock: Math.floor(Date.now() / 1000) + timelockOffset,
-            },
-        });
-
-        it("should allow refund after timelock expired", () => {
-            const contract = createHTLCContract(-3600); // 1 hour ago
-            const vtxo = createMockContractVtxo("htlc-contract");
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            expect(strategy.canSpend(vtxo, contract, context)).toBe(true);
-        });
-
-        it("should not allow refund before timelock", () => {
-            const contract = createHTLCContract(3600); // 1 hour from now
-            const vtxo = createMockContractVtxo("htlc-contract");
-            const context: SpendContext = {
-                currentTime: Date.now(),
-                spendingData: {},
-            };
-
-            expect(strategy.canSpend(vtxo, contract, context)).toBe(false);
+        it("should return undefined for unregistered handler", () => {
+            expect(contractHandlers.get("custom")).toBeUndefined();
         });
     });
 
@@ -283,45 +95,51 @@ describe("Contracts", () => {
         it("should save and retrieve contract", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await repository.saveContract(contract);
-            const retrieved = await repository.getContractById("test-1");
+            const contracts = await repository.getContracts({ id: "test-1" });
 
-            expect(retrieved).toEqual(contract);
+            expect(contracts).toHaveLength(1);
+            expect(contracts[0]).toEqual(contract);
         });
 
         it("should get contracts by state", async () => {
             const activeContract: Contract = {
                 id: "active-1",
+                type: "default",
+                params: {},
                 script: "script-1",
                 address: "address-1",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             const inactiveContract: Contract = {
                 id: "inactive-1",
+                type: "default",
+                params: {},
                 script: "script-2",
                 address: "address-2",
                 state: "inactive",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await repository.saveContract(activeContract);
             await repository.saveContract(inactiveContract);
 
-            const activeContracts =
-                await repository.getContractsByState("active");
-            const inactiveContracts =
-                await repository.getContractsByState("inactive");
+            const activeContracts = await repository.getContracts({
+                state: "active",
+            });
+            const inactiveContracts = await repository.getContracts({
+                state: "inactive",
+            });
 
             expect(activeContracts).toHaveLength(1);
             expect(activeContracts[0].id).toBe("active-1");
@@ -329,41 +147,48 @@ describe("Contracts", () => {
             expect(inactiveContracts[0].id).toBe("inactive-1");
         });
 
-        it("should update contract state", async () => {
+        it("should update contract state via save", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await repository.saveContract(contract);
-            await repository.updateContractState("test-1", "inactive");
 
-            const retrieved = await repository.getContractById("test-1");
-            expect(retrieved?.state).toBe("inactive");
+            // Update state by saving modified contract
+            await repository.saveContract({ ...contract, state: "inactive" });
+
+            const contracts = await repository.getContracts({ id: "test-1" });
+            expect(contracts[0]?.state).toBe("inactive");
         });
 
-        it("should update spending data", async () => {
+        it("should update contract data via save", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "vhtlc",
+                params: { hash: "abc" },
                 script: "script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "htlc-claim",
-                spendingData: { hashlock: "abc" },
+                data: { hashlock: "abc" },
             };
 
             await repository.saveContract(contract);
-            await repository.updateContractSpendingData("test-1", {
-                preimage: "secret",
+
+            // Update data by saving with merged data
+            await repository.saveContract({
+                ...contract,
+                data: { ...contract.data, preimage: "secret" },
             });
 
-            const retrieved = await repository.getContractById("test-1");
-            expect(retrieved?.spendingData).toEqual({
+            const contracts = await repository.getContracts({ id: "test-1" });
+            expect(contracts[0]?.data).toEqual({
                 hashlock: "abc",
                 preimage: "secret",
             });
@@ -372,35 +197,39 @@ describe("Contracts", () => {
         it("should delete contract", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await repository.saveContract(contract);
             await repository.deleteContract("test-1");
 
-            const retrieved = await repository.getContractById("test-1");
-            expect(retrieved).toBeNull();
+            const contracts = await repository.getContracts({ id: "test-1" });
+            expect(contracts).toHaveLength(0);
         });
 
         it("should get contract by script", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "default",
+                params: {},
                 script: "unique-script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await repository.saveContract(contract);
-            const retrieved =
-                await repository.getContractByScript("unique-script-hex");
+            const contracts = await repository.getContracts({
+                script: "unique-script-hex",
+            });
 
-            expect(retrieved?.id).toBe("test-1");
+            expect(contracts).toHaveLength(1);
+            expect(contracts[0].id).toBe("test-1");
         });
     });
 
@@ -424,11 +253,12 @@ describe("Contracts", () => {
         it("should add and retrieve contracts", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await watcher.addContract(contract);
@@ -441,20 +271,22 @@ describe("Contracts", () => {
         it("should track active/inactive contracts separately", async () => {
             const activeContract: Contract = {
                 id: "active-1",
+                type: "default",
+                params: {},
                 script: "script-1",
                 address: "address-1",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             const inactiveContract: Contract = {
                 id: "inactive-1",
+                type: "default",
+                params: {},
                 script: "script-2",
                 address: "address-2",
                 state: "inactive",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await watcher.addContract(activeContract);
@@ -468,11 +300,12 @@ describe("Contracts", () => {
         it("should toggle contract active state", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await watcher.addContract(contract);
@@ -488,11 +321,12 @@ describe("Contracts", () => {
         it("should remove contracts", async () => {
             const contract: Contract = {
                 id: "test-1",
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
                 state: "active",
                 createdAt: Date.now(),
-                spendingStrategy: "default",
             };
 
             await watcher.addContract(contract);
@@ -500,34 +334,6 @@ describe("Contracts", () => {
 
             await watcher.removeContract("test-1");
             expect(watcher.getAllContracts()).toHaveLength(0);
-        });
-    });
-
-    describe("Contract helpers", () => {
-        it("should create default contract params", () => {
-            const params = createDefaultContract("script-hex", "address");
-
-            expect(params.script).toBe("script-hex");
-            expect(params.address).toBe("address");
-            expect(params.spendingStrategy).toBe("default");
-            expect(params.autoSweep).toBe(false);
-        });
-
-        it("should create HTLC contract params", () => {
-            const params = createHTLCContract({
-                script: "htlc-script",
-                address: "htlc-address",
-                hashlock: "abc123",
-                timelock: 1704067200,
-                autoSweep: true,
-            });
-
-            expect(params.script).toBe("htlc-script");
-            expect(params.address).toBe("htlc-address");
-            expect(params.spendingStrategy).toBe("htlc-claim");
-            expect(params.spendingData?.hashlock).toBe("abc123");
-            expect(params.spendingData?.timelock).toBe(1704067200);
-            expect(params.autoSweep).toBe(true);
         });
     });
 
@@ -554,9 +360,10 @@ describe("Contracts", () => {
 
         it("should create and retrieve contracts", async () => {
             const contract = await manager.createContract({
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
-                spendingStrategy: "default",
             });
 
             expect(contract.id).toBeDefined();
@@ -569,15 +376,17 @@ describe("Contracts", () => {
 
         it("should list all contracts", async () => {
             await manager.createContract({
+                type: "default",
+                params: {},
                 script: "script-1",
                 address: "address-1",
-                spendingStrategy: "default",
             });
 
             await manager.createContract({
+                type: "vhtlc",
+                params: { hash: "abc" },
                 script: "script-2",
                 address: "address-2",
-                spendingStrategy: "htlc-claim",
             });
 
             expect(manager.getAllContracts()).toHaveLength(2);
@@ -585,9 +394,10 @@ describe("Contracts", () => {
 
         it("should activate and deactivate contracts", async () => {
             const contract = await manager.createContract({
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
-                spendingStrategy: "default",
             });
 
             expect(manager.getActiveContracts()).toHaveLength(1);
@@ -599,20 +409,21 @@ describe("Contracts", () => {
             expect(manager.getActiveContracts()).toHaveLength(1);
         });
 
-        it("should update spending data", async () => {
+        it("should update contract data", async () => {
             const contract = await manager.createContract({
+                type: "vhtlc",
+                params: { hash: "abc" },
                 script: "script-hex",
                 address: "address",
-                spendingStrategy: "htlc-claim",
-                spendingData: { hashlock: "abc" },
+                data: { hashlock: "abc" },
             });
 
-            await manager.updateSpendingData(contract.id, {
+            await manager.updateContractData(contract.id, {
                 preimage: "secret",
             });
 
             const updated = await manager.getContract(contract.id);
-            expect(updated?.spendingData).toEqual({
+            expect(updated?.data).toEqual({
                 hashlock: "abc",
                 preimage: "secret",
             });
@@ -620,9 +431,10 @@ describe("Contracts", () => {
 
         it("should persist contracts across initialization", async () => {
             await manager.createContract({
+                type: "default",
+                params: {},
                 script: "script-hex",
                 address: "address",
-                spendingStrategy: "default",
             });
 
             // Create new manager with same storage

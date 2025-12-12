@@ -96,9 +96,7 @@ type ConnectionState =
  * ```
  */
 export class ContractWatcher {
-    private config: Required<
-        Omit<ContractWatcherConfig, "walletRepository">
-    > &
+    private config: Required<Omit<ContractWatcherConfig, "walletRepository">> &
         Pick<ContractWatcherConfig, "walletRepository">;
     private contracts: Map<string, ContractState> = new Map();
     private scriptToContract: Map<string, string> = new Map(); // script -> contractId

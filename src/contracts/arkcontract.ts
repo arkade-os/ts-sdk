@@ -29,23 +29,24 @@ const ARKCONTRACT_PREFIX = "arkcontract";
  * ```
  */
 export function encodeArkContract(contract: Contract): string {
-    const parts: string[] = [`${ARKCONTRACT_PREFIX}=${contract.type}`];
+    const params = new URLSearchParams();
+
+    // Add contract type first
+    params.set(ARKCONTRACT_PREFIX, contract.type);
 
     // Add all params
     for (const [key, value] of Object.entries(contract.params)) {
-        parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(value)}`);
+        params.set(key, value);
     }
 
     // Add runtime data if present
     if (contract.data) {
         for (const [key, value] of Object.entries(contract.data)) {
-            parts.push(
-                `${encodeURIComponent(key)}=${encodeURIComponent(value)}`
-            );
+            params.set(key, value);
         }
     }
 
-    return parts.join("&");
+    return params.toString();
 }
 
 /**
@@ -73,36 +74,23 @@ export interface ParsedArkContract {
  * ```
  */
 export function decodeArkContract(encoded: string): ParsedArkContract {
-    if (!encoded.startsWith(ARKCONTRACT_PREFIX)) {
+    const params = new URLSearchParams(encoded);
+
+    // Extract type from the arkcontract key
+    const type = params.get(ARKCONTRACT_PREFIX);
+    if (!type) {
         throw new Error(
-            `Invalid arkcontract string: must start with '${ARKCONTRACT_PREFIX}'`
+            `Invalid arkcontract string: missing '${ARKCONTRACT_PREFIX}' key`
         );
     }
 
+    // Build data object from all other params
     const data: Record<string, string> = {};
-    const parts = encoded.split("&");
-
-    for (const part of parts) {
-        const eqIndex = part.indexOf("=");
-        if (eqIndex === -1) {
-            throw new Error(
-                `Invalid arkcontract string: malformed part '${part}'`
-            );
+    for (const [key, value] of params.entries()) {
+        if (key !== ARKCONTRACT_PREFIX) {
+            data[key] = value;
         }
-
-        const key = decodeURIComponent(part.substring(0, eqIndex));
-        const value = decodeURIComponent(part.substring(eqIndex + 1));
-        data[key] = value;
     }
-
-    // Extract type from the arkcontract key
-    const type = data[ARKCONTRACT_PREFIX];
-    if (!type) {
-        throw new Error("Invalid arkcontract string: missing contract type");
-    }
-
-    // Remove the arkcontract key from data
-    delete data[ARKCONTRACT_PREFIX];
 
     return { type, data };
 }

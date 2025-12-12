@@ -98,7 +98,6 @@ export const DefaultContractHandler: ContractHandler<
         }
 
         // Use exit path for unilateral exit
-        // Note: sequence is derived from the CSV in the script itself
         return { leaf: script.exit() };
     },
 
