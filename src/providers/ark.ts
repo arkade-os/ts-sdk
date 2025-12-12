@@ -610,7 +610,15 @@ export class RestArkProvider implements ArkProvider {
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({ intent }),
+            body: JSON.stringify({
+                intent: {
+                    proof: intent.proof,
+                    message:
+                        typeof intent.message === "string"
+                            ? intent.message
+                            : Intent.encodeMessage(intent.message),
+                },
+            }),
         });
 
         if (!response.ok) {
