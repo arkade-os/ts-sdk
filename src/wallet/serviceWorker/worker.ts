@@ -66,8 +66,9 @@ class ReadonlyHandler {
 
     async handleReload(
         _: ExtendedVirtualCoin[]
-    ): Promise<Awaited<ReturnType<Wallet["finalizePendingTxs"]>> | undefined> {
-        return undefined;
+    ): Promise<Awaited<ReturnType<Wallet["finalizePendingTxs"]>>> {
+        const pending = await this.wallet.fetchPendingTxs();
+        return { pending, finalized: [] };
     }
 
     async handleSettle(
@@ -268,18 +269,12 @@ export class Worker {
         );
 
         try {
-            // recover pending transactions
-            const result = await this.handler.handleReload(vtxos);
-            if (result) {
-                const { finalized, pending } = result;
-                console.info(
-                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
-                );
-            } else {
-                console.info(
-                    "Readonly wallet, no pending transactions to recover"
-                );
-            }
+            // recover pending transactions if possible
+            const { pending, finalized } =
+                await this.handler.handleReload(vtxos);
+            console.info(
+                `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
+            );
         } catch (error: unknown) {
             console.error("Error recovering pending transactions:", error);
         }

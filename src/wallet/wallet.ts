@@ -593,6 +593,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         return stopFunc;
     }
+
+    async fetchPendingTxs(): Promise<string[]> {
+        // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
+        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+        let { vtxos } = await this.indexerProvider.getVtxos({
+            scripts,
+        });
+        return vtxos
+            .filter(
+                (vtxo) =>
+                    vtxo.virtualStatus.state !== "swept" &&
+                    vtxo.virtualStatus.state !== "settled" &&
+                    vtxo.arkTxId !== undefined
+            )
+            .map((_) => _.arkTxId!);
+    }
 }
 
 /**
