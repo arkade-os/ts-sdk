@@ -39,7 +39,7 @@ export namespace Intent {
      * ownership of VTXOs and UTXOs. The proof includes the message to be
      * signed and the inputs/outputs that demonstrate ownership.
      *
-     * @param message - The Intent message to be signed
+     * @param message - The Intent message to be signed, either raw string of Message object
      * @param inputs - Array of transaction inputs to prove ownership of
      * @param outputs - Optional array of transaction outputs
      * @returns An unsigned Intent proof transaction
@@ -87,35 +87,23 @@ export namespace Intent {
     export function encodeMessage(message: Message): string {
         switch (message.type) {
             case "register":
-                return JSON.stringify(
-                    {
-                        type: "register",
-                        onchain_output_indexes: message.onchain_output_indexes,
-                        valid_at: message.valid_at,
-                        expire_at: message.expire_at,
-                        cosigners_public_keys: message.cosigners_public_keys,
-                    },
-                    null,
-                    0
-                );
+                return JSON.stringify({
+                    type: "register",
+                    onchain_output_indexes: message.onchain_output_indexes,
+                    valid_at: message.valid_at,
+                    expire_at: message.expire_at,
+                    cosigners_public_keys: message.cosigners_public_keys,
+                });
             case "delete":
-                return JSON.stringify(
-                    {
-                        type: "delete",
-                        expire_at: message.expire_at,
-                    },
-                    null,
-                    0
-                );
+                return JSON.stringify({
+                    type: "delete",
+                    expire_at: message.expire_at,
+                });
             case "get-pending-tx":
-                return JSON.stringify(
-                    {
-                        type: "get-pending-tx",
-                        expire_at: message.expire_at,
-                    },
-                    null,
-                    0
-                );
+                return JSON.stringify({
+                    type: "get-pending-tx",
+                    expire_at: message.expire_at,
+                });
         }
     }
 }

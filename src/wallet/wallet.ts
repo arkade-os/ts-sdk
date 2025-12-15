@@ -1206,7 +1206,9 @@ export class Wallet implements IWallet {
         };
     }
 
-    async safeRegisterIntent(intent: SignedIntent): Promise<string> {
+    async safeRegisterIntent(
+        intent: SignedIntent<Intent.RegisterMessage>
+    ): Promise<string> {
         try {
             return await this.arkProvider.registerIntent(intent);
         } catch (error) {
@@ -1237,7 +1239,7 @@ export class Wallet implements IWallet {
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[]
-    ): Promise<SignedIntent> {
+    ): Promise<SignedIntent<Intent.RegisterMessage>> {
         const inputs = this.prepareIntentProofInputs(coins);
 
         const message: Intent.RegisterMessage = {
@@ -1259,7 +1261,7 @@ export class Wallet implements IWallet {
 
     async makeDeleteIntentSignature(
         coins: ExtendedCoin[]
-    ): Promise<SignedIntent> {
+    ): Promise<SignedIntent<Intent.DeleteMessage>> {
         const inputs = this.prepareIntentProofInputs(coins);
 
         const message: Intent.DeleteMessage = {
@@ -1278,7 +1280,7 @@ export class Wallet implements IWallet {
 
     async makeGetPendingTxIntentSignature(
         vtxos: ExtendedVirtualCoin[]
-    ): Promise<SignedIntent> {
+    ): Promise<SignedIntent<Intent.GetPendingTxMessage>> {
         const inputs = this.prepareIntentProofInputs(vtxos);
 
         const message: Intent.GetPendingTxMessage = {
