@@ -351,10 +351,7 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 intent: {
                     proof: intent.proof,
-                    message:
-                        typeof intent.message === "string"
-                            ? intent.message
-                            : Intent.encodeMessage(intent.message),
+                    message: Intent.encodeMessage(intent.message),
                 },
             }),
         });
@@ -380,10 +377,7 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 intent: {
                     proof: intent.proof,
-                    message:
-                        typeof intent.message === "string"
-                            ? intent.message
-                            : Intent.encodeMessage(intent.message),
+                    message: Intent.encodeMessage(intent.message),
                 },
             }),
         });
@@ -623,10 +617,7 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 intent: {
                     proof: intent.proof,
-                    message:
-                        typeof intent.message === "string"
-                            ? intent.message
-                            : Intent.encodeMessage(intent.message),
+                    message: Intent.encodeMessage(intent.message),
                 },
             }),
         });
