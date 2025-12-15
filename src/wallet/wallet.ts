@@ -49,8 +49,12 @@ import {
     WalletBalance,
     WalletConfig,
 } from ".";
-import { VtxoScript } from "../script/base";
-import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
+import { TapLeafScript, VtxoScript } from "../script/base";
+import {
+    CLTVMultisigTapscript,
+    CSVMultisigTapscript,
+    RelativeTimelock,
+} from "../script/tapscript";
 import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
 import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
@@ -1202,7 +1206,9 @@ export class Wallet implements IWallet {
         };
     }
 
-    async safeRegisterIntent(intent: SignedIntent): Promise<string> {
+    async safeRegisterIntent(
+        intent: SignedIntent<Intent.RegisterMessage>
+    ): Promise<string> {
         try {
             return await this.arkProvider.registerIntent(intent);
         } catch (error) {
@@ -1233,10 +1239,10 @@ export class Wallet implements IWallet {
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
         cosignerPubKeys: string[]
-    ): Promise<SignedIntent> {
+    ): Promise<SignedIntent<Intent.RegisterMessage>> {
         const inputs = this.prepareIntentProofInputs(coins);
 
-        const message = {
+        const message: Intent.RegisterMessage = {
             type: "register",
             onchain_output_indexes: onchainOutputsIndexes,
             valid_at: 0,
@@ -1244,56 +1250,50 @@ export class Wallet implements IWallet {
             cosigners_public_keys: cosignerPubKeys,
         };
 
-        const encodedMessage = JSON.stringify(message, null, 0);
-
-        const proof = Intent.create(encodedMessage, inputs, outputs);
+        const proof = Intent.create(message, inputs, outputs);
         const signedProof = await this.identity.sign(proof);
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
-            message: encodedMessage,
+            message,
         };
     }
 
     async makeDeleteIntentSignature(
         coins: ExtendedCoin[]
-    ): Promise<SignedIntent> {
+    ): Promise<SignedIntent<Intent.DeleteMessage>> {
         const inputs = this.prepareIntentProofInputs(coins);
 
-        const message = {
+        const message: Intent.DeleteMessage = {
             type: "delete",
             expire_at: 0,
         };
 
-        const encodedMessage = JSON.stringify(message, null, 0);
-
-        const proof = Intent.create(encodedMessage, inputs, []);
+        const proof = Intent.create(message, inputs, []);
         const signedProof = await this.identity.sign(proof);
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
-            message: encodedMessage,
+            message,
         };
     }
 
     async makeGetPendingTxIntentSignature(
         vtxos: ExtendedVirtualCoin[]
-    ): Promise<SignedIntent> {
+    ): Promise<SignedIntent<Intent.GetPendingTxMessage>> {
         const inputs = this.prepareIntentProofInputs(vtxos);
 
-        const message = {
+        const message: Intent.GetPendingTxMessage = {
             type: "get-pending-tx",
             expire_at: 0,
         };
 
-        const encodedMessage = JSON.stringify(message, null, 0);
-
-        const proof = Intent.create(encodedMessage, inputs, []);
+        const proof = Intent.create(message, inputs, []);
         const signedProof = await this.identity.sign(proof);
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
-            message: encodedMessage,
+            message,
         };
     }
 
@@ -1372,7 +1372,7 @@ export class Wallet implements IWallet {
 
         for (const input of coins) {
             const vtxoScript = VtxoScript.decode(input.tapTree);
-            const sequence = getSequence(input);
+            const sequence = getSequence(input.intentTapLeafScript);
 
             const unknown = [VtxoTaprootTree.encode(input.tapTree)];
             if (input.extraWitness) {
@@ -1396,21 +1396,26 @@ export class Wallet implements IWallet {
     }
 }
 
-function getSequence(coin: ExtendedCoin): number | undefined {
+export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
     let sequence: number | undefined = undefined;
 
     try {
-        const scriptWithLeafVersion = coin.intentTapLeafScript[1];
+        const scriptWithLeafVersion = tapLeafScript[1];
         const script = scriptWithLeafVersion.subarray(
             0,
             scriptWithLeafVersion.length - 1
         );
-        const params = CSVMultisigTapscript.decode(script).params;
-        sequence = bip68.encode(
-            params.timelock.type === "blocks"
-                ? { blocks: Number(params.timelock.value) }
-                : { seconds: Number(params.timelock.value) }
-        );
+        try {
+            const params = CSVMultisigTapscript.decode(script).params;
+            sequence = bip68.encode(
+                params.timelock.type === "blocks"
+                    ? { blocks: Number(params.timelock.value) }
+                    : { seconds: Number(params.timelock.value) }
+            );
+        } catch {
+            const params = CLTVMultisigTapscript.decode(script).params;
+            sequence = Number(params.absoluteTimelock);
+        }
     } catch {}
 
     return sequence;
