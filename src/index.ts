@@ -1,6 +1,6 @@
 import { Transaction } from "./utils/transaction";
-import { SingleKey } from "./identity/singleKey";
-import { Identity } from "./identity";
+import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
+import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -13,7 +13,10 @@ import {
 import {
     TxType,
     IWallet,
+    IReadonlyWallet,
+    BaseWalletConfig,
     WalletConfig,
+    ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
     Coin,
@@ -38,6 +41,7 @@ import {
 import { Batch } from "./wallet/batch";
 import {
     Wallet,
+    ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
     getSequence,
@@ -50,7 +54,10 @@ import {
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import {
+    ServiceWorkerWallet,
+    ServiceWorkerReadonlyWallet,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -149,7 +156,9 @@ import { buildForfeitTx } from "./forfeit";
 export {
     // Wallets
     Wallet,
+    ReadonlyWallet,
     SingleKey,
+    ReadonlySingleKey,
     OnchainWallet,
     Ramps,
     VtxoManager,
@@ -176,6 +185,7 @@ export {
     setupServiceWorker,
     Worker,
     ServiceWorkerWallet,
+    ServiceWorkerReadonlyWallet,
     Request,
     Response,
 
@@ -246,8 +256,12 @@ export {
 export type {
     // Types and Interfaces
     Identity,
+    ReadonlyIdentity,
     IWallet,
+    IReadonlyWallet,
+    BaseWalletConfig,
     WalletConfig,
+    ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
     Coin,
