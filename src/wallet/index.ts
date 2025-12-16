@@ -131,6 +131,7 @@ export interface SendBitcoinParams {
     amount: number;
     feeRate?: number;
     memo?: string;
+    selectedVtxos?: VirtualCoin[];
 }
 
 export interface Recipient {
