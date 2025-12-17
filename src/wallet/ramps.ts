@@ -4,6 +4,7 @@ import { Estimator } from "../arkfee";
 import { Address, OutScript } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { networks, NetworkName } from "../networks";
+import { ArkAddress } from "../script/address";
 
 /**
  * Ramps is a class wrapping IWallet.settle method to provide a more convenient interface for onboarding and offboarding operations.
@@ -21,26 +22,46 @@ export class Ramps {
     /**
      * Onboard boarding utxos.
      *
+     * @param feeInfo - The fee info to deduct from the onboard amount.
      * @param boardingUtxos - The boarding utxos to onboard. If not provided, all boarding utxos will be used.
      * @param amount - The amount to onboard. If not provided, the total amount of boarding utxos will be onboarded.
      * @param eventCallback - The callback to receive settlement events. optional.
      */
     async onboard(
+        feeInfo: FeeInfo,
         boardingUtxos?: ExtendedCoin[],
         amount?: bigint,
         eventCallback?: (event: SettlementEvent) => void
     ): ReturnType<IWallet["settle"]> {
         boardingUtxos = boardingUtxos ?? (await this.wallet.getBoardingUtxos());
 
-        const totalAmount = boardingUtxos.reduce(
-            (acc, coin) => acc + BigInt(coin.value),
-            0n
-        );
+        // Calculate input fees and filter out utxos where fee >= value
+        const estimator = new Estimator(feeInfo.intentFee);
+        const filteredBoardingUtxos: ExtendedCoin[] = [];
+        let totalAmount = 0n;
+
+        for (const utxo of boardingUtxos) {
+            const inputFee = estimator.evalOnchainInput({
+                amount: BigInt(utxo.value),
+            });
+            if (inputFee.value >= utxo.value) {
+                // skip if fees are greater than or equal to the utxo value
+                continue;
+            }
+
+            filteredBoardingUtxos.push(utxo);
+            totalAmount += BigInt(utxo.value) - BigInt(inputFee.satoshis);
+        }
+
+        if (filteredBoardingUtxos.length === 0) {
+            throw new Error("No boarding utxos available after deducting fees");
+        }
+
         let change = 0n;
         if (amount) {
             if (amount > totalAmount) {
                 throw new Error(
-                    "Amount is greater than total amount of boarding utxos"
+                    "Amount is greater than total amount of boarding utxos after fees"
                 );
             }
             change = totalAmount - amount;
@@ -48,7 +69,22 @@ export class Ramps {
 
         amount = amount ?? totalAmount;
 
+        // Calculate offchain output fee using Estimator
         const offchainAddress = await this.wallet.getAddress();
+        const offchainAddr = ArkAddress.decode(offchainAddress);
+        const offchainScript = hex.encode(offchainAddr.pkScript);
+
+        const outputFee = estimator.evalOffchainOutput({
+            amount,
+            script: offchainScript,
+        });
+
+        if (BigInt(outputFee.value) > amount) {
+            throw new Error(
+                `can't deduct fees from onboard amount (${outputFee.value} > ${amount})`
+            );
+        }
+        amount -= BigInt(outputFee.satoshis);
 
         const outputs = [
             {
@@ -67,7 +103,7 @@ export class Ramps {
 
         return this.wallet.settle(
             {
-                inputs: boardingUtxos,
+                inputs: filteredBoardingUtxos,
                 outputs,
             },
             eventCallback
@@ -93,22 +129,48 @@ export class Ramps {
             withUnrolled: false,
         });
 
-        const totalAmount = vtxos.reduce(
-            (acc, coin) => acc + BigInt(coin.value),
-            0n
-        );
+        // Calculate input fees and filter out vtxos where fee >= value
+        const estimator = new Estimator(feeInfo.intentFee);
+        const filteredVtxos: typeof vtxos = [];
+        let totalAmount = 0n;
+
+        for (const vtxo of vtxos) {
+            const inputFee = estimator.evalOffchainInput({
+                amount: BigInt(vtxo.value),
+                type:
+                    vtxo.virtualStatus.state === "swept"
+                        ? "recoverable"
+                        : "vtxo",
+                weight: 0,
+                birth: vtxo.createdAt,
+                expiry: vtxo.virtualStatus.batchExpiry
+                    ? new Date(vtxo.virtualStatus.batchExpiry * 1000)
+                    : new Date(),
+            });
+            if (inputFee.value >= vtxo.value) {
+                // skip if fees are greater than or equal to the vtxo value
+                continue;
+            }
+
+            filteredVtxos.push(vtxo);
+            totalAmount += BigInt(vtxo.value) - BigInt(inputFee.satoshis);
+        }
+
+        if (filteredVtxos.length === 0) {
+            throw new Error("No vtxos available after deducting fees");
+        }
+
         let change = 0n;
         if (amount) {
             if (amount > totalAmount) {
-                throw new Error("Amount is greater than total amount of vtxos");
+                throw new Error(
+                    "Amount is greater than total amount of vtxos after fees"
+                );
             }
             change = totalAmount - amount;
         }
 
         amount = amount ?? totalAmount;
-
-        // Calculate onchain output fee using Estimator
-        const estimator = new Estimator(feeInfo.intentFee);
 
         const networkNames: NetworkName[] = [
             "bitcoin",
@@ -142,7 +204,7 @@ export class Ramps {
             script: hex.encode(destinationScript),
         });
 
-        if (outputFee.value > amount) {
+        if (BigInt(outputFee.value) > amount) {
             throw new Error(
                 `can't deduct fees from offboard amount (${outputFee.value} > ${amount})`
             );
@@ -166,7 +228,7 @@ export class Ramps {
 
         return this.wallet.settle(
             {
-                inputs: vtxos,
+                inputs: filteredVtxos,
                 outputs,
             },
             eventCallback
