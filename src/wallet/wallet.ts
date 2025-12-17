@@ -70,6 +70,7 @@ import {
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
+import { Estimator } from "../arkfee";
 
 export type IncomingFunds =
     | {
@@ -714,6 +715,9 @@ export class Wallet implements IWallet {
         // if no params are provided, use all non expired boarding utxos and offchain vtxos as inputs
         // and send all to the offchain address
         if (!params) {
+            const { fees } = await this.arkProvider.getInfo();
+            const estimator = new Estimator(fees.intentFee);
+
             let amount = 0;
 
             const exitScript = CSVMultisigTapscript.decode(
@@ -726,28 +730,60 @@ export class Wallet implements IWallet {
                 (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
             );
 
-            amount += boardingUtxos.reduce(
-                (sum, input) => sum + input.value,
-                0
-            );
+            for (const utxo of boardingUtxos) {
+                const inputFee = estimator.evalOnchainInput({
+                    amount: BigInt(utxo.value),
+                });
+                if (inputFee.value >= utxo.value) {
+                    // skip if fees are greater than the utxo value
+                    continue;
+                }
+
+                amount += utxo.value - inputFee.satoshis;
+            }
 
             const vtxos = await this.getVtxos({ withRecoverable: true });
-            amount += vtxos.reduce((sum, input) => sum + input.value, 0);
+            for (const vtxo of vtxos) {
+                const inputFee = estimator.evalOffchainInput({
+                    amount: BigInt(vtxo.value),
+                    type:
+                        vtxo.virtualStatus.state === "swept"
+                            ? "recoverable"
+                            : "vtxo",
+                    weight: 0,
+                    birth: vtxo.createdAt,
+                    expiry: vtxo.virtualStatus.batchExpiry
+                        ? new Date(vtxo.virtualStatus.batchExpiry * 1000)
+                        : new Date(),
+                });
+                if (inputFee.value >= vtxo.value) {
+                    // skip if fees are greater than the vtxo value
+                    continue;
+                }
+
+                amount += vtxo.value - inputFee.satoshis;
+            }
 
             const inputs = [...boardingUtxos, ...vtxos];
-
             if (inputs.length === 0) {
                 throw new Error("No inputs found");
             }
 
+            const output = {
+                address: await this.getAddress(),
+                amount: BigInt(amount),
+            };
+
+            const outputFee = estimator.evalOffchainOutput({
+                amount: output.amount,
+                script: hex.encode(ArkAddress.decode(output.address).pkScript),
+            });
+
+            output.amount -= BigInt(outputFee.satoshis);
+
             params = {
                 inputs,
-                outputs: [
-                    {
-                        address: await this.getAddress(),
-                        amount: BigInt(amount),
-                    },
-                ],
+                outputs: [output],
             };
         }
 

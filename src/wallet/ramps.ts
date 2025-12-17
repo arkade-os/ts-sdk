@@ -1,5 +1,9 @@
 import { ExtendedCoin, IWallet } from ".";
 import { FeeInfo, SettlementEvent } from "../providers/ark";
+import { Estimator } from "../arkfee";
+import { Address, OutScript } from "@scure/btc-signer";
+import { hex } from "@scure/base";
+import { networks, NetworkName } from "../networks";
 
 /**
  * Ramps is a class wrapping IWallet.settle method to provide a more convenient interface for onboarding and offboarding operations.
@@ -102,14 +106,48 @@ export class Ramps {
         }
 
         amount = amount ?? totalAmount;
-        const fees = feeInfo.intentFee.onchainOutput;
-        if (fees > amount) {
+
+        // Calculate onchain output fee using Estimator
+        const estimator = new Estimator(feeInfo.intentFee);
+
+        const networkNames: NetworkName[] = [
+            "bitcoin",
+            "regtest",
+            "testnet",
+            "signet",
+            "mutinynet",
+        ];
+        let destinationScript: Uint8Array | undefined;
+
+        for (const networkName of networkNames) {
+            try {
+                const network = networks[networkName];
+                const addr = Address(network).decode(destinationAddress);
+                destinationScript = OutScript.encode(addr);
+                break;
+            } catch {
+                // Try next network
+                continue;
+            }
+        }
+
+        if (!destinationScript) {
             throw new Error(
-                `can't deduct fees from offboard amount (${fees} > ${amount})`
+                `Failed to decode destination address: ${destinationAddress}`
             );
         }
 
-        amount -= fees;
+        const outputFee = estimator.evalOnchainOutput({
+            amount,
+            script: hex.encode(destinationScript),
+        });
+
+        if (outputFee.value > amount) {
+            throw new Error(
+                `can't deduct fees from offboard amount (${outputFee.value} > ${amount})`
+            );
+        }
+        amount -= BigInt(outputFee.satoshis);
 
         const outputs = [
             {

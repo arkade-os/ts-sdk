@@ -5,7 +5,7 @@ import {
     IntentOutputEnv,
 } from "./celenv.js";
 import {
-    Config,
+    IntentFeeConfig,
     OffchainInput,
     OnchainInput,
     FeeOutput,
@@ -21,7 +21,6 @@ interface Program {
  * Estimator evaluates CEL expressions to calculate fees for Ark intents
  */
 export class Estimator {
-    config: Config;
     private intentOffchainInput?: Program;
     private intentOnchainInput?: Program;
     private intentOffchainOutput?: Program;
@@ -31,48 +30,21 @@ export class Estimator {
      * Creates a new Estimator with the given config
      * @param config - Configuration containing CEL programs for fee calculation
      */
-    constructor(config: Config) {
-        this.config = config;
+    constructor(readonly config: IntentFeeConfig) {
+        this.intentOffchainInput = config.offchainInput
+            ? parseProgram(config.offchainInput, IntentOffchainInputEnv)
+            : undefined;
 
-        if (
-            config.intentOffchainInputProgram &&
-            config.intentOffchainInputProgram.length > 0
-        ) {
-            this.intentOffchainInput = parseProgram(
-                config.intentOffchainInputProgram,
-                IntentOffchainInputEnv
-            );
-        }
+        this.intentOnchainInput = config.onchainInput
+            ? parseProgram(config.onchainInput, IntentOnchainInputEnv)
+            : undefined;
 
-        if (
-            config.intentOnchainInputProgram &&
-            config.intentOnchainInputProgram.length > 0
-        ) {
-            this.intentOnchainInput = parseProgram(
-                config.intentOnchainInputProgram,
-                IntentOnchainInputEnv
-            );
-        }
-
-        if (
-            config.intentOffchainOutputProgram &&
-            config.intentOffchainOutputProgram.length > 0
-        ) {
-            this.intentOffchainOutput = parseProgram(
-                config.intentOffchainOutputProgram,
-                IntentOutputEnv
-            );
-        }
-
-        if (
-            config.intentOnchainOutputProgram &&
-            config.intentOnchainOutputProgram.length > 0
-        ) {
-            this.intentOnchainOutput = parseProgram(
-                config.intentOnchainOutputProgram,
-                IntentOutputEnv
-            );
-        }
+        this.intentOffchainOutput = config.offchainOutput
+            ? parseProgram(config.offchainOutput, IntentOutputEnv)
+            : undefined;
+        this.intentOnchainOutput = config.onchainOutput
+            ? parseProgram(config.onchainOutput, IntentOutputEnv)
+            : undefined;
     }
 
     /**
@@ -82,11 +54,11 @@ export class Estimator {
      */
     evalOffchainInput(input: OffchainInput): FeeAmount {
         if (!this.intentOffchainInput) {
-            return 0;
+            return FeeAmount.ZERO;
         }
 
         const args = inputToArgs(input);
-        return this.intentOffchainInput.program(args);
+        return new FeeAmount(this.intentOffchainInput.program(args));
     }
 
     /**
@@ -96,13 +68,13 @@ export class Estimator {
      */
     evalOnchainInput(input: OnchainInput): FeeAmount {
         if (!this.intentOnchainInput) {
-            return 0;
+            return FeeAmount.ZERO;
         }
 
         const args = {
-            amount: input.amount,
+            amount: Number(input.amount),
         };
-        return this.intentOnchainInput.program(args);
+        return new FeeAmount(this.intentOnchainInput.program(args));
     }
 
     /**
@@ -112,11 +84,11 @@ export class Estimator {
      */
     evalOffchainOutput(output: FeeOutput): FeeAmount {
         if (!this.intentOffchainOutput) {
-            return 0;
+            return FeeAmount.ZERO;
         }
 
         const args = outputToArgs(output);
-        return this.intentOffchainOutput.program(args);
+        return new FeeAmount(this.intentOffchainOutput.program(args));
     }
 
     /**
@@ -126,11 +98,11 @@ export class Estimator {
      */
     evalOnchainOutput(output: FeeOutput): FeeAmount {
         if (!this.intentOnchainOutput) {
-            return 0;
+            return FeeAmount.ZERO;
         }
 
         const args = outputToArgs(output);
-        return this.intentOnchainOutput.program(args);
+        return new FeeAmount(this.intentOnchainOutput.program(args));
     }
 
     /**
@@ -147,22 +119,22 @@ export class Estimator {
         offchainOutputs: FeeOutput[],
         onchainOutputs: FeeOutput[]
     ): FeeAmount {
-        let fee = 0;
+        let fee = FeeAmount.ZERO;
 
         for (const input of offchainInputs) {
-            fee += this.evalOffchainInput(input);
+            fee = fee.add(this.evalOffchainInput(input));
         }
 
         for (const input of onchainInputs) {
-            fee += this.evalOnchainInput(input);
+            fee = fee.add(this.evalOnchainInput(input));
         }
 
         for (const output of offchainOutputs) {
-            fee += this.evalOffchainOutput(output);
+            fee = fee.add(this.evalOffchainOutput(output));
         }
 
         for (const output of onchainOutputs) {
-            fee += this.evalOnchainOutput(output);
+            fee = fee.add(this.evalOnchainOutput(output));
         }
 
         return fee;
@@ -171,7 +143,7 @@ export class Estimator {
 
 function inputToArgs(input: OffchainInput): Record<string, any> {
     const args: Record<string, any> = {
-        amount: input.amount,
+        amount: Number(input.amount),
         inputType: input.type,
         weight: input.weight,
     };
@@ -189,7 +161,7 @@ function inputToArgs(input: OffchainInput): Record<string, any> {
 
 function outputToArgs(output: FeeOutput): Record<string, any> {
     return {
-        amount: output.amount,
+        amount: Number(output.amount),
         script: output.script,
     };
 }

@@ -3,7 +3,7 @@ import { readFileSync } from "fs";
 import { join } from "path";
 import {
     Estimator,
-    type Config,
+    type IntentFeeConfig,
     type OffchainInput,
     type OnchainInput,
     type FeeOutput,
@@ -38,7 +38,7 @@ type JsonOutput = {
 function convertJsonInput(j: JsonInput): OffchainInput {
     const now = Date.now();
     const input: OffchainInput = {
-        amount: j.amount ?? 0,
+        amount: BigInt(j.amount ?? 0),
         type: (j.type as "recoverable" | "vtxo" | "note") ?? "vtxo",
         weight: j.weight ?? 0,
     };
@@ -57,14 +57,14 @@ function convertJsonInput(j: JsonInput): OffchainInput {
 // Convert JSON onchain input to OnchainInput
 function convertJsonOnchainInput(j: JsonOnchainInput): OnchainInput {
     return {
-        amount: j.amount ?? 0,
+        amount: BigInt(j.amount ?? 0),
     };
 }
 
 // Convert JSON output to FeeOutput
 function convertJsonOutput(j: JsonOutput): FeeOutput {
     return {
-        amount: j.amount ?? 0,
+        amount: BigInt(j.amount ?? 0),
         script: j.script ?? "",
     };
 }
@@ -74,15 +74,11 @@ describe("Estimator", () => {
         describe("Invalid", () => {
             for (const testCase of invalidTestData.invalidConfigs) {
                 it(testCase.name, () => {
-                    const config: Config = {
-                        intentOffchainInputProgram:
-                            testCase.config.offchainInputProgram,
-                        intentOnchainInputProgram:
-                            testCase.config.onchainInputProgram,
-                        intentOffchainOutputProgram:
-                            testCase.config.offchainOutputProgram,
-                        intentOnchainOutputProgram:
-                            testCase.config.onchainOutputProgram,
+                    const config: IntentFeeConfig = {
+                        offchainInput: testCase.config.offchainInputProgram,
+                        onchainInput: testCase.config.onchainInputProgram,
+                        offchainOutput: testCase.config.offchainOutputProgram,
+                        onchainOutput: testCase.config.onchainOutputProgram,
                     };
 
                     expect(() => new Estimator(config)).toThrow();
@@ -134,11 +130,11 @@ describe("Estimator", () => {
         it("should return 0 if no program is set", () => {
             const estimator = new Estimator({});
             const result = estimator.evalOffchainInput({
-                amount: 0,
+                amount: BigInt(0),
                 type: "vtxo",
                 weight: 0,
             });
-            expect(result).toBe(0);
+            expect(result.value).toBe(0);
         });
 
         for (const fixture of testData.evalOffchainInput) {
@@ -146,11 +142,11 @@ describe("Estimator", () => {
                 for (const testCase of fixture.cases) {
                     it(testCase.name, () => {
                         const estimator = new Estimator({
-                            intentOffchainInputProgram: fixture.program,
+                            offchainInput: fixture.program,
                         });
                         const input = convertJsonInput(testCase.input);
                         const result = estimator.evalOffchainInput(input);
-                        expect(result).toBe(testCase.expected);
+                        expect(result.value).toBe(testCase.expected);
                     });
                 }
             });
@@ -161,9 +157,9 @@ describe("Estimator", () => {
         it("should return 0 if no program is set", () => {
             const estimator = new Estimator({});
             const result = estimator.evalOnchainInput({
-                amount: 0,
+                amount: BigInt(0),
             });
-            expect(result).toBe(0);
+            expect(result.value).toBe(0);
         });
 
         for (const fixture of testData.evalOnchainInput) {
@@ -171,11 +167,11 @@ describe("Estimator", () => {
                 for (const testCase of fixture.cases) {
                     it(testCase.name, () => {
                         const estimator = new Estimator({
-                            intentOnchainInputProgram: fixture.program,
+                            onchainInput: fixture.program,
                         });
                         const input = convertJsonOnchainInput(testCase.input);
                         const result = estimator.evalOnchainInput(input);
-                        expect(result).toBe(testCase.expected);
+                        expect(result.value).toBe(testCase.expected);
                     });
                 }
             });
@@ -186,10 +182,10 @@ describe("Estimator", () => {
         it("should return 0 if no program is set", () => {
             const estimator = new Estimator({});
             const result = estimator.evalOffchainOutput({
-                amount: 0,
+                amount: BigInt(0),
                 script: "",
             });
-            expect(result).toBe(0);
+            expect(result.value).toBe(0);
         });
 
         for (const fixture of testData.evalOffchainOutput) {
@@ -197,11 +193,11 @@ describe("Estimator", () => {
                 for (const testCase of fixture.cases) {
                     it(testCase.name, () => {
                         const estimator = new Estimator({
-                            intentOffchainOutputProgram: fixture.program,
+                            offchainOutput: fixture.program,
                         });
                         const output = convertJsonOutput(testCase.output);
                         const result = estimator.evalOffchainOutput(output);
-                        expect(result).toBe(testCase.expected);
+                        expect(result.value).toBe(testCase.expected);
                     });
                 }
             });
@@ -212,10 +208,10 @@ describe("Estimator", () => {
         it("should return 0 if no program is set", () => {
             const estimator = new Estimator({});
             const result = estimator.evalOnchainOutput({
-                amount: 0,
+                amount: BigInt(0),
                 script: "",
             });
-            expect(result).toBe(0);
+            expect(result.value).toBe(0);
         });
 
         for (const fixture of testData.evalOnchainOutput) {
@@ -223,11 +219,11 @@ describe("Estimator", () => {
                 for (const testCase of fixture.cases) {
                     it(testCase.name, () => {
                         const estimator = new Estimator({
-                            intentOnchainOutputProgram: fixture.program,
+                            onchainOutput: fixture.program,
                         });
                         const output = convertJsonOutput(testCase.output);
                         const result = estimator.evalOnchainOutput(output);
-                        expect(result).toBe(testCase.expected);
+                        expect(result.value).toBe(testCase.expected);
                     });
                 }
             });
@@ -239,15 +235,11 @@ describe("Estimator", () => {
             describe(fixture.name, () => {
                 for (const testCase of fixture.cases) {
                     it(testCase.name, () => {
-                        const config: Config = {
-                            intentOffchainInputProgram:
-                                fixture.offchainInputProgram,
-                            intentOnchainInputProgram:
-                                fixture.onchainInputProgram,
-                            intentOffchainOutputProgram:
-                                fixture.offchainOutputProgram,
-                            intentOnchainOutputProgram:
-                                fixture.onchainOutputProgram,
+                        const config: IntentFeeConfig = {
+                            offchainInput: fixture.offchainInputProgram,
+                            onchainInput: fixture.onchainInputProgram,
+                            offchainOutput: fixture.offchainOutputProgram,
+                            onchainOutput: fixture.onchainOutputProgram,
                         };
 
                         const estimator = new Estimator(config);
@@ -271,7 +263,7 @@ describe("Estimator", () => {
                             offchainOutputs,
                             onchainOutputs
                         );
-                        expect(result).toBe(testCase.expected);
+                        expect(result.value).toBe(testCase.expected);
                     });
                 }
             });

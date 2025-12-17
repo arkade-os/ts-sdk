@@ -255,8 +255,8 @@ describe("Wallet", () => {
 
             const provider = new RestArkProvider("http://localhost:7070");
             const info = await provider.getInfo();
-            expect(info.fees.intentFee.onchainInput).toBe(BigInt(1000));
-            expect(info.fees.intentFee.onchainOutput).toBe(BigInt(1000));
+            expect(Number(info.fees.intentFee.onchainInput)).toBe(1000);
+            expect(Number(info.fees.intentFee.onchainOutput)).toBe(1000);
         });
     });
 });

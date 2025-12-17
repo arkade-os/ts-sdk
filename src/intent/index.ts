@@ -60,6 +60,26 @@ export namespace Intent {
         // create the transaction to sign
         return craftToSignTx(toSpend, inputs, outputs);
     }
+
+    export function fee(proof: Proof): number {
+        let sumOfInputs = 0n;
+        for (let i = 0; i < proof.inputsLength; i++) {
+            const input = proof.getInput(i);
+            if (input.witnessUtxo === undefined)
+                throw new Error("intent proof input requires witness utxo");
+            sumOfInputs += input.witnessUtxo.amount;
+        }
+
+        let sumOfOutputs = 0n;
+        for (let i = 0; i < proof.outputsLength; i++) {
+            const output = proof.getOutput(i);
+            if (output.amount === undefined)
+                throw new Error("intent proof output requires amount");
+            sumOfOutputs += output.amount;
+        }
+
+        return Number(sumOfOutputs - sumOfInputs);
+    }
 }
 
 const OP_RETURN_EMPTY_PKSCRIPT = new Uint8Array([OP.RETURN]);

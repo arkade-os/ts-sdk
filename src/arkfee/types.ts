@@ -1,20 +1,36 @@
-export type FeeAmount = number;
+/**
+ * FeeAmount is a wrapper around a number that represents a fee amount in satoshis floating point.
+ * @param value - The fee amount in floating point.
+ * @method satoshis - Returns the fee amount in satoshis as a integer.
+ * @example
+ * const fee = new FeeAmount(1.23456789);
+ * console.log(fee.value); // 1.23456789
+ * console.log(fee.satoshis); // 2
+ */
+export class FeeAmount {
+    static ZERO = new FeeAmount(0);
 
-export function feeAmountToSatoshis(fee: FeeAmount): number {
-    return Math.ceil(fee);
+    constructor(readonly value: number) {}
+    get satoshis(): number {
+        return this.value ? Math.ceil(this.value) : 0;
+    }
+
+    add(other: FeeAmount): FeeAmount {
+        return new FeeAmount(this.value + other.value);
+    }
 }
 
-export interface Config {
-    intentOffchainInputProgram?: string;
-    intentOnchainInputProgram?: string;
-    intentOffchainOutputProgram?: string;
-    intentOnchainOutputProgram?: string;
+export interface IntentFeeConfig {
+    offchainInput?: string;
+    onchainInput?: string;
+    offchainOutput?: string;
+    onchainOutput?: string;
 }
 
 export type VtxoType = "recoverable" | "vtxo" | "note";
 
 export interface OffchainInput {
-    amount: number;
+    amount: bigint;
     expiry?: Date;
     birth?: Date;
     type: VtxoType;
@@ -22,10 +38,10 @@ export interface OffchainInput {
 }
 
 export interface OnchainInput {
-    amount: number;
+    amount: bigint;
 }
 
 export interface FeeOutput {
-    amount: number;
+    amount: bigint;
     script: string;
 }
