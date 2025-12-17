@@ -3,29 +3,43 @@ import { Environment } from "@marcbachmann/cel-js";
 /**
  * Variable names used in CEL expressions
  */
-export enum VariableName {
-    Amount = "amount",
-    Expiry = "expiry",
-    Birth = "birth",
-    Weight = "weight",
-    InputType = "inputType",
-    OutputType = "outputType",
-}
+export const AmountVariableName = "amount";
+export const ExpiryVariableName = "expiry";
+export const BirthVariableName = "birth";
+export const WeightVariableName = "weight";
+export const InputTypeVariableName = "inputType";
+export const OutputScriptVariableName = "script";
 
 const nowFunction = {
     signature: "now(): double",
     implementation: () => Math.floor(Date.now() / 1000),
 };
 
-export const intentOutputEnv = new Environment()
-    .registerVariable(VariableName.Amount, "double")
-    .registerVariable(VariableName.OutputType, "string")
+/**
+ * IntentOutputEnv is the CEL environment for output fee calculation
+ * Variables: amount, script
+ */
+export const IntentOutputEnv = new Environment()
+    .registerVariable(AmountVariableName, "double")
+    .registerVariable(OutputScriptVariableName, "string")
     .registerFunction(nowFunction.signature, nowFunction.implementation);
 
-export const intentInputEnv = new Environment()
-    .registerVariable(VariableName.Amount, "double")
-    .registerVariable(VariableName.Expiry, "double")
-    .registerVariable(VariableName.Birth, "double")
-    .registerVariable(VariableName.Weight, "double")
-    .registerVariable(VariableName.InputType, "string")
+/**
+ * IntentOffchainInputEnv is the CEL environment for offchain input fee calculation
+ * Variables: amount, expiry, birth, weight, inputType
+ */
+export const IntentOffchainInputEnv = new Environment()
+    .registerVariable(AmountVariableName, "double")
+    .registerVariable(ExpiryVariableName, "double")
+    .registerVariable(BirthVariableName, "double")
+    .registerVariable(WeightVariableName, "double")
+    .registerVariable(InputTypeVariableName, "string")
+    .registerFunction(nowFunction.signature, nowFunction.implementation);
+
+/**
+ * IntentOnchainInputEnv is the CEL environment for onchain input fee calculation
+ * Variables: amount
+ */
+export const IntentOnchainInputEnv = new Environment()
+    .registerVariable(AmountVariableName, "double")
     .registerFunction(nowFunction.signature, nowFunction.implementation);

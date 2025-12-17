@@ -1,51 +1,31 @@
-/**
- * FeeAmount represents a fee amount in satoshis (as a floating-point number)
- */
-export type FeeAmount = {
-    satoshis(): number;
-    amount: number;
-};
+export type FeeAmount = number;
 
-export function newFeeAmount(amount: number): FeeAmount {
-    return {
-        satoshis: () => Math.ceil(amount),
-        amount,
-    };
+export function feeAmountToSatoshis(fee: FeeAmount): number {
+    return Math.ceil(fee);
 }
 
-/**
- * InputType represents the type of an input
- */
-export enum InputType {
-    Recoverable = "recoverable",
-    Vtxo = "vtxo",
-    Boarding = "boarding",
-    Note = "note",
+export interface Config {
+    intentOffchainInputProgram?: string;
+    intentOnchainInputProgram?: string;
+    intentOffchainOutputProgram?: string;
+    intentOnchainOutputProgram?: string;
 }
 
-/**
- * Input represents an input to an intent
- */
-export interface Input {
+export type VtxoType = "recoverable" | "vtxo" | "note";
+
+export interface OffchainInput {
     amount: number;
     expiry?: Date;
     birth?: Date;
-    type: InputType;
+    type: VtxoType;
     weight: number;
 }
 
-/**
- * OutputType represents the type of an output
- */
-export enum OutputType {
-    Vtxo = "vtxo",
-    Onchain = "onchain",
+export interface OnchainInput {
+    amount: number;
 }
 
-/**
- * Output represents an output from an intent
- */
-export interface Output {
+export interface FeeOutput {
     amount: number;
-    type: OutputType;
+    script: string;
 }

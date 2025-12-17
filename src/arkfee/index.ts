@@ -1,7 +1,10 @@
 export { Estimator } from "./estimator";
 export type {
     FeeAmount,
-    Input as FeeInput,
-    Output as FeeOutput,
+    Config,
+    OffchainInput,
+    OnchainInput,
+    FeeOutput,
+    VtxoType,
 } from "./types";
-export { InputType, OutputType } from "./types";
+export { feeAmountToSatoshis } from "./types";
