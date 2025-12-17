@@ -82,13 +82,13 @@ export namespace Intent {
             sumOfOutputs += output.amount;
         }
 
-        if (sumOfOutputs < sumOfInputs) {
+        if (sumOfOutputs > sumOfInputs) {
             throw new Error(
-                "intent proof output amount is less than input amount"
+                `intent proof output amount is greater than input amount: ${sumOfOutputs} > ${sumOfInputs}`
             );
         }
 
-        return Number(sumOfOutputs - sumOfInputs);
+        return Number(sumOfInputs - sumOfOutputs);
     }
 
     export type RegisterMessage = {
