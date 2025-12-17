@@ -974,6 +974,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
             );
 
+            const filteredBoardingUtxos = [];
             for (const utxo of boardingUtxos) {
                 const inputFee = estimator.evalOnchainInput({
                     amount: BigInt(utxo.value),
@@ -983,10 +984,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     continue;
                 }
 
+                filteredBoardingUtxos.push(utxo);
                 amount += utxo.value - inputFee.satoshis;
             }
 
             const vtxos = await this.getVtxos({ withRecoverable: true });
+
+            const filteredVtxos = [];
             for (const vtxo of vtxos) {
                 const inputFee = estimator.evalOffchainInput({
                     amount: BigInt(vtxo.value),
@@ -1005,10 +1009,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     continue;
                 }
 
+                filteredVtxos.push(vtxo);
                 amount += vtxo.value - inputFee.satoshis;
             }
 
-            const inputs = [...boardingUtxos, ...vtxos];
+            const inputs = [...filteredBoardingUtxos, ...filteredVtxos];
             if (inputs.length === 0) {
                 throw new Error("No inputs found");
             }
