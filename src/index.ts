@@ -1,6 +1,6 @@
 import { Transaction } from "./utils/transaction";
-import { SingleKey } from "./identity/singleKey";
-import { Identity } from "./identity";
+import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
+import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -13,7 +13,10 @@ import {
 import {
     TxType,
     IWallet,
+    IReadonlyWallet,
+    BaseWalletConfig,
     WalletConfig,
+    ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
     Coin,
@@ -30,9 +33,19 @@ import {
     TxKey,
     GetVtxosFilter,
     TapLeaves,
+    isSpendable,
+    isSubdust,
+    isRecoverable,
+    isExpired,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
-import { Wallet, waitForIncomingFunds, IncomingFunds } from "./wallet/wallet";
+import {
+    Wallet,
+    ReadonlyWallet,
+    waitForIncomingFunds,
+    IncomingFunds,
+    getSequence,
+} from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
     SignerSession,
@@ -41,7 +54,10 @@ import {
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import { ServiceWorkerWallet } from "./wallet/serviceWorker/wallet";
+import {
+    ServiceWorkerWallet,
+    ServiceWorkerReadonlyWallet,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 import { Worker } from "./wallet/serviceWorker/worker";
@@ -131,13 +147,20 @@ import { Unroll } from "./wallet/unroll";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
+import {
+    validateVtxoTxGraph,
+    validateConnectorsTxGraph,
+} from "./tree/validation";
+import { buildForfeitTx } from "./forfeit";
 
 export * from "./arkfee";
 
 export {
     // Wallets
     Wallet,
+    ReadonlyWallet,
     SingleKey,
+    ReadonlySingleKey,
     OnchainWallet,
     Ramps,
     VtxoManager,
@@ -164,6 +187,7 @@ export {
     setupServiceWorker,
     Worker,
     ServiceWorkerWallet,
+    ServiceWorkerReadonlyWallet,
     Request,
     Response,
 
@@ -218,14 +242,28 @@ export {
     // Errors
     ArkError,
     maybeArkError,
+
+    // Batch session
     Batch,
+    validateVtxoTxGraph,
+    validateConnectorsTxGraph,
+    buildForfeitTx,
+    isRecoverable,
+    isSpendable,
+    isSubdust,
+    isExpired,
+    getSequence,
 };
 
 export type {
     // Types and Interfaces
     Identity,
+    ReadonlyIdentity,
     IWallet,
+    IReadonlyWallet,
+    BaseWalletConfig,
     WalletConfig,
+    ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
     Coin,

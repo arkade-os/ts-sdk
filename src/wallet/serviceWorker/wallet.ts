@@ -7,12 +7,13 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    IReadonlyWallet,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity } from "../../identity";
+import { Identity, ReadonlyIdentity, ReadonlySingleKey } from "../../identity";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { WalletRepositoryImpl } from "../../repositories/walletRepository";
@@ -20,10 +21,10 @@ import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
 import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
 
-export type PrivateKeyIdentity = Identity & { toHex(): string };
+type PrivateKeyIdentity = Identity & { toHex(): string };
 
 const isPrivateKeyIdentity = (
-    identity: Identity
+    identity: Identity | ReadonlyIdentity
 ): identity is PrivateKeyIdentity => {
     return typeof (identity as any).toHex === "function";
 };
@@ -75,7 +76,7 @@ interface ServiceWorkerWalletOptions {
     esploraUrl?: string;
     dbName?: string;
     dbVersion?: number;
-    identity: PrivateKeyIdentity;
+    identity: ReadonlyIdentity | Identity;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -85,14 +86,27 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
 };
 
-export class ServiceWorkerWallet implements IWallet {
+const createCommon = (options: ServiceWorkerWalletCreateOptions) => {
+    // Default to IndexedDB for service worker context
+    const storage = new IndexedDBStorageAdapter(
+        options.dbName || DEFAULT_DB_NAME,
+        options.dbVersion
+    );
+    // Create repositories
+    return {
+        walletRepo: new WalletRepositoryImpl(storage),
+        contractRepo: new ContractRepositoryImpl(storage),
+    };
+};
+
+export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
-    public readonly identity: Identity;
+    public readonly identity: ReadonlyIdentity;
 
-    private constructor(
+    protected constructor(
         public readonly serviceWorker: ServiceWorker,
-        identity: PrivateKeyIdentity,
+        identity: ReadonlyIdentity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository
     ) {
@@ -103,43 +117,26 @@ export class ServiceWorkerWallet implements IWallet {
 
     static async create(
         options: ServiceWorkerWalletCreateOptions
-    ): Promise<ServiceWorkerWallet> {
-        // Default to IndexedDB for service worker context
-        const storage = new IndexedDBStorageAdapter(
-            options.dbName || DEFAULT_DB_NAME,
-            options.dbVersion
-        );
-
-        // Create repositories
-        const walletRepo = new WalletRepositoryImpl(storage);
-        const contractRepo = new ContractRepositoryImpl(storage);
-
-        // Extract identity and check if it can expose private key
-        const identity = isPrivateKeyIdentity(options.identity)
-            ? options.identity
-            : null;
-        if (!identity) {
-            throw new Error(
-                "ServiceWorkerWallet.create() requires a Identity that can expose a single private key"
-            );
-        }
-
-        // Extract private key for service worker initialization
-        const privateKey = identity.toHex();
+    ): Promise<ServiceWorkerReadonlyWallet> {
+        const { walletRepo, contractRepo } = createCommon(options);
 
         // Create the wallet instance
-        const wallet = new ServiceWorkerWallet(
+        const wallet = new ServiceWorkerReadonlyWallet(
             options.serviceWorker,
-            identity,
+            options.identity,
             walletRepo,
             contractRepo
         );
+
+        const publicKey = await options.identity
+            .compressedPublicKey()
+            .then(hex.encode);
 
         // Initialize the service worker with the config
         const initMessage: Request.InitWallet = {
             type: "INIT_WALLET",
             id: getRandomId(),
-            privateKey,
+            key: { publicKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
         };
@@ -157,14 +154,14 @@ export class ServiceWorkerWallet implements IWallet {
      * @example
      * ```typescript
      * // One-liner setup - handles everything automatically!
-     * const wallet = await ServiceWorkerWallet.setup({
+     * const wallet = await ServiceWorkerReadonlyWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
      *   arkServerUrl: 'https://mutinynet.arkade.sh'
      * });
      *
-     * // With custom identity
-     * const identity = SingleKey.fromHex('your_private_key_hex');
-     * const wallet = await ServiceWorkerWallet.setup({
+     * // With custom readonly identity
+     * const identity = ReadonlySingleKey.fromPublicKey('your_public_key_hex');
+     * const wallet = await ServiceWorkerReadonlyWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
      *   arkServerUrl: 'https://mutinynet.arkade.sh',
      *   identity
@@ -173,21 +170,21 @@ export class ServiceWorkerWallet implements IWallet {
      */
     static async setup(
         options: ServiceWorkerWalletSetupOptions
-    ): Promise<ServiceWorkerWallet> {
+    ): Promise<ServiceWorkerReadonlyWallet> {
         // Register and setup the service worker
         const serviceWorker = await setupServiceWorker(
             options.serviceWorkerPath
         );
 
         // Use the existing create method
-        return ServiceWorkerWallet.create({
+        return ServiceWorkerReadonlyWallet.create({
             ...options,
             serviceWorker,
         });
     }
 
     // send a message and wait for a response
-    private async sendMessage<T extends Request.Base>(
+    protected async sendMessage<T extends Request.Base>(
         message: T
     ): Promise<Response.Base> {
         return new Promise((resolve, reject) => {
@@ -348,6 +345,116 @@ export class ServiceWorkerWallet implements IWallet {
         }
     }
 
+    async reload(): Promise<boolean> {
+        const message: Request.ReloadWallet = {
+            type: "RELOAD_WALLET",
+            id: getRandomId(),
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isWalletReloaded(response)) {
+            return response.success;
+        }
+        throw new UnexpectedResponseError(response);
+    }
+}
+
+export class ServiceWorkerWallet
+    extends ServiceWorkerReadonlyWallet
+    implements IWallet
+{
+    public readonly walletRepository: WalletRepository;
+    public readonly contractRepository: ContractRepository;
+    public readonly identity: Identity;
+
+    protected constructor(
+        public readonly serviceWorker: ServiceWorker,
+        identity: PrivateKeyIdentity,
+        walletRepository: WalletRepository,
+        contractRepository: ContractRepository
+    ) {
+        super(serviceWorker, identity, walletRepository, contractRepository);
+        this.identity = identity;
+        this.walletRepository = walletRepository;
+        this.contractRepository = contractRepository;
+    }
+
+    static async create(
+        options: ServiceWorkerWalletCreateOptions
+    ): Promise<ServiceWorkerWallet> {
+        const { walletRepo, contractRepo } = createCommon(options);
+
+        // Extract identity and check if it can expose private key
+        const identity = isPrivateKeyIdentity(options.identity)
+            ? options.identity
+            : null;
+        if (!identity) {
+            throw new Error(
+                "ServiceWorkerWallet.create() requires a Identity that can expose a single private key"
+            );
+        }
+
+        // Extract private key for service worker initialization
+        const privateKey = identity.toHex();
+
+        // Create the wallet instance
+        const wallet = new ServiceWorkerWallet(
+            options.serviceWorker,
+            identity,
+            walletRepo,
+            contractRepo
+        );
+
+        // Initialize the service worker with the config
+        const initMessage: Request.InitWallet = {
+            type: "INIT_WALLET",
+            id: getRandomId(),
+            key: { privateKey },
+            arkServerUrl: options.arkServerUrl,
+            arkServerPublicKey: options.arkServerPublicKey,
+        };
+
+        // Initialize the service worker
+        await wallet.sendMessage(initMessage);
+
+        return wallet;
+    }
+
+    /**
+     * Simplified setup method that handles service worker registration,
+     * identity creation, and wallet initialization automatically.
+     *
+     * @example
+     * ```typescript
+     * // One-liner setup - handles everything automatically!
+     * const wallet = await ServiceWorkerWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServerUrl: 'https://mutinynet.arkade.sh'
+     * });
+     *
+     * // With custom identity
+     * const identity = SingleKey.fromHex('your_private_key_hex');
+     * const wallet = await ServiceWorkerWallet.setup({
+     *   serviceWorkerPath: '/service-worker.js',
+     *   arkServerUrl: 'https://mutinynet.arkade.sh',
+     *   identity
+     * });
+     * ```
+     */
+    static async setup(
+        options: ServiceWorkerWalletSetupOptions
+    ): Promise<ServiceWorkerWallet> {
+        // Register and setup the service worker
+        const serviceWorker = await setupServiceWorker(
+            options.serviceWorkerPath
+        );
+
+        // Use the existing create method
+        return ServiceWorkerWallet.create({
+            ...options,
+            serviceWorker,
+        });
+    }
+
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         const message: Request.SendBitcoin = {
             type: "SEND_BITCOIN",
@@ -422,18 +529,6 @@ export class ServiceWorkerWallet implements IWallet {
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
         }
-    }
-
-    async reload(): Promise<boolean> {
-        const message: Request.ReloadWallet = {
-            type: "RELOAD_WALLET",
-            id: getRandomId(),
-        };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletReloaded(response)) {
-            return response.success;
-        }
-        throw new UnexpectedResponseError(response);
     }
 }
 
