@@ -36,7 +36,7 @@ export class Ramps {
         boardingUtxos = boardingUtxos ?? (await this.wallet.getBoardingUtxos());
 
         // Calculate input fees and filter out utxos where fee >= value
-        const estimator = new Estimator(feeInfo.intentFee);
+        const estimator = new Estimator(feeInfo?.intentFee ?? {});
         const filteredBoardingUtxos: ExtendedCoin[] = [];
         let totalAmount = 0n;
 
@@ -130,7 +130,7 @@ export class Ramps {
         });
 
         // Calculate input fees and filter out vtxos where fee >= value
-        const estimator = new Estimator(feeInfo.intentFee);
+        const estimator = new Estimator(feeInfo?.intentFee ?? {});
         const filteredVtxos: typeof vtxos = [];
         let totalAmount = 0n;
 

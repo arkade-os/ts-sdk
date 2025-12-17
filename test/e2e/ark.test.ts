@@ -42,7 +42,9 @@ describe("Ark integration tests", () => {
             async () => (await alice.wallet.getBoardingUtxos()).length > 0
         );
 
-        const settleTxid = await new Ramps(alice.wallet).onboard();
+        const { fees } = await alice.wallet.arkProvider.getInfo();
+
+        const settleTxid = await new Ramps(alice.wallet).onboard(fees);
         expect(settleTxid).toBeDefined();
     });
 
