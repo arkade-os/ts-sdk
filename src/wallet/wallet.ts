@@ -348,28 +348,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        // Use ContractManager if available (single source of truth for VTXOs)
-        if (this.supportsContractManager() && this._contractManager) {
-            const vtxosMap = await this._contractManager.getContractVtxos({
-                contractIds: [this.defaultContractId],
-                activeOnly: false,
-                includeSpent: filter?.withUnrolled ?? false,
-            });
-
-            let vtxos = vtxosMap.get(this.defaultContractId) || [];
-
-            // Apply filter for recoverable
-            if (!filter?.withRecoverable) {
-                vtxos = vtxos.filter(
-                    (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
-                );
-            }
-
-            return vtxos;
-        }
-
-        // Fallback: direct API call
         const address = await this.getAddress();
+
+        // For now, always fetch fresh data from provider and update cache
+        // In future, we can add cache invalidation logic based on timestamps
         const vtxos = await this.getVirtualCoins(filter);
         const extendedVtxos = vtxos.map((vtxo) =>
             extendVirtualCoin(this, vtxo)
@@ -688,6 +670,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
 
+    private _contractManager?: ContractManager;
+    private _contractManagerInitializing?: Promise<ContractManager>;
+    private readonly watcherConfig?: WalletConfig["watcherConfig"];
+    private readonly sweeperConfig?: WalletConfig["sweeperConfig"];
+
     protected constructor(
         identity: Identity,
         network: Network,
@@ -704,7 +691,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
-        renewalConfig?: WalletConfig["renewalConfig"]
+        renewalConfig?: WalletConfig["renewalConfig"],
+        watcherConfig?: WalletConfig["watcherConfig"],
+        sweeperConfig?: WalletConfig["sweeperConfig"]
     ) {
         super(
             identity,
@@ -724,6 +713,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
+        this.watcherConfig = watcherConfig;
+        this.sweeperConfig = sweeperConfig;
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -768,7 +759,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            config.renewalConfig
+            config.renewalConfig,
+            config.watcherConfig,
+            config.sweeperConfig
         );
     }
 

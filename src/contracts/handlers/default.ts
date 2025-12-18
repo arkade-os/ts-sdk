@@ -12,7 +12,7 @@ import {
 /**
  * Convert RelativeTimelock to BIP68 sequence number.
  */
-function timelockToSequence(timelock: RelativeTimelock): number {
+export function timelockToSequence(timelock: RelativeTimelock): number {
     return bip68.encode(
         timelock.type === "blocks"
             ? { blocks: Number(timelock.value) }
@@ -23,7 +23,7 @@ function timelockToSequence(timelock: RelativeTimelock): number {
 /**
  * Convert BIP68 sequence number back to RelativeTimelock.
  */
-function sequenceToTimelock(sequence: number): RelativeTimelock {
+export function sequenceToTimelock(sequence: number): RelativeTimelock {
     const decoded = bip68.decode(sequence);
     if ("blocks" in decoded && decoded.blocks !== undefined) {
         return { type: "blocks", value: BigInt(decoded.blocks) };
@@ -40,7 +40,6 @@ function sequenceToTimelock(sequence: number): RelativeTimelock {
 export interface DefaultContractParams {
     pubKey: Uint8Array;
     serverPubKey: Uint8Array;
-    csvTimelock?: RelativeTimelock;
 }
 
 /**
@@ -62,29 +61,17 @@ export const DefaultContractHandler: ContractHandler<
     },
 
     serializeParams(params: DefaultContractParams): Record<string, string> {
-        const result: Record<string, string> = {
+        return {
             pubKey: hex.encode(params.pubKey),
             serverPubKey: hex.encode(params.serverPubKey),
         };
-
-        if (params.csvTimelock) {
-            result.csv = timelockToSequence(params.csvTimelock).toString();
-        }
-
-        return result;
     },
 
     deserializeParams(params: Record<string, string>): DefaultContractParams {
-        const result: DefaultContractParams = {
+        return {
             pubKey: hex.decode(params.pubKey),
             serverPubKey: hex.decode(params.serverPubKey),
         };
-
-        if (params.csv) {
-            result.csvTimelock = sequenceToTimelock(Number(params.csv));
-        }
-
-        return result;
     },
 
     selectPath(
