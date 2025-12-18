@@ -1698,7 +1698,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // Contract ID defaults to script, so no need to specify id explicitly
         await manager.createContract({
             type: "default",
-            params: {},
+            params: {
+                pubKey: hex.encode(this.offchainTapscript.options.pubKey),
+                serverPubKey: hex.encode(
+                    this.offchainTapscript.options.serverPubKey
+                ),
+            },
             script: this.defaultContractId,
             address: await this.getAddress(),
             state: "active",
