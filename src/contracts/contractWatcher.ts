@@ -122,6 +122,10 @@ export class ContractWatcher {
 
     /**
      * Add a contract to be watched.
+     *
+     * Active contracts are immediately subscribed. All contracts are polled
+     * to discover any existing VTXOs (which may cause them to be watched
+     * even if inactive).
      */
     async addContract(contract: Contract): Promise<void> {
         const state: ContractState = {
@@ -132,11 +136,12 @@ export class ContractWatcher {
         this.contracts.set(contract.id, state);
         this.scriptToContract.set(contract.script, contract.id);
 
-        // If we're already watching and contract is active, update subscription
-        if (this.isWatching && contract.state === "active") {
-            await this.updateSubscription();
-            // Poll immediately for new contract
+        // If we're already watching, poll to discover VTXOs and update subscription
+        if (this.isWatching) {
+            // Poll first to discover VTXOs (may affect whether we watch this contract)
             await this.pollContracts([contract.id]);
+            // Update subscription based on active state and VTXOs
+            await this.updateSubscription();
         }
     }
 
@@ -220,6 +225,35 @@ export class ContractWatcher {
      */
     getActiveScripts(): string[] {
         return this.getActiveContracts().map((c) => c.script);
+    }
+
+    /**
+     * Get scripts that should be watched.
+     *
+     * Returns scripts for:
+     * - All active contracts
+     * - All contracts with known VTXOs (regardless of state)
+     *
+     * This ensures we continue monitoring contracts even after they're
+     * deactivated, as long as they have unspent VTXOs.
+     */
+    getScriptsToWatch(): string[] {
+        const scripts = new Set<string>();
+
+        for (const [, state] of this.contracts) {
+            // Always watch active contracts
+            if (state.contract.state === "active") {
+                scripts.add(state.contract.script);
+                continue;
+            }
+
+            // Also watch inactive/expired contracts that have VTXOs
+            if (state.lastKnownVtxos.size > 0) {
+                scripts.add(state.contract.script);
+            }
+        }
+
+        return Array.from(scripts);
     }
 
     /**
@@ -704,12 +738,14 @@ export class ContractWatcher {
     }
 
     /**
-     * Update the subscription with current active scripts.
+     * Update the subscription with scripts that should be watched.
+     *
+     * Watches both active contracts and contracts with VTXOs.
      */
     private async updateSubscription(): Promise<void> {
-        const activeScripts = this.getActiveScripts();
+        const scriptsToWatch = this.getScriptsToWatch();
 
-        if (activeScripts.length === 0) {
+        if (scriptsToWatch.length === 0) {
             if (this.subscriptionId) {
                 try {
                     await this.config.indexerProvider.unsubscribeForScripts(
@@ -725,7 +761,7 @@ export class ContractWatcher {
 
         this.subscriptionId =
             await this.config.indexerProvider.subscribeForScripts(
-                activeScripts,
+                scriptsToWatch,
                 this.subscriptionId
             );
     }
