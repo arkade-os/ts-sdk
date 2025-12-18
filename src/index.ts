@@ -152,6 +152,7 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import { IUpdater, WalletUpdater } from "./wallet/serviceWorker/WalletUpdater";
 
 export {
     // Wallets
@@ -188,6 +189,10 @@ export {
     ServiceWorkerReadonlyWallet,
     Request,
     Response,
+
+    // Experimental SW
+    type IUpdater,
+    WalletUpdater,
 
     // Tapscript
     decodeTapscript,

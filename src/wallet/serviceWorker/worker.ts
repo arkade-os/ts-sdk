@@ -27,7 +27,7 @@ import {
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
 
-class ReadonlyHandler {
+export class ReadonlyHandler {
     constructor(protected readonly wallet: ReadonlyWallet) {}
 
     get offchainTapscript() {
@@ -84,7 +84,7 @@ class ReadonlyHandler {
     }
 }
 
-class Handler extends ReadonlyHandler {
+export class Handler extends ReadonlyHandler {
     constructor(protected readonly wallet: Wallet) {
         super(wallet);
     }

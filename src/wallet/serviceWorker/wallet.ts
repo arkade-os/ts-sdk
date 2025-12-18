@@ -20,6 +20,7 @@ import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
 import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
+import { WalletUpdater } from "./WalletUpdater";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -189,7 +190,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     ): Promise<Response.Base> {
         return new Promise((resolve, reject) => {
             const messageHandler = (event: MessageEvent) => {
-                const response = event.data as Response.Base;
+                const response = event.data.payload as Response.Base;
+                console.log("Received message from SW:", response);
                 if (response.id === "") {
                     reject(new Error("Invalid response id"));
                     return;
@@ -210,7 +212,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
-            this.serviceWorker.postMessage(message);
+            console.log("Sending message to SW:", message);
+            this.serviceWorker.postMessage({
+                prefix: WalletUpdater.messagePrefix,
+                id: message.id,
+                type: message.type,
+                payload: message,
+            });
         });
     }
 
