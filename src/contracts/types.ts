@@ -221,12 +221,13 @@ export interface ContractHandler<
 }
 
 /**
- * Event types emitted by the contract watcher.
+ * Event types emitted by the contract watcher and sweeper.
  */
 export type ContractEventType =
     | "vtxo_received"
     | "vtxo_spent"
     | "vtxo_swept"
+    | "vtxo_spendable"
     | "contract_expired";
 
 /**

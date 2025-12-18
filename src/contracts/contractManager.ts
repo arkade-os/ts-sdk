@@ -7,6 +7,7 @@ import {
     ContractVtxo,
     ContractState,
     ContractEvent,
+    ContractEventType,
     ContractEventCallback,
     ContractBalance,
     ContractWithVtxos,
@@ -119,7 +120,8 @@ export class ContractManager {
     private watcher: ContractWatcher;
     private sweeper?: ContractSweeper;
     private initialized = false;
-    private eventCallback?: ContractEventCallback;
+    private eventCallbacks: Set<ContractEventCallback> = new Set();
+    private stopWatcherFn?: () => void;
 
     constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -149,7 +151,10 @@ export class ContractManager {
     }
 
     /**
-     * Initialize the manager by loading persisted contracts.
+     * Initialize the manager by loading persisted contracts and starting to watch.
+     *
+     * After initialization, the manager automatically watches all active contracts
+     * and contracts with VTXOs. Use `onContractEvent()` to register event callbacks.
      */
     async initialize(): Promise<void> {
         if (this.initialized) {
@@ -176,6 +181,23 @@ export class ContractManager {
         }
 
         this.initialized = true;
+
+        // Start watching automatically
+        this.stopWatcherFn = await this.watcher.startWatching((event) => {
+            this.handleContractEvent(event);
+        });
+
+        // Start sweeper if configured
+        this.sweeper?.start((event) => {
+            if (event.type === "vtxo_spendable") {
+                this.emitEvent({
+                    type: "vtxo_spendable" as ContractEventType,
+                    contractId: event.contractId,
+                    vtxos: event.vtxos,
+                    timestamp: Date.now(),
+                });
+            }
+        });
     }
 
     /**
@@ -590,37 +612,41 @@ export class ContractManager {
     }
 
     /**
-     * Start watching for contract events.
+     * Register a callback for contract events.
+     *
+     * The manager automatically watches after `initialize()`. This method
+     * allows registering callbacks to receive events.
      *
      * @param callback - Event callback
-     * @returns Stop function
+     * @returns Unsubscribe function to remove this callback
+     *
+     * @example
+     * ```typescript
+     * const unsubscribe = manager.onContractEvent((event) => {
+     *   console.log(`${event.type} on ${event.contractId}`);
+     * });
+     *
+     * // Later: stop receiving events
+     * unsubscribe();
+     * ```
+     */
+    onContractEvent(callback: ContractEventCallback): () => void {
+        this.eventCallbacks.add(callback);
+        return () => {
+            this.eventCallbacks.delete(callback);
+        };
+    }
+
+    /**
+     * Start watching for contract events.
+     *
+     * @deprecated Use `onContractEvent()` instead. Watching starts automatically on `initialize()`.
+     * @param callback - Event callback
+     * @returns Stop function (only removes callback, does not stop watching)
      */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
         this.ensureInitialized();
-
-        this.eventCallback = callback;
-
-        const stopWatcher = await this.watcher.startWatching((event) => {
-            this.handleContractEvent(event);
-        });
-
-        // Start sweeper if configured
-        this.sweeper?.start((event) => {
-            if (event.type === "vtxo_spendable") {
-                callback({
-                    type: "vtxo_spendable" as any,
-                    contractId: event.contractId,
-                    vtxos: event.vtxos,
-                    timestamp: Date.now(),
-                });
-            }
-        });
-
-        return () => {
-            stopWatcher();
-            this.sweeper?.stop();
-            this.eventCallback = undefined;
-        };
+        return this.onContractEvent(callback);
     }
 
     /**
@@ -668,14 +694,27 @@ export class ContractManager {
     }
 
     /**
+     * Emit an event to all registered callbacks.
+     */
+    private emitEvent(event: ContractEvent): void {
+        for (const callback of this.eventCallbacks) {
+            try {
+                callback(event);
+            } catch (error) {
+                console.error("Error in contract event callback:", error);
+            }
+        }
+    }
+
+    /**
      * Handle events from the watcher.
      */
     private handleContractEvent(event: ContractEvent): void {
         // Check for contract expiration
         this.watcher.checkExpiredContracts();
 
-        // Forward to callback
-        this.eventCallback?.(event);
+        // Forward to all callbacks
+        this.emitEvent(event);
     }
 
     /**
@@ -698,16 +737,15 @@ export class ContractManager {
      * Implements the disposable pattern for cleanup.
      */
     dispose(): void {
-        // Stop watching if active
-        if (this.watcher.isCurrentlyWatching()) {
-            this.watcher.stopWatching();
-        }
+        // Stop watching
+        this.stopWatcherFn?.();
+        this.stopWatcherFn = undefined;
 
         // Stop sweeper if configured
         this.sweeper?.stop();
 
-        // Clear callback
-        this.eventCallback = undefined;
+        // Clear callbacks
+        this.eventCallbacks.clear();
 
         // Mark as uninitialized
         this.initialized = false;
