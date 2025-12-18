@@ -218,6 +218,23 @@ export interface ContractHandler<
         contract: Contract,
         context: PathContext
     ): PathSelection[];
+
+    /**
+     * Get the sweep destination for a contract.
+     *
+     * Called when sweeping VTXOs from this contract. Returns the
+     * destination address, or the default destination.
+     *
+     * @param contract - The contract being swept
+     * @param context - Spending context
+     * @param defaultDestination - The wallet's default address (fallback)
+     * @returns Destination address to sweep to
+     */
+    getSweepDestination?(
+        contract: Contract,
+        context: PathContext,
+        defaultDestination: string
+    ): string;
 }
 
 /**

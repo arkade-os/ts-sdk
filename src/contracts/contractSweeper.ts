@@ -385,9 +385,12 @@ export class ContractSweeper {
         // Limit VTXOs per sweep
         const toSweep = vtxos.slice(0, this.config.maxVtxosPerSweep);
 
-        // Determine destination
-        const destination =
-            contract.sweepDestination || (await this.deps.getDefaultAddress());
+        // Determine destination (handler-defined > contract override > default)
+        const defaultDestination = await this.deps.getDefaultAddress();
+        const destination = await this.getDestinationForContract(
+            contract,
+            defaultDestination
+        );
 
         this.eventCallback?.({
             type: "sweep_started",
@@ -420,6 +423,34 @@ export class ContractSweeper {
             });
             return null;
         }
+    }
+
+    /**
+     * Get the sweep destination for a contract.
+     *
+     * Priority:
+     * 1. Handler-defined destination (via getSweepDestination)
+     * 2. Contract's sweepDestination override
+     * 3. Default wallet address
+     */
+    private async getDestinationForContract(
+        contract: Contract,
+        defaultDestination: string
+    ): Promise<string> {
+        const handler = contractHandlers.get(contract.type);
+
+        // Try handler-defined destination
+        if (handler?.getSweepDestination) {
+            const context = await this.buildPathContext();
+            return handler.getSweepDestination(
+                contract,
+                context,
+                defaultDestination
+            );
+        }
+
+        // Fall back to contract override or default
+        return contract.sweepDestination || defaultDestination;
     }
 
     /**
