@@ -96,6 +96,13 @@ export interface Contract {
      * Optional metadata for external integrations.
      */
     metadata?: Record<string, unknown>;
+
+    /**
+     * Delegation configuration for server-side VTXO refresh.
+     * When enabled, allows the server to refresh VTXOs without user interaction.
+     * See DelegationConfig for details.
+     */
+    delegation?: DelegationConfig;
 }
 
 /**
@@ -235,6 +242,19 @@ export interface ContractHandler<
         context: PathContext,
         defaultDestination: string
     ): string;
+
+    /**
+     * Whether this contract type supports delegation.
+     *
+     * When true, the contract can have its VTXOs refreshed by the server
+     * using pre-signed forfeit transactions (SIGHASH_ALL|ANYONECANPAY).
+     *
+     * Default contracts ("default" type) typically support delegation.
+     * Complex multi-party contracts may not support it.
+     *
+     * @returns true if delegation is supported for this contract type
+     */
+    supportsDelegation?(): boolean;
 }
 
 /**
@@ -348,4 +368,96 @@ export interface SweepResult {
     totalValue: number;
     vtxoCount: number;
     destination: string;
+}
+
+// ============================================================================
+// Delegation Types (Future Support)
+// ============================================================================
+//
+// Delegation enables VTXOs to be refreshed by the server without requiring
+// complex multi-party coordination. The wallet pre-signs forfeit transactions
+// using SIGHASH_ALL|ANYONECANPAY, which become valid if the user doesn't
+// participate in a round.
+//
+// Flow:
+// 1. Wallet pre-signs forfeit tx with SIGHASH_ALL|ANYONECANPAY
+// 2. Server can include user's VTXOs in a round using the pre-signed forfeit
+// 3. If user participates, new VTXOs are created with fresh forfeits
+// 4. If user doesn't participate, server uses pre-signed forfeit as collateral
+//
+// This is particularly useful for complex contracts (like VHTLC) where
+// multi-party coordination is difficult.
+// ============================================================================
+
+/**
+ * Delegation configuration for a contract.
+ *
+ * When delegation is enabled, the wallet pre-signs forfeit transactions
+ * that allow the server to refresh VTXOs without user interaction.
+ */
+export interface DelegationConfig {
+    /**
+     * Whether delegation is enabled for this contract.
+     */
+    enabled: boolean;
+
+    /**
+     * Public key that can sign on behalf of the wallet for delegation.
+     * Typically the server's public key.
+     */
+    delegatePubKey?: string;
+
+    /**
+     * Maximum rounds the server can refresh without user participation.
+     * After this limit, user must participate or funds expire.
+     */
+    maxDelegatedRounds?: number;
+
+    /**
+     * Current count of delegated rounds (updated by server).
+     */
+    delegatedRoundsCount?: number;
+}
+
+/**
+ * Pre-signed forfeit transaction data for delegation.
+ *
+ * Stored per-VTXO to enable server-side refresh.
+ */
+export interface DelegatedForfeit {
+    /**
+     * The VTXO this forfeit applies to (txid:vout).
+     */
+    vtxoOutpoint: string;
+
+    /**
+     * Pre-signed forfeit signature (SIGHASH_ALL|ANYONECANPAY).
+     * Hex-encoded Schnorr signature.
+     */
+    forfeitSignature: string;
+
+    /**
+     * Round ID when this forfeit was created.
+     */
+    roundId?: string;
+
+    /**
+     * Expiration timestamp (ms) for this delegation.
+     */
+    expiresAt?: number;
+}
+
+/**
+ * Result of creating delegation data for a VTXO.
+ */
+export interface DelegationResult {
+    /**
+     * The forfeit data to send to the server.
+     */
+    forfeit: DelegatedForfeit;
+
+    /**
+     * Updated contract data to store locally.
+     */
+    contractData?: Record<string, string>;
 }

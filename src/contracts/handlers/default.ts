@@ -105,4 +105,14 @@ export const DefaultContractHandler: ContractHandler<
 
         return paths;
     },
+
+    /**
+     * Default contracts support delegation.
+     *
+     * The forfeit path uses (Alice + Server) multisig, which is
+     * compatible with pre-signed forfeit delegation.
+     */
+    supportsDelegation(): boolean {
+        return true;
+    },
 };
