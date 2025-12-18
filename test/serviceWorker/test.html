@@ -1,4 +1,4 @@
-<!-- test.html is a simple test page for the ServiceWorkerWallet implementation -->
+<!-- test.html is a simple test page for the service worker wallet updater -->
 <!doctype html>
 <html lang="en">
     <head>
@@ -342,8 +342,8 @@
 
         <script type="module">
             import {
-                ServiceWorkerWallet,
-                setupServiceWorker,
+                ArkSW,
+                WalletUpdater,
                 Transaction,
             } from "/dist/browser/index.js";
 
@@ -359,13 +359,111 @@
                 }
             }
 
+            function createWalletClient(serviceWorker) {
+                const sendMessage = (type, payload, { onBroadcast } = {}) => {
+                    const id = crypto.randomUUID();
+                    return new Promise((resolve, reject) => {
+                        const handler = (event) => {
+                            const response = event.data;
+                            if (
+                                !response ||
+                                response.id !== id ||
+                                response.tag !== WalletUpdater.messageTag
+                            ) {
+                                return;
+                            }
+
+                            if (response.type === "SETTLE_EVENT") {
+                                onBroadcast?.(response.payload);
+                                return;
+                            }
+
+                            navigator.serviceWorker.removeEventListener(
+                                "message",
+                                handler
+                            );
+                            if (response.error) {
+                                const error =
+                                    response.error instanceof Error
+                                        ? response.error
+                                        : new Error(String(response.error));
+                                reject(error);
+                            } else {
+                                resolve(response);
+                            }
+                        };
+
+                        navigator.serviceWorker.addEventListener(
+                            "message",
+                            handler
+                        );
+
+                        const message = {
+                            id,
+                            tag: WalletUpdater.messageTag,
+                            type,
+                            ...(payload === undefined ? {} : { payload }),
+                        };
+
+                        serviceWorker.postMessage(message);
+                    });
+                };
+
+                return {
+                    async init(config) {
+                        await sendMessage("INIT_WALLET", {
+                            key: { privateKey: config.privateKey },
+                            arkServerUrl: config.arkServerUrl,
+                        });
+                    },
+                    async getAddress() {
+                        const response = await sendMessage("GET_ADDRESS");
+                        return response.payload.address;
+                    },
+                    async getBalance() {
+                        const response = await sendMessage("GET_BALANCE");
+                        return response.payload;
+                    },
+                    async getVtxos() {
+                        const response = await sendMessage("GET_VTXOS", {});
+                        return response.payload.vtxos;
+                    },
+                    async getBoardingUtxos() {
+                        const response =
+                            await sendMessage("GET_BOARDING_UTXOS");
+                        return response.payload.utxos;
+                    },
+                    async getTransactionHistory() {
+                        const response = await sendMessage(
+                            "GET_TRANSACTION_HISTORY"
+                        );
+                        return response.payload.transactions;
+                    },
+                    async sign(tx, inputIndexes) {
+                        const response = await sendMessage("SIGN_TRANSACTION", {
+                            tx,
+                            inputIndexes,
+                        });
+                        return response.payload.tx;
+                    },
+                    async settle(params, onEvent) {
+                        const response = await sendMessage(
+                            "SETTLE",
+                            params ?? { inputs: [], outputs: [] },
+                            { onBroadcast: onEvent }
+                        );
+                        return response.payload.txid;
+                    },
+                };
+            }
+
             async function initialize() {
                 setLoading(true);
                 try {
                     console.log("setupServiceWorker");
-                    const serviceWorker = await setupServiceWorker("/sw.js");
+                    const serviceWorker = await ArkSW.setup("/sw.js");
                     console.log("serviceWorker", serviceWorker);
-                    wallet = new ServiceWorkerWallet(serviceWorker);
+                    wallet = createWalletClient(serviceWorker);
                     appendLog("Service worker wallet created successfully");
                 } catch (error) {
                     console.error("Error creating wallet:", error);

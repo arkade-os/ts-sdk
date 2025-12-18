@@ -4,7 +4,7 @@ import {
     VirtualCoin,
     ArkTransaction,
     IWallet,
-    Coin,
+    // Coin,
     ExtendedCoin,
 } from "..";
 import { ExtendedVirtualCoin } from "../..";
@@ -68,19 +68,19 @@ export namespace Response {
         | "CONTRACT_MANAGER_DISPOSED"
         | "CONTRACT_EVENT";
 
-    export interface Base {
-        type: Type;
+    export interface Base<T> {
+        type: T;
         success: boolean;
         id: string;
     }
 
-    export const walletInitialized = (id: string): Base => ({
+    export const walletInitialized = (id: string): Base<Type> => ({
         type: "WALLET_INITIALIZED",
         success: true,
         id,
     });
 
-    export interface Error extends Base {
+    export interface Error extends Base<Type> {
         type: "ERROR";
         success: false;
         message: string;
@@ -95,7 +95,7 @@ export namespace Response {
         };
     }
 
-    export interface SettleEvent extends Base {
+    export interface SettleEvent extends Base<Type> {
         type: "SETTLE_EVENT";
         success: true;
         event: SettlementEvent;
@@ -113,7 +113,7 @@ export namespace Response {
         };
     }
 
-    export interface SettleSuccess extends Base {
+    export interface SettleSuccess extends Base<Type> {
         type: "SETTLE_SUCCESS";
         success: true;
         txid: string;
@@ -128,22 +128,24 @@ export namespace Response {
         };
     }
 
-    export function isSettleSuccess(response: Base): response is SettleSuccess {
+    export function isSettleSuccess(
+        response: Base<Type>
+    ): response is SettleSuccess {
         return response.type === "SETTLE_SUCCESS" && response.success;
     }
 
-    export interface Address extends Base {
+    export interface Address extends Base<Type> {
         type: "ADDRESS";
         success: true;
         address: string;
     }
 
-    export function isAddress(response: Base): response is Address {
+    export function isAddress(response: Base<Type>): response is Address {
         return response.type === "ADDRESS" && response.success === true;
     }
 
     export function isBoardingAddress(
-        response: Base
+        response: Base<Type>
     ): response is BoardingAddress {
         return (
             response.type === "BOARDING_ADDRESS" && response.success === true
@@ -159,7 +161,7 @@ export namespace Response {
         };
     }
 
-    export interface BoardingAddress extends Base {
+    export interface BoardingAddress extends Base<Type> {
         type: "BOARDING_ADDRESS";
         success: true;
         address: string;
@@ -177,13 +179,13 @@ export namespace Response {
         };
     }
 
-    export interface Balance extends Base {
+    export interface Balance extends Base<Type> {
         type: "BALANCE";
         success: true;
         balance: WalletBalance;
     }
 
-    export function isBalance(response: Base): response is Balance {
+    export function isBalance(response: Base<Type>): response is Balance {
         return response.type === "BALANCE" && response.success === true;
     }
 
@@ -196,13 +198,13 @@ export namespace Response {
         };
     }
 
-    export interface Vtxos extends Base {
+    export interface Vtxos extends Base<Type> {
         type: "VTXOS";
         success: true;
         vtxos: Awaited<ReturnType<IWallet["getVtxos"]>>;
     }
 
-    export function isVtxos(response: Base): response is Vtxos {
+    export function isVtxos(response: Base<Type>): response is Vtxos {
         return response.type === "VTXOS" && response.success === true;
     }
 
@@ -218,13 +220,15 @@ export namespace Response {
         };
     }
 
-    export interface VirtualCoins extends Base {
+    export interface VirtualCoins extends Base<Type> {
         type: "VIRTUAL_COINS";
         success: true;
         virtualCoins: VirtualCoin[];
     }
 
-    export function isVirtualCoins(response: Base): response is VirtualCoins {
+    export function isVirtualCoins(
+        response: Base<Type>
+    ): response is VirtualCoins {
         return response.type === "VIRTUAL_COINS" && response.success === true;
     }
 
@@ -240,13 +244,15 @@ export namespace Response {
         };
     }
 
-    export interface BoardingUtxos extends Base {
+    export interface BoardingUtxos extends Base<Type> {
         type: "BOARDING_UTXOS";
         success: true;
         boardingUtxos: Awaited<ReturnType<IWallet["getBoardingUtxos"]>>;
     }
 
-    export function isBoardingUtxos(response: Base): response is BoardingUtxos {
+    export function isBoardingUtxos(
+        response: Base<Type>
+    ): response is BoardingUtxos {
         return response.type === "BOARDING_UTXOS" && response.success === true;
     }
 
@@ -262,14 +268,14 @@ export namespace Response {
         };
     }
 
-    export interface SendBitcoinSuccess extends Base {
+    export interface SendBitcoinSuccess extends Base<Type> {
         type: "SEND_BITCOIN_SUCCESS";
         success: true;
         txid: string;
     }
 
     export function isSendBitcoinSuccess(
-        response: Base
+        response: Base<Type>
     ): response is SendBitcoinSuccess {
         return (
             response.type === "SEND_BITCOIN_SUCCESS" &&
@@ -289,14 +295,14 @@ export namespace Response {
         };
     }
 
-    export interface TransactionHistory extends Base {
+    export interface TransactionHistory extends Base<Type> {
         type: "TRANSACTION_HISTORY";
         success: true;
         transactions: ArkTransaction[];
     }
 
     export function isTransactionHistory(
-        response: Base
+        response: Base<Type>
     ): response is TransactionHistory {
         return (
             response.type === "TRANSACTION_HISTORY" && response.success === true
@@ -315,7 +321,7 @@ export namespace Response {
         };
     }
 
-    export interface WalletStatus extends Base {
+    export interface WalletStatus extends Base<Type> {
         type: "WALLET_STATUS";
         success: true;
         status: {
@@ -324,7 +330,9 @@ export namespace Response {
         };
     }
 
-    export function isWalletStatus(response: Base): response is WalletStatus {
+    export function isWalletStatus(
+        response: Base<Type>
+    ): response is WalletStatus {
         return response.type === "WALLET_STATUS" && response.success === true;
     }
 
@@ -344,11 +352,13 @@ export namespace Response {
         };
     }
 
-    export interface ClearResponse extends Base {
+    export interface ClearResponse extends Base<Type> {
         type: "CLEAR_RESPONSE";
     }
 
-    export function isClearResponse(response: Base): response is ClearResponse {
+    export function isClearResponse(
+        response: Base<Type>
+    ): response is ClearResponse {
         return response.type === "CLEAR_RESPONSE";
     }
 
@@ -360,12 +370,12 @@ export namespace Response {
         };
     }
 
-    export interface WalletReloaded extends Base {
+    export interface WalletReloaded extends Base<Type> {
         type: "WALLET_RELOADED";
     }
 
     export function isWalletReloaded(
-        response: Base
+        response: Base<Type>
     ): response is WalletReloaded {
         return response.type === "WALLET_RELOADED";
     }
@@ -381,13 +391,13 @@ export namespace Response {
         };
     }
 
-    export interface VtxoUpdate extends Base {
+    export interface VtxoUpdate extends Base<Type> {
         type: "VTXO_UPDATE";
         spentVtxos: ExtendedVirtualCoin[];
         newVtxos: ExtendedVirtualCoin[];
     }
 
-    export function isVtxoUpdate(response: Base): response is VtxoUpdate {
+    export function isVtxoUpdate(response: Base<Type>): response is VtxoUpdate {
         return response.type === "VTXO_UPDATE";
     }
 
@@ -404,12 +414,12 @@ export namespace Response {
         };
     }
 
-    export interface UtxoUpdate extends Base {
+    export interface UtxoUpdate extends Base<Type> {
         type: "UTXO_UPDATE";
         coins: ExtendedCoin[];
     }
 
-    export function isUtxoUpdate(response: Base): response is UtxoUpdate {
+    export function isUtxoUpdate(response: Base<Type>): response is UtxoUpdate {
         return response.type === "UTXO_UPDATE";
     }
 
