@@ -337,36 +337,39 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-**Ultra-simplified setup!** We handle all the complex service worker registration and identity management for you:
+Use the modular service worker with the wallet updater:
 
 ```typescript
-// SIMPLE SETUP with identity! 🎉
-import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk';
+// app.ts
+import { ArkSW, WalletUpdater } from '@arkade-os/sdk';
 
-// Create your identity
-const identity = SingleKey.fromHex('your_private_key_hex');
-// Or generate a new one:
-// const identity = SingleKey.fromRandomBytes();
+await ArkSW.setup('/service-worker.js');
 
-const wallet = await ServiceWorkerWallet.setup({
-  serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity
+const serviceWorker = await ArkSW.getServiceWorker();
+serviceWorker.postMessage({
+  id: crypto.randomUUID(),
+  tag: WalletUpdater.messageTag,
+  type: 'INIT_WALLET',
+  payload: {
+    key: { privateKey: 'your_private_key_hex' },
+    arkServerUrl: 'https://mutinynet.arkade.sh',
+  },
 });
 
-// That's it! Ready to use immediately:
-const address = await wallet.getAddress();
-const balance = await wallet.getBalance();
+navigator.serviceWorker.addEventListener('message', (event) => {
+  console.log('SW response:', event.data);
+});
 ```
 
-You'll also need to create a service worker file:
+Create a service worker file:
 
 ```typescript
 // service-worker.js
-import { Worker } from '@arkade-os/sdk'
+import { ArkSW, WalletUpdater } from '@arkade-os/sdk'
 
-// Worker handles communication between the main thread and service worker
-new Worker().start()
+const walletUpdater = new WalletUpdater();
+const sw = new ArkSW({ updaters: [walletUpdater] });
+sw.start();
 ```
 
 ### Repositories (Storage)
