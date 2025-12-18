@@ -20,6 +20,39 @@ import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
 import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
+import {
+    RequestClear,
+    RequestGetAddress,
+    RequestGetBalance,
+    RequestGetBoardingAddress,
+    RequestGetBoardingUtxos,
+    RequestGetStatus,
+    RequestGetTransactionHistory,
+    RequestGetVtxos,
+    RequestInitWallet,
+    RequestReloadWallet,
+    RequestSendBitcoin,
+    RequestSettle,
+    ResponseClear,
+    ResponseGetAddress,
+    ResponseGetBalance,
+    ResponseGetBoardingAddress,
+    ResponseGetBoardingUtxos,
+    ResponseGetStatus,
+    ResponseGetTransactionHistory,
+    ResponseGetVtxos,
+    ResponseReloadWallet,
+    ResponseSendBitcoin,
+    ResponseSettle,
+    WalletUpdater,
+    WalletUpdaterRequest,
+    WalletUpdaterResponse,
+} from "./wallet-updater";
+import { RequestEnvelope, ResponseEnvelope } from "./ark-serviceworker";
+import {
+    getActiveServiceWorker,
+    setupServiceWorkerOnce,
+} from "./service-worker-manager";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -30,7 +63,7 @@ const isPrivateKeyIdentity = (
 };
 
 class UnexpectedResponseError extends Error {
-    constructor(response: Response.Base) {
+    constructor(response: unknown) {
         super(
             `Unexpected response type. Got: ${JSON.stringify(response, null, 2)}`
         );
@@ -133,13 +166,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             .then(hex.encode);
 
         // Initialize the service worker with the config
-        const initMessage: Request.InitWallet = {
+        const initMessage: RequestInitWallet = {
+            tag: WalletUpdater.messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            key: { publicKey },
-            arkServerUrl: options.arkServerUrl,
-            arkServerPublicKey: options.arkServerPublicKey,
+            payload: {
+                key: { publicKey },
+                arkServerUrl: options.arkServerUrl,
+                arkServerPublicKey: options.arkServerPublicKey,
+            },
         };
+
+        navigator.serviceWorker.addEventListener("message", (m) => {
+            if (m.data.tag === undefined) {
+                console.error("message received without tag: ", m.data);
+            }
+            if (m.data.tag !== WalletUpdater.messageTag) return;
+            console.debug("[Wallet] broadcast received", m.data);
+        });
 
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
@@ -184,17 +228,23 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     // send a message and wait for a response
-    protected async sendMessage<T extends Request.Base>(
-        message: T
-    ): Promise<Response.Base> {
+    protected async sendMessage<
+        REQ extends RequestEnvelope,
+        RES extends ResponseEnvelope,
+    >(message: Partial<REQ>): Promise<RES> {
+        const id = getRandomId();
         return new Promise((resolve, reject) => {
             const messageHandler = (event: MessageEvent) => {
-                const response = event.data as Response.Base;
+                const response = event.data as RES;
+                // console.log("Received message from SW:", response);
+                if (!response) {
+                    console.log("Invalid response received from SW", event);
+                }
                 if (response.id === "") {
                     reject(new Error("Invalid response id"));
                     return;
                 }
-                if (response.id !== message.id) {
+                if (response.id !== id) {
                     return;
                 }
                 navigator.serviceWorker.removeEventListener(
@@ -202,23 +252,25 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     messageHandler
                 );
 
-                if (!response.success) {
-                    reject(new Error((response as Response.Error).message));
+                if (response.error) {
+                    reject(response.error);
                 } else {
                     resolve(response);
                 }
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
-            this.serviceWorker.postMessage(message);
+            // console.log("Sending message to SW:", message);
+            this.serviceWorker.postMessage({
+                tag: WalletUpdater.messageTag,
+                id,
+                type: "type" in message ? message.type : "NO_TYPE",
+                payload: "payload" in message ? message.payload : undefined,
+            });
         });
     }
 
     async clear() {
-        const message: Request.Clear = {
-            type: "CLEAR",
-            id: getRandomId(),
-        };
         // Clear page-side storage to maintain parity with SW
         try {
             const address = await this.getAddress();
@@ -227,132 +279,100 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             console.warn("Failed to clear vtxos from wallet repository");
         }
 
-        await this.sendMessage(message);
+        await this.sendMessage<RequestClear, ResponseClear>({ type: "CLEAR" });
     }
 
     async getAddress(): Promise<string> {
-        const message: Request.GetAddress = {
-            type: "GET_ADDRESS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isAddress(response)) {
-                return response.address;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get address: ${error}`);
+        const response = await this.sendMessage<
+            RequestGetAddress,
+            ResponseGetAddress
+        >({ type: "GET_ADDRESS" });
+        if (response.payload.address) {
+            return response.payload.address;
         }
+        throw new UnexpectedResponseError(response);
     }
 
     async getBoardingAddress(): Promise<string> {
-        const message: Request.GetBoardingAddress = {
+        const response = await this.sendMessage<
+            RequestGetBoardingAddress,
+            ResponseGetBoardingAddress
+        >({
             type: "GET_BOARDING_ADDRESS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isBoardingAddress(response)) {
-                return response.address;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get boarding address: ${error}`);
+        });
+        if (response.payload.address) {
+            return response.payload.address;
         }
+        throw new UnexpectedResponseError(response);
     }
 
     async getBalance(): Promise<WalletBalance> {
-        const message: Request.GetBalance = {
-            type: "GET_BALANCE",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isBalance(response)) {
-                return response.balance;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get balance: ${error}`);
+        const response = await this.sendMessage<
+            RequestGetBalance,
+            ResponseGetBalance
+        >({ type: "GET_BALANCE" });
+        if (response.payload) {
+            return response.payload;
         }
+        throw new UnexpectedResponseError(response);
     }
 
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const message: Request.GetBoardingUtxos = {
-            type: "GET_BOARDING_UTXOS",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isBoardingUtxos(response)) {
-                return response.boardingUtxos;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get boarding UTXOs: ${error}`);
+        const response = await this.sendMessage<
+            RequestGetBoardingUtxos,
+            ResponseGetBoardingUtxos
+        >({ type: "GET_BOARDING_UTXOS" });
+        if (response.payload.utxos) {
+            return response.payload.utxos;
         }
+        throw new UnexpectedResponseError(response);
     }
 
-    async getStatus(): Promise<Response.WalletStatus["status"]> {
-        const message: Request.GetStatus = {
-            type: "GET_STATUS",
-            id: getRandomId(),
-        };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletStatus(response)) {
-            return response.status;
+    async getStatus(): Promise<ResponseGetStatus["payload"]> {
+        const response = await this.sendMessage<
+            RequestGetStatus,
+            ResponseGetStatus
+        >({ type: "GET_STATUS" });
+        if (response.payload) {
+            return response.payload;
         }
         throw new UnexpectedResponseError(response);
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const message: Request.GetTransactionHistory = {
+        const response = await this.sendMessage<
+            RequestGetTransactionHistory,
+            ResponseGetTransactionHistory
+        >({
             type: "GET_TRANSACTION_HISTORY",
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isTransactionHistory(response)) {
-                return response.transactions;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get transaction history: ${error}`);
+        });
+        if (response.payload.transactions) {
+            return response.payload.transactions;
         }
+        throw new UnexpectedResponseError(response);
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        const message: Request.GetVtxos = {
+        const response = await this.sendMessage<
+            RequestGetVtxos,
+            ResponseGetVtxos
+        >({
             type: "GET_VTXOS",
-            id: getRandomId(),
-            filter,
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isVtxos(response)) {
-                return response.vtxos;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to get vtxos: ${error}`);
+            payload: { filter },
+        });
+        if (response.payload.vtxos) {
+            return response.payload.vtxos;
         }
+        throw new UnexpectedResponseError(response);
     }
 
     async reload(): Promise<boolean> {
-        const message: Request.ReloadWallet = {
-            type: "RELOAD_WALLET",
-            id: getRandomId(),
-        };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletReloaded(response)) {
-            return response.success;
+        const response = await this.sendMessage<
+            RequestReloadWallet,
+            ResponseReloadWallet
+        >({ type: "RELOAD_WALLET" });
+        if (response.payload.reloaded) {
+            return true;
         }
         throw new UnexpectedResponseError(response);
     }
@@ -405,12 +425,15 @@ export class ServiceWorkerWallet
         );
 
         // Initialize the service worker with the config
-        const initMessage: Request.InitWallet = {
+        const initMessage: RequestInitWallet = {
+            tag: WalletUpdater.messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            key: { privateKey },
-            arkServerUrl: options.arkServerUrl,
-            arkServerPublicKey: options.arkServerPublicKey,
+            payload: {
+                key: { privateKey },
+                arkServerUrl: options.arkServerUrl,
+                arkServerPublicKey: options.arkServerPublicKey,
+            },
         };
 
         // Initialize the service worker
@@ -444,7 +467,8 @@ export class ServiceWorkerWallet
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerWallet> {
         // Register and setup the service worker
-        const serviceWorker = await setupServiceWorker(
+        await setupServiceWorkerOnce(options.serviceWorkerPath);
+        const serviceWorker = await getActiveServiceWorker(
             options.serviceWorkerPath
         );
 
@@ -456,79 +480,28 @@ export class ServiceWorkerWallet
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        const message: Request.SendBitcoin = {
+        const response = await this.sendMessage<
+            RequestSendBitcoin,
+            ResponseSendBitcoin
+        >({
             type: "SEND_BITCOIN",
-            params,
-            id: getRandomId(),
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isSendBitcoinSuccess(response)) {
-                return response.txid;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Failed to send bitcoin: ${error}`);
+            payload: params,
+        });
+        if (response.payload.txid) {
+            return response.payload.txid;
         }
+        throw new UnexpectedResponseError(response);
     }
 
     async settle(
         params?: SettleParams,
         callback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        const message: Request.Settle = {
+        const response = await this.sendMessage<RequestSettle, ResponseSettle>({
             type: "SETTLE",
-            params,
-            id: getRandomId(),
-        };
-
-        try {
-            return new Promise((resolve, reject) => {
-                const messageHandler = (event: MessageEvent) => {
-                    const response = event.data as Response.Base;
-                    if (response.id !== message.id) {
-                        return;
-                    }
-
-                    if (!response.success) {
-                        navigator.serviceWorker.removeEventListener(
-                            "message",
-                            messageHandler
-                        );
-                        reject(new Error((response as Response.Error).message));
-                        return;
-                    }
-
-                    switch (response.type) {
-                        case "SETTLE_EVENT":
-                            if (callback) {
-                                callback(
-                                    (response as Response.SettleEvent).event
-                                );
-                            }
-                            break;
-                        case "SETTLE_SUCCESS":
-                            navigator.serviceWorker.removeEventListener(
-                                "message",
-                                messageHandler
-                            );
-                            resolve((response as Response.SettleSuccess).txid);
-                            break;
-                        default:
-                            break;
-                    }
-                };
-
-                navigator.serviceWorker.addEventListener(
-                    "message",
-                    messageHandler
-                );
-                this.serviceWorker.postMessage(message);
-            });
-        } catch (error) {
-            throw new Error(`Settlement failed: ${error}`);
-        }
+            payload: params,
+        });
+        return response.payload.txid;
     }
 }
 

@@ -152,6 +152,17 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import { WalletUpdater } from "./wallet/serviceWorker/wallet-updater";
+import {
+    ArkSW,
+    IUpdater,
+    RequestEnvelope,
+    ResponseEnvelope,
+} from "./wallet/serviceWorker/ark-serviceworker";
+import {
+    getActiveServiceWorker,
+    setupServiceWorkerOnce,
+} from "./wallet/serviceWorker/service-worker-manager";
 
 export * from "./arkfee";
 
@@ -190,6 +201,15 @@ export {
     ServiceWorkerReadonlyWallet,
     Request,
     Response,
+
+    // Experimental SW
+    type IUpdater,
+    WalletUpdater,
+    type RequestEnvelope,
+    type ResponseEnvelope,
+    ArkSW,
+    setupServiceWorkerOnce,
+    getActiveServiceWorker,
 
     // Tapscript
     decodeTapscript,

@@ -27,7 +27,7 @@ import {
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
 
-class ReadonlyHandler {
+export class ReadonlyHandler {
     constructor(protected readonly wallet: ReadonlyWallet) {}
 
     get offchainTapscript() {
@@ -82,9 +82,15 @@ class ReadonlyHandler {
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
         return undefined;
     }
+
+    async handleSignTransaction(
+        ..._: Parameters<Wallet["identity"]["sign"]>
+    ): Promise<Awaited<ReturnType<Wallet["identity"]["sign"]>> | undefined> {
+        return undefined;
+    }
 }
 
-class Handler extends ReadonlyHandler {
+export class Handler extends ReadonlyHandler {
     constructor(protected readonly wallet: Wallet) {
         super(wallet);
     }
@@ -107,6 +113,12 @@ class Handler extends ReadonlyHandler {
         ...args: Parameters<Wallet["sendBitcoin"]>
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
         return this.wallet.sendBitcoin(...args);
+    }
+
+    async handleSignTransaction(
+        ...args: Parameters<Wallet["identity"]["sign"]>
+    ) {
+        return this.wallet.identity.sign(...args);
     }
 }
 
