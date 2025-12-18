@@ -11,6 +11,24 @@ import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 import { ContractRepositoryImpl } from "../src/repositories/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
 import type { VirtualCoin, ExtendedVirtualCoin } from "../src/wallet";
+import { DefaultVtxo } from "../src/script/default";
+
+// Test keys for creating valid contracts
+const TEST_PUB_KEY = new Uint8Array(32).fill(1);
+const TEST_SERVER_PUB_KEY = new Uint8Array(32).fill(2);
+
+// Create a valid default contract script
+const testDefaultScript = new DefaultVtxo.Script({
+    pubKey: TEST_PUB_KEY,
+    serverPubKey: TEST_SERVER_PUB_KEY,
+});
+const TEST_DEFAULT_SCRIPT = hex.encode(testDefaultScript.pkScript);
+
+// Helper to create valid default contract params
+const createDefaultParams = () => ({
+    pubKey: hex.encode(TEST_PUB_KEY),
+    serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
+});
 
 // Mock IndexerProvider
 const createMockIndexerProvider = (): IndexerProvider => ({
@@ -361,8 +379,8 @@ describe("Contracts", () => {
         it("should create and retrieve contracts", async () => {
             const contract = await manager.createContract({
                 type: "default",
-                params: {},
-                script: "script-hex",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
                 address: "address",
             });
 
@@ -375,17 +393,21 @@ describe("Contracts", () => {
         });
 
         it("should list all contracts", async () => {
+            // Create two contracts with explicit different IDs
+            // (since script defaults to ID, we need different IDs for same script)
             await manager.createContract({
+                id: "contract-1",
                 type: "default",
-                params: {},
-                script: "script-1",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
                 address: "address-1",
             });
 
             await manager.createContract({
-                type: "vhtlc",
-                params: { hash: "abc" },
-                script: "script-2",
+                id: "contract-2",
+                type: "default",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
                 address: "address-2",
             });
 
@@ -395,8 +417,8 @@ describe("Contracts", () => {
         it("should activate and deactivate contracts", async () => {
             const contract = await manager.createContract({
                 type: "default",
-                params: {},
-                script: "script-hex",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
                 address: "address",
             });
 
@@ -411,29 +433,29 @@ describe("Contracts", () => {
 
         it("should update contract data", async () => {
             const contract = await manager.createContract({
-                type: "vhtlc",
-                params: { hash: "abc" },
-                script: "script-hex",
+                type: "default",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
                 address: "address",
-                data: { hashlock: "abc" },
+                data: { customField: "initial" },
             });
 
             await manager.updateContractData(contract.id, {
-                preimage: "secret",
+                newField: "added",
             });
 
             const updated = await manager.getContract(contract.id);
             expect(updated?.data).toEqual({
-                hashlock: "abc",
-                preimage: "secret",
+                customField: "initial",
+                newField: "added",
             });
         });
 
         it("should persist contracts across initialization", async () => {
             await manager.createContract({
                 type: "default",
-                params: {},
-                script: "script-hex",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
                 address: "address",
             });
 

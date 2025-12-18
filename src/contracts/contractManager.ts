@@ -213,9 +213,32 @@ export class ContractManager {
         this.ensureInitialized();
 
         // Validate that a handler exists for this contract type
-        if (!contractHandlers.has(params.type)) {
+        const handler = contractHandlers.get(params.type);
+        if (!handler) {
             throw new Error(
                 `No handler registered for contract type '${params.type}'`
+            );
+        }
+
+        // Validate params by attempting to create the script
+        // This catches invalid/missing params early
+        try {
+            const script = handler.createScript(params.params);
+            const derivedScript = hex.encode(script.pkScript);
+
+            // Verify the derived script matches the provided script
+            if (derivedScript !== params.script) {
+                throw new Error(
+                    `Script mismatch: provided script does not match script derived from params. ` +
+                        `Expected ${derivedScript}, got ${params.script}`
+                );
+            }
+        } catch (error) {
+            if (error instanceof Error && error.message.includes("mismatch")) {
+                throw error;
+            }
+            throw new Error(
+                `Invalid params for contract type '${params.type}': ${error instanceof Error ? error.message : String(error)}`
             );
         }
 
