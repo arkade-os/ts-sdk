@@ -788,7 +788,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             withRecoverable: false,
         });
 
-        const selected = selectVirtualCoins(virtualCoins, params.amount);
+        let selected;
+        if (params.selectedVtxos) {
+            const selectedVtxoSum = params.selectedVtxos
+                .map((v) => v.value)
+                .reduce((a, b) => a + b, 0);
+            if (selectedVtxoSum < params.amount) {
+                throw new Error("Selected VTXOs do not cover specified amount");
+            }
+            const changeAmount = selectedVtxoSum - params.amount;
+
+            selected = {
+                inputs: params.selectedVtxos,
+                changeAmount: BigInt(changeAmount),
+            };
+        } else {
+            selected = selectVirtualCoins(virtualCoins, params.amount);
+        }
 
         const selectedLeaf = this.offchainTapscript.forfeit();
         if (!selectedLeaf) {
