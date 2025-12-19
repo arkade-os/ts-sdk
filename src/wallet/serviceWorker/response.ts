@@ -9,6 +9,12 @@ import {
 } from "..";
 import { ExtendedVirtualCoin } from "../..";
 import { SettlementEvent } from "../../providers/ark";
+import type {
+    Contract,
+    ContractVtxo,
+    ContractBalance,
+    ContractEvent,
+} from "../../contracts";
 
 function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
@@ -36,7 +42,15 @@ export namespace Response {
         | "ERROR"
         | "CLEAR_RESPONSE"
         | "VTXO_UPDATE"
-        | "UTXO_UPDATE";
+        | "UTXO_UPDATE"
+        // Contract operations
+        | "CONTRACTS"
+        | "CONTRACT"
+        | "CONTRACT_CREATED"
+        | "CONTRACT_STATE_UPDATED"
+        | "CONTRACT_VTXOS"
+        | "CONTRACT_BALANCE"
+        | "CONTRACT_EVENT";
 
     export interface Base {
         type: Type;
@@ -389,6 +403,168 @@ export namespace Response {
             id: getRandomId(), // spontaneous update, not tied to a request
             success: true,
             coins,
+        };
+    }
+
+    // Contract operations
+
+    export interface Contracts extends Base {
+        type: "CONTRACTS";
+        success: true;
+        contracts: Contract[];
+    }
+
+    export function isContracts(response: Base): response is Contracts {
+        return response.type === "CONTRACTS" && response.success === true;
+    }
+
+    export function contracts(id: string, contracts: Contract[]): Contracts {
+        return {
+            type: "CONTRACTS",
+            success: true,
+            contracts,
+            id,
+        };
+    }
+
+    export interface ContractResponse extends Base {
+        type: "CONTRACT";
+        success: true;
+        contract: Contract | undefined;
+    }
+
+    export function isContract(response: Base): response is ContractResponse {
+        return response.type === "CONTRACT" && response.success === true;
+    }
+
+    export function contract(
+        id: string,
+        contract: Contract | undefined
+    ): ContractResponse {
+        return {
+            type: "CONTRACT",
+            success: true,
+            contract,
+            id,
+        };
+    }
+
+    export interface ContractCreated extends Base {
+        type: "CONTRACT_CREATED";
+        success: true;
+        contract: Contract;
+    }
+
+    export function isContractCreated(
+        response: Base
+    ): response is ContractCreated {
+        return (
+            response.type === "CONTRACT_CREATED" && response.success === true
+        );
+    }
+
+    export function contractCreated(
+        id: string,
+        contract: Contract
+    ): ContractCreated {
+        return {
+            type: "CONTRACT_CREATED",
+            success: true,
+            contract,
+            id,
+        };
+    }
+
+    export interface ContractStateUpdated extends Base {
+        type: "CONTRACT_STATE_UPDATED";
+        success: true;
+    }
+
+    export function isContractStateUpdated(
+        response: Base
+    ): response is ContractStateUpdated {
+        return (
+            response.type === "CONTRACT_STATE_UPDATED" &&
+            response.success === true
+        );
+    }
+
+    export function contractStateUpdated(id: string): ContractStateUpdated {
+        return {
+            type: "CONTRACT_STATE_UPDATED",
+            success: true,
+            id,
+        };
+    }
+
+    export interface ContractVtxosResponse extends Base {
+        type: "CONTRACT_VTXOS";
+        success: true;
+        vtxos: Map<string, ContractVtxo[]>;
+    }
+
+    export function isContractVtxos(
+        response: Base
+    ): response is ContractVtxosResponse {
+        return response.type === "CONTRACT_VTXOS" && response.success === true;
+    }
+
+    export function contractVtxos(
+        id: string,
+        vtxos: Map<string, ContractVtxo[]>
+    ): ContractVtxosResponse {
+        return {
+            type: "CONTRACT_VTXOS",
+            success: true,
+            vtxos,
+            id,
+        };
+    }
+
+    export interface ContractBalanceResponse extends Base {
+        type: "CONTRACT_BALANCE";
+        success: true;
+        balance: ContractBalance;
+    }
+
+    export function isContractBalance(
+        response: Base
+    ): response is ContractBalanceResponse {
+        return (
+            response.type === "CONTRACT_BALANCE" && response.success === true
+        );
+    }
+
+    export function contractBalance(
+        id: string,
+        balance: ContractBalance
+    ): ContractBalanceResponse {
+        return {
+            type: "CONTRACT_BALANCE",
+            success: true,
+            balance,
+            id,
+        };
+    }
+
+    export interface ContractEventResponse extends Base {
+        type: "CONTRACT_EVENT";
+        success: true;
+        event: ContractEvent;
+    }
+
+    export function isContractEvent(
+        response: Base
+    ): response is ContractEventResponse {
+        return response.type === "CONTRACT_EVENT" && response.success === true;
+    }
+
+    export function contractEvent(event: ContractEvent): ContractEventResponse {
+        return {
+            type: "CONTRACT_EVENT",
+            id: getRandomId(), // spontaneous event, not tied to a request
+            success: true,
+            event,
         };
     }
 }

@@ -1,4 +1,9 @@
 import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
+import type {
+    ContractState,
+    GetContractsFilter,
+    GetContractVtxosOptions,
+} from "../../contracts";
 
 /**
  * Request is the namespace that contains the request types for the service worker.
@@ -17,7 +22,14 @@ export namespace Request {
         | "SEND_BITCOIN"
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
-        | "CLEAR";
+        | "CLEAR"
+        // Contract operations
+        | "GET_CONTRACTS"
+        | "GET_CONTRACT"
+        | "CREATE_CONTRACT"
+        | "UPDATE_CONTRACT_STATE"
+        | "GET_CONTRACT_VTXOS"
+        | "GET_CONTRACT_BALANCE";
 
     export interface Base {
         type: Type;
@@ -163,5 +175,106 @@ export namespace Request {
 
     export function isReloadWallet(message: Base): message is ReloadWallet {
         return message.type === "RELOAD_WALLET";
+    }
+
+    // Contract operations
+
+    export interface GetContracts extends Base {
+        type: "GET_CONTRACTS";
+        filter?: GetContractsFilter;
+    }
+
+    export function isGetContracts(message: Base): message is GetContracts {
+        return message.type === "GET_CONTRACTS";
+    }
+
+    export interface GetContract extends Base {
+        type: "GET_CONTRACT";
+        contractId: string;
+    }
+
+    export function isGetContract(message: Base): message is GetContract {
+        return (
+            message.type === "GET_CONTRACT" &&
+            "contractId" in message &&
+            typeof message.contractId === "string"
+        );
+    }
+
+    export interface CreateContract extends Base {
+        type: "CREATE_CONTRACT";
+        params: {
+            type: string;
+            params: Record<string, string>;
+            script: string;
+            address: string;
+            id?: string;
+            label?: string;
+            state?: ContractState;
+            autoSweep?: boolean;
+            sweepDestination?: string;
+            expiresAt?: number;
+            data?: Record<string, string>;
+            metadata?: Record<string, unknown>;
+        };
+    }
+
+    export function isCreateContract(message: Base): message is CreateContract {
+        return (
+            message.type === "CREATE_CONTRACT" &&
+            "params" in message &&
+            typeof message.params === "object" &&
+            message.params !== null &&
+            "type" in message.params &&
+            "params" in message.params &&
+            "script" in message.params &&
+            "address" in message.params
+        );
+    }
+
+    export interface UpdateContractState extends Base {
+        type: "UPDATE_CONTRACT_STATE";
+        contractId: string;
+        state: ContractState;
+    }
+
+    export function isUpdateContractState(
+        message: Base
+    ): message is UpdateContractState {
+        return (
+            message.type === "UPDATE_CONTRACT_STATE" &&
+            "contractId" in message &&
+            typeof message.contractId === "string" &&
+            "state" in message &&
+            (message.state === "active" ||
+                message.state === "inactive" ||
+                message.state === "expired")
+        );
+    }
+
+    export interface GetContractVtxos extends Base {
+        type: "GET_CONTRACT_VTXOS";
+        options?: GetContractVtxosOptions;
+    }
+
+    export function isGetContractVtxos(
+        message: Base
+    ): message is GetContractVtxos {
+        return message.type === "GET_CONTRACT_VTXOS";
+    }
+
+    export interface GetContractBalance extends Base {
+        type: "GET_CONTRACT_BALANCE";
+        contractId: string;
+    }
+
+    export function isGetContractBalance(
+        message: Base
+    ): message is GetContractBalance {
+        return (
+            message.type === "GET_CONTRACT_BALANCE" &&
+            "contractId" in message &&
+            typeof message.contractId === "string"
+        );
     }
 }
