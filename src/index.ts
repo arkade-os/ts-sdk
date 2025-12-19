@@ -145,13 +145,50 @@ import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
-import { ContractRepositoryImpl } from "./repositories/contractRepository";
+import {
+    ContractRepositoryImpl,
+    ContractManagerRepository,
+} from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+
+// Contracts
+import {
+    ContractManager,
+    ContractWatcher,
+    contractHandlers,
+    DefaultContractHandler,
+    VHTLCContractHandler,
+    encodeArkContract,
+    decodeArkContract,
+    contractFromArkContract,
+    contractFromArkContractWithAddress,
+    isArkContract,
+} from "./contracts";
+import type {
+    Contract,
+    ContractVtxo,
+    ContractState,
+    ContractEvent,
+    ContractEventCallback,
+    ContractBalance,
+    ContractWithVtxos,
+    ContractHandler,
+    PathSelection,
+    PathContext,
+    GetContractVtxosOptions,
+    GetContractsFilter,
+    ContractManagerConfig,
+    CreateContractParams,
+    ContractWatcherConfig,
+    ParsedArkContract,
+    DefaultContractParams,
+    VHTLCContractParams,
+} from "./contracts";
 
 export {
     // Wallets
@@ -251,6 +288,18 @@ export {
     isSubdust,
     isExpired,
     getSequence,
+
+    // Contracts
+    ContractManager,
+    ContractWatcher,
+    contractHandlers,
+    DefaultContractHandler,
+    VHTLCContractHandler,
+    encodeArkContract,
+    decodeArkContract,
+    contractFromArkContract,
+    contractFromArkContractWithAddress,
+    isArkContract,
 };
 
 export type {
@@ -347,4 +396,25 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Contract types
+    ContractManagerRepository,
+    Contract,
+    ContractVtxo,
+    ContractState,
+    ContractEvent,
+    ContractEventCallback,
+    ContractBalance,
+    ContractWithVtxos,
+    ContractHandler,
+    PathSelection,
+    PathContext,
+    GetContractVtxosOptions,
+    GetContractsFilter,
+    ContractManagerConfig,
+    CreateContractParams,
+    ContractWatcherConfig,
+    ParsedArkContract,
+    DefaultContractParams,
+    VHTLCContractParams,
 };

@@ -1,8 +1,26 @@
 import { StorageAdapter } from "../storage";
+import { Contract, ContractState } from "../contracts/types";
+
+/**
+ * Filter options for querying contracts.
+ */
+export interface ContractFilter {
+    /** Filter by contract ID */
+    id?: string;
+    /** Filter by multiple contract IDs */
+    ids?: string[];
+    /** Filter by script */
+    script?: string;
+    /** Filter by state(s) */
+    state?: ContractState | ContractState[];
+}
 
 const getContractStorageKey = (id: string, key: string) =>
     `contract:${id}:${key}`;
 const getCollectionStorageKey = (type: string) => `collection:${type}`;
+
+/** Storage key for the contracts collection */
+const CONTRACTS_COLLECTION = "ark_contracts";
 
 export interface ContractRepository {
     // Generic contract metadata (for SDK users like boltz-swap)
@@ -25,7 +43,29 @@ export interface ContractRepository {
     ): Promise<void>;
 }
 
-export class ContractRepositoryImpl implements ContractRepository {
+/**
+ * Extended repository interface for ContractManager functionality.
+ * Implementations must provide these methods to use ContractManager.
+ */
+export interface ContractManagerRepository extends ContractRepository {
+    /**
+     * Get contracts with optional filter.
+     * Returns all contracts if no filter provided.
+     */
+    getContracts(filter?: ContractFilter): Promise<Contract[]>;
+
+    /**
+     * Save or update a contract.
+     */
+    saveContract(contract: Contract): Promise<void>;
+
+    /**
+     * Delete a contract by ID.
+     */
+    deleteContract(id: string): Promise<void>;
+}
+
+export class ContractRepositoryImpl implements ContractManagerRepository {
     private storage: StorageAdapter;
 
     constructor(storage: StorageAdapter) {
@@ -185,5 +225,61 @@ export class ContractRepositoryImpl implements ContractRepository {
 
     async clearContractData(): Promise<void> {
         await this.storage.clear();
+    }
+
+    // Contract entity management methods
+
+    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
+        const contracts =
+            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
+
+        if (!filter) {
+            return [...contracts];
+        }
+
+        return contracts.filter((c) => {
+            // Filter by ID
+            if (filter.id !== undefined && c.id !== filter.id) {
+                return false;
+            }
+
+            // Filter by multiple IDs
+            if (filter.ids !== undefined && !filter.ids.includes(c.id)) {
+                return false;
+            }
+
+            // Filter by script
+            if (filter.script !== undefined && c.script !== filter.script) {
+                return false;
+            }
+
+            // Filter by state(s)
+            if (filter.state !== undefined) {
+                const states = Array.isArray(filter.state)
+                    ? filter.state
+                    : [filter.state];
+                if (!states.includes(c.state)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+    }
+
+    async saveContract(contract: Contract): Promise<void> {
+        await this.saveToContractCollection(
+            CONTRACTS_COLLECTION,
+            contract,
+            "id"
+        );
+    }
+
+    async deleteContract(id: string): Promise<void> {
+        await this.removeFromContractCollection<Contract, "id">(
+            CONTRACTS_COLLECTION,
+            id,
+            "id"
+        );
     }
 }
