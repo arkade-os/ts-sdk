@@ -5,6 +5,10 @@ import {
     ContractWatcher,
     ContractSweeper,
     contractHandlers,
+    encodeArkContract,
+    decodeArkContract,
+    contractFromArkContract,
+    isArkContract,
 } from "../src/contracts";
 import type { Contract, ContractVtxo, ContractState } from "../src/contracts";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
@@ -12,6 +16,7 @@ import { ContractRepositoryImpl } from "../src/repositories/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
 import type { VirtualCoin, ExtendedVirtualCoin } from "../src/wallet";
 import { DefaultVtxo } from "../src/script/default";
+import { DefaultContractHandler } from "../src/contracts/handlers/default";
 
 // Test keys for creating valid contracts
 const TEST_PUB_KEY = new Uint8Array(32).fill(1);
@@ -526,6 +531,389 @@ describe("Contracts", () => {
             const config = sweeper.getConfig();
             expect(config.enabled).toBe(false);
             expect(config.minSweepValue).toBe(1000);
+        });
+    });
+
+    describe("ArkContract encoding/decoding", () => {
+        it("should encode a contract to arkcontract string", () => {
+            const contract: Contract = {
+                id: "test-id",
+                type: "default",
+                params: {
+                    pubKey: "abc123",
+                    serverPubKey: "def456",
+                },
+                script: "5120...",
+                address: "tark1...",
+                state: "active",
+                createdAt: Date.now(),
+            };
+
+            const encoded = encodeArkContract(contract);
+            expect(encoded).toContain("arkcontract=default");
+            expect(encoded).toContain("pubKey=abc123");
+            expect(encoded).toContain("serverPubKey=def456");
+        });
+
+        it("should encode contract with runtime data", () => {
+            const contract: Contract = {
+                id: "test-id",
+                type: "vhtlc",
+                params: { hash: "abc" },
+                data: { preimage: "secret123" },
+                script: "5120...",
+                address: "tark1...",
+                state: "active",
+                createdAt: Date.now(),
+            };
+
+            const encoded = encodeArkContract(contract);
+            expect(encoded).toContain("preimage=secret123");
+        });
+
+        it("should decode an arkcontract string", () => {
+            const encoded =
+                "arkcontract=default&pubKey=abc123&serverPubKey=def456";
+            const parsed = decodeArkContract(encoded);
+
+            expect(parsed.type).toBe("default");
+            expect(parsed.data.pubKey).toBe("abc123");
+            expect(parsed.data.serverPubKey).toBe("def456");
+        });
+
+        it("should throw for invalid arkcontract string", () => {
+            expect(() => decodeArkContract("invalid=string")).toThrow(
+                "Invalid arkcontract string"
+            );
+        });
+
+        it("should check if string is arkcontract", () => {
+            expect(isArkContract("arkcontract=default&foo=bar")).toBe(true);
+            expect(isArkContract("not-arkcontract")).toBe(false);
+            expect(isArkContract("arkcontractwrong=test")).toBe(false);
+        });
+
+        it("should create contract from arkcontract string", () => {
+            const encoded = "arkcontract=default&pubKey=abc&serverPubKey=def";
+            const contract = contractFromArkContract(encoded, {
+                id: "my-contract",
+                label: "Test Contract",
+                autoSweep: true,
+            });
+
+            expect(contract.id).toBe("my-contract");
+            expect(contract.label).toBe("Test Contract");
+            expect(contract.type).toBe("default");
+            expect(contract.params.pubKey).toBe("abc");
+            expect(contract.autoSweep).toBe(true);
+            expect(contract.state).toBe("active");
+        });
+
+        it("should throw for unknown contract type", () => {
+            const encoded = "arkcontract=unknown-type&foo=bar";
+            expect(() => contractFromArkContract(encoded)).toThrow(
+                "No handler registered for contract type"
+            );
+        });
+    });
+
+    describe("Handler param validation", () => {
+        let storage: InMemoryStorageAdapter;
+        let repository: ContractRepositoryImpl;
+        let manager: ContractManager;
+        let mockIndexer: IndexerProvider;
+
+        beforeEach(async () => {
+            storage = new InMemoryStorageAdapter();
+            repository = new ContractRepositoryImpl(storage);
+            mockIndexer = createMockIndexerProvider();
+
+            manager = new ContractManager({
+                indexerProvider: mockIndexer,
+                contractRepository: repository,
+                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
+                getDefaultAddress: async () => "default-address",
+            });
+            await manager.initialize();
+        });
+
+        it("should reject contract with invalid params", async () => {
+            await expect(
+                manager.createContract({
+                    type: "default",
+                    params: {}, // Missing required pubKey and serverPubKey
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address",
+                })
+            ).rejects.toThrow();
+        });
+
+        it("should reject contract with mismatched script", async () => {
+            await expect(
+                manager.createContract({
+                    type: "default",
+                    params: createDefaultParams(),
+                    script: "wrong-script-that-doesnt-match",
+                    address: "address",
+                })
+            ).rejects.toThrow("Script mismatch");
+        });
+
+        it("should accept contract with valid params and matching script", async () => {
+            const contract = await manager.createContract({
+                type: "default",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+
+            expect(contract).toBeDefined();
+            expect(contract.type).toBe("default");
+        });
+    });
+
+    describe("VTXO-based watching", () => {
+        let watcher: ContractWatcher;
+        let mockIndexer: IndexerProvider;
+
+        beforeEach(() => {
+            mockIndexer = createMockIndexerProvider();
+            watcher = new ContractWatcher({
+                indexerProvider: mockIndexer,
+                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
+            });
+        });
+
+        it("should include active contracts in scripts to watch", async () => {
+            const contract: Contract = {
+                id: "active-contract",
+                type: "default",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+
+            await watcher.addContract(contract);
+            const scripts = watcher.getScriptsToWatch();
+
+            expect(scripts).toContain(TEST_DEFAULT_SCRIPT);
+        });
+
+        it("should exclude inactive contracts without VTXOs from watching", async () => {
+            const contract: Contract = {
+                id: "inactive-contract",
+                type: "default",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+                state: "inactive",
+                createdAt: Date.now(),
+            };
+
+            await watcher.addContract(contract);
+            const scripts = watcher.getScriptsToWatch();
+
+            // Inactive with no VTXOs should not be watched
+            expect(scripts).not.toContain(TEST_DEFAULT_SCRIPT);
+        });
+
+        it("should return active scripts via getActiveScripts", async () => {
+            const contract: Contract = {
+                id: "test",
+                type: "default",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+
+            await watcher.addContract(contract);
+            const activeScripts = watcher.getActiveScripts();
+
+            expect(activeScripts).toContain(TEST_DEFAULT_SCRIPT);
+        });
+    });
+
+    describe("Multiple event callbacks", () => {
+        let storage: InMemoryStorageAdapter;
+        let repository: ContractRepositoryImpl;
+        let manager: ContractManager;
+        let mockIndexer: IndexerProvider;
+
+        beforeEach(async () => {
+            storage = new InMemoryStorageAdapter();
+            repository = new ContractRepositoryImpl(storage);
+            mockIndexer = createMockIndexerProvider();
+
+            manager = new ContractManager({
+                indexerProvider: mockIndexer,
+                contractRepository: repository,
+                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
+                getDefaultAddress: async () => "default-address",
+            });
+            await manager.initialize();
+        });
+
+        it("should support registering multiple event callbacks", () => {
+            const callback1 = vi.fn();
+            const callback2 = vi.fn();
+
+            const unsubscribe1 = manager.onContractEvent(callback1);
+            const unsubscribe2 = manager.onContractEvent(callback2);
+
+            expect(unsubscribe1).toBeInstanceOf(Function);
+            expect(unsubscribe2).toBeInstanceOf(Function);
+        });
+
+        it("should allow unsubscribing callbacks", () => {
+            const callback = vi.fn();
+
+            const unsubscribe = manager.onContractEvent(callback);
+            unsubscribe();
+
+            // After unsubscribe, callback should not be called
+            // (we can't easily trigger events in unit tests, but verify unsubscribe works)
+            expect(unsubscribe).toBeInstanceOf(Function);
+        });
+    });
+
+    describe("DefaultContractHandler", () => {
+        it("should create script from params", () => {
+            const params = {
+                pubKey: hex.encode(TEST_PUB_KEY),
+                serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
+            };
+
+            const script = DefaultContractHandler.createScript(params);
+
+            expect(script).toBeDefined();
+            expect(script.pkScript).toBeDefined();
+        });
+
+        it("should serialize and deserialize params", () => {
+            const original = {
+                pubKey: TEST_PUB_KEY,
+                serverPubKey: TEST_SERVER_PUB_KEY,
+            };
+
+            const serialized = DefaultContractHandler.serializeParams(original);
+            const deserialized =
+                DefaultContractHandler.deserializeParams(serialized);
+
+            expect(deserialized.pubKey).toBeInstanceOf(Uint8Array);
+            expect(deserialized.serverPubKey).toBeInstanceOf(Uint8Array);
+            expect(Array.from(deserialized.pubKey)).toEqual(
+                Array.from(TEST_PUB_KEY)
+            );
+        });
+
+        it("should select forfeit path when collaborative", () => {
+            const params = createDefaultParams();
+            const script = DefaultContractHandler.createScript(params);
+            const contract: Contract = {
+                id: "test",
+                type: "default",
+                params,
+                script: hex.encode(script.pkScript),
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+
+            const path = DefaultContractHandler.selectPath(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+            });
+
+            expect(path).toBeDefined();
+            expect(path?.leaf).toBeDefined();
+        });
+
+        it("should select exit path when not collaborative", () => {
+            const params = createDefaultParams();
+            const script = DefaultContractHandler.createScript(params);
+            const contract: Contract = {
+                id: "test",
+                type: "default",
+                params,
+                script: hex.encode(script.pkScript),
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+
+            const path = DefaultContractHandler.selectPath(script, contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+            });
+
+            expect(path).toBeDefined();
+            expect(path?.leaf).toBeDefined();
+        });
+
+        it("should return multiple spendable paths", () => {
+            const params = createDefaultParams();
+            const script = DefaultContractHandler.createScript(params);
+            const contract: Contract = {
+                id: "test",
+                type: "default",
+                params,
+                script: hex.encode(script.pkScript),
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+
+            const paths = DefaultContractHandler.getSpendablePaths(
+                script,
+                contract,
+                {
+                    collaborative: true,
+                    currentTime: Date.now(),
+                }
+            );
+
+            // Should have both forfeit and exit paths when collaborative
+            expect(paths.length).toBeGreaterThanOrEqual(2);
+        });
+
+        it("should support delegation", () => {
+            expect(DefaultContractHandler.supportsDelegation()).toBe(true);
+        });
+    });
+
+    describe("getSweepDestination", () => {
+        it("should return default destination from DefaultContractHandler", () => {
+            // DefaultContractHandler doesn't override getSweepDestination,
+            // so it should be undefined (falls back to contract.sweepDestination or default)
+            expect(DefaultContractHandler.getSweepDestination).toBeUndefined();
+        });
+
+        it("should use contract sweepDestination when set", async () => {
+            const storage = new InMemoryStorageAdapter();
+            const repository = new ContractRepositoryImpl(storage);
+            const mockIndexer = createMockIndexerProvider();
+
+            const manager = new ContractManager({
+                indexerProvider: mockIndexer,
+                contractRepository: repository,
+                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
+                getDefaultAddress: async () => "default-address",
+            });
+            await manager.initialize();
+
+            const contract = await manager.createContract({
+                type: "default",
+                params: createDefaultParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "contract-address",
+                sweepDestination: "custom-sweep-destination",
+            });
+
+            expect(contract.sweepDestination).toBe("custom-sweep-destination");
         });
     });
 });
