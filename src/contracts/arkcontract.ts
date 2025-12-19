@@ -51,9 +51,13 @@ export function encodeArkContract(contract: Contract): string {
 
 /**
  * Parsed result from decoding an arkcontract string.
+ *
+ * This is a low-level representation. For type-safe contract creation,
+ * use `contractFromArkContract` or `contractFromArkContractWithAddress`
+ * which validate params through the handler system.
  */
 export interface ParsedArkContract {
-    /** Contract type */
+    /** Contract type (e.g., "vhtlc", "default") */
     type: string;
 
     /** All key-value pairs from the string */
@@ -61,10 +65,14 @@ export interface ParsedArkContract {
 }
 
 /**
- * Decode an arkcontract string.
+ * Decode an arkcontract string into raw type and data.
+ *
+ * This is a low-level function that parses the URL-encoded format.
+ * For creating typed Contract objects, use `contractFromArkContract`
+ * or `contractFromArkContractWithAddress` instead.
  *
  * @param encoded - The arkcontract string
- * @returns Parsed contract data
+ * @returns Parsed type and key-value data
  * @throws If the string is not a valid arkcontract
  *
  * @example

@@ -191,6 +191,9 @@ async function main() {
     console.log("\n=== Example Complete ===");
 }
 
+// WARNING: arkdExec is passed directly to shell. Only use trusted values.
+// For production code, use execFileSync with separated arguments to prevent
+// command injection vulnerabilities.
 async function fundAddress(address, amount) {
     execSync(
         `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`,

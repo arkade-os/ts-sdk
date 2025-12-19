@@ -7,6 +7,8 @@ import { Contract, ContractState } from "../contracts/types";
 export interface ContractFilter {
     /** Filter by contract ID */
     id?: string;
+    /** Filter by multiple contract IDs */
+    ids?: string[];
     /** Filter by script */
     script?: string;
     /** Filter by state(s) */
@@ -238,6 +240,11 @@ export class ContractRepositoryImpl implements ContractManagerRepository {
         return contracts.filter((c) => {
             // Filter by ID
             if (filter.id !== undefined && c.id !== filter.id) {
+                return false;
+            }
+
+            // Filter by multiple IDs
+            if (filter.ids !== undefined && !filter.ids.includes(c.id)) {
                 return false;
             }
 
