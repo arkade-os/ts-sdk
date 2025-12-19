@@ -3,7 +3,6 @@ import { hex } from "@scure/base";
 import {
     ContractManager,
     ContractWatcher,
-    ContractSweeper,
     contractHandlers,
     encodeArkContract,
     decodeArkContract,
@@ -478,62 +477,6 @@ describe("Contracts", () => {
         });
     });
 
-    describe("ContractSweeper", () => {
-        let sweeper: ContractSweeper;
-        let watcher: ContractWatcher;
-        let mockIndexer: IndexerProvider;
-        let executeSweepMock: ReturnType<typeof vi.fn>;
-
-        beforeEach(() => {
-            mockIndexer = createMockIndexerProvider();
-            watcher = new ContractWatcher({
-                indexerProvider: mockIndexer,
-            });
-            executeSweepMock = vi.fn().mockResolvedValue("mock-txid");
-
-            sweeper = new ContractSweeper(
-                {
-                    contractWatcher: watcher,
-                    getDefaultAddress: async () => "default-address",
-                    executeSweep: executeSweepMock,
-                    extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
-                },
-                {
-                    enabled: false,
-                    minSweepValue: 1000,
-                    maxVtxosPerSweep: 50,
-                    batchSweeps: true,
-                    pollIntervalMs: 60000,
-                }
-            );
-        });
-
-        afterEach(() => {
-            sweeper.stop();
-        });
-
-        it("should start and stop without errors", () => {
-            expect(sweeper.isActive()).toBe(false);
-
-            sweeper.start();
-            expect(sweeper.isActive()).toBe(false); // enabled: false
-
-            sweeper.updateConfig({ enabled: true });
-            // Would need to restart to take effect in this test
-        });
-
-        it("should return empty results when no contracts", async () => {
-            const results = await sweeper.checkAndSweep();
-            expect(results).toEqual([]);
-        });
-
-        it("should get config", () => {
-            const config = sweeper.getConfig();
-            expect(config.enabled).toBe(false);
-            expect(config.minSweepValue).toBe(1000);
-        });
-    });
-
     describe("ArkContract encoding/decoding", () => {
         it("should encode a contract to arkcontract string", () => {
             const contract: Contract = {
@@ -598,14 +541,12 @@ describe("Contracts", () => {
             const contract = contractFromArkContract(encoded, {
                 id: "my-contract",
                 label: "Test Contract",
-                autoSweep: true,
             });
 
             expect(contract.id).toBe("my-contract");
             expect(contract.label).toBe("Test Contract");
             expect(contract.type).toBe("default");
             expect(contract.params.pubKey).toBe("abc");
-            expect(contract.autoSweep).toBe(true);
             expect(contract.state).toBe("active");
         });
 
@@ -878,42 +819,6 @@ describe("Contracts", () => {
 
             // Should have both forfeit and exit paths when collaborative
             expect(paths.length).toBeGreaterThanOrEqual(2);
-        });
-
-        it("should support delegation", () => {
-            expect(DefaultContractHandler.supportsDelegation()).toBe(true);
-        });
-    });
-
-    describe("getSweepDestination", () => {
-        it("should return default destination from DefaultContractHandler", () => {
-            // DefaultContractHandler doesn't override getSweepDestination,
-            // so it should be undefined (falls back to contract.sweepDestination or default)
-            expect(DefaultContractHandler.getSweepDestination).toBeUndefined();
-        });
-
-        it("should use contract sweepDestination when set", async () => {
-            const storage = new InMemoryStorageAdapter();
-            const repository = new ContractRepositoryImpl(storage);
-            const mockIndexer = createMockIndexerProvider();
-
-            const manager = new ContractManager({
-                indexerProvider: mockIndexer,
-                contractRepository: repository,
-                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
-                getDefaultAddress: async () => "default-address",
-            });
-            await manager.initialize();
-
-            const contract = await manager.createContract({
-                type: "default",
-                params: createDefaultParams(),
-                script: TEST_DEFAULT_SCRIPT,
-                address: "contract-address",
-                sweepDestination: "custom-sweep-destination",
-            });
-
-            expect(contract.sweepDestination).toBe("custom-sweep-destination");
         });
     });
 });

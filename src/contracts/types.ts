@@ -34,7 +34,6 @@ export type ContractState = "active" | "inactive" | "expired";
  *   address: "tark1...",
  *   state: "active",
  *   createdAt: 1704067200000,
- *   autoSweep: true,
  * };
  * ```
  */
@@ -82,27 +81,9 @@ export interface Contract {
     data?: Record<string, string>;
 
     /**
-     * If true, VTXOs in this contract will be automatically swept
-     * to the wallet's default address when a spending path is available.
-     */
-    autoSweep?: boolean;
-
-    /**
-     * Override destination for sweeping (defaults to wallet's main address).
-     */
-    sweepDestination?: string;
-
-    /**
      * Optional metadata for external integrations.
      */
     metadata?: Record<string, unknown>;
-
-    /**
-     * Delegation configuration for server-side VTXO refresh.
-     * When enabled, allows the server to refresh VTXOs without user interaction.
-     * See DelegationConfig for details.
-     */
-    delegation?: DelegationConfig;
 }
 
 /**
@@ -225,46 +206,14 @@ export interface ContractHandler<
         contract: Contract,
         context: PathContext
     ): PathSelection[];
-
-    /**
-     * Get the sweep destination for a contract.
-     *
-     * Called when sweeping VTXOs from this contract. Returns the
-     * destination address, or the default destination.
-     *
-     * @param contract - The contract being swept
-     * @param context - Spending context
-     * @param defaultDestination - The wallet's default address (fallback)
-     * @returns Destination address to sweep to
-     */
-    getSweepDestination?(
-        contract: Contract,
-        context: PathContext,
-        defaultDestination: string
-    ): string;
-
-    /**
-     * Whether this contract type supports delegation.
-     *
-     * When true, the contract can have its VTXOs refreshed by the server
-     * using pre-signed forfeit transactions (SIGHASH_ALL|ANYONECANPAY).
-     *
-     * Default contracts ("default" type) typically support delegation.
-     * Complex multi-party contracts may not support it.
-     *
-     * @returns true if delegation is supported for this contract type
-     */
-    supportsDelegation?(): boolean;
 }
 
 /**
- * Event types emitted by the contract watcher and sweeper.
+ * Event types emitted by the contract watcher.
  */
 export type ContractEventType =
     | "vtxo_received"
     | "vtxo_spent"
-    | "vtxo_swept"
-    | "vtxo_spendable"
     | "contract_expired";
 
 /**
@@ -292,9 +241,6 @@ export interface GetContractsFilter {
 
     /** Filter by contract type(s) */
     type?: string | string[];
-
-    /** Filter by autoSweep setting */
-    autoSweep?: boolean;
 
     /** Include VTXOs for each contract in the result */
     withVtxos?: boolean;
@@ -337,127 +283,4 @@ export interface ContractBalance {
 
     /** Number of VTXOs in this contract */
     vtxoCount: number;
-}
-
-/**
- * Configuration for the contract sweeper service.
- */
-export interface SweeperConfig {
-    /** How often to check for spendable VTXOs (ms) */
-    pollIntervalMs: number;
-
-    /** Minimum total value to trigger a sweep (sats) */
-    minSweepValue: number;
-
-    /** Maximum number of VTXOs to sweep in a single transaction */
-    maxVtxosPerSweep: number;
-
-    /** Whether to batch sweeps from multiple contracts */
-    batchSweeps: boolean;
-
-    /** Whether the sweeper is enabled */
-    enabled: boolean;
-}
-
-/**
- * Result of a sweep operation.
- */
-export interface SweepResult {
-    txid: string;
-    contractIds: string[];
-    totalValue: number;
-    vtxoCount: number;
-    destination: string;
-}
-
-// ============================================================================
-// Delegation Types (Future Support)
-// ============================================================================
-//
-// Delegation enables VTXOs to be refreshed by the server without requiring
-// complex multi-party coordination. The wallet pre-signs forfeit transactions
-// using SIGHASH_ALL|ANYONECANPAY, which become valid if the user doesn't
-// participate in a round.
-//
-// Flow:
-// 1. Wallet pre-signs forfeit tx with SIGHASH_ALL|ANYONECANPAY
-// 2. Server can include user's VTXOs in a round using the pre-signed forfeit
-// 3. If user participates, new VTXOs are created with fresh forfeits
-// 4. If user doesn't participate, server uses pre-signed forfeit as collateral
-//
-// This is particularly useful for complex contracts (like VHTLC) where
-// multi-party coordination is difficult.
-// ============================================================================
-
-/**
- * Delegation configuration for a contract.
- *
- * When delegation is enabled, the wallet pre-signs forfeit transactions
- * that allow the server to refresh VTXOs without user interaction.
- */
-export interface DelegationConfig {
-    /**
-     * Whether delegation is enabled for this contract.
-     */
-    enabled: boolean;
-
-    /**
-     * Public key that can sign on behalf of the wallet for delegation.
-     * Typically the server's public key.
-     */
-    delegatePubKey?: string;
-
-    /**
-     * Maximum rounds the server can refresh without user participation.
-     * After this limit, user must participate or funds expire.
-     */
-    maxDelegatedRounds?: number;
-
-    /**
-     * Current count of delegated rounds (updated by server).
-     */
-    delegatedRoundsCount?: number;
-}
-
-/**
- * Pre-signed forfeit transaction data for delegation.
- *
- * Stored per-VTXO to enable server-side refresh.
- */
-export interface DelegatedForfeit {
-    /**
-     * The VTXO this forfeit applies to (txid:vout).
-     */
-    vtxoOutpoint: string;
-
-    /**
-     * Pre-signed forfeit signature (SIGHASH_ALL|ANYONECANPAY).
-     * Hex-encoded Schnorr signature.
-     */
-    forfeitSignature: string;
-
-    /**
-     * Round ID when this forfeit was created.
-     */
-    roundId?: string;
-
-    /**
-     * Expiration timestamp (ms) for this delegation.
-     */
-    expiresAt?: number;
-}
-
-/**
- * Result of creating delegation data for a VTXO.
- */
-export interface DelegationResult {
-    /**
-     * The forfeit data to send to the server.
-     */
-    forfeit: DelegatedForfeit;
-
-    /**
-     * Updated contract data to store locally.
-     */
-    contractData?: Record<string, string>;
 }

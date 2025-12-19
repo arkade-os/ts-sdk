@@ -275,29 +275,6 @@ export class VtxoManager {
         return manager.getTotalContractBalance();
     }
 
-    /**
-     * Manually trigger a sweep of all eligible contracts with autoSweep enabled.
-     * Only available when using the Wallet class.
-     *
-     * @returns Array of sweep results, or empty array if ContractManager not available
-     */
-    async sweepAllContracts(): Promise<
-        Array<{
-            txid: string;
-            contractIds: string[];
-            totalValue: number;
-            vtxoCount: number;
-            destination: string;
-        }>
-    > {
-        const manager = await this.getContractManager();
-        if (!manager) {
-            return [];
-        }
-
-        return manager.sweepAll();
-    }
-
     // ========== Recovery Methods ==========
 
     /**

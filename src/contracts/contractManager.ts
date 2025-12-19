@@ -7,21 +7,17 @@ import {
     ContractVtxo,
     ContractState,
     ContractEvent,
-    ContractEventType,
     ContractEventCallback,
     ContractBalance,
     ContractWithVtxos,
     GetContractsFilter,
     GetContractVtxosOptions,
-    SweeperConfig,
-    SweepResult,
     PathContext,
     PathSelection,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
-import { ContractSweeper, ContractSweeperDeps } from "./contractSweeper";
 import { contractHandlers } from "./handlers";
-import { VirtualCoin, ExtendedVirtualCoin, isSpendable } from "../wallet";
+import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
 
 /**
  * Configuration for the ContractManager.
@@ -41,18 +37,6 @@ export interface ContractManagerConfig {
 
     /** Function to get the wallet's default Ark address */
     getDefaultAddress: () => Promise<string>;
-
-    /** Function to execute a sweep transaction */
-    executeSweep?: (
-        vtxos: ContractVtxo[],
-        destination: string
-    ) => Promise<string>;
-
-    /** Function to get current block height (optional) */
-    getCurrentBlockHeight?: () => Promise<number>;
-
-    /** Sweeper configuration */
-    sweeperConfig?: Partial<SweeperConfig>;
 
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
@@ -77,7 +61,6 @@ export type CreateContractParams = Omit<
  * The ContractManager orchestrates:
  * - Contract registration and persistence
  * - Multi-contract watching via ContractWatcher
- * - Automatic sweeping via ContractSweeper
  * - VTXO queries across contracts
  *
  * @example
@@ -87,10 +70,6 @@ export type CreateContractParams = Omit<
  *   contractRepository: wallet.contractRepository,
  *   extendVtxo: (vtxo) => extendVirtualCoin(wallet, vtxo),
  *   getDefaultAddress: () => wallet.getAddress(),
- *   executeSweep: async (vtxos, dest) => {
- *     // Build and execute sweep transaction
- *     return txid;
- *   },
  * });
  *
  * // Initialize (loads persisted contracts)
@@ -103,7 +82,6 @@ export type CreateContractParams = Omit<
  *   params: { sender: "ab12...", receiver: "cd34...", ... },
  *   script: "5120...",
  *   address: "tark1...",
- *   autoSweep: true,
  * });
  *
  * // Start watching for events
@@ -118,7 +96,6 @@ export type CreateContractParams = Omit<
 export class ContractManager {
     private config: ContractManagerConfig;
     private watcher: ContractWatcher;
-    private sweeper?: ContractSweeper;
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
@@ -132,22 +109,6 @@ export class ContractManager {
             walletRepository: config.walletRepository,
             ...config.watcherConfig,
         });
-
-        // Create sweeper if executeSweep is provided
-        if (config.executeSweep) {
-            const sweeperDeps: ContractSweeperDeps = {
-                contractWatcher: this.watcher,
-                getDefaultAddress: config.getDefaultAddress,
-                executeSweep: config.executeSweep,
-                extendVtxo: config.extendVtxo,
-                getCurrentBlockHeight: config.getCurrentBlockHeight,
-            };
-
-            this.sweeper = new ContractSweeper(
-                sweeperDeps,
-                config.sweeperConfig
-            );
-        }
     }
 
     /**
@@ -185,18 +146,6 @@ export class ContractManager {
         // Start watching automatically
         this.stopWatcherFn = await this.watcher.startWatching((event) => {
             this.handleContractEvent(event);
-        });
-
-        // Start sweeper if configured
-        this.sweeper?.start((event) => {
-            if (event.type === "vtxo_spendable") {
-                this.emitEvent({
-                    type: "vtxo_spendable" as ContractEventType,
-                    contractId: event.contractId,
-                    vtxos: event.vtxos,
-                    timestamp: Date.now(),
-                });
-            }
         });
     }
 
@@ -322,11 +271,8 @@ export class ContractManager {
      * // Get all VHTLC contracts
      * const vhtlcs = await manager.getContracts({ type: 'vhtlc' });
      *
-     * // Get active contracts with autoSweep enabled
-     * const sweepable = await manager.getContracts({
-     *   state: 'active',
-     *   autoSweep: true
-     * });
+     * // Get all active contracts
+     * const active = await manager.getContracts({ state: 'active' });
      *
      * // Get contracts with their VTXOs included
      * const withVtxos = await manager.getContracts({ withVtxos: true });
@@ -362,13 +308,6 @@ export class ContractManager {
                 ? filter.type
                 : [filter.type];
             contracts = contracts.filter((c) => types.includes(c.type));
-        }
-
-        // Filter by autoSweep
-        if (filter.autoSweep !== undefined) {
-            contracts = contracts.filter(
-                (c) => (c.autoSweep ?? false) === filter.autoSweep
-            );
         }
 
         // Include VTXOs in result
@@ -483,14 +422,9 @@ export class ContractManager {
      * Delete a contract.
      *
      * @param id - Contract ID
-     * @param sweepFirst - If true, sweep any remaining VTXOs first
      */
-    async deleteContract(id: string, sweepFirst = false): Promise<void> {
+    async deleteContract(id: string): Promise<void> {
         this.ensureInitialized();
-
-        if (sweepFirst && this.sweeper) {
-            await this.sweeper.sweepContract(id);
-        }
 
         await this.config.contractRepository.deleteContract(id);
         await this.watcher.removeContract(id);
@@ -680,43 +614,6 @@ export class ContractManager {
     }
 
     /**
-     * Manually trigger a sweep of all eligible contracts.
-     */
-    async sweepAll(): Promise<SweepResult[]> {
-        if (!this.sweeper) {
-            throw new Error("Sweeper not configured");
-        }
-        return this.sweeper.sweepAll();
-    }
-
-    /**
-     * Manually sweep a specific contract.
-     */
-    async sweepContract(contractId: string): Promise<SweepResult | null> {
-        if (!this.sweeper) {
-            throw new Error("Sweeper not configured");
-        }
-        return this.sweeper.sweepContract(contractId);
-    }
-
-    /**
-     * Get pending sweepable VTXOs.
-     */
-    async getPendingSweeps(): Promise<Map<string, ContractVtxo[]>> {
-        if (!this.sweeper) {
-            return new Map();
-        }
-        return this.sweeper.getPendingSweeps();
-    }
-
-    /**
-     * Update sweeper configuration.
-     */
-    updateSweeperConfig(config: Partial<SweeperConfig>): void {
-        this.sweeper?.updateConfig(config);
-    }
-
-    /**
      * Emit an event to all registered callbacks.
      */
     private emitEvent(event: ContractEvent): void {
@@ -754,7 +651,7 @@ export class ContractManager {
     /**
      * Dispose of the ContractManager and release all resources.
      *
-     * Stops the watcher and sweeper, clears callbacks, and marks
+     * Stops the watcher, clears callbacks, and marks
      * the manager as uninitialized.
      *
      * Implements the disposable pattern for cleanup.
@@ -763,9 +660,6 @@ export class ContractManager {
         // Stop watching
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
-
-        // Stop sweeper if configured
-        this.sweeper?.stop();
 
         // Clear callbacks
         this.eventCallbacks.clear();

@@ -211,8 +211,6 @@ export namespace Request {
             id?: string;
             label?: string;
             state?: ContractState;
-            autoSweep?: boolean;
-            sweepDestination?: string;
             expiresAt?: number;
             data?: Record<string, string>;
             metadata?: Record<string, unknown>;

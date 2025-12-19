@@ -87,7 +87,6 @@ import {
     ContractVtxo,
     ContractEvent,
     ContractEventCallback,
-    SweeperConfig,
 } from "../contracts/types";
 
 export type IncomingFunds =
@@ -673,7 +672,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     private readonly watcherConfig?: WalletConfig["watcherConfig"];
-    private readonly sweeperConfig?: WalletConfig["sweeperConfig"];
 
     protected constructor(
         identity: Identity,
@@ -692,8 +690,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
         renewalConfig?: WalletConfig["renewalConfig"],
-        watcherConfig?: WalletConfig["watcherConfig"],
-        sweeperConfig?: WalletConfig["sweeperConfig"]
+        watcherConfig?: WalletConfig["watcherConfig"]
     ) {
         super(
             identity,
@@ -714,7 +711,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...renewalConfig,
         };
         this.watcherConfig = watcherConfig;
-        this.sweeperConfig = sweeperConfig;
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -760,8 +756,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.walletRepository,
             setup.contractRepository,
             config.renewalConfig,
-            config.watcherConfig,
-            config.sweeperConfig
+            config.watcherConfig
         );
     }
 
@@ -1612,7 +1607,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * - The wallet's default receiving address (as a "default" contract)
      * - External contracts (Boltz swaps, HTLCs, etc.)
      * - Multi-contract watching with resilient connections
-     * - Automatic sweeping of spendable contract VTXOs
      *
      * @example
      * ```typescript
@@ -1625,7 +1619,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      *   params: { ... },
      *   script: swapScript,
      *   address: swapAddress,
-     *   autoSweep: true,
      * });
      *
      * // Start watching for events (includes wallet's default address)
@@ -1671,8 +1664,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     private async initializeContractManager(): Promise<ContractManager> {
-        const self = this;
-
         const manager = new ContractManager({
             indexerProvider: this.indexerProvider,
             contractRepository: this
@@ -1680,15 +1671,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             walletRepository: this.walletRepository,
             extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
             getDefaultAddress: () => this.getAddress(),
-            executeSweep: async (
-                vtxos: ContractVtxo[],
-                destination: string
-            ) => {
-                // Use settle to sweep VTXOs to the destination
-                return self.sweepContractVtxos(vtxos, destination);
-            },
             watcherConfig: this.watcherConfig,
-            sweeperConfig: this.sweeperConfig,
         });
 
         await manager.initialize();
@@ -1788,17 +1771,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     /**
-     * Sweep all eligible contract VTXOs to the wallet's default address.
-     */
-    async sweepAllContracts(): Promise<string[]> {
-        const manager = await this.getContractManager();
-        const results = await manager.sweepAll();
-        return results.map((r) => r.txid);
-    }
-
-    /**
      * Internal method to sweep contract VTXOs via settlement.
-     * Used by the ContractSweeper.
      */
     private async sweepContractVtxos(
         vtxos: ContractVtxo[],

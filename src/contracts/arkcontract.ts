@@ -120,7 +120,6 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
  *   {
  *     id: "my-swap",
  *     label: "Lightning Receive",
- *     autoSweep: true,
  *   }
  * );
  * ```
@@ -131,8 +130,6 @@ export function contractFromArkContract(
         id?: string;
         label?: string;
         state?: "active" | "inactive";
-        autoSweep?: boolean;
-        sweepDestination?: string;
         expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
@@ -162,8 +159,6 @@ export function contractFromArkContract(
         state: options.state || "active",
         createdAt: Date.now(),
         expiresAt: options.expiresAt,
-        autoSweep: options.autoSweep,
-        sweepDestination: options.sweepDestination,
         metadata: options.metadata,
     };
 }
@@ -185,8 +180,6 @@ export function contractFromArkContractWithAddress(
         id?: string;
         label?: string;
         state?: "active" | "inactive";
-        autoSweep?: boolean;
-        sweepDestination?: string;
         expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
@@ -207,8 +200,6 @@ export function contractFromArkContractWithAddress(
         state: options.state || "active",
         createdAt: Date.now(),
         expiresAt: options.expiresAt,
-        autoSweep: options.autoSweep,
-        sweepDestination: options.sweepDestination,
         metadata: options.metadata,
     };
 }

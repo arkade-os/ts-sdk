@@ -829,15 +829,6 @@ export class ContractWatcher {
                 timestamp
             );
         }
-
-        if (update.sweptVtxos?.length) {
-            this.processSubscriptionVtxos(
-                update.sweptVtxos,
-                scripts,
-                "vtxo_swept",
-                timestamp
-            );
-        }
     }
 
     /**
@@ -847,7 +838,7 @@ export class ContractWatcher {
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
         scripts: string[],
-        eventType: "vtxo_received" | "vtxo_spent" | "vtxo_swept",
+        eventType: "vtxo_received" | "vtxo_spent",
         timestamp: number
     ): void {
         // If we have exactly one script, all VTXOs belong to that contract
@@ -900,7 +891,7 @@ export class ContractWatcher {
     private emitVtxoEvent(
         contractId: string,
         vtxos: VirtualCoin[],
-        eventType: "vtxo_received" | "vtxo_spent" | "vtxo_swept",
+        eventType: "vtxo_received" | "vtxo_spent",
         timestamp: number
     ): void {
         const state = this.contracts.get(contractId);
