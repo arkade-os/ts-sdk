@@ -19,44 +19,14 @@ import { ReadonlyWallet, Wallet } from "../wallet";
 import { hex } from "@scure/base";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { vtxosToTxs } from "../../utils/transactionHistory";
-
-// Generic
-export type RequestEnvelope<T, U> = {
-    type: T;
-    id: string;
-    payload: U;
-};
-export type ResponseEnvelope<T, U> = {
-    type: T;
-    id?: string;
-    error?: Error;
-    broadcast?: boolean;
-    payload?: U;
-};
-export interface IUpdater<M = string, MP = unknown, R = string, RP = unknown> {
-    readonly messagePrefix: string;
-
-    /** Called once when the SW starts */
-    // TODO: paramteric start?
-    // start(
-    //     message: RequestEnvelope<M, MP>
-    // ): Promise<ResponseEnvelope<R, RP> | null>;
-    start(): Promise<void>;
-
-    /** Called once when the SW is shutting down */
-    stop(): Promise<void>;
-
-    /** Called periodically by the Worker */
-    tick(now: number): Promise<ResponseEnvelope<R, RP>[]>;
-
-    /** Handle routed messages */
-    handleMessage(
-        message: RequestEnvelope<M, MP>
-    ): Promise<ResponseEnvelope<R, RP> | null>;
-}
+import {
+    IUpdater,
+    RequestEnvelope,
+    ResponseEnvelope,
+} from "./ark-serviceworker";
 
 // WalletUpdater
-type WalletUpdaterMessage = RequestEnvelope<
+type WalletUpdaterRequest = RequestEnvelope<
     Request.Type,
     | Request.Settle
     | Request.GetAddress
@@ -76,13 +46,13 @@ type WalletUpdaterResponse = ResponseEnvelope<
     | Response.VtxoUpdate
     | Response.UtxoUpdate
     | Response.SendBitcoinSuccess
-    | Response.Base
+    | Response.Base<Response.Type>
 >;
 export class WalletUpdater
     implements
         IUpdater<
-            WalletUpdaterMessage["type"],
-            WalletUpdaterMessage["payload"],
+            WalletUpdaterRequest["type"],
+            WalletUpdaterRequest["payload"],
             WalletUpdaterResponse["type"],
             WalletUpdaterResponse["payload"]
         >
@@ -115,7 +85,7 @@ export class WalletUpdater
         // optional cleanup and persistence
     }
 
-    async tick(now: number) {
+    async tick(_now: number) {
         const results = await Promise.allSettled(
             this.onNextTick.map((fn) => fn())
         );
@@ -141,7 +111,7 @@ export class WalletUpdater
     }
 
     async handleMessage(
-        message: WalletUpdaterMessage
+        message: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse | null> {
         if (message.type === "INIT_WALLET") {
             await this.handleInitWallet(message.payload as Request.InitWallet);
@@ -179,8 +149,9 @@ export class WalletUpdater
                 return { id: message.id, type: payload.type, payload };
             }
             case "GET_BALANCE": {
-                const address = await this.handler.getAddress();
-                const payload = Response.address(message.id, address);
+                const payload = await this.handleGetBalance(
+                    message as Request.GetBalance
+                );
                 return { id: message.id, type: payload.type, payload };
             }
             case "GET_VTXOS": {
@@ -355,7 +326,6 @@ export class WalletUpdater
     }
 
     private async onWalletInitialized() {
-        console.log("onWalletInitialized - Initializing wallet...");
         if (
             !this.handler ||
             !this.arkProvider ||
@@ -433,6 +403,7 @@ export class WalletUpdater
 
                     // notify all clients about the vtxo update
                     this.scheduleForNextTick(() => ({
+                        prefix: WalletUpdater.messagePrefix,
                         type: "VTXO_UPDATE",
                         broadcast: true,
                         payload: Response.vtxoUpdate(newVtxos, spentVtxos),
@@ -455,6 +426,7 @@ export class WalletUpdater
 
                     // notify all clients about the utxo update
                     this.scheduleForNextTick(() => ({
+                        prefix: WalletUpdater.messagePrefix,
                         type: "UTXO_UPDATE",
                         broadcast: true,
                         payload: Response.utxoUpdate(utxos),

@@ -20,7 +20,8 @@ import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { ContractRepositoryImpl } from "../../repositories/contractRepository";
 import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
-import { WalletUpdater } from "./WalletUpdater";
+import { WalletUpdater } from "./wallet-updater";
+import { ArkServiceworker } from "./ark-serviceworker";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -31,7 +32,7 @@ const isPrivateKeyIdentity = (
 };
 
 class UnexpectedResponseError extends Error {
-    constructor(response: Response.Base) {
+    constructor(response: Response.Base<Response.Type>) {
         super(
             `Unexpected response type. Got: ${JSON.stringify(response, null, 2)}`
         );
@@ -142,6 +143,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             arkServerPublicKey: options.arkServerPublicKey,
         };
 
+        navigator.serviceWorker.addEventListener("message", (m) => {
+            if (m.data.prefix !== WalletUpdater.messagePrefix) return;
+            console.debug("[Wallet] broadcast received", m.data);
+        });
+
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
 
@@ -187,11 +193,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     // send a message and wait for a response
     protected async sendMessage<T extends Request.Base>(
         message: T
-    ): Promise<Response.Base> {
+    ): Promise<Response.Base<Response.Type>> {
         return new Promise((resolve, reject) => {
             const messageHandler = (event: MessageEvent) => {
-                const response = event.data.payload as Response.Base;
-                console.log("Received message from SW:", response);
+                const response = event.data
+                    .payload as Response.Base<Response.Type>;
+                // console.log("Received message from SW:", response);
                 if (response.id === "") {
                     reject(new Error("Invalid response id"));
                     return;
@@ -212,7 +219,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
-            console.log("Sending message to SW:", message);
+            // console.log("Sending message to SW:", message);
             this.serviceWorker.postMessage({
                 prefix: WalletUpdater.messagePrefix,
                 id: message.id,
@@ -452,14 +459,14 @@ export class ServiceWorkerWallet
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerWallet> {
         // Register and setup the service worker
-        const serviceWorker = await setupServiceWorker(
+        const serviceWorker = await ArkServiceworker.setup(
             options.serviceWorkerPath
         );
 
         // Use the existing create method
         return ServiceWorkerWallet.create({
             ...options,
-            serviceWorker,
+            serviceWorker: ArkServiceworker.getServiceWorker(),
         });
     }
 
@@ -494,7 +501,7 @@ export class ServiceWorkerWallet
         try {
             return new Promise((resolve, reject) => {
                 const messageHandler = (event: MessageEvent) => {
-                    const response = event.data as Response.Base;
+                    const response = event.data as Response.Base<Response.Type>;
                     if (response.id !== message.id) {
                         return;
                     }
