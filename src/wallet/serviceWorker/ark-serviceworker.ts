@@ -24,19 +24,20 @@ export const ArkServiceworker = {
 declare const self: ServiceWorkerGlobalScope;
 
 // Generic
-export type RequestEnvelope<T, U> = {
-    type: T;
+export type RequestEnvelope = {
+    prefix: string;
     id: string;
-    payload: U;
 };
-export type ResponseEnvelope<T, U> = {
-    type: T;
+export type ResponseEnvelope = {
+    prefix: string;
     id?: string;
     error?: Error;
     broadcast?: boolean;
-    payload?: U;
 };
-export interface IUpdater<M = string, MP = unknown, R = string, RP = unknown> {
+export interface IUpdater<
+    REQ extends RequestEnvelope = RequestEnvelope,
+    RES extends ResponseEnvelope = ResponseEnvelope,
+> {
     readonly messagePrefix: string;
 
     /** Called once when the SW starts */
@@ -50,12 +51,10 @@ export interface IUpdater<M = string, MP = unknown, R = string, RP = unknown> {
     stop(): Promise<void>;
 
     /** Called periodically by the Worker */
-    tick(now: number): Promise<ResponseEnvelope<R, RP>[]>;
+    tick(now: number): Promise<RES[]>;
 
     /** Handle routed messages */
-    handleMessage(
-        message: RequestEnvelope<M, MP>
-    ): Promise<ResponseEnvelope<R, RP> | null>;
+    handleMessage(message: REQ): Promise<RES | null>;
 }
 
 type WorkerOptions = {
@@ -155,7 +154,14 @@ export class ArkSW {
     }
 
     private onMessage = async (event: ExtendableMessageEvent) => {
-        const { id, prefix, payload } = event.data;
+        const { id, prefix } = event.data as RequestEnvelope;
+
+        if (!id || !prefix) {
+            console.error(event.data);
+            throw new Error(
+                "Invalid message received, missing required fields"
+            );
+        }
 
         if (this.debug) {
             console.log(`[${prefix}] incoming message:`, event.data);
@@ -164,17 +170,13 @@ export class ArkSW {
         const updater = this.updaters.get(prefix);
         if (!updater) {
             console.warn(
-                `[${prefix}] unknown message prefix ${prefix}, ignoring message`
+                `[${prefix}] unknown message prefix '${prefix}', ignoring message`
             );
             return;
         }
 
         try {
-            const response = await updater.handleMessage({
-                id,
-                type: payload.type,
-                payload: event.data.payload,
-            });
+            const response = await updater.handleMessage(event.data);
             if (this.debug)
                 console.log(`[${prefix}] outgoing response:`, response);
             if (response) {

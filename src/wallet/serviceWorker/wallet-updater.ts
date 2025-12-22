@@ -1,4 +1,8 @@
-import { ArkProvider, RestArkProvider } from "../../providers/ark";
+import {
+    ArkProvider,
+    RestArkProvider,
+    SettlementEvent,
+} from "../../providers/ark";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { WalletRepository, WalletRepositoryImpl } from "../../repositories";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
@@ -8,10 +12,15 @@ import { Response } from "./response";
 import {
     ArkTransaction,
     ExtendedCoin,
+    GetVtxosFilter,
     isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
+    IWallet,
+    SendBitcoinParams,
+    SettleParams,
+    WalletBalance,
 } from "../index";
 import { Request } from "./request";
 import { ReadonlySingleKey, SingleKey } from "../../identity";
@@ -24,38 +33,155 @@ import {
     RequestEnvelope,
     ResponseEnvelope,
 } from "./ark-serviceworker";
+import TransactionHistory = Response.TransactionHistory;
+import WalletStatus = Response.WalletStatus;
+
+export type RequestInitWallet = RequestEnvelope & {
+    type: "INIT_WALLET";
+    payload: {
+        key: { privateKey: string } | { publicKey: string };
+        arkServerUrl: string;
+        arkServerPublicKey?: string;
+    };
+};
+export type ResponseInitWallet = ResponseEnvelope & {
+    type: "WALLET_INITIALIZED";
+};
+
+export type RequestSettle = RequestEnvelope & {
+    type: "SETTLE";
+    payload: SettleParams;
+};
+export type ResponseSettle = ResponseEnvelope & {
+    type: "SETTLE_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestSendBitcoin = RequestEnvelope & {
+    type: "SEND_BITCOIN";
+    payload: SendBitcoinParams;
+};
+export type ResponseSendBitcoin = ResponseEnvelope & {
+    type: "SEND_BITCOIN_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetAddress = RequestEnvelope & { type: "GET_ADDRESS" };
+export type ResponseGetAddress = ResponseEnvelope & {
+    type: "ADDRESS";
+    payload: { address: string };
+};
+
+export type RequestGetBoardingAddress = RequestEnvelope & {
+    type: "GET_BOARDING_ADDRESS";
+};
+export type ResponseGetBoardingAddress = ResponseEnvelope & {
+    type: "BOARDING_ADDRESS";
+    payload: { address: string };
+};
+
+export type RequestGetBalance = RequestEnvelope & { type: "GET_BALANCE" };
+export type ResponseGetBalance = ResponseEnvelope & {
+    type: "BALANCE";
+    payload: WalletBalance;
+};
+
+export type RequestGetVtxos = RequestEnvelope & {
+    type: "GET_VTXOS";
+    payload: { filter?: GetVtxosFilter };
+};
+export type ResponseGetVtxos = ResponseEnvelope & {
+    type: "VTXOS";
+    payload: { vtxos: Awaited<ReturnType<IWallet["getVtxos"]>> };
+};
+
+export type RequestGetBoardingUtxos = RequestEnvelope & {
+    type: "GET_BOARDING_UTXOS";
+};
+export type ResponseGetBoardingUtxos = ResponseEnvelope & {
+    type: "BOARDING_UTXOS";
+    payload: { utxos: ExtendedCoin[] };
+};
+
+export type RequestGetTransactionHistory = RequestEnvelope & {
+    type: "GET_TRANSACTION_HISTORY";
+};
+export type ResponseGetTransactionHistory = ResponseEnvelope & {
+    type: "TRANSACTION_HISTORY";
+    payload: { transactions: ArkTransaction[] };
+};
+
+export type RequestGetStatus = RequestEnvelope & { type: "GET_STATUS" };
+export type ResponseGetStatus = ResponseEnvelope & {
+    type: "WALLET_STATUS";
+    payload: {
+        walletInitialized: boolean;
+        xOnlyPublicKey: Uint8Array | undefined;
+    };
+};
+
+export type RequestClear = RequestEnvelope & { type: "CLEAR" };
+export type ResponseClear = ResponseEnvelope & {
+    type: "CLEAR_SUCCESS";
+    payload: { cleared: boolean };
+};
+
+export type RequestReloadWallet = RequestEnvelope & { type: "RELOAD_WALLET" };
+export type ResponseReloadWallet = ResponseEnvelope & {
+    type: "RELOAD_SUCCESS";
+    payload: { reloaded: boolean };
+};
+
+export type ResponseSettleEvent = ResponseEnvelope & {
+    broadcast: true;
+    type: "SETTLE_EVENT";
+    payload: SettlementEvent;
+};
+export type ResponseUtxoUpdate = ResponseEnvelope & {
+    broadcast: true;
+    type: "UTXO_UPDATE";
+    payload: { coins: ExtendedCoin[] };
+};
+export type ResponseVtxoUpdate = ResponseEnvelope & {
+    broadcast: true;
+    type: "VTXO_UPDATE";
+    payload: { newVtxos: ExtendedCoin[]; spentVtxos: ExtendedCoin[] };
+};
 
 // WalletUpdater
-type WalletUpdaterRequest = RequestEnvelope<
-    Request.Type,
-    | Request.Settle
-    | Request.GetAddress
-    | Request.GetBoardingAddress
-    | Request.SendBitcoin
-    | Request.InitWallet
-    | Request.GetBalance
-    | Request.Clear
-    | Request.GetVirtualCoins
->;
-type WalletUpdaterResponse = ResponseEnvelope<
-    Response.Type,
-    | Response.SettleEvent
-    | Response.ClearResponse
-    | Response.WalletStatus
-    | Response.Balance
-    | Response.VtxoUpdate
-    | Response.UtxoUpdate
-    | Response.SendBitcoinSuccess
-    | Response.Base<Response.Type>
->;
+export type WalletUpdaterRequest =
+    | RequestInitWallet
+    | RequestSettle
+    | RequestSendBitcoin
+    | RequestGetAddress
+    | RequestGetBoardingAddress
+    | RequestGetBalance
+    | RequestGetVtxos
+    | RequestGetBoardingUtxos
+    | RequestGetTransactionHistory
+    | RequestGetStatus
+    | RequestClear
+    | RequestReloadWallet;
+
+export type WalletUpdaterResponse =
+    | ResponseInitWallet
+    | ResponseSettle
+    | ResponseSettleEvent
+    | ResponseSendBitcoin
+    | ResponseGetAddress
+    | ResponseGetBoardingAddress
+    | ResponseGetBalance
+    | ResponseGetVtxos
+    | ResponseGetBoardingUtxos
+    | ResponseGetTransactionHistory
+    | ResponseGetStatus
+    | ResponseClear
+    | ResponseReloadWallet
+    | ResponseUtxoUpdate
+    | ResponseVtxoUpdate;
+
 export class WalletUpdater
-    implements
-        IUpdater<
-            WalletUpdaterRequest["type"],
-            WalletUpdaterRequest["payload"],
-            WalletUpdaterResponse["type"],
-            WalletUpdaterResponse["payload"]
-        >
+    implements IUpdater<WalletUpdaterRequest, WalletUpdaterResponse>
 {
     static messagePrefix = "WalletUpdater";
     readonly messagePrefix = WalletUpdater.messagePrefix;
@@ -110,111 +236,148 @@ export class WalletUpdater
         this.onNextTick.push(callback);
     }
 
+    private prefixed(
+        res: Partial<WalletUpdaterResponse>
+    ): WalletUpdaterResponse {
+        return {
+            ...res,
+            prefix: this.messagePrefix,
+        } as WalletUpdaterResponse;
+    }
+
     async handleMessage(
         message: WalletUpdaterRequest
-    ): Promise<WalletUpdaterResponse | null> {
+    ): Promise<WalletUpdaterResponse> {
+        const id = message.id;
+        console.log(`[${this.messagePrefix}] handleMessage`, message);
         if (message.type === "INIT_WALLET") {
-            await this.handleInitWallet(message.payload as Request.InitWallet);
-            const payload = Response.walletInitialized(message.id);
-            return { id: message.id, type: payload.type, payload };
+            await this.handleInitWallet(message);
+            return this.prefixed({
+                id,
+                type: "WALLET_INITIALIZED",
+            });
         }
         if (!this.handler) {
-            return Response.error(message.id, "Handler not initialized");
+            return this.prefixed({
+                id,
+                error: new Error("Wallet handler not initialized"),
+            });
         }
-        switch (message.type) {
-            case "SETTLE": {
-                const payload = await this.handleSettle(
-                    message.payload as Request.Settle
-                );
-                if (payload)
-                    return { id: message.id, type: payload.type, payload };
-                return null;
-            }
-            case "SEND_BITCOIN": {
-                const payload = await this.handleSendBitcoin(
-                    message.payload as Request.SendBitcoin
-                );
-                if (payload)
-                    return { id: message.id, type: payload.type, payload };
-                return null;
-            }
-            case "GET_ADDRESS": {
-                const address = await this.handler.getAddress();
-                const payload = Response.address(message.id, address);
-                return { id: message.id, type: payload.type, payload };
-            }
-            case "GET_BOARDING_ADDRESS": {
-                const address = await this.handler.getBoardingAddress();
-                const payload = Response.boardingAddress(message.id, address);
-                return { id: message.id, type: payload.type, payload };
-            }
-            case "GET_BALANCE": {
-                const payload = await this.handleGetBalance(
-                    message as Request.GetBalance
-                );
-                return { id: message.id, type: payload.type, payload };
-            }
-            case "GET_VTXOS": {
-                const payload = await this.handleGetVtxos(
-                    message as Request.GetVtxos
-                );
-                if (payload) {
-                    return { id: message.id, type: payload.type, payload };
+        try {
+            switch (message.type) {
+                case "SETTLE": {
+                    const response = await this.handleSettle(message);
+                    return this.prefixed({
+                        id,
+                        ...response,
+                    });
                 }
-                return null;
+
+                case "SEND_BITCOIN": {
+                    const response = await this.handleSendBitcoin(message);
+                    return this.prefixed({
+                        id,
+                        ...response,
+                    });
+                }
+                case "GET_ADDRESS": {
+                    const address = await this.handler.getAddress();
+                    return this.prefixed({
+                        id,
+                        type: "ADDRESS",
+                        payload: { address },
+                    });
+                }
+                case "GET_BOARDING_ADDRESS": {
+                    const address = await this.handler.getBoardingAddress();
+                    return this.prefixed({
+                        id,
+                        type: "BOARDING_ADDRESS",
+                        payload: { address },
+                    });
+                }
+                case "GET_BALANCE": {
+                    const balance = await this.handleGetBalance();
+                    return this.prefixed({
+                        id,
+                        type: "BALANCE",
+                        payload: balance,
+                    });
+                }
+                case "GET_VTXOS": {
+                    const vtxos = await this.handleGetVtxos(message);
+                    return {
+                        prefix: this.messagePrefix,
+                        id,
+                        type: "VTXOS",
+                        payload: { vtxos },
+                    };
+                }
+                case "GET_BOARDING_UTXOS": {
+                    const utxos = await this.getAllBoardingUtxos();
+                    return this.prefixed({
+                        id,
+                        type: "BOARDING_UTXOS",
+                        payload: { utxos },
+                    });
+                }
+                case "GET_TRANSACTION_HISTORY": {
+                    const transactions = await this.getTransactionHistory();
+                    return this.prefixed({
+                        id,
+                        type: "TRANSACTION_HISTORY",
+                        payload: { transactions },
+                    });
+                }
+                case "GET_STATUS": {
+                    const pubKey = await this.handler.identity.xOnlyPublicKey();
+                    return this.prefixed({
+                        id,
+                        type: "WALLET_STATUS",
+                        payload: {
+                            walletInitialized: true,
+                            xOnlyPublicKey: pubKey,
+                        },
+                    });
+                }
+                case "CLEAR": {
+                    await this.clear();
+                    return this.prefixed({
+                        id,
+                        type: "CLEAR_SUCCESS",
+                        payload: { cleared: true },
+                    });
+                }
+                case "RELOAD_WALLET": {
+                    await this.onWalletInitialized();
+                    return this.prefixed({
+                        id,
+                        type: "RELOAD_SUCCESS",
+                        payload: { reloaded: true },
+                    });
+                }
+                default:
+                    console.error("Unknown message type", message);
+                    throw new Error("Unknown message");
             }
-            case "GET_BOARDING_UTXOS": {
-                const boardingUtxos = await this.getAllBoardingUtxos();
-                const payload = Response.boardingUtxos(
-                    message.id,
-                    boardingUtxos
-                );
-                return { id: message.id, type: payload.type, payload };
-            }
-            case "GET_TRANSACTION_HISTORY": {
-                const txs = await this.getTransactionHistory();
-                const payload = Response.transactionHistory(message.id, txs);
-                return { id: message.id, type: payload.type, payload };
-            }
-            case "GET_STATUS": {
-                const pubKey = await this.handler.identity.xOnlyPublicKey();
-                const payload = Response.walletStatus(
-                    message.id,
-                    this.handler !== undefined,
-                    pubKey
-                );
-                return { id: message.id, type: payload.type, payload };
-            }
-            case "CLEAR": {
-                await this.clear();
-                const payload = Response.clearResponse(message.id, true);
-                return { id: message.id, type: payload.type, payload };
-            }
-            case "RELOAD_WALLET": {
-                await await this.onWalletInitialized();
-                const payload = Response.walletReloaded(message.id, true);
-                return { id: message.id, type: payload.type, payload };
-            }
-            default:
-                console.error(`Unknown message type: ${message.type}`);
-                throw new Error("Unknown message");
+        } catch (error: unknown) {
+            return this.prefixed({ id, error: error as Error });
         }
     }
 
     // Wallet methods
-    private async handleInitWallet(message: Request.InitWallet) {
-        console.log("handleInitWallet", message);
-        const { arkServerPublicKey, arkServerUrl } = message;
+    private async handleInitWallet({ payload }: RequestInitWallet) {
+        const { arkServerPublicKey, arkServerUrl } = payload;
         this.arkProvider = new RestArkProvider(arkServerUrl);
         this.indexerProvider = new RestIndexerProvider(arkServerUrl);
 
         if (
-            "privateKey" in message.key &&
-            typeof message.key.privateKey === "string"
+            "privateKey" in payload.key &&
+            typeof payload.key.privateKey === "string"
         ) {
             const {
                 key: { privateKey },
-            } = message;
+            } = payload;
             const identity = SingleKey.fromHex(privateKey);
             const wallet = await Wallet.create({
                 identity,
@@ -224,12 +387,12 @@ export class WalletUpdater
             });
             this.handler = new Handler(wallet);
         } else if (
-            "publicKey" in message.key &&
-            typeof message.key.publicKey === "string"
+            "publicKey" in payload.key &&
+            typeof payload.key.publicKey === "string"
         ) {
             const {
                 key: { publicKey },
-            } = message;
+            } = payload;
             const identity = ReadonlySingleKey.fromPublicKey(
                 hex.decode(publicKey)
             );
@@ -248,7 +411,7 @@ export class WalletUpdater
         await this.onWalletInitialized();
     }
 
-    private async handleGetBalance(message: Request.GetBalance) {
+    private async handleGetBalance() {
         const [boardingUtxos, spendableVtxos, sweptVtxos] = await Promise.all([
             this.getAllBoardingUtxos(),
             this.getSpendableVtxos(),
@@ -286,7 +449,7 @@ export class WalletUpdater
         const totalBoarding = confirmed + unconfirmed;
         const totalOffchain = settled + preconfirmed + recoverable;
 
-        return Response.balance(message.id, {
+        return {
             boarding: {
                 confirmed,
                 unconfirmed,
@@ -297,7 +460,7 @@ export class WalletUpdater
             available: settled + preconfirmed,
             recoverable,
             total: totalBoarding + totalOffchain,
-        });
+        };
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
         if (!this.handler) return [];
@@ -402,12 +565,13 @@ export class WalletUpdater
                     ]);
 
                     // notify all clients about the vtxo update
-                    this.scheduleForNextTick(() => ({
-                        prefix: WalletUpdater.messagePrefix,
-                        type: "VTXO_UPDATE",
-                        broadcast: true,
-                        payload: Response.vtxoUpdate(newVtxos, spentVtxos),
-                    }));
+                    this.scheduleForNextTick(() =>
+                        this.prefixed({
+                            type: "VTXO_UPDATE",
+                            broadcast: true,
+                            payload: { newVtxos, spentVtxos },
+                        })
+                    );
                 }
                 if (funds.type === "utxo") {
                     const utxos = funds.coins.map((utxo) =>
@@ -425,12 +589,13 @@ export class WalletUpdater
                     );
 
                     // notify all clients about the utxo update
-                    this.scheduleForNextTick(() => ({
-                        prefix: WalletUpdater.messagePrefix,
-                        type: "UTXO_UPDATE",
-                        broadcast: true,
-                        payload: Response.utxoUpdate(utxos),
-                    }));
+                    this.scheduleForNextTick(() =>
+                        this.prefixed({
+                            type: "UTXO_UPDATE",
+                            broadcast: true,
+                            payload: { coins: utxos },
+                        })
+                    );
                 }
             }
         );
@@ -478,45 +643,48 @@ export class WalletUpdater
         };
     }
 
-    private async handleSettle(message: Request.Settle) {
+    private async handleSettle(message: RequestSettle) {
         if (!this.handler) {
-            return null;
+            throw new Error("Wallet handler not initialized");
         }
-        const txid = await this.handler.handleSettle(message.params, (e) => {
-            this.scheduleForNextTick(() => Response.settleEvent(message.id, e));
+        const txid = await this.handler.handleSettle(message.payload, (e) => {
+            this.scheduleForNextTick(() =>
+                this.prefixed({
+                    id: message.id,
+                    type: "SETTLE_EVENT",
+                    payload: e,
+                })
+            );
         });
-        if (txid) {
-            return Response.settleSuccess(message.id, txid);
-        } else {
-            return Response.error(
-                message.id,
-                "Operation not supported in readonly mode"
-            );
+
+        if (!txid) {
+            throw new Error("Settlement failed");
         }
+        return { type: "SETTLE_SUCCESS", payload: { txid } } as ResponseSettle;
     }
 
-    private async handleSendBitcoin(message: Request.SendBitcoin) {
+    private async handleSendBitcoin(message: RequestSendBitcoin) {
         if (!this.handler) {
-            return null;
+            throw new Error("Wallet handler not initialized");
         }
-        const txid = await this.handler.handleSendBitcoin(message.params);
-        if (txid) {
-            return Response.sendBitcoinSuccess(message.id, txid);
-        } else {
-            return Response.error(
-                message.id,
-                "Operation not supported in readonly mode"
-            );
+        const txid = await this.handler.handleSendBitcoin(message.payload);
+        if (!txid) {
+            throw new Error("Send bitcoin failed");
         }
+        return {
+            type: "SEND_BITCOIN_SUCCESS",
+            payload: { txid },
+        } as ResponseSendBitcoin;
     }
 
-    private async handleGetVtxos(message: Request.GetVtxos) {
+    private async handleGetVtxos(message: RequestGetVtxos) {
         if (!this.handler) {
-            return null;
+            throw new Error("Wallet handler not initialized");
         }
         const vtxos = await this.getSpendableVtxos();
         const dustAmount = this.handler.dustAmount;
-        const includeRecoverable = message.filter?.withRecoverable ?? false;
+        const includeRecoverable =
+            message.payload.filter?.withRecoverable ?? false;
         const filteredVtxos = includeRecoverable
             ? vtxos
             : vtxos.filter((v) => {
@@ -532,7 +700,7 @@ export class WalletUpdater
                   return true;
               });
 
-        return Response.vtxos(message.id, filteredVtxos);
+        return filteredVtxos;
     }
 
     private async clear() {
