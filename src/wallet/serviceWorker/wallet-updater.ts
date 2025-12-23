@@ -249,7 +249,7 @@ export class WalletUpdater
         message: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         const id = message.id;
-        console.log(`[${this.messagePrefix}] handleMessage`, message);
+        // console.log(`[${this.messagePrefix}] handleMessage`, message);
         if (message.type === "INIT_WALLET") {
             await this.handleInitWallet(message);
             return this.prefixed({
@@ -542,6 +542,7 @@ export class WalletUpdater
         // subscribe for incoming funds and notify all clients when new funds arrive
         this.incomingFundsSubscription = await this.handler.notifyIncomingFunds(
             async (funds) => {
+                console.log("incomng funds: ", funds);
                 if (funds.type === "vtxo") {
                     const newVtxos =
                         funds.newVtxos.length > 0

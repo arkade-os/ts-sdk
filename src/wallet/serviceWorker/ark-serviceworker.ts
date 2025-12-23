@@ -93,6 +93,16 @@ export class ArkSW {
         // Hook message routing
         self.addEventListener("message", this.onMessage);
 
+        // activate service worker immediately
+        self.addEventListener("install", () => {
+            self.skipWaiting();
+        });
+        // take control of clients immediately
+        self.addEventListener("activate", () => {
+            self.clients.claim();
+            this.runTick();
+        });
+
         // Kick off scheduler
         this.scheduleNextTick();
     }
@@ -134,14 +144,34 @@ export class ArkSW {
                         response
                     );
                 if (response && response.length > 0) {
+                    console.log(
+                        `[${updater.messagePrefix}] tick result`,
+                        response
+                    );
                     self.clients
                         .matchAll({ includeUncontrolled: true, type: "window" })
                         .then((clients) => {
                             for (const message of response) {
                                 if (message.broadcast)
-                                    clients.forEach((client) => {
-                                        client.postMessage(message);
-                                    });
+                                    console.log(
+                                        `[${updater.messagePrefix}] broadcasting to ${clients.length} clients: ${message.id}`
+                                    );
+                                clients.forEach((client) => {
+                                    // in wallet we expect data to be present in the `event.data`
+                                    // it will be a breaking change
+                                    let backwardCompatibleMessage = message;
+                                    if ("payload" in message) {
+                                        backwardCompatibleMessage = {
+                                            ...message,
+                                            // @ts-ignore
+                                            ...message.payload,
+                                        };
+                                    }
+
+                                    client.postMessage(
+                                        backwardCompatibleMessage
+                                    );
+                                });
                             }
                         });
                 }
