@@ -11,6 +11,7 @@ import {
 import { AnchorBumper, findP2AOutput, P2A } from "../utils/anchor";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Transaction } from "../utils/transaction";
+import { DUST_AMOUNT } from "./utils";
 
 /**
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
@@ -31,7 +32,6 @@ import { Transaction } from "../utils/transaction";
  */
 export class OnchainWallet implements AnchorBumper {
     static MIN_FEE_RATE = 1; // sat/vbyte
-    static DUST_AMOUNT = 546; // sats
 
     readonly onchainP2TR: P2TR;
     readonly provider: OnchainProvider;
@@ -95,7 +95,7 @@ export class OnchainWallet implements AnchorBumper {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
         }
-        if (params.amount < OnchainWallet.DUST_AMOUNT) {
+        if (params.amount < DUST_AMOUNT) {
             throw new Error("Amount is below dust limit");
         }
 
@@ -109,12 +109,75 @@ export class OnchainWallet implements AnchorBumper {
             feeRate = OnchainWallet.MIN_FEE_RATE;
         }
 
-        // Ensure fee is an integer by rounding up
-        const estimatedFee = Math.ceil(174 * feeRate);
-        const totalNeeded = params.amount + estimatedFee;
+        const MAX_ITERATIONS = 10;
+        let iterations = 0;
+        let selected: { inputs: Coin[]; changeAmount: bigint } | undefined;
+        let estimatedFee: number = 0;
+        let isEstimatingFee = true;
+        let prevInputsCount = 0;
 
-        // Select coins
-        const selected = selectCoins(coins, totalNeeded);
+        while (isEstimatingFee) {
+            if (++iterations >= MAX_ITERATIONS) {
+                throw new Error(
+                    "Failed to estimate fees, selection did not converge"
+                );
+            }
+
+            const totalNeeded = params.amount + estimatedFee;
+            const txWeightEstimator = TxWeightEstimator.create();
+
+            // Select coins
+            selected = selectCoins(coins, totalNeeded);
+
+            // Add weight of each coin input
+            for (const _ of selected.inputs) {
+                txWeightEstimator.addKeySpendInput();
+            }
+
+            // Add weight of the send amount output
+            txWeightEstimator.addTxOutput(params.address);
+
+            const hasChange = selected.changeAmount >= BigInt(DUST_AMOUNT);
+
+            // Add change output weight if change amount is available
+            if (hasChange) {
+                txWeightEstimator.addTxOutput(this.address);
+            }
+
+            // Compute fee using newly generated input/output weights
+            const newFee = Number(
+                txWeightEstimator.vsize().fee(BigInt(feeRate))
+            );
+
+            // Check stability of the selected inputs size against loop count
+            if (
+                prevInputsCount === selected.inputs.length &&
+                newFee === estimatedFee
+            ) {
+                estimatedFee = Math.ceil(newFee);
+
+                // Compute the value of the selected inputs
+                const totalInputsValue = selected.inputs.reduce(
+                    (sum, coin) => sum + coin.value,
+                    0
+                );
+
+                // The potential final amount to be used in send tx
+                const totalAmountNeeded = params.amount + estimatedFee;
+
+                // Stop the estimation if the value of selected input covers send amount and fees
+                if (totalInputsValue >= totalAmountNeeded) {
+                    isEstimatingFee = false;
+                }
+            }
+
+            estimatedFee = Math.ceil(newFee);
+            prevInputsCount = selected.inputs.length;
+        }
+
+        if (!selected) {
+            throw new Error("Fee estimation failed");
+        }
 
         // Create transaction
         let tx = new Transaction();
@@ -138,8 +201,9 @@ export class OnchainWallet implements AnchorBumper {
             BigInt(params.amount),
             this.network
         );
+
         // Add change output if needed
-        if (selected.changeAmount > 0n) {
+        if (selected.changeAmount >= BigInt(DUST_AMOUNT)) {
             tx.addOutputAddress(
                 this.address,
                 selected.changeAmount,
@@ -168,7 +232,7 @@ export class OnchainWallet implements AnchorBumper {
         const childVsize = TxWeightEstimator.create()
             .addKeySpendInput(true)
             .addP2AInput()
-            .addP2TROutput()
+            .addTxOutput(this.address)
             .vsize().value;
 
         const packageVSize = parentVsize + Number(childVsize);
