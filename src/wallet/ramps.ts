@@ -145,7 +145,7 @@ export class Ramps {
                 birth: vtxo.createdAt,
                 expiry: vtxo.virtualStatus.batchExpiry
                     ? new Date(vtxo.virtualStatus.batchExpiry * 1000)
-                    : new Date(),
+                    : undefined,
             });
             if (inputFee.value >= vtxo.value) {
                 // skip if fees are greater than or equal to the vtxo value
