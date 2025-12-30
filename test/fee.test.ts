@@ -89,7 +89,6 @@ describe("Estimator", () => {
                         const errorMsg = error.message.toLowerCase();
                         const expectedErr = testCase.err.toLowerCase();
 
-                        // Map Go error messages to TypeScript CEL library error patterns
                         if (expectedErr.includes("syntax error")) {
                             expect(
                                 errorMsg.includes("syntax") ||
@@ -100,10 +99,13 @@ describe("Estimator", () => {
                         } else if (
                             expectedErr.includes("undeclared reference")
                         ) {
+                            console.log(errorMsg);
                             expect(
                                 errorMsg.includes("unknown variable") ||
                                     errorMsg.includes("undeclared") ||
-                                    errorMsg.includes("function not found")
+                                    errorMsg.includes(
+                                        "found no matching overload"
+                                    )
                             ).toBe(true);
                         } else if (
                             expectedErr.includes("found no matching overload")

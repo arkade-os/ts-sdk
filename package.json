@@ -91,7 +91,7 @@
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4",
-        "@marcbachmann/cel-js": "6.3.4"
+        "@marcbachmann/cel-js": "7.0.0"
     },
     "devDependencies": {
         "@types/node": "24.3.1",
