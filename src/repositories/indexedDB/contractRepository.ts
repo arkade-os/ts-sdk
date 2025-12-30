@@ -19,26 +19,19 @@ import { openDatabase, STORE_CONTRACT_DATA, STORE_COLLECTIONS } from "./db";
 export class IndexedDBContractRepository implements ContractRepository {
     private db: IDBDatabase | null = null;
 
-    constructor(
-        private readonly dbName: string = DEFAULT_DB_NAME,
-        private readonly withMigration = true
-    ) {}
+    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     static async create(
-        dbName: string = DEFAULT_DB_NAME,
-        withMigration = true
+        dbName: string = DEFAULT_DB_NAME
     ): Promise<IndexedDBContractRepository> {
-        const repository = new IndexedDBContractRepository(
-            dbName,
-            withMigration
-        );
+        const repository = new IndexedDBContractRepository(dbName);
         await repository.getDB();
         return repository;
     }
 
     private async getDB(): Promise<IDBDatabase> {
         if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName, this.withMigration);
+        this.db = await openDatabase(this.dbName);
         return this.db;
     }
 

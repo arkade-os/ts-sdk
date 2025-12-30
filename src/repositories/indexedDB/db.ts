@@ -70,11 +70,10 @@ export const deserializeUtxo = (o: any): ExtendedCoin => ({
 const dbCache = new Map<string, IDBDatabase>();
 
 /**
- * Opens an IndexedDB database with shared upgrade handling for both wallet and contract repositories.
+ * Opens an IndexedDB database.
  */
 export async function openDatabase(
-    dbName: string = DEFAULT_DB_NAME,
-    withMigration = false
+    dbName: string = DEFAULT_DB_NAME
 ): Promise<IDBDatabase> {
     // Return cached instance if available
     if (dbCache.has(dbName)) {
