@@ -13,20 +13,18 @@ import {
     isSubdust,
     StorageConfig,
 } from "..";
-import { processStorageConfig, ReadonlyWallet, Wallet } from "../wallet";
+import { ReadonlyWallet, Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { hex } from "@scure/base";
-import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import {
     WalletRepository,
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
 import { extendCoin, extendVirtualCoin } from "../utils";
-import { DEFAULT_DB_NAME } from "./utils";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { InMemoryStorageAdapter } from "../../storage/inMemory";
 
@@ -129,15 +127,13 @@ export class Worker {
     private contractRepository: ContractRepository;
 
     constructor(
-        storage: StorageConfig = new IndexedDBStorageAdapter(DEFAULT_DB_NAME),
+        storage: StorageConfig,
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
     ) {
-        const { walletRepository, contractRepository } =
-            processStorageConfig(storage);
-        this.walletRepository = walletRepository;
-        this.contractRepository = contractRepository;
+        this.walletRepository = storage.walletRepository;
+        this.contractRepository = storage.contractRepository;
     }
 
     /**
