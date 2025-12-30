@@ -39,16 +39,20 @@ export namespace Intent {
      * ownership of VTXOs and UTXOs. The proof includes the message to be
      * signed and the inputs/outputs that demonstrate ownership.
      *
-     * @param message - The Intent message to be signed
+     * @param message - The Intent message to be signed, either raw string of Message object
      * @param inputs - Array of transaction inputs to prove ownership of
      * @param outputs - Optional array of transaction outputs
      * @returns An unsigned Intent proof transaction
      */
     export function create(
-        message: string,
+        message: string | Message,
         inputs: TransactionInput[],
         outputs: TransactionOutput[] = []
     ): Proof {
+        if (typeof message !== "string") {
+            message = encodeMessage(message);
+        }
+
         if (inputs.length == 0)
             throw new Error("intent proof requires at least one input");
         if (!validateInputs(inputs)) throw new Error("invalid inputs");
@@ -59,6 +63,48 @@ export namespace Intent {
 
         // create the transaction to sign
         return craftToSignTx(toSpend, inputs, outputs);
+    }
+
+    export type RegisterMessage = {
+        type: "register";
+        onchain_output_indexes: number[];
+        valid_at: number;
+        expire_at: number;
+        cosigners_public_keys: string[];
+    };
+
+    export type DeleteMessage = {
+        type: "delete";
+        expire_at: number;
+    };
+
+    export type GetPendingTxMessage = {
+        type: "get-pending-tx";
+        expire_at: number;
+    };
+    export type Message = RegisterMessage | DeleteMessage | GetPendingTxMessage;
+
+    export function encodeMessage(message: Message): string {
+        switch (message.type) {
+            case "register":
+                return JSON.stringify({
+                    type: "register",
+                    onchain_output_indexes: message.onchain_output_indexes,
+                    valid_at: message.valid_at,
+                    expire_at: message.expire_at,
+                    cosigners_public_keys: message.cosigners_public_keys,
+                });
+            case "delete":
+                return JSON.stringify({
+                    type: "delete",
+                    expire_at: message.expire_at,
+                });
+            case "get-pending-tx":
+                return JSON.stringify({
+                    type: "get-pending-tx",
+                    expire_at: message.expire_at,
+                });
+        }
     }
 }
 
@@ -147,9 +193,13 @@ function craftToSignTx(
 ): Transaction {
     const firstInput = inputs[0];
 
+    const lockTime = inputs
+        .map((input) => input.sequence || 0)
+        .reduce((a, b) => Math.max(a, b), 0);
+
     const tx = new Transaction({
         version: 2,
-        lockTime: 0,
+        lockTime,
     });
 
     // add the first "toSpend" input

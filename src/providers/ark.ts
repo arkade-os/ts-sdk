@@ -4,6 +4,7 @@ import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator } from "./utils";
 import { maybeArkError } from "./errors";
+import { Intent } from "../intent";
 
 export type Output = {
     address: string; // onchain or off-chain
@@ -143,9 +144,9 @@ export interface ArkInfo {
     vtxoMinAmount: bigint;
 }
 
-export interface SignedIntent {
+export interface SignedIntent<T extends Intent.Message> {
     proof: string;
-    message: string;
+    message: T;
 }
 
 export interface TxNotification {
@@ -167,8 +168,10 @@ export interface ArkProvider {
         signedCheckpointTxs: string[];
     }>;
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
-    registerIntent(intent: SignedIntent): Promise<string>;
-    deleteIntent(intent: SignedIntent): Promise<void>;
+    registerIntent(
+        intent: SignedIntent<Intent.RegisterMessage>
+    ): Promise<string>;
+    deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void>;
     confirmRegistration(intentId: string): Promise<void>;
     submitTreeNonces(
         batchId: string,
@@ -192,7 +195,9 @@ export interface ArkProvider {
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }>;
-    getPendingTxs(intent: SignedIntent): Promise<PendingTx[]>;
+    getPendingTxs(
+        intent: SignedIntent<Intent.GetPendingTxMessage>
+    ): Promise<PendingTx[]>;
 }
 
 /**
@@ -334,7 +339,9 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async registerIntent(intent: SignedIntent): Promise<string> {
+    async registerIntent(
+        intent: SignedIntent<Intent.RegisterMessage>
+    ): Promise<string> {
         const url = `${this.serverUrl}/v1/batch/registerIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -344,7 +351,7 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 intent: {
                     proof: intent.proof,
-                    message: intent.message,
+                    message: Intent.encodeMessage(intent.message),
                 },
             }),
         });
@@ -358,7 +365,9 @@ export class RestArkProvider implements ArkProvider {
         return data.intentId;
     }
 
-    async deleteIntent(intent: SignedIntent): Promise<void> {
+    async deleteIntent(
+        intent: SignedIntent<Intent.DeleteMessage>
+    ): Promise<void> {
         const url = `${this.serverUrl}/v1/batch/deleteIntent`;
         const response = await fetch(url, {
             method: "POST",
@@ -368,7 +377,7 @@ export class RestArkProvider implements ArkProvider {
             body: JSON.stringify({
                 intent: {
                     proof: intent.proof,
-                    message: intent.message,
+                    message: Intent.encodeMessage(intent.message),
                 },
             }),
         });
@@ -596,14 +605,21 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async getPendingTxs(intent: SignedIntent): Promise<PendingTx[]> {
+    async getPendingTxs(
+        intent: SignedIntent<Intent.GetPendingTxMessage>
+    ): Promise<PendingTx[]> {
         const url = `${this.serverUrl}/v1/tx/pending`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
             },
-            body: JSON.stringify({ intent }),
+            body: JSON.stringify({
+                intent: {
+                    proof: intent.proof,
+                    message: Intent.encodeMessage(intent.message),
+                },
+            }),
         });
 
         if (!response.ok) {
