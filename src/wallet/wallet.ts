@@ -45,7 +45,6 @@ import {
     ReadonlyWalletConfig,
     SendBitcoinParams,
     SettleParams,
-    StorageConfig,
     TxType,
     VirtualCoin,
     WalletBalance,
@@ -64,7 +63,6 @@ import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
-import { InMemoryStorageAdapter } from "../storage/inMemory";
 import {
     WalletRepository,
     WalletRepositoryImpl,
@@ -76,6 +74,7 @@ import {
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
+import { InMemoryStorageAdapter } from "../storage/inMemory";
 import { Estimator } from "../arkfee";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 
@@ -219,9 +218,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Save tapscripts
         const offchainTapscript = bareVtxoTapscript;
 
-        const { walletRepository, contractRepository } = processStorageConfig(
-            config.storage ?? new InMemoryStorageAdapter()
-        );
+        const walletRepository =
+            config.storage?.walletRepository ??
+            new WalletRepositoryImpl(new InMemoryStorageAdapter());
+        const contractRepository =
+            config.storage?.contractRepository ??
+            new ContractRepositoryImpl(new InMemoryStorageAdapter());
 
         return {
             arkProvider,
@@ -1690,20 +1692,4 @@ export async function waitForIncomingFunds(
     });
 
     return promise;
-}
-
-export function processStorageConfig(config: StorageConfig): {
-    walletRepository: WalletRepository;
-    contractRepository: ContractRepository;
-} {
-    // custom repositories
-    if ("walletRepository" in config && "contractRepository" in config) {
-        return config;
-    }
-
-    // storage adapter
-    return {
-        walletRepository: new WalletRepositoryImpl(config),
-        contractRepository: new ContractRepositoryImpl(config),
-    };
 }

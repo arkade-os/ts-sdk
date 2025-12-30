@@ -3,7 +3,6 @@ import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
@@ -109,19 +108,17 @@ export interface WalletConfig extends ReadonlyWalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
-    storage?: StorageConfig;
+    storage: StorageConfig;
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
     renewalConfig?: RenewalConfig;
 }
 
-export type StorageConfig =
-    | StorageAdapter
-    | {
-          walletRepository: WalletRepository;
-          contractRepository: ContractRepository;
-      };
+export type StorageConfig = {
+    walletRepository: WalletRepository;
+    contractRepository: ContractRepository;
+};
 
 /**
  * Provider class constructor interface for dependency injection.
