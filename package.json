@@ -99,14 +99,14 @@
         "esbuild": "^0.25.9",
         "eventsource": "4.0.0",
         "expo": "~52.0.47",
-        "fake-indexeddb": "6.2.5",
         "glob": "11.0.3",
         "husky": "9.1.7",
         "prettier": "3.6.2",
         "rimraf": "^6.0.1",
         "typedoc": "^0.28.12",
         "typescript": "5.9.2",
-        "vitest": "3.2.4"
+        "vitest": "3.2.4",
+        "indexeddbshim": "16.1.0"
     },
     "keywords": [
         "bitcoin",
