@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import {
@@ -14,6 +14,7 @@ import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletR
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
 import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
+import { migrateWalletRepository } from "../src/repositories/migration";
 import type {
     ExtendedVirtualCoin,
     ExtendedCoin,
@@ -49,7 +50,7 @@ const walletRepositoryImplementations: Array<
         name: "IndexedDBWalletRepository",
         factory: async () => {
             const dbName = getUniqueDbName("wallet-idb");
-            return await IndexedDBWalletRepository.create(dbName);
+            return IndexedDBWalletRepository.create(dbName);
         },
     },
 ];
@@ -608,20 +609,21 @@ describe.each(contractRepositoryImplementations)(
 );
 
 describe("IndexedDB migrations", () => {
-    it("should migrate from version 1 to version 2", async () => {
-        const dbName = getUniqueDbName("wallet-idb");
+    it("should migrate wallet data from StorageAdapter to IndexedDB format", async () => {
+        const oldDbName = getUniqueDbName("wallet-migration-old");
+        const newDbName = getUniqueDbName("wallet-migration-new");
 
-        const storage = new IndexedDBStorageAdapter(dbName, 1);
-        const walletRepoV1 = new WalletRepositoryImpl(storage);
-        const contractRepoV1 = new ContractRepositoryImpl(storage);
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        const walletRepoV1 = new WalletRepositoryImpl(oldStorage);
 
-        const testAddress = "test-address-123";
-        const testContractId = "test-contract-123";
-        const testKey = "test-key";
+        const testAddress1 = "test-address-1";
+        const testAddress2 = "test-address-2";
 
         const vtxo1 = createMockVtxo("txvtxo1", 0, 10000);
         const vtxo2 = createMockVtxo("txvtxo2", 1, 20000);
+        const vtxo3 = createMockVtxo("txvtxo3", 0, 30000);
         const utxo1 = createMockUtxo("txutxo1", 0, 10000);
+        const utxo2 = createMockUtxo("txutxo2", 1, 20000);
         const tx1 = createMockTransaction(
             { boardingTxid: "btx1" },
             "SENT" as TxType,
@@ -632,67 +634,96 @@ describe("IndexedDB migrations", () => {
             "RECEIVED" as TxType,
             20000
         );
+        const tx3 = createMockTransaction(
+            { arkTxid: "atx3" },
+            "SENT" as TxType,
+            30000
+        );
         const walletState = {
             lastSyncTime: Date.now(),
             settings: { theme: "dark" },
         };
-        const contractData = {
-            status: "active",
-            amount: 1000,
-        };
 
-        // store some data in the v1 database
-        await walletRepoV1.saveVtxos(testAddress, [vtxo1, vtxo2]);
-        await walletRepoV1.saveUtxos(testAddress, [utxo1]);
-        await walletRepoV1.saveTransactions(testAddress, [tx1, tx2]);
+        await walletRepoV1.saveVtxos(testAddress1, [vtxo1, vtxo2]);
+        await walletRepoV1.saveVtxos(testAddress2, [vtxo3]);
+        await walletRepoV1.saveUtxos(testAddress1, [utxo1]);
+        await walletRepoV1.saveUtxos(testAddress2, [utxo2]);
+        await walletRepoV1.saveTransactions(testAddress1, [tx1, tx2]);
+        await walletRepoV1.saveTransactions(testAddress2, [tx3]);
         await walletRepoV1.saveWalletState(walletState);
 
-        await contractRepoV1.setContractData(
-            testContractId,
-            testKey,
-            contractData
-        );
-        await contractRepoV1.saveToContractCollection(
-            "swaps",
-            { id: "1" },
-            "id"
-        );
+        const walletRepoV2 = await IndexedDBWalletRepository.create(newDbName);
 
-        // close the v1 database
-        storage["db"]?.close();
+        await migrateWalletRepository(oldStorage, walletRepoV2, [
+            testAddress1,
+            testAddress2,
+        ]);
 
-        // open the v2 database
-        const walletRepoV2 = await IndexedDBWalletRepository.create(dbName);
-        const contractRepoV2 = await IndexedDBContractRepository.create(dbName);
+        const vtxos1 = await walletRepoV2.getVtxos(testAddress1);
+        expect(vtxos1).toHaveLength(2);
+        expect(vtxos1[0].txid).toBe("txvtxo1");
+        expect(vtxos1[0].value).toBe(10000);
+        expect(vtxos1[1].txid).toBe("txvtxo2");
+        expect(vtxos1[1].value).toBe(20000);
 
-        const vtxos = await walletRepoV2.getVtxos(testAddress);
-        expect(vtxos).toHaveLength(2);
-        expect(vtxos[0].txid).toBe("txvtxo1");
-        expect(vtxos[1].txid).toBe("txvtxo2");
+        const vtxos2 = await walletRepoV2.getVtxos(testAddress2);
+        expect(vtxos2).toHaveLength(1);
+        expect(vtxos2[0].txid).toBe("txvtxo3");
+        expect(vtxos2[0].value).toBe(30000);
 
-        const utxos = await walletRepoV2.getUtxos(testAddress);
-        expect(utxos).toHaveLength(1);
-        expect(utxos[0].txid).toBe("txutxo1");
+        const utxos1 = await walletRepoV2.getUtxos(testAddress1);
+        expect(utxos1).toHaveLength(1);
+        expect(utxos1[0].txid).toBe("txutxo1");
+        expect(utxos1[0].value).toBe(10000);
 
-        const txs = await walletRepoV2.getTransactionHistory(testAddress);
-        expect(txs).toHaveLength(2);
-        expect(txs[0].key.boardingTxid).toBe("btx1");
-        expect(txs[0].type).toBe("SENT");
-        expect(txs[1].key.commitmentTxid).toBe("ctx2");
-        expect(txs[1].type).toBe("RECEIVED");
+        const utxos2 = await walletRepoV2.getUtxos(testAddress2);
+        expect(utxos2).toHaveLength(1);
+        expect(utxos2[0].txid).toBe("txutxo2");
+        expect(utxos2[0].value).toBe(20000);
+
+        const txs1 = await walletRepoV2.getTransactionHistory(testAddress1);
+        expect(txs1).toHaveLength(2);
+        expect(txs1[0].key.boardingTxid).toBe("btx1");
+        expect(txs1[0].type).toBe("SENT");
+        expect(txs1[0].amount).toBe(10000);
+        expect(txs1[1].key.commitmentTxid).toBe("ctx2");
+        expect(txs1[1].type).toBe("RECEIVED");
+        expect(txs1[1].amount).toBe(20000);
+
+        const txs2 = await walletRepoV2.getTransactionHistory(testAddress2);
+        expect(txs2).toHaveLength(1);
+        expect(txs2[0].key.arkTxid).toBe("atx3");
+        expect(txs2[0].type).toBe("SENT");
+        expect(txs2[0].amount).toBe(30000);
 
         const walletState2 = await walletRepoV2.getWalletState();
+        expect(walletState2).not.toBeNull();
         expect(walletState2?.settings?.theme).toBe("dark");
-        const contractData2 = await contractRepoV2.getContractData(
-            testContractId,
-            testKey
+        expect(walletState2?.lastSyncTime).toBe(walletState.lastSyncTime);
+    });
+
+    it("should not migrate if migration already completed", async () => {
+        const oldDbName = getUniqueDbName("wallet-migration-skip-old");
+        const newDbName = getUniqueDbName("wallet-migration-skip-new");
+
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        const walletRepoV1 = new WalletRepositoryImpl(oldStorage);
+        const testAddress = "test-address";
+
+        const vtxo1 = createMockVtxo("tx1", 0, 10000);
+        await walletRepoV1.saveVtxos(testAddress, [vtxo1]);
+
+        await oldStorage.setItem(
+            "migration-from-storage-adapter-wallet",
+            "done"
         );
-        expect(contractData2).toEqual(contractData);
-        const collection2 = await contractRepoV2.getContractCollection<{
-            id: string;
-        }>("swaps");
-        expect(collection2).toHaveLength(1);
-        expect(collection2[0].id).toBe("1");
+
+        const walletRepoV2 = await IndexedDBWalletRepository.create(newDbName);
+
+        await migrateWalletRepository(oldStorage, walletRepoV2, [testAddress]);
+
+        const vtxos = await walletRepoV2.getVtxos(testAddress);
+        expect(vtxos).toHaveLength(0);
     });
 });
 

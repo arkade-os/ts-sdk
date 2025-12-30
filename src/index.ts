@@ -134,6 +134,7 @@ import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
+import { migrateWalletRepository } from "./repositories/migration";
 
 export {
     // Wallets
@@ -206,6 +207,7 @@ export {
     ContractRepositoryImpl,
     IndexedDBWalletRepository,
     IndexedDBContractRepository,
+    migrateWalletRepository,
 
     // Intent proof
     Intent,

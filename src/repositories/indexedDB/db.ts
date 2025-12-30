@@ -1,12 +1,7 @@
 import { hex } from "@scure/base";
 import { TapLeafScript } from "../../script/base";
-import {
-    ArkTransaction,
-    ExtendedCoin,
-    ExtendedVirtualCoin,
-} from "../../wallet";
+import { ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import { WalletState } from "../walletRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 
 // Store names
@@ -16,7 +11,7 @@ export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
 export const STORE_CONTRACT_DATA = "contractData";
 export const STORE_COLLECTIONS = "collections";
-export const DB_VERSION = 2;
+export const DB_VERSION = 1;
 
 // Serialization helpers
 export const toHex = (b: Uint8Array | undefined) =>
@@ -98,66 +93,29 @@ export async function openDatabase(
         throw new Error("IndexedDB is not available in this environment");
     }
 
-    return new Promise((resolve, reject) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = globalObject.indexedDB.open(dbName, DB_VERSION);
-
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
             const db = request.result;
             dbCache.set(dbName, db);
             resolve(db);
         };
-
-        request.onupgradeneeded = (event: IDBVersionChangeEvent) => {
-            if (withMigration) {
-                handleUpgrade(event);
-            }
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            initDatabase(db);
         };
     });
+
+    return db;
 }
 
-/**
- * Handles the upgrade of the database schema.
- * It supports migration from v1 (repositories/walletRepository.ts) to v2 (repositories/indexedDB/walletRepository.ts).
- * @param event - The event object containing the old version and the new version.
- */
-function handleUpgrade(event: IDBVersionChangeEvent): void {
-    const db = (event.target as IDBOpenDBRequest).result;
-    const oldVersion = event.oldVersion;
-    const transaction = (event.target as IDBOpenDBRequest).transaction;
-
-    if (!transaction) {
-        console.error("Transaction not available during upgrade");
-        return;
-    }
-
-    // Add error handler to transaction to prevent silent aborts
-    transaction.onerror = (event) => {
-        console.error("Transaction error during upgrade:", event);
-    };
-
-    transaction.onabort = (event) => {
-        console.error("Transaction aborted during upgrade:", event);
-    };
-
-    // Create wallet repository stores
-    let vtxosStore: IDBObjectStore;
-    let utxosStore: IDBObjectStore;
-    let transactionsStore: IDBObjectStore;
-    let walletStateStore: IDBObjectStore;
-
-    // Create contract repository stores
-    let contractDataStore: IDBObjectStore;
-    let collectionsStore: IDBObjectStore;
-
-    try {
-        // Create wallet stores
-        if (!db.objectStoreNames.contains(STORE_VTXOS)) {
-            db.createObjectStore(STORE_VTXOS, {
-                keyPath: ["address", "txid", "vout"],
-            });
-        }
-        vtxosStore = transaction.objectStore(STORE_VTXOS);
+function initDatabase(db: IDBDatabase): IDBDatabase {
+    // Create wallet stores
+    if (!db.objectStoreNames.contains(STORE_VTXOS)) {
+        const vtxosStore = db.createObjectStore(STORE_VTXOS, {
+            keyPath: ["address", "txid", "vout"],
+        });
 
         if (!vtxosStore.indexNames.contains("address")) {
             vtxosStore.createIndex("address", "address", {
@@ -210,13 +168,12 @@ function handleUpgrade(event: IDBVersionChangeEvent): void {
                 unique: false,
             });
         }
+    }
 
-        if (!db.objectStoreNames.contains(STORE_UTXOS)) {
-            db.createObjectStore(STORE_UTXOS, {
-                keyPath: ["address", "txid", "vout"],
-            });
-        }
-        utxosStore = transaction.objectStore(STORE_UTXOS);
+    if (!db.objectStoreNames.contains(STORE_UTXOS)) {
+        const utxosStore = db.createObjectStore(STORE_UTXOS, {
+            keyPath: ["address", "txid", "vout"],
+        });
 
         if (!utxosStore.indexNames.contains("address")) {
             utxosStore.createIndex("address", "address", {
@@ -234,18 +191,17 @@ function handleUpgrade(event: IDBVersionChangeEvent): void {
                 unique: false,
             });
         }
+    }
 
-        if (!db.objectStoreNames.contains(STORE_TRANSACTIONS)) {
-            db.createObjectStore(STORE_TRANSACTIONS, {
-                keyPath: [
-                    "address",
-                    "keyBoardingTxid",
-                    "keyCommitmentTxid",
-                    "keyArkTxid",
-                ],
-            });
-        }
-        transactionsStore = transaction.objectStore(STORE_TRANSACTIONS);
+    if (!db.objectStoreNames.contains(STORE_TRANSACTIONS)) {
+        const transactionsStore = db.createObjectStore(STORE_TRANSACTIONS, {
+            keyPath: [
+                "address",
+                "keyBoardingTxid",
+                "keyCommitmentTxid",
+                "keyArkTxid",
+            ],
+        });
 
         if (!transactionsStore.indexNames.contains("address")) {
             transactionsStore.createIndex("address", "address", {
@@ -277,145 +233,31 @@ function handleUpgrade(event: IDBVersionChangeEvent): void {
                 unique: false,
             });
         }
+    }
 
-        if (!db.objectStoreNames.contains(STORE_WALLET_STATE)) {
-            db.createObjectStore(STORE_WALLET_STATE, {
-                keyPath: "key",
-            });
-        }
-        walletStateStore = transaction.objectStore(STORE_WALLET_STATE);
+    if (!db.objectStoreNames.contains(STORE_WALLET_STATE)) {
+        db.createObjectStore(STORE_WALLET_STATE, {
+            keyPath: "key",
+        });
+    }
 
-        // Create contract stores
-        if (!db.objectStoreNames.contains(STORE_CONTRACT_DATA)) {
-            db.createObjectStore(STORE_CONTRACT_DATA, {
-                keyPath: ["contractId", "key"],
-            });
-        }
-        contractDataStore = transaction.objectStore(STORE_CONTRACT_DATA);
+    // Create contract stores
+    if (!db.objectStoreNames.contains(STORE_CONTRACT_DATA)) {
+        const contractDataStore = db.createObjectStore(STORE_CONTRACT_DATA, {
+            keyPath: ["contractId", "key"],
+        });
 
         if (!contractDataStore.indexNames.contains("contractId")) {
             contractDataStore.createIndex("contractId", "contractId", {
                 unique: false,
             });
         }
-
-        if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
-            db.createObjectStore(STORE_COLLECTIONS, {
-                keyPath: "contractType",
-            });
-        }
-        collectionsStore = transaction.objectStore(STORE_COLLECTIONS);
-    } catch (error) {
-        console.error("Error during upgrade setup:", error);
     }
 
-    // Migrate data from old "storage" object store if upgrading from version 1
-    if (oldVersion === 1 && db.objectStoreNames.contains("storage")) {
-        try {
-            const oldStorageStore = transaction.objectStore("storage");
-            const cursorRequest = oldStorageStore.openCursor();
-
-            cursorRequest.onsuccess = (cursorEvent: Event) => {
-                const cursor = (
-                    cursorEvent.target as IDBRequest<IDBCursorWithValue>
-                ).result;
-                if (!cursor) {
-                    return; // Migration complete
-                }
-
-                const key = cursor.key as string;
-                const value = cursor.value as string;
-
-                try {
-                    // Migrate VTXOs: vtxos:${address}
-                    if (key.startsWith("vtxos:")) {
-                        const address = key.substring(6); // Remove "vtxos:" prefix
-                        const vtxos = JSON.parse(value) as any[];
-                        for (const vtxo of vtxos) {
-                            const deserialized = deserializeVtxo(vtxo);
-                            const serialized = serializeVtxo(deserialized);
-                            vtxosStore.put({
-                                address,
-                                ...serialized,
-                            });
-                        }
-                    }
-                    // Migrate UTXOs: utxos:${address}
-                    else if (key.startsWith("utxos:")) {
-                        const address = key.substring(6); // Remove "utxos:" prefix
-                        const utxos = JSON.parse(value) as any[];
-                        for (const utxo of utxos) {
-                            const deserialized = deserializeUtxo(utxo);
-                            const serialized = serializeUtxo(deserialized);
-                            utxosStore.put({
-                                address,
-                                ...serialized,
-                            });
-                        }
-                    }
-                    // Migrate Transactions: tx:${address}
-                    else if (key.startsWith("tx:")) {
-                        const address = key.substring(3); // Remove "tx:" prefix
-                        const txs = JSON.parse(value) as ArkTransaction[];
-                        for (const tx of txs) {
-                            transactionsStore.put({
-                                address,
-                                ...tx,
-                                keyBoardingTxid: tx.key.boardingTxid,
-                                keyCommitmentTxid: tx.key.commitmentTxid,
-                                keyArkTxid: tx.key.arkTxid,
-                            });
-                        }
-                    }
-                    // Migrate Wallet State: wallet:state
-                    else if (key === "wallet:state") {
-                        const state = JSON.parse(value) as WalletState;
-                        walletStateStore.put({
-                            key: "state",
-                            data: state,
-                        });
-                    }
-                    // Migrate contract data: contract:${contractId}:${key}
-                    else if (key.startsWith("contract:")) {
-                        const parts = key.substring(9).split(":"); // Remove "contract:" prefix
-                        if (parts.length >= 2) {
-                            const contractId = parts[0];
-                            const dataKey = parts.slice(1).join(":"); // Handle keys with colons
-                            const data = JSON.parse(value);
-                            contractDataStore.put({
-                                contractId,
-                                key: dataKey,
-                                data,
-                            });
-                        }
-                    }
-                    // Migrate collections: collection:${contractType}
-                    else if (key.startsWith("collection:")) {
-                        const contractType = key.substring(11); // Remove "collection:" prefix
-                        const items = JSON.parse(value);
-                        collectionsStore.put({
-                            contractType,
-                            items,
-                        });
-                    }
-                } catch (error) {
-                    console.error(
-                        `Failed to migrate data for key ${key}:`,
-                        error
-                    );
-                }
-
-                cursor.continue();
-            };
-
-            cursorRequest.onerror = () => {
-                console.error(
-                    "Failed to read old storage data for migration:",
-                    cursorRequest.error
-                );
-            };
-        } catch (error) {
-            console.error("Failed to start migration:", error);
-        }
+    if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
+        db.createObjectStore(STORE_COLLECTIONS, {
+            keyPath: "contractType",
+        });
     }
+    return db;
 }
