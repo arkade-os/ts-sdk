@@ -33,6 +33,7 @@ import {
     TxKey,
     GetVtxosFilter,
     TapLeaves,
+    StorageConfig,
     isSpendable,
     isSubdust,
     isRecoverable,
@@ -147,6 +148,9 @@ import { Unroll } from "./wallet/unroll";
 import { WalletRepositoryImpl } from "./repositories/walletRepository";
 import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
+import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
+import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
+import { migrateWalletRepository } from "./repositories/migration";
 import {
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
@@ -225,6 +229,9 @@ export {
     // Repositories
     WalletRepositoryImpl,
     ContractRepositoryImpl,
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
+    migrateWalletRepository,
 
     // Intent proof
     Intent,
@@ -347,4 +354,7 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Storage
+    StorageConfig,
 };

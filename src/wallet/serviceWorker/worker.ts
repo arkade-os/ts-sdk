@@ -11,6 +11,7 @@ import {
     isRecoverable,
     isSpendable,
     isSubdust,
+    StorageConfig,
 } from "..";
 import { ReadonlyWallet, Wallet } from "../wallet";
 import { Request } from "./request";
@@ -19,13 +20,13 @@ import { ArkProvider, RestArkProvider } from "../../providers/ark";
 import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { hex } from "@scure/base";
-import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import {
     WalletRepository,
     WalletRepositoryImpl,
 } from "../../repositories/walletRepository";
 import { extendCoin, extendVirtualCoin } from "../utils";
-import { DEFAULT_DB_NAME } from "./utils";
+import { ContractRepository } from "../../repositories/contractRepository";
+import { InMemoryStorageAdapter } from "../../storage/inMemory";
 
 class ReadonlyHandler {
     constructor(protected readonly wallet: ReadonlyWallet) {}
@@ -123,17 +124,16 @@ export class Worker {
     private indexerProvider: IndexerProvider | undefined;
     private incomingFundsSubscription: (() => void) | undefined;
     private walletRepository: WalletRepository;
-    private storage: IndexedDBStorageAdapter;
+    private contractRepository: ContractRepository;
 
     constructor(
-        readonly dbName: string = DEFAULT_DB_NAME,
-        readonly dbVersion: number = 1,
+        storage: StorageConfig,
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
     ) {
-        this.storage = new IndexedDBStorageAdapter(dbName, dbVersion);
-        this.walletRepository = new WalletRepositoryImpl(this.storage);
+        this.walletRepository = storage.walletRepository;
+        this.contractRepository = storage.contractRepository;
     }
 
     /**
@@ -234,10 +234,11 @@ export class Worker {
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
 
         // Clear storage - this replaces vtxoRepository.close()
-        await this.storage.clear();
 
         // Reset in-memory caches by recreating the repository
-        this.walletRepository = new WalletRepositoryImpl(this.storage);
+        this.walletRepository = new WalletRepositoryImpl(
+            new InMemoryStorageAdapter()
+        );
 
         this.handler = undefined;
         this.arkProvider = undefined;
@@ -392,7 +393,10 @@ export class Worker {
                     identity,
                     arkServerUrl,
                     arkServerPublicKey,
-                    storage: this.storage, // Use unified storage for wallet too
+                    storage: {
+                        walletRepository: this.walletRepository,
+                        contractRepository: this.contractRepository,
+                    },
                 });
                 this.handler = new Handler(wallet);
             } else if (
@@ -409,7 +413,10 @@ export class Worker {
                     identity,
                     arkServerUrl,
                     arkServerPublicKey,
-                    storage: this.storage, // Use unified storage for wallet too
+                    storage: {
+                        walletRepository: this.walletRepository,
+                        contractRepository: this.contractRepository,
+                    },
                 });
                 this.handler = new ReadonlyHandler(wallet);
             } else {

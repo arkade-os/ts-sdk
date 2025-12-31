@@ -64,7 +64,6 @@ import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
-import { InMemoryStorageAdapter } from "../storage/inMemory";
 import {
     WalletRepository,
     WalletRepositoryImpl,
@@ -76,6 +75,7 @@ import {
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
+import { InMemoryStorageAdapter } from "../storage/inMemory";
 
 export type IncomingFunds =
     | {
@@ -217,10 +217,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Save tapscripts
         const offchainTapscript = bareVtxoTapscript;
 
-        // Set up storage and repositories
-        const storage = config.storage || new InMemoryStorageAdapter();
-        const walletRepository = new WalletRepositoryImpl(storage);
-        const contractRepository = new ContractRepositoryImpl(storage);
+        const walletRepository =
+            config.storage?.walletRepository ??
+            new WalletRepositoryImpl(new InMemoryStorageAdapter());
+        const contractRepository =
+            config.storage?.contractRepository ??
+            new ContractRepositoryImpl(new InMemoryStorageAdapter());
 
         return {
             arkProvider,
