@@ -111,28 +111,6 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async removeVtxo(address: string, vtxoId: string): Promise<void> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_VTXOS], "readwrite");
-                const store = transaction.objectStore(STORE_VTXOS);
-                const [txid, vout] = vtxoId.split(":");
-                const key = [address, txid, parseInt(vout, 10)];
-                const request = store.delete(key);
-
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve();
-            });
-        } catch (error) {
-            console.error(
-                `Failed to remove VTXO ${vtxoId} for address ${address}:`,
-                error
-            );
-            throw error;
-        }
-    }
-
     async clearVtxos(address: string): Promise<void> {
         try {
             const db = await this.getDB();
@@ -215,28 +193,6 @@ export class IndexedDBWalletRepository implements WalletRepository {
         } catch (error) {
             console.error(
                 `Failed to save UTXOs for address ${address}:`,
-                error
-            );
-            throw error;
-        }
-    }
-
-    async removeUtxo(address: string, utxoId: string): Promise<void> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction([STORE_UTXOS], "readwrite");
-                const store = transaction.objectStore(STORE_UTXOS);
-                const [txid, vout] = utxoId.split(":");
-                const key = [address, txid, parseInt(vout, 10)];
-                const request = store.delete(key);
-
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve();
-            });
-        } catch (error) {
-            console.error(
-                `Failed to remove UTXO ${utxoId} for address ${address}:`,
                 error
             );
             throw error;

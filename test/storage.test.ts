@@ -127,18 +127,6 @@ describe.each(walletRepositoryImplementations)(
                 expect(retrieved[0].value).toBe(15000);
             });
 
-            it("should remove a specific VTXO", async () => {
-                const vtxo1 = createMockVtxo("tx1", 0, 10000);
-                const vtxo2 = createMockVtxo("tx2", 1, 20000);
-                await repository.saveVtxos(testAddress, [vtxo1, vtxo2]);
-
-                await repository.removeVtxo(testAddress, "tx1:0");
-                const retrieved = await repository.getVtxos(testAddress);
-
-                expect(retrieved).toHaveLength(1);
-                expect(retrieved[0].txid).toBe("tx2");
-            });
-
             it("should clear all VTXOs for an address", async () => {
                 const vtxo1 = createMockVtxo("tx1", 0, 10000);
                 await repository.saveVtxos(testAddress, [vtxo1]);
@@ -197,18 +185,6 @@ describe.each(walletRepositoryImplementations)(
                 const retrieved = await repository.getUtxos(testAddress);
                 expect(retrieved).toHaveLength(1);
                 expect(retrieved[0].value).toBe(15000);
-            });
-
-            it("should remove a specific UTXO", async () => {
-                const utxo1 = createMockUtxo("tx1", 0, 10000);
-                const utxo2 = createMockUtxo("tx2", 1, 20000);
-                await repository.saveUtxos(testAddress, [utxo1, utxo2]);
-
-                await repository.removeUtxo(testAddress, "tx1:0");
-                const retrieved = await repository.getUtxos(testAddress);
-
-                expect(retrieved).toHaveLength(1);
-                expect(retrieved[0].txid).toBe("tx2");
             });
 
             it("should clear all UTXOs for an address", async () => {
