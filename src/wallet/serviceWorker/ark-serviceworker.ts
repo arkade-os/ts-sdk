@@ -25,11 +25,11 @@ declare const self: ServiceWorkerGlobalScope;
 
 // Generic
 export type RequestEnvelope = {
-    prefix: string;
+    tag: string;
     id: string;
 };
 export type ResponseEnvelope = {
-    prefix: string;
+    tag: string;
     id?: string;
     error?: Error;
     broadcast?: boolean;
@@ -38,13 +38,8 @@ export interface IUpdater<
     REQ extends RequestEnvelope = RequestEnvelope,
     RES extends ResponseEnvelope = ResponseEnvelope,
 > {
-    readonly messagePrefix: string;
+    readonly messageTag: string;
 
-    /** Called once when the SW starts */
-    // TODO: paramteric start?
-    // start(
-    //     message: RequestEnvelope<M, MP>
-    // ): Promise<ResponseEnvelope<R, RP> | null>;
     start(): Promise<void>;
 
     /** Called once when the SW is shutting down */
@@ -75,7 +70,7 @@ export class ArkSW {
         tickIntervalMs = 30_000,
         debug = false,
     }: WorkerOptions) {
-        this.updaters = new Map(updaters.map((u) => [u.messagePrefix, u]));
+        this.updaters = new Map(updaters.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
         this.debug = debug;
     }
@@ -111,7 +106,7 @@ export class ArkSW {
         this.running = false;
 
         if (this.tickTimeout !== null) {
-            clearTimeout(this.tickTimeout);
+            self.clearTimeout(this.tickTimeout);
         }
 
         self.removeEventListener("message", this.onMessage);
@@ -123,6 +118,7 @@ export class ArkSW {
 
     private scheduleNextTick() {
         if (!this.running) return;
+        if (this.tickTimeout !== null) return;
 
         this.tickTimeout = self.setTimeout(
             () => this.runTick(),
@@ -132,6 +128,10 @@ export class ArkSW {
 
     private async runTick() {
         if (!this.running) return;
+        if (this.tickTimeout !== null) {
+            self.clearTimeout(this.tickTimeout);
+            this.tickTimeout = null;
+        }
 
         const now = Date.now();
 
@@ -140,12 +140,12 @@ export class ArkSW {
                 const response = await updater.tick(now);
                 if (this.debug)
                     console.log(
-                        `[${updater.messagePrefix}] outgoing tick response:`,
+                        `[${updater.messageTag}] outgoing tick response:`,
                         response
                     );
                 if (response && response.length > 0) {
                     console.log(
-                        `[${updater.messagePrefix}] tick result`,
+                        `[${updater.messageTag}] tick result`,
                         response
                     );
                     self.clients
@@ -154,7 +154,7 @@ export class ArkSW {
                             for (const message of response) {
                                 if (message.broadcast)
                                     console.log(
-                                        `[${updater.messagePrefix}] broadcasting to ${clients.length} clients: ${message.id}`
+                                        `[${updater.messageTag}] broadcasting to ${clients.length} clients: ${message.id}`
                                     );
                                 clients.forEach((client) => {
                                     // in wallet we expect data to be present in the `event.data`
@@ -176,7 +176,7 @@ export class ArkSW {
                         });
                 }
             } catch (err) {
-                console.error(`[${updater.messagePrefix}] tick failed`, err);
+                console.error(`[${updater.messageTag}] tick failed`, err);
             }
         }
 
@@ -184,9 +184,9 @@ export class ArkSW {
     }
 
     private onMessage = async (event: ExtendableMessageEvent) => {
-        const { id, prefix } = event.data as RequestEnvelope;
+        const { id, tag } = event.data as RequestEnvelope;
 
-        if (!id || !prefix) {
+        if (!id || !tag) {
             console.error(event.data);
             throw new Error(
                 "Invalid message received, missing required fields"
@@ -194,13 +194,13 @@ export class ArkSW {
         }
 
         if (this.debug) {
-            console.log(`[${prefix}] incoming message:`, event.data);
+            console.log(`[${tag}] incoming message:`, event.data);
         }
 
-        const updater = this.updaters.get(prefix);
+        const updater = this.updaters.get(tag);
         if (!updater) {
             console.warn(
-                `[${prefix}] unknown message prefix '${prefix}', ignoring message`
+                `[${tag}] unknown message tag '${tag}', ignoring message`
             );
             return;
         }
@@ -208,12 +208,12 @@ export class ArkSW {
         try {
             const response = await updater.handleMessage(event.data);
             if (this.debug)
-                console.log(`[${prefix}] outgoing response:`, response);
+                console.log(`[${tag}] outgoing response:`, response);
             if (response) {
                 event.source?.postMessage(response);
             }
         } catch (err) {
-            console.error(`[${prefix}] handleMessage failed`, err);
+            console.error(`[${tag}] handleMessage failed`, err);
             event.source?.postMessage({ id, error: String(err) });
         }
     };

@@ -167,7 +167,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
-            prefix: WalletUpdater.messagePrefix,
+            tag: WalletUpdater.messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
             payload: {
@@ -178,10 +178,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         };
 
         navigator.serviceWorker.addEventListener("message", (m) => {
-            if (m.data.prefix === undefined) {
-                console.error("message received without prefix: ", m.data);
+            if (m.data.tag === undefined) {
+                console.error("message received without tag: ", m.data);
             }
-            if (m.data.prefix !== WalletUpdater.messagePrefix) return;
+            if (m.data.tag !== WalletUpdater.messageTag) return;
             console.debug("[Wallet] broadcast received", m.data);
         });
 
@@ -262,7 +262,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             navigator.serviceWorker.addEventListener("message", messageHandler);
             // console.log("Sending message to SW:", message);
             this.serviceWorker.postMessage({
-                prefix: WalletUpdater.messagePrefix,
+                tag: WalletUpdater.messageTag,
                 id,
                 type: "type" in message ? message.type : "NO_TYPE",
                 payload: "payload" in message ? message.payload : undefined,
@@ -426,7 +426,7 @@ export class ServiceWorkerWallet
 
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
-            prefix: WalletUpdater.messagePrefix,
+            tag: WalletUpdater.messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
             payload: {

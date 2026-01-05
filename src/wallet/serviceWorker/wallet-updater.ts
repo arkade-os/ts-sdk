@@ -183,8 +183,8 @@ export type WalletUpdaterResponse =
 export class WalletUpdater
     implements IUpdater<WalletUpdaterRequest, WalletUpdaterResponse>
 {
-    static messagePrefix = "WalletUpdater";
-    readonly messagePrefix = WalletUpdater.messagePrefix;
+    static messageTag = "WalletUpdater";
+    readonly messageTag = WalletUpdater.messageTag;
 
     private handler: ReadonlyHandler | undefined;
     private arkProvider: ArkProvider | undefined;
@@ -222,7 +222,7 @@ export class WalletUpdater
                     return result.value;
                 } else {
                     console.error(
-                        `[${WalletUpdater.messagePrefix}] tick failed`,
+                        `[${WalletUpdater.messageTag}] tick failed`,
                         result.reason
                     );
                     // TODO: how to deliver errors down the stream? a broadcast?
@@ -236,12 +236,10 @@ export class WalletUpdater
         this.onNextTick.push(callback);
     }
 
-    private prefixed(
-        res: Partial<WalletUpdaterResponse>
-    ): WalletUpdaterResponse {
+    private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
         return {
             ...res,
-            prefix: this.messagePrefix,
+            tag: this.messageTag,
         } as WalletUpdaterResponse;
     }
 
@@ -249,16 +247,16 @@ export class WalletUpdater
         message: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         const id = message.id;
-        // console.log(`[${this.messagePrefix}] handleMessage`, message);
+        // console.log(`[${this.messageTag}] handleMessage`, message);
         if (message.type === "INIT_WALLET") {
             await this.handleInitWallet(message);
-            return this.prefixed({
+            return this.tagged({
                 id,
                 type: "WALLET_INITIALIZED",
             });
         }
         if (!this.handler) {
-            return this.prefixed({
+            return this.tagged({
                 id,
                 error: new Error("Wallet handler not initialized"),
             });
@@ -267,7 +265,7 @@ export class WalletUpdater
             switch (message.type) {
                 case "SETTLE": {
                     const response = await this.handleSettle(message);
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         ...response,
                     });
@@ -275,14 +273,14 @@ export class WalletUpdater
 
                 case "SEND_BITCOIN": {
                     const response = await this.handleSendBitcoin(message);
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         ...response,
                     });
                 }
                 case "GET_ADDRESS": {
                     const address = await this.handler.getAddress();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "ADDRESS",
                         payload: { address },
@@ -290,7 +288,7 @@ export class WalletUpdater
                 }
                 case "GET_BOARDING_ADDRESS": {
                     const address = await this.handler.getBoardingAddress();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "BOARDING_ADDRESS",
                         payload: { address },
@@ -298,7 +296,7 @@ export class WalletUpdater
                 }
                 case "GET_BALANCE": {
                     const balance = await this.handleGetBalance();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "BALANCE",
                         payload: balance,
@@ -307,7 +305,7 @@ export class WalletUpdater
                 case "GET_VTXOS": {
                     const vtxos = await this.handleGetVtxos(message);
                     return {
-                        prefix: this.messagePrefix,
+                        tag: this.messageTag,
                         id,
                         type: "VTXOS",
                         payload: { vtxos },
@@ -315,7 +313,7 @@ export class WalletUpdater
                 }
                 case "GET_BOARDING_UTXOS": {
                     const utxos = await this.getAllBoardingUtxos();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "BOARDING_UTXOS",
                         payload: { utxos },
@@ -323,7 +321,7 @@ export class WalletUpdater
                 }
                 case "GET_TRANSACTION_HISTORY": {
                     const transactions = await this.getTransactionHistory();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
                         payload: { transactions },
@@ -331,7 +329,7 @@ export class WalletUpdater
                 }
                 case "GET_STATUS": {
                     const pubKey = await this.handler.identity.xOnlyPublicKey();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "WALLET_STATUS",
                         payload: {
@@ -342,7 +340,7 @@ export class WalletUpdater
                 }
                 case "CLEAR": {
                     await this.clear();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "CLEAR_SUCCESS",
                         payload: { cleared: true },
@@ -350,7 +348,7 @@ export class WalletUpdater
                 }
                 case "RELOAD_WALLET": {
                     await this.onWalletInitialized();
-                    return this.prefixed({
+                    return this.tagged({
                         id,
                         type: "RELOAD_SUCCESS",
                         payload: { reloaded: true },
@@ -361,7 +359,7 @@ export class WalletUpdater
                     throw new Error("Unknown message");
             }
         } catch (error: unknown) {
-            return this.prefixed({ id, error: error as Error });
+            return this.tagged({ id, error: error as Error });
         }
     }
 
@@ -567,7 +565,7 @@ export class WalletUpdater
 
                     // notify all clients about the vtxo update
                     this.scheduleForNextTick(() =>
-                        this.prefixed({
+                        this.tagged({
                             type: "VTXO_UPDATE",
                             broadcast: true,
                             payload: { newVtxos, spentVtxos },
@@ -591,7 +589,7 @@ export class WalletUpdater
 
                     // notify all clients about the utxo update
                     this.scheduleForNextTick(() =>
-                        this.prefixed({
+                        this.tagged({
                             type: "UTXO_UPDATE",
                             broadcast: true,
                             payload: { coins: utxos },
@@ -650,7 +648,7 @@ export class WalletUpdater
         }
         const txid = await this.handler.handleSettle(message.payload, (e) => {
             this.scheduleForNextTick(() =>
-                this.prefixed({
+                this.tagged({
                     id: message.id,
                     type: "SETTLE_EVENT",
                     payload: e,
