@@ -237,10 +237,16 @@ export class RestArkProvider implements ArkProvider {
                 intentFee: {
                     ...fromServer.fees?.intentFee,
                     onchainInput: BigInt(
-                        fromServer.fees?.intentFee?.onchainInput ?? 0
+                        // split(".")[0] to remove the decimal part
+                        fromServer.fees?.intentFee?.onchainInput.split(
+                            "."
+                        )[0] ?? 0
                     ),
                     onchainOutput: BigInt(
-                        fromServer.fees?.intentFee?.onchainOutput ?? 0
+                        // split(".")[0] to remove the decimal part
+                        fromServer.fees?.intentFee?.onchainOutput.split(
+                            "."
+                        )[0] ?? 0
                     ),
                 },
                 txFeeRate: fromServer?.fees?.txFeeRate ?? "",
