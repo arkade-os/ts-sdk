@@ -159,6 +159,10 @@ import {
     RequestEnvelope,
     ResponseEnvelope,
 } from "./wallet/serviceWorker/ark-serviceworker";
+import {
+    getActiveServiceWorker,
+    setupServiceWorkerOnce,
+} from "./wallet/serviceWorker/service-worker-manager";
 
 export {
     // Wallets
@@ -202,6 +206,8 @@ export {
     type RequestEnvelope,
     type ResponseEnvelope,
     ArkSW,
+    setupServiceWorkerOnce,
+    getActiveServiceWorker,
 
     // Tapscript
     decodeTapscript,

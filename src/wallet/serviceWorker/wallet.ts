@@ -48,11 +48,11 @@ import {
     WalletUpdaterRequest,
     WalletUpdaterResponse,
 } from "./wallet-updater";
+import { RequestEnvelope, ResponseEnvelope } from "./ark-serviceworker";
 import {
-    ArkServiceworker,
-    RequestEnvelope,
-    ResponseEnvelope,
-} from "./ark-serviceworker";
+    getActiveServiceWorker,
+    setupServiceWorkerOnce,
+} from "./service-worker-manager";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -467,14 +467,15 @@ export class ServiceWorkerWallet
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerWallet> {
         // Register and setup the service worker
-        const serviceWorker = await ArkServiceworker.setup(
+        await setupServiceWorkerOnce(options.serviceWorkerPath);
+        const serviceWorker = await getActiveServiceWorker(
             options.serviceWorkerPath
         );
 
         // Use the existing create method
         return ServiceWorkerWallet.create({
             ...options,
-            serviceWorker: ArkServiceworker.getServiceWorker(),
+            serviceWorker,
         });
     }
 

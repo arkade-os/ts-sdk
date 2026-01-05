@@ -1,25 +1,7 @@
-import { setupServiceWorker } from "./utils";
-
-// there can be only one SW per scope
-let currentSW: ServiceWorker | null = null;
-
-const isReady = () => {
-    return navigator.serviceWorker.ready;
-};
-
-export const ArkServiceworker = {
-    setup: async (path: string) => {
-        currentSW = await setupServiceWorker(path);
-        return currentSW;
-    },
-    isReady,
-    getServiceWorker: (): ServiceWorker => {
-        if (currentSW === null) {
-            throw new Error("SW not ready yet, try again later");
-        }
-        return currentSW;
-    },
-};
+import {
+    getActiveServiceWorker,
+    setupServiceWorkerOnce,
+} from "./service-worker-manager";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -219,10 +201,11 @@ export class ArkSW {
     };
 
     // TODO: will be moved to the SDK and use utils package, need to manage the registration state somehow
-    static getServiceWorker() {
-        return ArkServiceworker.getServiceWorker();
+    static async getServiceWorker(path?: string) {
+        return getActiveServiceWorker(path);
     }
     static async setup(path: string) {
-        return ArkServiceworker.setup(path);
+        await setupServiceWorkerOnce(path);
+        return getActiveServiceWorker(path);
     }
 }
