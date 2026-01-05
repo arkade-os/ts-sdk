@@ -6,6 +6,7 @@ import {
     EsploraProvider,
     RestIndexerProvider,
     ArkAddress,
+    IntentFeeConfig,
 } from "../../src";
 import { execSync } from "child_process";
 
@@ -124,6 +125,27 @@ export async function beforeEachFaucet(): Promise<void> {
             `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
         );
     }
+}
+
+export function setFees(fees: IntentFeeConfig): void {
+    let cmd = `${arkdExec} arkd fees intent`;
+    if (fees.offchainInput) {
+        cmd += ` --offchain-input ${fees.offchainInput}`;
+    }
+    if (fees.onchainInput) {
+        cmd += ` --onchain-input ${fees.onchainInput}`;
+    }
+    if (fees.offchainOutput) {
+        cmd += ` --offchain-output ${fees.offchainOutput}`;
+    }
+    if (fees.onchainOutput) {
+        cmd += ` --onchain-output ${fees.onchainOutput}`;
+    }
+    execCommand(cmd);
+}
+
+export function clearFees(): void {
+    execCommand(`${arkdExec} arkd fees clear`);
 }
 
 export async function waitFor(
