@@ -931,19 +931,22 @@ describe("Ark integration tests", () => {
             async () => (await alice.wallet.getBoardingUtxos()).length > 0
         );
 
-        setFees({ onchainInput: "1000.0" });
+        try {
+            setFees({ onchainInput: "1000.0" });
 
-        const { fees } = await alice.wallet.arkProvider.getInfo();
+            const { fees } = await alice.wallet.arkProvider.getInfo();
 
-        expect(fees.intentFee.onchainInput).toBe("1000.0");
+            expect(fees.intentFee.onchainInput).toBe("1000.0");
 
-        const settleTxid = await new Ramps(alice.wallet).onboard(fees);
-        expect(settleTxid).toBeDefined();
-        clearFees();
+            const settleTxid = await new Ramps(alice.wallet).onboard(fees);
+            expect(settleTxid).toBeDefined();
 
-        const vtxos = await alice.wallet.getVtxos();
-        expect(vtxos).toHaveLength(1);
-        const vtxo = vtxos[0];
-        expect(vtxo.value).toBe(100000 - 1000);
+            const vtxos = await alice.wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+            const vtxo = vtxos[0];
+            expect(vtxo.value).toBe(100000 - 1000);
+        } finally {
+            clearFees();
+        }
     });
 });
