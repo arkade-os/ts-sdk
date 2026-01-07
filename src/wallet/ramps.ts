@@ -81,7 +81,7 @@ export class Ramps {
 
         if (BigInt(outputFee.satoshis) > amount) {
             throw new Error(
-                `can't deduct fees from onboard amount (${outputFee.value} > ${amount})`
+                `can't deduct fees from onboard amount (${outputFee.satoshis} > ${amount})`
             );
         }
         amount -= BigInt(outputFee.satoshis);
@@ -204,9 +204,9 @@ export class Ramps {
             script: hex.encode(destinationScript),
         });
 
-        if (BigInt(outputFee.value) > amount) {
+        if (BigInt(outputFee.satoshis) > amount) {
             throw new Error(
-                `can't deduct fees from offboard amount (${outputFee.value} > ${amount})`
+                `can't deduct fees from offboard amount (${outputFee.satoshis} > ${amount})`
             );
         }
         amount -= BigInt(outputFee.satoshis);
