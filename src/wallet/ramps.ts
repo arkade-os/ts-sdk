@@ -147,7 +147,7 @@ export class Ramps {
                     ? new Date(vtxo.virtualStatus.batchExpiry * 1000)
                     : undefined,
             });
-            if (inputFee.value >= vtxo.value) {
+            if (inputFee.satoshis >= vtxo.value) {
                 // skip if fees are greater than or equal to the vtxo value
                 continue;
             }
