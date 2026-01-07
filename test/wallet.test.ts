@@ -227,6 +227,7 @@ describe("Wallet", () => {
                 intentFee: {
                     onchainInput: "200.0",
                     onchainOutput: "1000",
+                    offchainOutput: "amount * 0.1",
                 },
                 txFeeRate: "100",
             },
@@ -254,7 +255,7 @@ describe("Wallet", () => {
             expect(boardingAddress).toBeDefined();
         });
 
-        it("should convert intentFee.onchainInput and intentFee.onchainOutput to bigint", async () => {
+        it("should return intentFee config as strings", async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: true,
                 json: () => Promise.resolve(mockArkInfo),
@@ -262,8 +263,9 @@ describe("Wallet", () => {
 
             const provider = new RestArkProvider("http://localhost:7070");
             const info = await provider.getInfo();
-            expect(info.fees.intentFee.onchainInput).toBe(BigInt(200));
-            expect(info.fees.intentFee.onchainOutput).toBe(BigInt(1000));
+            expect(info.fees.intentFee.onchainInput).toBe("200.0");
+            expect(info.fees.intentFee.onchainOutput).toBe("1000");
+            expect(info.fees.intentFee.offchainOutput).toBe("amount * 0.1");
         });
     });
 

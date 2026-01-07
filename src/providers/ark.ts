@@ -4,6 +4,7 @@ import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
 import { eventSourceIterator } from "./utils";
 import { maybeArkError } from "./errors";
+import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 
 export type Output = {
@@ -97,15 +98,8 @@ export interface ScheduledSession {
     period: bigint;
 }
 
-export interface IntentFeeInfo {
-    offchainInput: string;
-    offchainOutput: string;
-    onchainInput: bigint;
-    onchainOutput: bigint;
-}
-
 export interface FeeInfo {
-    intentFee: IntentFeeInfo;
+    intentFee: IntentFeeConfig;
     txFeeRate: string;
 }
 
@@ -132,7 +126,7 @@ export interface ArkInfo {
     forfeitAddress: string;
     forfeitPubkey: string;
     network: string;
-    scheduledSession: ScheduledSession;
+    scheduledSession?: ScheduledSession;
     serviceStatus: ServiceStatus;
     sessionDuration: bigint;
     signerPubkey: string;
@@ -234,21 +228,7 @@ export class RestArkProvider implements ArkProvider {
             digest: fromServer.digest ?? "",
             dust: BigInt(fromServer.dust ?? 0),
             fees: {
-                intentFee: {
-                    ...fromServer.fees?.intentFee,
-                    onchainInput: BigInt(
-                        // split(".")[0] to remove the decimal part
-                        (fromServer.fees?.intentFee?.onchainInput ?? "0").split(
-                            "."
-                        )[0] ?? 0
-                    ),
-                    onchainOutput: BigInt(
-                        // split(".")[0] to remove the decimal part
-                        (
-                            fromServer.fees?.intentFee?.onchainOutput ?? "0"
-                        ).split(".")[0] ?? 0
-                    ),
-                },
+                intentFee: fromServer.fees?.intentFee ?? {},
                 txFeeRate: fromServer?.fees?.txFeeRate ?? "",
             },
             forfeitAddress: fromServer.forfeitAddress ?? "",
@@ -270,6 +250,7 @@ export class RestArkProvider implements ArkProvider {
                           period: BigInt(
                               fromServer.scheduledSession.period ?? 0
                           ),
+                          fees: fromServer.scheduledSession.fees ?? {},
                       }
                     : undefined,
             serviceStatus: fromServer.serviceStatus ?? {},
@@ -281,7 +262,7 @@ export class RestArkProvider implements ArkProvider {
             version: fromServer.version ?? "",
             vtxoMaxAmount: BigInt(fromServer.vtxoMaxAmount ?? -1),
             vtxoMinAmount: BigInt(fromServer.vtxoMinAmount ?? 0),
-        } as ArkInfo;
+        };
     }
 
     async submitTx(

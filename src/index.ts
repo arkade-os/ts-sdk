@@ -153,6 +153,8 @@ import {
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
 
+export * from "./arkfee";
+
 export {
     // Wallets
     Wallet,
