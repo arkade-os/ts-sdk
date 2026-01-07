@@ -81,7 +81,6 @@ describe("Estimator", () => {
                         onchainOutput: testCase.config.onchainOutputProgram,
                     };
 
-                    expect(() => new Estimator(config)).toThrow();
                     try {
                         new Estimator(config);
                         expect.fail("Expected error to be thrown");
