@@ -44,7 +44,7 @@ export class Ramps {
             const inputFee = estimator.evalOnchainInput({
                 amount: BigInt(utxo.value),
             });
-            if (inputFee.value >= utxo.value) {
+            if (inputFee.satoshis >= utxo.value) {
                 // skip if fees are greater than or equal to the utxo value
                 continue;
             }
@@ -79,7 +79,7 @@ export class Ramps {
             script: offchainScript,
         });
 
-        if (BigInt(outputFee.value) > amount) {
+        if (BigInt(outputFee.satoshis) > amount) {
             throw new Error(
                 `can't deduct fees from onboard amount (${outputFee.value} > ${amount})`
             );

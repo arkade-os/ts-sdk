@@ -99,7 +99,6 @@ describe("Estimator", () => {
                         } else if (
                             expectedErr.includes("undeclared reference")
                         ) {
-                            console.log(errorMsg);
                             expect(
                                 errorMsg.includes("unknown variable") ||
                                     errorMsg.includes("undeclared") ||
@@ -114,12 +113,7 @@ describe("Estimator", () => {
                                 errorMsg.includes("no such overload") ||
                                     errorMsg.includes("matching overload")
                             ).toBe(true);
-                        } else if (
-                            expectedErr.includes("expected return type")
-                        ) {
-                            expect(errorMsg).toContain("expected return type");
                         } else {
-                            // Fallback: check if error message contains the expected text
                             expect(errorMsg).toContain(expectedErr);
                         }
                     }
