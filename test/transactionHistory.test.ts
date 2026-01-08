@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
+import transactionHistoryProgressive from "./fixtures/transaction_history-progressive.json";
 import { vtxosToTxs } from "../src/utils/transactionHistory";
-import { VirtualCoin, TxType, isSpendable } from "../src/wallet";
+import { isSpendable, TxType, VirtualCoin } from "../src";
 
 describe("vtxosToTxs", () => {
     // TODO FIX THIS!
@@ -221,60 +222,137 @@ describe("vtxosToTxs", () => {
         });
     });
 
-    for (const [index, { vtxos, expected }] of transactionHistory.entries()) {
-        it(`fixture #${index + 1}`, async () => {
-            const spendableVtxos: VirtualCoin[] = [];
-            const spentVtxos: VirtualCoin[] = [];
+    describe("list of generated transactions is correct", () => {
+        for (const [
+            index,
+            { vtxos, expected },
+        ] of transactionHistory.entries()) {
+            it(`fixture #${index + 1}`, async () => {
+                const spendableVtxos: VirtualCoin[] = [];
+                const spentVtxos: VirtualCoin[] = [];
 
-            for (const vtxo of vtxos) {
-                const virtualCoin: VirtualCoin = {
-                    ...vtxo,
-                    createdAt: new Date(vtxo.createdAt),
-                    virtualStatus: {
-                        state: vtxo.virtualStatus.state as
-                            | "swept"
-                            | "settled"
-                            | "preconfirmed"
-                            | "spent",
-                        commitmentTxIds: vtxo.virtualStatus.commitmentTxIds,
-                        batchExpiry: vtxo.virtualStatus.batchExpiry,
-                    },
-                };
-                if (isSpendable(virtualCoin)) {
-                    spendableVtxos.push(virtualCoin);
-                } else {
-                    spentVtxos.push(virtualCoin);
+                for (const vtxo of vtxos) {
+                    const virtualCoin: VirtualCoin = {
+                        ...vtxo,
+                        createdAt: new Date(vtxo.createdAt),
+                        virtualStatus: {
+                            state: vtxo.virtualStatus.state as
+                                | "swept"
+                                | "settled"
+                                | "preconfirmed"
+                                | "spent",
+                            commitmentTxIds: vtxo.virtualStatus.commitmentTxIds,
+                            batchExpiry: vtxo.virtualStatus.batchExpiry,
+                        },
+                    };
+                    if (isSpendable(virtualCoin)) {
+                        spendableVtxos.push(virtualCoin);
+                    } else {
+                        spentVtxos.push(virtualCoin);
+                    }
                 }
-            }
 
-            // convert VTXOs to offchain transactions
-            const offchainTxs = vtxosToTxs(
-                spendableVtxos,
-                spentVtxos,
-                new Set<string>()
-            );
+                // convert VTXOs to offchain transactions
+                const offchainTxs = vtxosToTxs(
+                    spendableVtxos,
+                    spentVtxos,
+                    new Set<string>()
+                );
 
-            const txs = [...offchainTxs];
+                const txs = [...offchainTxs];
 
-            // sort transactions by creation time in descending order (newest first)
-            txs.sort(
-                // place createdAt = 0 (unconfirmed txs) first, then descending
-                (a, b) => {
-                    if (a.createdAt === 0) return -1;
-                    if (b.createdAt === 0) return 1;
-                    return b.createdAt - a.createdAt;
+                // sort transactions by creation time in descending order (newest first)
+                txs.sort(
+                    // place createdAt = 0 (unconfirmed txs) first, then descending
+                    (a, b) => {
+                        if (a.createdAt === 0) return -1;
+                        if (b.createdAt === 0) return 1;
+                        return b.createdAt - a.createdAt;
+                    }
+                );
+
+                // Each transaction should have a unique arkTxId
+                const arkTxIds = new Set<string>();
+                const txsWithArkTxId = txs.filter((tx) => tx.key.arkTxid);
+                txsWithArkTxId.map((tx) => arkTxIds.add(tx.key.arkTxid));
+                expect(arkTxIds.size).toBe(txsWithArkTxId.length);
+
+                // Verify we have some transactions
+                expect(txs.length).toBeGreaterThan(0);
+                expect(txs).toStrictEqual(expected);
+            });
+        }
+    });
+
+    describe("list of generated transactions is correct adding VTXOs", () => {
+        for (const [
+            index,
+            { vtxos, expected },
+        ] of transactionHistoryProgressive.entries()) {
+            it(`with ${index + 1} VTXO`, async () => {
+                const spendableVtxos: VirtualCoin[] = [];
+                const spentVtxos: VirtualCoin[] = [];
+
+                for (const vtxo of vtxos) {
+                    const virtualCoin: VirtualCoin = {
+                        ...vtxo,
+                        createdAt: new Date(vtxo.createdAt),
+                        virtualStatus: {
+                            state: vtxo.virtualStatus.state as
+                                | "swept"
+                                | "settled"
+                                | "preconfirmed"
+                                | "spent",
+                            commitmentTxIds: vtxo.virtualStatus.commitmentTxIds,
+                            batchExpiry: vtxo.virtualStatus.batchExpiry,
+                        },
+                    };
+                    if (isSpendable(virtualCoin)) {
+                        spendableVtxos.push(virtualCoin);
+                    } else {
+                        spentVtxos.push(virtualCoin);
+                    }
                 }
-            );
 
-            // Each transaction should have a unique arkTxId
-            const arkTxIds = new Set<string>();
-            const txsWithArkTxId = txs.filter((tx) => tx.key.arkTxid);
-            txsWithArkTxId.map((tx) => arkTxIds.add(tx.key.arkTxid));
-            expect(arkTxIds.size).toBe(txsWithArkTxId.length);
+                // convert VTXOs to offchain transactions
+                const offchainTxs = vtxosToTxs(
+                    spendableVtxos,
+                    spentVtxos,
+                    new Set<string>()
+                );
 
-            // Verify we have some transactions
-            expect(txs.length).toBeGreaterThan(0);
-            expect(txs).toStrictEqual(expected);
-        });
-    }
+                const txs = [...offchainTxs];
+
+                // sort transactions by creation time in descending order (newest first)
+                txs.sort(
+                    // place createdAt = 0 (unconfirmed txs) first, then descending
+                    (a, b) => {
+                        if (a.createdAt === 0) return -1;
+                        if (b.createdAt === 0) return 1;
+                        return b.createdAt - a.createdAt;
+                    }
+                );
+
+                // Each transaction should have a unique arkTxId
+                const arkTxIds = new Set<string>();
+                const txsWithArkTxId = txs.filter((tx) => tx.key.arkTxid);
+                txsWithArkTxId.map((tx) => arkTxIds.add(tx.key.arkTxid));
+                expect(arkTxIds.size).toBe(txsWithArkTxId.length);
+
+                // Verify we have some transactions
+                expect(txs.length).toBeGreaterThan(0);
+                expect(txs).toStrictEqual(expected);
+                // // TODO verify balance is correct
+                // expect(
+                //     txs.reduce(
+                //         (r, t) =>
+                //             t.type === TxType.TxSent
+                //                 ? r - t.amount
+                //                 : r + t.amount,
+                //         0
+                //     )
+                // ).toBe(spendableVtxos.reduce((r, v) => r + v.value, 0));
+            });
+        }
+    });
 });

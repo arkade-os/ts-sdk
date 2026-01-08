@@ -17,7 +17,7 @@ export function vtxosToTxs(
     // All vtxos are received unless:
     // - they resulted from a settlement (either boarding or refresh)
     // - they are the change of a spend tx
-    let vtxosLeftToCheck = [...spent];
+    let vtxosLeftToCheck = spent;
     for (const vtxo of [...spendable, ...spent]) {
         if (
             vtxo.virtualStatus.state !== "preconfirmed" &&
@@ -29,9 +29,9 @@ export function vtxosToTxs(
             continue;
         }
 
-        const settleVtxos = findVtxosSpentInSettlement(vtxosLeftToCheck, vtxo);
-        vtxosLeftToCheck = removeVtxosFromList(vtxosLeftToCheck, settleVtxos);
-        const settleAmount = reduceVtxosAmount(settleVtxos);
+        const settledVtxos = findVtxosSpentInSettlement(vtxosLeftToCheck, vtxo);
+        vtxosLeftToCheck = removeVtxosFromList(vtxosLeftToCheck, settledVtxos);
+        const settleAmount = reduceVtxosAmount(settledVtxos);
         if (vtxo.value <= settleAmount) {
             continue; // settlement or change, ignore
         }
@@ -120,7 +120,7 @@ export function vtxosToTxs(
             key: txKey,
             amount: spentAmount - resultedAmount,
             type: TxType.TxSent,
-            createdAt: vtxo.createdAt.getTime(),
+            createdAt: vtxo.createdAt.getTime() + 1, // ensure that SENT is always after RECEIVED
             settled: true,
         });
     }
