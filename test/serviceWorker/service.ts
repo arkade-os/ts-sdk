@@ -1,4 +1,5 @@
-import { Worker } from "../../src/wallet/serviceWorker/worker";
+import { ArkSW } from "../../src/wallet/serviceWorker/worker";
+import { WalletUpdater } from "../../src/wallet/serviceWorker/wallet";
 
 // ensure crypto is available in the service worker context
 if (typeof crypto === "undefined" || !crypto.getRandomValues) {
@@ -11,4 +12,5 @@ if (typeof crypto === "undefined" || !crypto.getRandomValues) {
     });
 }
 
-new Worker().start();
+const sw = new ArkSW({ updaters: [new WalletUpdater()] });
+sw.start();

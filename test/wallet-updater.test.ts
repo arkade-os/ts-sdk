@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { WalletUpdater } from "../src/wallet/serviceWorker/wallet-updater";
+import { WalletUpdater } from "../src/wallet/serviceWorker/wallet";
 
 const baseMessage = (id: string = "1") => ({
     id,
