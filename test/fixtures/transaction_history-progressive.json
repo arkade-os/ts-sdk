@@ -428,28 +428,6 @@
                 "isSpent": true
             },
             {
-                "txid": "fb7507d5f3538750a025f3db40527f66d8537de7fde9ebaffeb70066f4384ab9",
-                "vout": 1,
-                "value": 3445,
-                "status": {
-                    "confirmed": false
-                },
-                "virtualStatus": {
-                    "state": "swept",
-                    "commitmentTxIds": [
-                        "51b9249ac3e11ecb57e6b6f6aac727510168246eb0811a25b2a9191b11c27ff1",
-                        "0c48a7ac081eae860a35623380771566de21c156a957a7c85ebc75201b7400e7"
-                    ],
-                    "batchExpiry": 1764444780000
-                },
-                "spentBy": "8437ffb0be6a542e22cdcb0d9806508f574d129cf2bb3c8217ba78d7f963b85f",
-                "settledBy": "",
-                "arkTxId": "90d64a5c75a6e3fc6374506776e4675359399bb6ae296a62f0c409fa854f2d11",
-                "createdAt": "2025-11-06T21:40:42.000Z",
-                "isUnrolled": false,
-                "isSpent": true
-            },
-            {
                 "txid": "1d236cdca67132a6f2479c3e4dd50a882081ccedf7b60c241aeea24ffa72f11d",
                 "vout": 0,
                 "value": 980,
@@ -575,6 +553,105 @@
                 "isUnrolled": false,
                 "isSpent": true
             }
+        ],
+        "allBoardingTxs": [
+            {
+                "key": {
+                    "boardingTxid": "4558419bc06015f2917d4359ac2dc8bea832dd312bfe54ef1d28f107bf915bd4",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 903,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1764272721000
+            },
+            {
+                "key": {
+                    "boardingTxid": "b365318df20097425ce1db0a1887d14ae980055d10f3e3794f300eefd94b7f40",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 500,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1763683155000
+            },
+            {
+                "key": {
+                    "boardingTxid": "4d39c2c8302c4991f740b123113f6c03e9796bf9747d1afdc57b6bfaeb5b9e6b",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 1200,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1763144544000
+            },
+            {
+                "key": {
+                    "boardingTxid": "651a9f2d8ee5486c82fc404846c5a5070f79daff7441cbc491d47249948d42ef",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 1965,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1762949363000
+            },
+            {
+                "key": {
+                    "boardingTxid": "13ba8171bc255bf8ec02e8182f9b1a964b4acd86f3804deb541f766ac8edf06c",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 1307,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1762466140000
+            },
+            {
+                "key": {
+                    "boardingTxid": "a8df5f550cf342228a2609adb7734ff5423fc9e1dd4a91209daecf8314ba67bc",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 1743,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1761859089000
+            },
+            {
+                "key": {
+                    "boardingTxid": "fc37001d0d70e9ad4d9beee02e1b74fe1ce4deee382a041106c17bf4e0cb4b44",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 2323,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1761859089000
+            },
+            {
+                "key": {
+                    "boardingTxid": "b5a245de0d6ac955b47d65f4efcde91288396b4c68e674de64de66d27bd83f3c",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 979,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1761592682000
+            }
+        ],
+        "commitmentsToIgnore": [
+            "3ced8b5f669baafcc7dc694c07a3e6652c83848f6c46c016699e703e48c91985",
+            "8e9fb5e484d019c65ca9f4a46edeef1bfe730072509399d9235a4de2f2da5914",
+            "d62c6b368e5548a8a4e296de436d237b985c51fff59e5017b1ef5f59026d12b1",
+            "f07df319aa880590612d0a70b71ab3764304c1f621d7ce9146ba974e4e9c06fb",
+            "cb305bfdf2007bd5fb521673dcd5e8fa35d252b5ce4c839ea15c125833f94838",
+            "51b9249ac3e11ecb57e6b6f6aac727510168246eb0811a25b2a9191b11c27ff1",
+            "ee33948cf61d1487b6ccf29eb96d328cfd4c3f05ba003736f18249dc113091ce"
         ],
         "expected": [
             {
