@@ -4,7 +4,6 @@ declare const self: ServiceWorkerGlobalScope;
 
 import { ReadonlySingleKey, SingleKey } from "../../identity/singleKey";
 import {
-    ArkTransaction,
     ExtendedCoin,
     ExtendedVirtualCoin,
     isExpired,
@@ -16,7 +15,6 @@ import { ReadonlyWallet, Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
-import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { hex } from "@scure/base";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
@@ -60,8 +58,8 @@ class ReadonlyHandler {
         return this.wallet.getBoardingAddress();
     }
 
-    getBoardingTxs() {
-        return this.wallet.getBoardingTxs();
+    getTransactionHistory() {
+        return this.wallet.getTransactionHistory();
     }
 
     async handleReload(
@@ -180,37 +178,6 @@ export class Worker {
         return await this.walletRepository.getUtxos(address);
     }
 
-    private async getTransactionHistory(): Promise<ArkTransaction[]> {
-        if (!this.handler) return [];
-
-        let txs: ArkTransaction[] = [];
-
-        try {
-            const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
-                await this.handler.getBoardingTxs();
-
-            const { spendable, spent } = await this.getAllVtxos();
-
-            // convert VTXOs to offchain transactions
-            const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);
-
-            txs = [...boardingTxs, ...offchainTxs];
-
-            // sort transactions by creation time in descending order (newest first)
-            txs.sort(
-                // place createdAt = 0 (unconfirmed txs) first, then descending
-                (a, b) => {
-                    if (a.createdAt === 0) return -1;
-                    if (b.createdAt === 0) return 1;
-                    return b.createdAt - a.createdAt;
-                }
-            );
-        } catch (error: unknown) {
-            console.error("Error getting transaction history:", error);
-        }
-        return txs;
-    }
-
     async start(withServiceWorkerUpdate = true) {
         self.addEventListener(
             "message",
@@ -293,7 +260,7 @@ export class Worker {
         );
 
         // Get transaction history to cache boarding txs
-        const txs = await this.getTransactionHistory();
+        const txs = await this.handler.getTransactionHistory();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
         // unsubscribe previous subscription if any
@@ -790,7 +757,7 @@ export class Worker {
         }
 
         try {
-            const txs = await this.getTransactionHistory();
+            const txs = await this.handler.getTransactionHistory();
             event.source?.postMessage(
                 Response.transactionHistory(message.id, txs)
             );

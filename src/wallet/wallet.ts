@@ -77,6 +77,7 @@ import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
+import { transactionHistoryV2 } from "../utils/transactionHistoryV2";
 
 export type IncomingFunds =
     | {
@@ -379,37 +380,43 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
 
-        const spendableVtxos = [];
-        const spentVtxos = [];
-
-        for (const vtxo of response.vtxos) {
-            if (isSpendable(vtxo)) {
-                spendableVtxos.push(vtxo);
-            } else {
-                spentVtxos.push(vtxo);
-            }
-        }
-
-        // convert VTXOs to offchain transactions
-        const offchainTxs = vtxosToTxs(
-            spendableVtxos,
-            spentVtxos,
+        return transactionHistoryV2(
+            response.vtxos,
+            boardingTxs,
             commitmentsToIgnore
         );
 
-        const txs = [...boardingTxs, ...offchainTxs];
-
-        // sort transactions by creation time in descending order (newest first)
-        txs.sort(
-            // place createdAt = 0 (unconfirmed txs) first, then descending
-            (a, b) => {
-                if (a.createdAt === 0) return -1;
-                if (b.createdAt === 0) return 1;
-                return b.createdAt - a.createdAt;
-            }
-        );
-
-        return txs;
+        // const spendableVtxos = [];
+        // const spentVtxos = [];
+        //
+        // for (const vtxo of response.vtxos) {
+        //     if (isSpendable(vtxo)) {
+        //         spendableVtxos.push(vtxo);
+        //     } else {
+        //         spentVtxos.push(vtxo);
+        //     }
+        // }
+        //
+        // // convert VTXOs to offchain transactions
+        // const offchainTxs = vtxosToTxs(
+        //     spendableVtxos,
+        //     spentVtxos,
+        //     commitmentsToIgnore
+        // );
+        //
+        // const txs = [...boardingTxs, ...offchainTxs];
+        //
+        // // sort transactions by creation time in descending order (newest first)
+        // txs.sort(
+        //     // place createdAt = 0 (unconfirmed txs) first, then descending
+        //     (a, b) => {
+        //         if (a.createdAt === 0) return -1;
+        //         if (b.createdAt === 0) return 1;
+        //         return b.createdAt - a.createdAt;
+        //     }
+        // );
+        //
+        // return txs;
     }
 
     async getBoardingTxs(): Promise<{
