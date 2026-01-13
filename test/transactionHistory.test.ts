@@ -6,7 +6,7 @@ import {
     isSpendable,
     ArkTransaction,
 } from "../src/wallet";
-import { buildTransactionHistory } from "../src/utils/buildTransactionHistory";
+import { buildTransactionHistory } from "../src/utils/transactionHistory";
 
 describe("buildTransactionHistory", () => {
     // TODO FIX THIS!
