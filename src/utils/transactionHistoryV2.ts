@@ -28,12 +28,6 @@ export function transactionHistoryV2(
     const swept = new Set<string>();
 
     for (const vtxo of fromOldestVtxo) {
-        // if (
-        //     vtxo.txid ===
-        //     "fb7507d5f3538750a025f3db40527f66d8537de7fde9ebaffeb70066f4384ab9"
-        // ) {
-        //     console.log(vtxo);
-        // }
         if (
             vtxo.virtualStatus.commitmentTxIds?.every((c) =>
                 commitmentsToIgnore.has(c)
@@ -76,15 +70,6 @@ export function transactionHistoryV2(
                             vtxo.value;
                         changes.set(change.txid, changeLeft);
 
-                        if (changeLeft === 0) {
-                            console.log(
-                                "change left 0",
-                                change.txid,
-                                vtxo.value
-                            );
-                        }
-
-                        // TODO: allSpent to received
                         // settlements do not appear in tx history
                         if (
                             commitmentIdsSettling.length === 0 &&
@@ -125,11 +110,7 @@ export function transactionHistoryV2(
                         changes.set(change.txid, changeLeft);
 
                         if (changeLeft >= 0) {
-                            console.log("change left 0", change.txid);
-                            if (
-                                // commitmentIdsSettling.length === 0 &&
-                                !used.has(vtxo.txid)
-                            ) {
+                            if (!used.has(vtxo.txid)) {
                                 received.push({
                                     key: { ...txKey, arkTxid: vtxo.txid },
                                     tag: "offchain",
@@ -143,7 +124,7 @@ export function transactionHistoryV2(
                     }
                 } else {
                     // Onchain
-                    console.warn(`no change for ${vtxo.txid} ${vtxo.value}`);
+                    // it should be safe to ignore it
                 }
             } else if (!changes.has(vtxo.txid) && !swept.has(vtxo.txid)) {
                 received.push({
