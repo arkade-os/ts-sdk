@@ -72,8 +72,18 @@ export function buildTransactionHistory(
                         });
                     }
                 } else {
-                    // Spent onchain, but never received a change for it
-                    // TODO: test it with a real tx like NOW!
+                    // Spent entirely onchain
+                    sent.push({
+                        key: { ...txKey, arkTxid: vtxo.arkTxId },
+                        tag: "offchain",
+                        type: TxType.TxSent,
+                        amount: vtxo.value,
+                        settled: true,
+                        // This is the creation time of the VTXO, not the onchain tx
+                        // If it is the change of a previous transaction, they will have the same createdAt
+                        // and possibly end up in the wrong order in the history
+                        createdAt: vtxo.createdAt.getTime() + 1,
+                    });
                 }
             }
         }
