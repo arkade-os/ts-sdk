@@ -1,9 +1,14 @@
 import { describe, it, expect, vi } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
-import { vtxosToTxs } from "../src/utils/transactionHistory";
-import { VirtualCoin, TxType, isSpendable } from "../src/wallet";
+import {
+    VirtualCoin,
+    TxType,
+    isSpendable,
+    ArkTransaction,
+} from "../src/wallet";
+import { buildTransactionHistory } from "../src/utils/buildTransactionHistory";
 
-describe("vtxosToTxs", () => {
+describe("buildTransactionHistory", () => {
     // TODO FIX THIS!
     describe("Bug: duplicate sent transactions for split vtxos", () => {
         it("should create a single sent transaction when a vtxo is split into multiple outputs", async () => {
@@ -61,13 +66,11 @@ describe("vtxosToTxs", () => {
 
             // resultVtxo1 went to the recipient, so it's not in our spendable list
 
-            const spendable = [resultVtxo0];
-            const spent = [spentVtxo];
             const boardingBatchTxids = new Set<string>();
 
-            const transactions = vtxosToTxs(
-                spendable,
-                spent,
+            const transactions = buildTransactionHistory(
+                [resultVtxo0, spentVtxo],
+                [],
                 boardingBatchTxids
             );
 
@@ -156,14 +159,10 @@ describe("vtxosToTxs", () => {
                 isSpent: false,
             };
 
-            const spendable = [resultVtxo0, resultVtxo1];
-            const spent = [spentVtxo];
-            const boardingBatchTxids = new Set<string>();
-
-            const transactions = vtxosToTxs(
-                spendable,
-                spent,
-                boardingBatchTxids
+            const transactions = buildTransactionHistory(
+                [resultVtxo0, resultVtxo1],
+                [],
+                new Set<string>()
             );
             const sentTxs = transactions.filter(
                 (tx) => tx.type === TxType.TxSent
@@ -206,9 +205,9 @@ describe("vtxosToTxs", () => {
             const spent: VirtualCoin[] = [];
             const boardingBatchTxids = new Set<string>();
 
-            const transactions = vtxosToTxs(
-                spendable,
-                spent,
+            const transactions = buildTransactionHistory(
+                [receivedVtxo],
+                [],
                 boardingBatchTxids
             );
             const receivedTxs = transactions.filter(
@@ -221,60 +220,27 @@ describe("vtxosToTxs", () => {
         });
     });
 
-    for (const [index, { vtxos, expected }] of transactionHistory.entries()) {
-        it(`fixture #${index + 1}`, async () => {
-            const spendableVtxos: VirtualCoin[] = [];
-            const spentVtxos: VirtualCoin[] = [];
-
-            for (const vtxo of vtxos) {
-                const virtualCoin: VirtualCoin = {
-                    ...vtxo,
-                    createdAt: new Date(vtxo.createdAt),
-                    virtualStatus: {
-                        state: vtxo.virtualStatus.state as
-                            | "swept"
-                            | "settled"
-                            | "preconfirmed"
-                            | "spent",
-                        commitmentTxIds: vtxo.virtualStatus.commitmentTxIds,
-                        batchExpiry: vtxo.virtualStatus.batchExpiry,
-                    },
-                };
-                if (isSpendable(virtualCoin)) {
-                    spendableVtxos.push(virtualCoin);
-                } else {
-                    spentVtxos.push(virtualCoin);
-                }
+    describe("Handles real-life histories correctly", () => {
+        transactionHistory.forEach(
+            ({
+                address,
+                vtxos,
+                allBoardingTxs,
+                commitmentsToIgnore,
+                expected,
+            }) => {
+                it(`should handle history from ${address}`, async () => {
+                    const transactions = buildTransactionHistory(
+                        vtxos.map((_) => ({
+                            ..._,
+                            createdAt: new Date(_.createdAt),
+                        })) as VirtualCoin[],
+                        allBoardingTxs as ArkTransaction[],
+                        new Set(commitmentsToIgnore)
+                    );
+                    expect(transactions).toStrictEqual(expected);
+                });
             }
-
-            // convert VTXOs to offchain transactions
-            const offchainTxs = vtxosToTxs(
-                spendableVtxos,
-                spentVtxos,
-                new Set<string>()
-            );
-
-            const txs = [...offchainTxs];
-
-            // sort transactions by creation time in descending order (newest first)
-            txs.sort(
-                // place createdAt = 0 (unconfirmed txs) first, then descending
-                (a, b) => {
-                    if (a.createdAt === 0) return -1;
-                    if (b.createdAt === 0) return 1;
-                    return b.createdAt - a.createdAt;
-                }
-            );
-
-            // Each transaction should have a unique arkTxId
-            const arkTxIds = new Set<string>();
-            const txsWithArkTxId = txs.filter((tx) => tx.key.arkTxid);
-            txsWithArkTxId.map((tx) => arkTxIds.add(tx.key.arkTxid));
-            expect(arkTxIds.size).toBe(txsWithArkTxId.length);
-
-            // Verify we have some transactions
-            expect(txs.length).toBeGreaterThan(0);
-            expect(txs).toStrictEqual(expected);
-        });
-    }
+        );
+    });
 });

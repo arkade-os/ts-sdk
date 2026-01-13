@@ -4,7 +4,7 @@ import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
-import { vtxosToTxs } from "../utils/transactionHistory";
+import { vtxosToTxs } from "../utils/buildTransactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import { getNetwork, Network, NetworkName } from "../networks";
@@ -77,7 +77,7 @@ import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
-import { transactionHistoryV2 } from "../utils/transactionHistoryV2";
+import { buildTransactionHistory } from "../utils/buildTransactionHistory";
 
 export type IncomingFunds =
     | {
@@ -380,7 +380,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
 
-        return transactionHistoryV2(
+        return buildTransactionHistory(
             response.vtxos,
             boardingTxs,
             commitmentsToIgnore

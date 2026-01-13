@@ -566,6 +566,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         value: Number(vtxo.amount),
         status: {
             confirmed: !vtxo.isSwept && !vtxo.isPreconfirmed,
+            isLeaf: !vtxo.isPreconfirmed,
         },
         virtualStatus: {
             state: vtxo.isSwept
