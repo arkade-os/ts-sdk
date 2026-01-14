@@ -1,7 +1,7 @@
 import { ArkTransaction, TxKey, TxType, VirtualCoin } from "../wallet";
 
 type ExtendedArkTransaction = ArkTransaction & {
-    tag: "offchain" | "onchain" | "boarding" | "exit";
+    tag: "offchain" | "onchain" | "boarding" | "exit" | "batch";
 };
 const txKey: TxKey = {
     commitmentTxid: "",
@@ -30,151 +30,152 @@ export function buildTransactionHistory(
     const sent: ExtendedArkTransaction[] = [];
     let received: ExtendedArkTransaction[] = [];
 
-    // Track all settled VTXOs
-    const settledBy = new Map<string, VirtualCoin[]>();
-
     for (const vtxo of fromOldestVtxo) {
-        if (vtxo.settledBy) {
-            const existing = settledBy.get(vtxo.settledBy) ?? [];
-            settledBy.set(vtxo.settledBy, [...existing, vtxo]);
+        if (vtxo.status.isLeaf) {
+            // If this vtxo is a leaf and it's not the settlement of a boarding or there's no vtxo refreshed by it,
+            // it's translated into a received batch transaction
+            if (
+                !commitmentsToIgnore.has(
+                    vtxo.virtualStatus.commitmentTxIds![0]
+                ) &&
+                fromOldestVtxo.filter(
+                    (v) =>
+                        v.settledBy === vtxo.virtualStatus.commitmentTxIds![0]
+                ).length === 0
+            ) {
+                received.push({
+                    key: {
+                        ...txKey,
+                        commitmentTxid: vtxo.virtualStatus.commitmentTxIds![0],
+                    },
+                    tag: "batch",
+                    type: TxType.TxReceived,
+                    amount: vtxo.value,
+                    settled: vtxo.status.isLeaf || vtxo.isSpent!,
+                    createdAt: vtxo.createdAt.getTime(),
+                });
+            }
+        } else if (
+            fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0
+        ) {
+            // If this vtxo is preconfirmed and does not spend any other vtxos,
+            // it's translated into a received offchain transaction
+            received.push({
+                key: { ...txKey, arkTxid: vtxo.txid! },
+                tag: "offchain",
+                type: TxType.TxReceived,
+                amount: vtxo.value,
+                settled: vtxo.status.isLeaf || vtxo.isSpent!,
+                createdAt: vtxo.createdAt.getTime(),
+            });
         }
 
-        // In this part, we only handle VTXOs spent offchain
+        // If the vtxo is spent, it's translated into a sent transaction unless:
+        // - it's been refreshed (we don't want to add any record in this case)
+        // - a sent transaction has been already added to avoid duplicates (can happen if many vtxos have been spent in the same tx or forfeited in the same batch)
         if (vtxo.isSpent) {
-            // The arkTxId is the outpoint.txid of the VTXO that spent this one
-            if (vtxo.arkTxId) {
-                const change = fromOldestVtxo.find(
+            // If the vtxo is spent offchain, it's translated into offchain sent tx
+            if (
+                vtxo.arkTxId &&
+                !sent.some((s) => s.key.arkTxid === vtxo.arkTxId)
+            ) {
+                const changes = fromOldestVtxo.filter(
                     (_) => _.txid === vtxo.arkTxId
                 );
 
-                if (change) {
-                    // If there is already the outgoing amount for this change,
-                    // there is nothing to do here
-                    if (!sent.some((s) => s.key.arkTxid === change.txid)) {
-                        // We want to find all the other VTXOs spent by the same transaction to
-                        // calculate the full amount of the change.
-                        const allSpent = fromOldestVtxo.filter(
-                            (v) => v.arkTxId === change.txid
-                        );
-                        const spentAmount = allSpent.reduce(
-                            (acc, v) => acc + v.value,
-                            0
-                        );
+                let txAmount = 0;
+                let txTime = 0;
+                if (changes.length > 0) {
+                    const changeAmount = changes.reduce(
+                        (acc, v) => acc + v.value,
+                        0
+                    );
+                    // We want to find all the other VTXOs spent by the same transaction to
+                    // calculate the full amount of the change.
+                    const allSpent = fromOldestVtxo.filter(
+                        (v) => v.arkTxId === vtxo.arkTxId
+                    );
+                    const spentAmount = allSpent.reduce(
+                        (acc, v) => acc + v.value,
+                        0
+                    );
+                    txAmount = spentAmount - changeAmount;
+                    txTime = changes[0].createdAt.getTime();
+                } else {
+                    txAmount = vtxo.value;
+                    // TODO: fetch the vtxo with /v1/indexer/vtxos?outpoints=<vtxo.arkTxid:0> to know when the tx was made
+                    txTime = vtxo.createdAt.getTime() + 1;
+                }
 
-                        // This outgoing movement in the history will represent the event that created the change
+                sent.push({
+                    key: { ...txKey, arkTxid: vtxo.arkTxId },
+                    tag: "offchain",
+                    type: TxType.TxSent,
+                    amount: txAmount,
+                    settled: true,
+                    createdAt: txTime,
+                });
+            }
+
+            // If the vtxo is forfeited in a batch and the total sum of forfeited vtxos is bigger than the sum of new vtxos,
+            // it's translated into an exit sent tx
+            if (
+                vtxo.settledBy &&
+                !commitmentsToIgnore.has(vtxo.settledBy) &&
+                !sent.some((s) => s.key.commitmentTxid === vtxo.settledBy)
+            ) {
+                const changes = fromOldestVtxo.filter(
+                    (v) =>
+                        v.status.isLeaf &&
+                        v.virtualStatus.commitmentTxIds?.every(
+                            (_) => vtxo.settledBy === _
+                        )
+                );
+
+                const forfeitVtxos = fromOldestVtxo.filter(
+                    (v) => v.settledBy === vtxo.settledBy
+                );
+                const forfeitAmount = forfeitVtxos.reduce(
+                    (acc, v) => acc + v.value,
+                    0
+                );
+
+                if (changes.length > 0) {
+                    const settledAmount = changes.reduce(
+                        (acc, v) => acc + v.value,
+                        0
+                    );
+
+                    // forfeitAmount > settledAmount --> collaborative exit with offchain change
+                    // TODO: make this support fees!
+                    if (forfeitAmount > settledAmount) {
                         sent.push({
-                            key: { ...txKey, arkTxid: change.txid },
-                            tag: "offchain",
+                            key: { ...txKey, commitmentTxid: vtxo.settledBy },
+                            tag: "exit",
                             type: TxType.TxSent,
-                            amount: spentAmount - change.value,
+                            amount: forfeitAmount - settledAmount,
                             settled: true,
-                            createdAt: change.createdAt.getTime(),
+                            createdAt: changes[0].createdAt.getTime(),
                         });
                     }
                 } else {
-                    // Spent entirely offchain
+                    // forfeitAmount > 0 && settledAmount == 0 --> collaborative exit without any offchain change
                     sent.push({
-                        key: { ...txKey, arkTxid: vtxo.arkTxId },
-                        tag: "offchain",
+                        key: { ...txKey, commitmentTxid: vtxo.settledBy },
+                        tag: "exit",
                         type: TxType.TxSent,
-                        amount: vtxo.value,
+                        amount: forfeitAmount,
                         settled: true,
-                        // This is the creation time of the VTXO, not the onchain tx
-                        // If it is the change of a previous transaction, they will have the same createdAt
-                        // and possibly end up in the wrong order in the history
+                        // TODO: fetch commitment tx with /v1/indexer/commitmentTx/<commitmentTxid> to know when the tx was made
                         createdAt: vtxo.createdAt.getTime() + 1,
                     });
                 }
             }
         }
-
-        // If not preconfirmed and all its commitments are to be ignored,
-        // the VTXO is not present in the history
-        if (
-            vtxo.virtualStatus.state !== "preconfirmed" &&
-            vtxo.virtualStatus.commitmentTxIds?.every((c) =>
-                commitmentsToIgnore.has(c)
-            )
-        ) {
-            continue;
-        }
-
-        // This list represnts all the commitment IDs in this VTXO which
-        // settle one or more VTXOs
-        const commitmentIdsSettling =
-            vtxo.virtualStatus.commitmentTxIds?.filter((_) =>
-                settledBy.has(_)
-            ) ?? [];
-
-        if (commitmentIdsSettling.length > 0 && vtxo.status.isLeaf) {
-            // This VTXO is the result of coin renewal.
-            // A normal renewal doesn't affect the user's balance and we don't show
-            // it in the history.
-            // But if the renewal returns less satoshis than the original one,
-            // it means that an exit occurred (onchain) and this case must be shown
-            // as a SENT movement in the history.
-            for (const commitmentTxid of commitmentIdsSettling) {
-                // Collect all the VTXOs that settled in this commitment to ensure
-                // we consider the whole renewed amount.
-                const settled = fromOldestVtxo.filter(
-                    (v) => v.settledBy === commitmentTxid
-                );
-
-                if (settled.length === 0) continue; // this is impossible
-
-                const settledAmount = settled.reduce(
-                    (acc, v) => acc + v.value,
-                    0
-                );
-                // TODO: look for all the vtxos involved in the settledBy (they have same commitmentIds)
-                if (vtxo.value < settledAmount) {
-                    // We renewed an amount and got back less: this is an exit!
-                    sent.push({
-                        key: { ...txKey, commitmentTxid },
-                        tag: "exit",
-                        type: TxType.TxSent,
-                        amount: settledAmount - vtxo.value,
-                        settled: true,
-                        createdAt: vtxo.createdAt.getTime(),
-                    });
-                }
-                if (
-                    vtxo.value === settledAmount &&
-                    vtxo.settledBy &&
-                    vtxo.status.confirmed
-                ) {
-                    // full exit?
-                    sent.push({
-                        key: { ...txKey, commitmentTxid },
-                        tag: "exit",
-                        type: TxType.TxSent,
-                        amount: vtxo.value,
-                        settled: true,
-                        createdAt: vtxo.createdAt.getTime(),
-                    });
-                }
-            }
-        } else {
-            // If it's not a renewal, it must be shown on the UI because it affects the balance.
-            // Ensure that it only appears once. Note that the spending scenario was handled above.
-            const foundInSpent = sent.find((s) => s.key.arkTxid === vtxo.txid);
-            if (!foundInSpent) {
-                received.push({
-                    key: { ...txKey, arkTxid: vtxo.txid },
-                    tag: "offchain",
-                    type: TxType.TxReceived,
-                    amount: vtxo.value,
-                    settled: !!vtxo.spentBy,
-                    createdAt: vtxo.createdAt.getTime(),
-                });
-            }
-        }
     }
 
     // Boardings are always inbound amounts, and we only hide the ones to ignore.
-    const boardingTx = allBoardingTxs
-        .filter((tx) => !commitmentsToIgnore.has(tx.key.commitmentTxid))
-        .map((tx) => ({ ...tx, tag: "boarding" }));
+    const boardingTx = allBoardingTxs.map((tx) => ({ ...tx, tag: "boarding" }));
 
     const sorted = [...boardingTx, ...sent, ...received].sort(
         (a, b) => b.createdAt - a.createdAt
