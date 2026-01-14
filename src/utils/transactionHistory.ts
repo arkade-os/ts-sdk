@@ -72,7 +72,7 @@ export function buildTransactionHistory(
                         });
                     }
                 } else {
-                    // Spent entirely onchain
+                    // Spent entirely offchain
                     sent.push({
                         key: { ...txKey, arkTxid: vtxo.arkTxId },
                         tag: "offchain",
@@ -149,7 +149,7 @@ export function buildTransactionHistory(
                     tag: "offchain",
                     type: TxType.TxReceived,
                     amount: vtxo.value,
-                    settled: true,
+                    settled: !!vtxo.spentBy,
                     createdAt: vtxo.createdAt.getTime(),
                 });
             }
