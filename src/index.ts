@@ -54,15 +54,9 @@ import {
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import {
-    ServiceWorkerWallet,
-    ServiceWorkerReadonlyWallet,
-} from "./wallet/serviceWorker/wallet";
+import { WalletUpdater } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./wallet/serviceWorker/utils";
-import { Worker } from "./wallet/serviceWorker/worker";
-import { Request } from "./wallet/serviceWorker/request";
-import { Response } from "./wallet/serviceWorker/response";
 import {
     ESPLORA_URL,
     EsploraProvider,
@@ -152,6 +146,16 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import {
+    ArkSW,
+    IUpdater,
+    RequestEnvelope,
+    ResponseEnvelope,
+} from "./wallet/serviceWorker/worker";
+import {
+    getActiveServiceWorker,
+    setupServiceWorkerOnce,
+} from "./wallet/serviceWorker/service-worker-manager";
 
 export * from "./arkfee";
 
@@ -185,11 +189,15 @@ export {
 
     // Service Worker
     setupServiceWorker,
-    Worker,
-    ServiceWorkerWallet,
-    ServiceWorkerReadonlyWallet,
-    Request,
-    Response,
+
+    // Experimental SW
+    type IUpdater,
+    WalletUpdater,
+    type RequestEnvelope,
+    type ResponseEnvelope,
+    ArkSW,
+    setupServiceWorkerOnce,
+    getActiveServiceWorker,
 
     // Tapscript
     decodeTapscript,
