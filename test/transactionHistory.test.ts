@@ -228,6 +228,7 @@ describe("buildTransactionHistory", () => {
                 allBoardingTxs,
                 commitmentsToIgnore,
                 expected,
+                expectedBalance,
             }) => {
                 it(`should handle history from ${address}`, async () => {
                     const transactions = buildTransactionHistory(
@@ -239,6 +240,15 @@ describe("buildTransactionHistory", () => {
                         new Set(commitmentsToIgnore)
                     );
                     expect(transactions).toStrictEqual(expected);
+
+                    const balance = transactions.reduce(
+                        (acc, tx) =>
+                            tx.type === TxType.TxReceived
+                                ? acc + tx.amount
+                                : acc - tx.amount,
+                        0
+                    );
+                    expect(balance).toBe(expectedBalance);
                 });
             }
         );
