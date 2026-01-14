@@ -7,6 +7,7 @@ import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import { DelegatorProvider } from "../providers/delegator";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -33,6 +34,7 @@ export interface BaseWalletConfig {
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
+    delegatorProvider?: DelegatorProvider;
 }
 
 /**

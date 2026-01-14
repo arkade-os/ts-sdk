@@ -9,6 +9,7 @@ import {
     IntentFeeConfig,
 } from "../../src";
 import { execSync } from "child_process";
+import { RestDelegatorProvider } from "../../src/providers/delegator";
 
 export const arkdExec =
     process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
@@ -52,6 +53,25 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
             forcePolling: true,
             pollingInterval: 2000,
         }),
+    });
+
+    return {
+        wallet,
+        identity,
+    };
+}
+
+export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> {
+    const identity = createTestIdentity();
+
+    const wallet = await Wallet.create({
+        identity,
+        arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000", {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7001"),
     });
 
     return {

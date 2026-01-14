@@ -22,10 +22,12 @@ export namespace DefaultVtxo {
         pubKey: Bytes;
         serverPubKey: Bytes;
         csvTimelock?: RelativeTimelock;
+        delegatePubKey?: Bytes;
     }
 
     /**
      * DefaultVtxo.Script is the class letting to create the vtxo script.
+     * If delegatePubKey is provided, the script will contain a delegate path.
      * @example
      * ```typescript
      * const vtxoScript = new DefaultVtxo.Script({
@@ -44,12 +46,14 @@ export namespace DefaultVtxo {
 
         readonly forfeitScript: string;
         readonly exitScript: string;
+        readonly delegateScript?: string;
 
         constructor(readonly options: Options) {
             const {
                 pubKey,
                 serverPubKey,
                 csvTimelock = Script.DEFAULT_TIMELOCK,
+                delegatePubKey,
             } = options;
 
             const forfeitScript = MultisigTapscript.encode({
@@ -61,10 +65,24 @@ export namespace DefaultVtxo {
                 pubkeys: [pubKey],
             }).script;
 
-            super([forfeitScript, exitScript]);
+            const tapscripts = [forfeitScript, exitScript];
+
+            let delegateScript: Bytes | undefined;
+            if (delegatePubKey) {
+                delegateScript = MultisigTapscript.encode({
+                    pubkeys: [pubKey, delegatePubKey, serverPubKey],
+                }).script;
+
+                tapscripts.push(delegateScript);
+            }
+
+            super(tapscripts);
 
             this.forfeitScript = hex.encode(forfeitScript);
             this.exitScript = hex.encode(exitScript);
+            this.delegateScript = delegateScript
+                ? hex.encode(delegateScript)
+                : undefined;
         }
 
         forfeit(): TapLeafScript {
@@ -73,6 +91,17 @@ export namespace DefaultVtxo {
 
         exit(): TapLeafScript {
             return this.findLeaf(this.exitScript);
+        }
+
+        hasDelegate(): boolean {
+            return this.delegateScript !== undefined;
+        }
+
+        delegate(): TapLeafScript {
+            if (!this.delegateScript) {
+                throw new Error("Delegator not configured");
+            }
+            return this.findLeaf(this.delegateScript);
         }
     }
 }

@@ -77,6 +77,7 @@ import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
+import { DelegatorProvider } from "../providers/delegator";
 
 export type IncomingFunds =
     | {
@@ -119,7 +120,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
-        public readonly contractRepository: ContractRepository
+        public readonly contractRepository: ContractRepository,
+        readonly delegatorProvider?: DelegatorProvider
     ) {}
 
     /**
@@ -128,7 +130,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected static async setupWalletConfig(
         config: ReadonlyWalletConfig,
-        pubkey: Uint8Array
+        pubKey: Uint8Array
     ) {
         // Use provided arkProvider instance or create a new one from arkServerUrl
         const arkProvider =
@@ -204,19 +206,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // Generate tapscripts for offchain and boarding address
         const serverPubKey = hex.decode(info.signerPubkey).slice(1);
-        const bareVtxoTapscript = new DefaultVtxo.Script({
-            pubKey: pubkey,
+
+        const delegatePubKey = config.delegatorProvider
+            ? await config.delegatorProvider
+                  .getDelegateInfo()
+                  .then((info) => hex.decode(info.pubkey).slice(1))
+            : undefined;
+
+        const offchainTapscript = new DefaultVtxo.Script({
+            pubKey,
             serverPubKey,
             csvTimelock: exitTimelock,
+            delegatePubKey,
         });
         const boardingTapscript = new DefaultVtxo.Script({
-            pubKey: pubkey,
+            pubKey,
             serverPubKey,
             csvTimelock: boardingTimelock,
         });
-
-        // Save tapscripts
-        const offchainTapscript = bareVtxoTapscript;
 
         // Set up storage and repositories
         const storage = config.storage || new InMemoryStorageAdapter();
@@ -236,6 +243,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
+            delegatorProvider: config.delegatorProvider,
         };
     }
 
@@ -257,7 +265,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.boardingTapscript,
             setup.dustAmount,
             setup.walletRepository,
-            setup.contractRepository
+            setup.contractRepository,
+            setup.delegatorProvider
         );
     }
 
