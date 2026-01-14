@@ -2209,5 +2209,82 @@
                 "type": "RECEIVED"
             }
         ]
+    },
+    {
+        "name": "bob-exits-to-alice",
+        "vtxos": [
+            {
+                "txid": "c0e597dfdf8161dfa056eddddc496865195306f556fce3e0410822f855ffe3d8",
+                "vout": 0,
+                "value": 5000,
+                "status": {
+                    "confirmed": true,
+                    "isLeaf": true
+                },
+                "virtualStatus": {
+                    "state": "settled",
+                    "commitmentTxIds": [
+                        "66c455c8eca6dc49fd1ec56378776c8c52a648f114cbe4bb340e83e5023a3bf9"
+                    ],
+                    "batchExpiry": 1768381801000
+                },
+                "spentBy": "3162f444710ef7380e416b02bae21a4212bc6dc093179d90cd1d732a1663a6c1",
+                "settledBy": "7244f18f3d9cb0faa970b12e41355cc1454b3caf9d4ae8e72653d7c5a9a83f3a",
+                "arkTxId": "",
+                "createdAt": "2026-01-14T08:52:57.000Z",
+                "isUnrolled": false,
+                "isSpent": true
+            },
+            {
+                "txid": "03b05204d2669f169ab7f9024c2ff527ff0a30a1dfffded419f0ddfbbc45c837",
+                "vout": 0,
+                "value": 5000,
+                "status": {
+                    "confirmed": false,
+                    "isLeaf": false
+                },
+                "virtualStatus": {
+                    "state": "preconfirmed",
+                    "commitmentTxIds": [
+                        "5d7d6a643d87f66055b60a43e729276698111c30ffe0661f31312daf49d70597"
+                    ],
+                    "batchExpiry": 1768381781000
+                },
+                "spentBy": "086e84f82c22a0df590860ae9f52bcd350b47e4b1d97180873579efb77758c96",
+                "settledBy": "66c455c8eca6dc49fd1ec56378776c8c52a648f114cbe4bb340e83e5023a3bf9",
+                "arkTxId": "",
+                "createdAt": "2026-01-14T08:52:47.000Z",
+                "isUnrolled": false,
+                "isSpent": true
+            }
+        ],
+        "allBoardingTxs": [],
+        "commitmentsToIgnore": [],
+        "expected": [
+            {
+                "amount": 5000,
+                "createdAt": 1768380777000,
+                "key": {
+                    "arkTxid": "",
+                    "boardingTxid": "",
+                    "commitmentTxid": "66c455c8eca6dc49fd1ec56378776c8c52a648f114cbe4bb340e83e5023a3bf9"
+                },
+                "settled": true,
+                "tag": "exit",
+                "type": "SENT"
+            },
+            {
+                "amount": 5000,
+                "createdAt": 1768380767000,
+                "key": {
+                    "arkTxid": "03b05204d2669f169ab7f9024c2ff527ff0a30a1dfffded419f0ddfbbc45c837",
+                    "boardingTxid": "",
+                    "commitmentTxid": ""
+                },
+                "settled": true,
+                "tag": "offchain",
+                "type": "RECEIVED"
+            }
+        ]
     }
 ]

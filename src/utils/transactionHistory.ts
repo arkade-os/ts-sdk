@@ -138,6 +138,21 @@ export function buildTransactionHistory(
                         createdAt: vtxo.createdAt.getTime(),
                     });
                 }
+                if (
+                    vtxo.value === settledAmount &&
+                    vtxo.settledBy &&
+                    vtxo.status.confirmed
+                ) {
+                    // full exit?
+                    sent.push({
+                        key: { ...txKey, commitmentTxid },
+                        tag: "exit",
+                        type: TxType.TxSent,
+                        amount: vtxo.value,
+                        settled: true,
+                        createdAt: vtxo.createdAt.getTime(),
+                    });
+                }
             }
         } else {
             // If it's not a renewal, it must be shown on the UI because it affects the balance.
