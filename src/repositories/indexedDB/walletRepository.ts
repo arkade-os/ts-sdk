@@ -15,6 +15,7 @@ import {
     serializeUtxo,
     deserializeVtxo,
     deserializeUtxo,
+    SerializedVtxo,
 } from "./db";
 
 /**
@@ -57,7 +58,8 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const transaction = db.transaction([STORE_VTXOS], "readonly");
                 const store = transaction.objectStore(STORE_VTXOS);
                 const index = store.index("address");
-                const request = index.getAll(address);
+                const request: IDBRequest<SerializedVtxo[]> =
+                    index.getAll(address);
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
@@ -84,7 +86,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
                 const promises = vtxos.map((vtxo) => {
                     return new Promise<void>((resolveItem, rejectItem) => {
-                        const serialized = serializeVtxo(vtxo);
+                        const serialized: SerializedVtxo = serializeVtxo(vtxo);
                         const item = {
                             address,
                             ...serialized,
