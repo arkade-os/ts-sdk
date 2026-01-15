@@ -29,7 +29,7 @@ export interface BaseWalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
-    storage?: StorageAdapter;
+    storage?: StorageConfig;
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
