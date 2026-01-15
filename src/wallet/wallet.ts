@@ -1582,6 +1582,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return { finalized, pending };
     }
 
+    async delegate(): Promise<void> {
+        const allSpendableCoins = await this.getVtxos({
+            withRecoverable: true,
+        });
+    }
+
     private prepareIntentProofInputs(
         coins: ExtendedCoin[]
     ): TransactionInput[] {
