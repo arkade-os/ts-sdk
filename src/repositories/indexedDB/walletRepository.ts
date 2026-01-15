@@ -271,27 +271,23 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 );
                 const store = transaction.objectStore(STORE_TRANSACTIONS);
 
-                const promises = txs.map((tx) => {
-                    return new Promise<void>((resolveItem, rejectItem) => {
-                        const item = {
-                            address,
-                            ...tx,
-                            keyBoardingTxid: tx.key.boardingTxid,
-                            keyCommitmentTxid: tx.key.commitmentTxid,
-                            keyArkTxid: tx.key.arkTxid,
-                        };
-                        const request = store.put(item);
-
-                        request.onerror = () => rejectItem(request.error);
-                        request.onsuccess = () => resolveItem();
-                    });
+                // Queue all put operations
+                txs.forEach((tx) => {
+                    const item = {
+                        address,
+                        ...tx,
+                        keyBoardingTxid: tx.key.boardingTxid,
+                        keyCommitmentTxid: tx.key.commitmentTxid,
+                        keyArkTxid: tx.key.arkTxid,
+                    };
+                    store.put(item);
                 });
 
-                Promise.all(promises)
-                    .then(() => resolve())
-                    .catch(reject);
-
+                // Handle transaction completion
+                transaction.oncomplete = () => resolve();
                 transaction.onerror = () => reject(transaction.error);
+                transaction.onabort = () =>
+                    reject(new Error("Transaction aborted"));
             });
         } catch (error) {
             console.error(
