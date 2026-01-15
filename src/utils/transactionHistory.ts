@@ -1,7 +1,7 @@
 import { ArkTransaction, TxKey, TxType, VirtualCoin } from "../wallet";
 
 type ExtendedArkTransaction = ArkTransaction & {
-    tag: "offchain" | "onchain" | "boarding" | "exit" | "batch";
+    tag: "offchain" | "boarding" | "exit" | "batch";
 };
 const txKey: TxKey = {
     commitmentTxid: "",

@@ -1,11 +1,6 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect } from "vitest";
 import transactionHistory from "./fixtures/transaction_history.json";
-import {
-    VirtualCoin,
-    TxType,
-    isSpendable,
-    ArkTransaction,
-} from "../src/wallet";
+import { VirtualCoin, TxType, ArkTransaction } from "../src/wallet";
 import { buildTransactionHistory } from "../src/utils/transactionHistory";
 
 describe("buildTransactionHistory", () => {
