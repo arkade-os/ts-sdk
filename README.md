@@ -166,7 +166,6 @@ const boardingUtxos = await wallet.getBoardingUtxos()
 const txid = await wallet.sendBitcoin({
   address: 'ark1qq4...', // ark address
   amount: 50000,         // in satoshis
-  feeRate: 1             // optional, in sats/vbyte
 })
 ```
 
