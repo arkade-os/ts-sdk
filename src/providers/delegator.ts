@@ -9,8 +9,8 @@ export interface DelegateInfo {
 
 export interface DelegatorProvider {
     delegate(
-        intent: SignedIntent<Intent.Message>,
-        forfeit: string
+        intent: SignedIntent<Intent.RegisterMessage>,
+        forfeits: string[]
     ): Promise<void>;
     getDelegateInfo(): Promise<DelegateInfo>;
 }
@@ -21,7 +21,7 @@ export interface DelegatorProvider {
  * ```typescript
  * const provider = new RestDelegatorProvider('https://delegator.example.com');
  * const info = await provider.getDelegateInfo();
- * await provider.delegate(intent, forfeit);
+ * await provider.delegate(intent, forfeits);
  * ```
  */
 export class RestDelegatorProvider implements DelegatorProvider {
@@ -29,7 +29,7 @@ export class RestDelegatorProvider implements DelegatorProvider {
 
     async delegate(
         intent: SignedIntent<Intent.RegisterMessage>,
-        forfeit: string
+        forfeits: string[]
     ): Promise<void> {
         const url = `${this.url}/api/v1/delegate`;
         const response = await fetch(url, {
@@ -42,7 +42,7 @@ export class RestDelegatorProvider implements DelegatorProvider {
                     proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
                 },
-                forfeit,
+                forfeits,
             }),
         });
 

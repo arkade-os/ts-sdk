@@ -30,7 +30,7 @@ import {
 } from "./utils";
 import { hex, base64 } from "@scure/base";
 
-describe("Ark integration tests", () => {
+describe("Common", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     for (const { name, factory } of [
@@ -1037,4 +1037,37 @@ describe("Ark integration tests", () => {
             });
         });
     }
+});
+
+describe("Delegate", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    it("should delegate renewal of vtxos", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWalletWithDelegate();
+        const boardingAddress = await alice.wallet.getBoardingAddress();
+        execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        await alice.wallet.settle();
+
+        let vtxos = await alice.wallet.getVtxos();
+        expect(vtxos).toHaveLength(1);
+        const vtxoBeforeDelegate = vtxos[0];
+        expect(vtxoBeforeDelegate.txid).toBeDefined();
+
+        await alice.wallet.delegate(
+            [vtxoBeforeDelegate],
+            new Date(Date.now() + 1000)
+        );
+
+        // wait for the delegate to be completed
+        await new Promise((resolve) => setTimeout(resolve, 10000));
+
+        vtxos = await alice.wallet.getVtxos();
+        expect(vtxos).toHaveLength(1);
+
+        const vtxoAfterDelegate = vtxos[0];
+        expect(vtxoAfterDelegate.txid).not.toBe(vtxoBeforeDelegate.txid);
+        expect(vtxoAfterDelegate.value).toBe(vtxoBeforeDelegate.value);
+    });
 });
