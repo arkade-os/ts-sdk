@@ -74,7 +74,6 @@ const dbCache = new Map<string, IDBDatabase>();
 export async function openDatabase(
     dbName: string = DEFAULT_DB_NAME
 ): Promise<IDBDatabase> {
-    console.log(`openDatabase ${dbName} ${DB_VERSION}`);
     // Return cached instance if available
     if (dbCache.has(dbName)) {
         const cached = dbCache.get(dbName)!;
@@ -93,7 +92,6 @@ export async function openDatabase(
     }
 
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        console.log(`open database ${dbName} with version ${DB_VERSION}`);
         const request = globalObject.indexedDB.open(dbName, DB_VERSION);
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
