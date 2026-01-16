@@ -33,6 +33,7 @@ import {
     TxKey,
     GetVtxosFilter,
     TapLeaves,
+    StorageConfig,
     isSpendable,
     isSubdust,
     isRecoverable,
@@ -152,6 +153,9 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
+import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
+import { migrateWalletRepository } from "./repositories/migration";
 
 export * from "./arkfee";
 
@@ -227,6 +231,9 @@ export {
     // Repositories
     WalletRepositoryImpl,
     ContractRepositoryImpl,
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
+    migrateWalletRepository,
 
     // Intent proof
     Intent,
@@ -349,4 +356,7 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Storage
+    StorageConfig,
 };

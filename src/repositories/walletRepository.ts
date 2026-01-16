@@ -68,13 +68,11 @@ export interface WalletRepository {
     // VTXO management
     getVtxos(address: string): Promise<ExtendedVirtualCoin[]>;
     saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void>;
-    removeVtxo(address: string, vtxoId: string): Promise<void>;
     clearVtxos(address: string): Promise<void>;
 
     // UTXO management
     getUtxos(address: string): Promise<ExtendedCoin[]>;
     saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void>;
-    removeUtxo(address: string, utxoId: string): Promise<void>;
     clearUtxos(address: string): Promise<void>;
 
     // Transaction history
@@ -131,18 +129,6 @@ export class WalletRepositoryImpl implements WalletRepository {
         );
     }
 
-    async removeVtxo(address: string, vtxoId: string): Promise<void> {
-        const vtxos = await this.getVtxos(address);
-        const [txid, vout] = vtxoId.split(":");
-        const filtered = vtxos.filter(
-            (v) => !(v.txid === txid && v.vout === parseInt(vout, 10))
-        );
-        await this.storage.setItem(
-            getVtxosStorageKey(address),
-            JSON.stringify(filtered.map(serializeVtxo))
-        );
-    }
-
     async clearVtxos(address: string): Promise<void> {
         await this.storage.removeItem(getVtxosStorageKey(address));
     }
@@ -181,18 +167,6 @@ export class WalletRepositoryImpl implements WalletRepository {
         );
     }
 
-    async removeUtxo(address: string, utxoId: string): Promise<void> {
-        const utxos = await this.getUtxos(address);
-        const [txid, vout] = utxoId.split(":");
-        const filtered = utxos.filter(
-            (v) => !(v.txid === txid && v.vout === parseInt(vout, 10))
-        );
-        await this.storage.setItem(
-            getUtxosStorageKey(address),
-            JSON.stringify(filtered.map(serializeUtxo))
-        );
-    }
-
     async clearUtxos(address: string): Promise<void> {
         await this.storage.removeItem(getUtxosStorageKey(address));
     }
@@ -221,7 +195,10 @@ export class WalletRepositoryImpl implements WalletRepository {
         const storedTransactions = await this.getTransactionHistory(address);
         for (const tx of txs) {
             const existing = storedTransactions.findIndex(
-                (t) => t.key === tx.key
+                (t) =>
+                    t.key.boardingTxid === tx.key.boardingTxid &&
+                    t.key.commitmentTxid === tx.key.commitmentTxid &&
+                    t.key.arkTxid === tx.key.arkTxid
             );
             if (existing !== -1) {
                 storedTransactions[existing] = tx;
