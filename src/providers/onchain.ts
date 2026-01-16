@@ -284,24 +284,45 @@ export class EsploraProvider implements OnchainProvider {
         time: number;
         hash: string;
     }> {
-        const tipBlocks = await fetch(`${this.baseUrl}/blocks/tip`);
-        if (!tipBlocks.ok) {
-            throw new Error(`Failed to get chain tip: ${tipBlocks.statusText}`);
+        const heightResponse = await fetch(`${this.baseUrl}/blocks/tip/height`);
+        if (!heightResponse.ok) {
+            throw new Error(
+                `Failed to get chain tip height: ${heightResponse.statusText}`
+            );
         }
 
-        const tip = await tipBlocks.json();
-        if (!isValidBlocksTip(tip)) {
-            throw new Error(`Invalid chain tip: ${JSON.stringify(tip)}`);
+        const heightText = await heightResponse.text();
+        const height = parseInt(heightText, 10);
+        if (isNaN(height)) {
+            throw new Error(`Invalid chain tip height: ${heightText}`);
         }
 
-        if (tip.length === 0) {
-            throw new Error("No chain tip found");
+        const blockResponse = await fetch(
+            `${this.baseUrl}/block-height/${height}`
+        );
+        if (!blockResponse.ok) {
+            throw new Error(
+                `Failed to get block at height ${height}: ${blockResponse.statusText}`
+            );
         }
 
-        const hash = tip[0].id;
+        const hash = await blockResponse.text();
+
+        const blockDataResponse = await fetch(`${this.baseUrl}/block/${hash}`);
+        if (!blockDataResponse.ok) {
+            throw new Error(
+                `Failed to get block data for ${hash}: ${blockDataResponse.statusText}`
+            );
+        }
+
+        const blockData = await blockDataResponse.json();
+        if (!isValidBlock(blockData)) {
+            throw new Error(`Invalid block data: ${JSON.stringify(blockData)}`);
+        }
+
         return {
-            height: tip[0].height,
-            time: tip[0].mediantime,
+            height,
+            time: blockData.mediantime,
             hash,
         };
     }
@@ -344,21 +365,12 @@ export class EsploraProvider implements OnchainProvider {
     }
 }
 
-function isValidBlocksTip(
-    tip: any
-): tip is { id: string; height: number; mediantime: number }[] {
+function isValidBlock(block: any): block is { mediantime: number } {
     return (
-        Array.isArray(tip) &&
-        tip.every((t) => {
-            t &&
-                typeof t === "object" &&
-                typeof t.id === "string" &&
-                t.id.length > 0 &&
-                typeof t.height === "number" &&
-                t.height >= 0 &&
-                typeof t.mediantime === "number" &&
-                t.mediantime > 0;
-        })
+        block &&
+        typeof block === "object" &&
+        typeof block.mediantime === "number" &&
+        block.mediantime > 0
     );
 }
 
