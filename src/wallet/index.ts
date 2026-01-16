@@ -148,6 +148,7 @@ export interface SettleParams {
 
 export interface Status {
     confirmed: boolean;
+    isLeaf?: boolean;
     block_height?: number;
     block_hash?: string;
     block_time?: number;

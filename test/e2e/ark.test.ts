@@ -346,6 +346,7 @@ describe("Common", () => {
                     });
 
                     // Wait for the transaction to be processed
+                    execCommand("nigiri rpc --generate 1");
                     await new Promise((resolve) => setTimeout(resolve, 5000));
 
                     // Verify Bob's history
@@ -380,6 +381,7 @@ describe("Common", () => {
                     expect(bobExitTxid).toBeDefined();
 
                     // Wait for the transaction to be processed
+                    execCommand("nigiri rpc --generate 1");
                     await new Promise((resolve) => setTimeout(resolve, 5000));
 
                     // Check bob's history
