@@ -42,7 +42,7 @@ const walletRepositoryImplementations: Array<
         name: "WalletRepositoryImpl (IndexedDBStorage)",
         factory: async () => {
             const dbName = getUniqueDbName("wallet-repo");
-            const storage = new IndexedDBStorageAdapter(dbName, 1);
+            const storage = new IndexedDBStorageAdapter(dbName);
             return new WalletRepositoryImpl(storage);
         },
     },
@@ -69,7 +69,7 @@ const contractRepositoryImplementations: Array<
         name: "ContractRepositoryImpl (IndexedDBStorage)",
         factory: async () => {
             const dbName = getUniqueDbName("contract-repo");
-            const storage = new IndexedDBStorageAdapter(dbName, 1);
+            const storage = new IndexedDBStorageAdapter(dbName);
             return new ContractRepositoryImpl(storage);
         },
     },

@@ -384,13 +384,13 @@ const storage = new FileSystemStorageAdapter('./wallet-data')
 // Browser/PWA
 const storage = new LocalStorageAdapter()
 // or for advanced features:
-const storage = new IndexedDBStorageAdapter('my-app', 1)
+const storage = new IndexedDBStorageAdapter('my-app', 2)
 
-// React Native  
+// React Native
 const storage = new AsyncStorageAdapter()
 
 // Service Worker
-const storage = new IndexedDBStorageAdapter('service-worker-wallet', 1)
+const storage = new IndexedDBStorageAdapter('service-worker-wallet', 2)
 
 // Load identity from storage (simple pattern everywhere)
 const privateKeyHex = await storage.getItem('private-key')
