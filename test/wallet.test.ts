@@ -273,7 +273,7 @@ describe("Wallet", () => {
             });
             mockFetch.mockResolvedValueOnce({
                 ok: true,
-                json: () => Promise.resolve(mockFeeRate),
+                json: () => Promise.resolve({ "1": mockFeeRate }),
             });
 
             const wallet = await OnchainWallet.create(
@@ -314,7 +314,7 @@ describe("Wallet", () => {
             });
             mockFetch.mockResolvedValueOnce({
                 ok: true,
-                json: () => Promise.resolve(mockFeeRate),
+                json: () => Promise.resolve({ "1": mockFeeRate }),
             });
             mockFetch.mockResolvedValueOnce({
                 ok: true,
@@ -341,7 +341,7 @@ describe("Wallet", () => {
             });
             mockFetch.mockResolvedValueOnce({
                 ok: true,
-                json: () => Promise.resolve(mockFeeRate),
+                json: () => Promise.resolve({ "1": mockFeeRate }),
             });
             mockFetch.mockResolvedValueOnce({
                 ok: true,
@@ -384,7 +384,7 @@ describe("Wallet", () => {
                 });
                 mockFetch.mockResolvedValueOnce({
                     ok: true,
-                    json: () => Promise.resolve(feeRate),
+                    json: () => Promise.resolve({ "1": feeRate }),
                 });
                 mockFetch.mockResolvedValueOnce({
                     ok: true,
@@ -455,7 +455,7 @@ describe("Wallet", () => {
             });
             mockFetch.mockResolvedValueOnce({
                 ok: true,
-                json: () => Promise.resolve(feeRate),
+                json: () => Promise.resolve({ "1": feeRate }),
             });
             mockFetch.mockResolvedValueOnce({
                 ok: true,
