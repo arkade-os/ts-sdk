@@ -6,6 +6,13 @@ export type VSize = {
     fee(feeRate: bigint): bigint;
 };
 
+/**
+ * Calculates the byte size required to store a variable-length integer (VarInt).
+ * Bitcoin uses VarInts to compact integer data (like array lengths).
+ *
+ * @param n - The integer value to check
+ * @returns The size in bytes (1, 3, 5, or 9)
+ */
 const getVarIntSize = (n: number): number => {
     if (n < 0xfd) return 1;
     if (n < 0xffff) return 3;
