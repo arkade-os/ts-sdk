@@ -153,7 +153,10 @@ import {
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
-import { migrateWalletRepository } from "./repositories/migrations/fromStorageAdapter";
+import {
+    migrateWalletRepository,
+    migrateContractRepository,
+} from "./repositories/migrations/fromStorageAdapter";
 
 export * from "./arkfee";
 
@@ -230,6 +233,7 @@ export {
     IndexedDBWalletRepository,
     IndexedDBContractRepository,
     migrateWalletRepository,
+    migrateContractRepository,
 
     // Intent proof
     Intent,

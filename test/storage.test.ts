@@ -8,7 +8,10 @@ import {
 import { ContractRepository } from "../src/repositories/contractRepository";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
-import { migrateWalletRepository } from "../src/repositories/migrations/fromStorageAdapter";
+import {
+    migrateWalletRepository,
+    migrateContractRepository,
+} from "../src/repositories/migrations/fromStorageAdapter";
 import type {
     ExtendedVirtualCoin,
     ExtendedCoin,
@@ -20,6 +23,7 @@ import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
 import { WalletRepositoryImpl } from "../src/repositories/migrations/walletRepositoryImpl";
 import { ContractRepositoryImpl } from "../src/repositories/migrations/contractRepositoryImpl";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
+import { readFile } from "node:fs/promises";
 
 type RepositoryTestItem<T> = {
     name: string;
@@ -674,6 +678,61 @@ describe("IndexedDB migrations", () => {
         expect(walletState2).not.toBeNull();
         expect(walletState2?.settings?.theme).toBe("dark");
         expect(walletState2?.lastSyncTime).toBe(walletState.lastSyncTime);
+    });
+
+    it("should migrate contract data from StorageAdapter to IndexedDB format", async () => {
+        const fixturePath = new URL(
+            "./fixtures/v1-db-dump.json",
+            import.meta.url
+        );
+        const fixtureRaw = await readFile(fixturePath, "utf8");
+        const fixture = JSON.parse(fixtureRaw) as Record<string, string>;
+
+        const storage = new InMemoryStorageAdapter();
+        await Promise.all(
+            Object.entries(fixture).map(([key, value]) =>
+                storage.setItem(key, value)
+            )
+        );
+        await storage.setItem(
+            "contract:test-contract:metadata",
+            JSON.stringify({ name: "example" })
+        );
+
+        const dbName = getUniqueDbName("contract-migration");
+        await migrateContractRepository(storage, dbName);
+
+        const repo = await IndexedDBContractRepository.create(dbName);
+
+        const reverseSwapsFixture = JSON.parse(
+            fixture["collection:reverseSwaps"]
+        );
+        const reverseSwaps = await repo.getContractCollection("reverseSwaps");
+        expect(reverseSwaps).toEqual(reverseSwapsFixture);
+
+        const commitmentTxsFixture = JSON.parse(
+            fixture["collection:commitmentTxs"]
+        );
+        const commitmentTxs = await repo.getContractCollection("commitmentTxs");
+        expect(commitmentTxs).toEqual(commitmentTxsFixture);
+
+        const submarineSwapsFixture = JSON.parse(
+            fixture["collection:submarineSwaps"]
+        );
+        const submarineSwaps =
+            await repo.getContractCollection("submarineSwaps");
+        expect(submarineSwaps).toEqual(submarineSwapsFixture);
+
+        const contractData = await repo.getContractData(
+            "test-contract",
+            "metadata"
+        );
+        expect(contractData).toEqual({ name: "example" });
+
+        const migration = await storage.getItem(
+            "migration-from-storage-adapter-contract"
+        );
+        expect(migration).toBe("done");
     });
 
     it("should not migrate if migration already completed", async () => {

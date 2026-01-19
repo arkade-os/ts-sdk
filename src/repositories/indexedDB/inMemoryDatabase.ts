@@ -1,6 +1,6 @@
 import {
-    STORE_COLLECTIONS,
-    STORE_CONTRACT_DATA,
+    STORE_CONTRACT_COLLECTIONS,
+    STORE_CONTRACTS,
     STORE_TRANSACTIONS,
     STORE_UTXOS,
     STORE_VTXOS,
@@ -12,8 +12,8 @@ type StoreName =
     | typeof STORE_UTXOS
     | typeof STORE_TRANSACTIONS
     | typeof STORE_WALLET_STATE
-    | typeof STORE_CONTRACT_DATA
-    | typeof STORE_COLLECTIONS;
+    | typeof STORE_CONTRACTS
+    | typeof STORE_CONTRACT_COLLECTIONS;
 
 type StoreKeyPath = string | string[];
 
@@ -27,8 +27,8 @@ const storeKeyPaths: Record<StoreName, StoreKeyPath> = {
         "keyArkTxid",
     ],
     [STORE_WALLET_STATE]: "key",
-    [STORE_CONTRACT_DATA]: ["contractId", "key"],
-    [STORE_COLLECTIONS]: "contractType",
+    [STORE_CONTRACTS]: "key",
+    [STORE_CONTRACT_COLLECTIONS]: "key",
 };
 
 export class InMemoryDatabase {
@@ -37,8 +37,8 @@ export class InMemoryDatabase {
         [STORE_UTXOS]: new Map(),
         [STORE_TRANSACTIONS]: new Map(),
         [STORE_WALLET_STATE]: new Map(),
-        [STORE_CONTRACT_DATA]: new Map(),
-        [STORE_COLLECTIONS]: new Map(),
+        [STORE_CONTRACTS]: new Map(),
+        [STORE_CONTRACT_COLLECTIONS]: new Map(),
     };
 
     put<T extends Record<string, any>>(

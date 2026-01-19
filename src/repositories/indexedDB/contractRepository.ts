@@ -3,8 +3,8 @@ import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 import {
     openDatabase,
     closeDatabase,
-    STORE_CONTRACT_DATA,
-    STORE_COLLECTIONS,
+    STORE_CONTRACTS,
+    STORE_CONTRACT_COLLECTIONS,
 } from "./db";
 import { InMemoryDatabase } from "./inMemoryDatabase";
 
@@ -34,6 +34,10 @@ type ContractStore = {
     ) => Promise<void>;
 };
 
+const contractKey = (contractId: string, key: string) =>
+    `contract:${contractId}:${key}`;
+const collectionKey = (contractType: string) => `collection:${contractType}`;
+
 class IndexedDbContractStore implements ContractStore {
     private db: IDBDatabase | null = null;
 
@@ -58,19 +62,22 @@ class IndexedDbContractStore implements ContractStore {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_CONTRACT_DATA],
+                    [STORE_CONTRACTS],
                     "readonly"
                 );
-                const store = transaction.objectStore(STORE_CONTRACT_DATA);
-                const request = store.get([contractId, key]);
+                const store = transaction.objectStore(STORE_CONTRACTS);
+                const request = store.get(contractKey(contractId, key));
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
-                    const result = request.result;
-                    if (result && result.data !== undefined) {
-                        resolve(result.data as T);
-                    } else {
-                        resolve(null);
+                    const result = request.result as
+                        | { value?: string }
+                        | undefined;
+                    if (!result?.value) return resolve(null);
+                    try {
+                        resolve(JSON.parse(result.value) as T);
+                    } catch (error) {
+                        reject(error);
                     }
                 };
             });
@@ -92,16 +99,14 @@ class IndexedDbContractStore implements ContractStore {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_CONTRACT_DATA],
+                    [STORE_CONTRACTS],
                     "readwrite"
                 );
-                const store = transaction.objectStore(STORE_CONTRACT_DATA);
-                const item = {
-                    contractId,
-                    key,
-                    data,
-                };
-                const request = store.put(item);
+                const store = transaction.objectStore(STORE_CONTRACTS);
+                const request = store.put({
+                    key: contractKey(contractId, key),
+                    value: JSON.stringify(data),
+                });
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => resolve();
@@ -120,11 +125,11 @@ class IndexedDbContractStore implements ContractStore {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_CONTRACT_DATA],
+                    [STORE_CONTRACTS],
                     "readwrite"
                 );
-                const store = transaction.objectStore(STORE_CONTRACT_DATA);
-                const request = store.delete([contractId, key]);
+                const store = transaction.objectStore(STORE_CONTRACTS);
+                const request = store.delete(contractKey(contractId, key));
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => resolve();
@@ -143,13 +148,14 @@ class IndexedDbContractStore implements ContractStore {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_CONTRACT_DATA, STORE_COLLECTIONS],
+                    [STORE_CONTRACTS, STORE_CONTRACT_COLLECTIONS],
                     "readwrite"
                 );
                 const contractDataStore =
-                    transaction.objectStore(STORE_CONTRACT_DATA);
-                const collectionsStore =
-                    transaction.objectStore(STORE_COLLECTIONS);
+                    transaction.objectStore(STORE_CONTRACTS);
+                const collectionsStore = transaction.objectStore(
+                    STORE_CONTRACT_COLLECTIONS
+                );
 
                 const contractDataRequest = contractDataStore.clear();
                 const collectionsRequest = collectionsStore.clear();
@@ -183,19 +189,24 @@ class IndexedDbContractStore implements ContractStore {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_COLLECTIONS],
+                    [STORE_CONTRACT_COLLECTIONS],
                     "readonly"
                 );
-                const store = transaction.objectStore(STORE_COLLECTIONS);
-                const request = store.get(contractType);
+                const store = transaction.objectStore(
+                    STORE_CONTRACT_COLLECTIONS
+                );
+                const request = store.get(collectionKey(contractType));
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
-                    const result = request.result;
-                    if (result && result.items) {
-                        resolve(result.items as ReadonlyArray<T>);
-                    } else {
-                        resolve([]);
+                    const result = request.result as
+                        | { value?: string }
+                        | undefined;
+                    if (!result?.value) return resolve([]);
+                    try {
+                        resolve(JSON.parse(result.value) as ReadonlyArray<T>);
+                    } catch (error) {
+                        reject(error);
                     }
                 };
             });
@@ -222,41 +233,33 @@ class IndexedDbContractStore implements ContractStore {
         }
 
         try {
+            const collection =
+                await this.getContractCollection<T>(contractType);
+            const existingIndex = collection.findIndex(
+                (i) => i[idField] === itemId
+            );
+            const updated =
+                existingIndex !== -1
+                    ? collection.map((entry, index) =>
+                          index === existingIndex ? item : entry
+                      )
+                    : [...collection, item];
+
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_COLLECTIONS],
+                    [STORE_CONTRACT_COLLECTIONS],
                     "readwrite"
                 );
-                const store = transaction.objectStore(STORE_COLLECTIONS);
-                const getRequest = store.get(contractType);
-
-                getRequest.onsuccess = () => {
-                    const existing = getRequest.result;
-                    let collection: T[] = existing?.items || [];
-
-                    // Find existing item index
-                    const existingIndex = collection.findIndex(
-                        (i) => i[idField] === itemId
-                    );
-
-                    // Update or add item
-                    if (existingIndex !== -1) {
-                        collection[existingIndex] = item;
-                    } else {
-                        collection = [...collection, item];
-                    }
-
-                    const putRequest = store.put({
-                        contractType,
-                        items: collection,
-                    });
-
-                    putRequest.onsuccess = () => resolve();
-                    putRequest.onerror = () => reject(putRequest.error);
-                };
-
-                getRequest.onerror = () => reject(getRequest.error);
+                const store = transaction.objectStore(
+                    STORE_CONTRACT_COLLECTIONS
+                );
+                const request = store.put({
+                    key: collectionKey(contractType),
+                    value: JSON.stringify(updated),
+                });
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
             });
         } catch (error) {
             console.error(
@@ -278,34 +281,25 @@ class IndexedDbContractStore implements ContractStore {
         }
 
         try {
+            const collection =
+                await this.getContractCollection<T>(contractType);
+            const filtered = collection.filter((item) => item[idField] !== id);
+
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_COLLECTIONS],
+                    [STORE_CONTRACT_COLLECTIONS],
                     "readwrite"
                 );
-                const store = transaction.objectStore(STORE_COLLECTIONS);
-                const getRequest = store.get(contractType);
-
-                getRequest.onsuccess = () => {
-                    const existing = getRequest.result;
-                    let collection: T[] = existing?.items || [];
-
-                    // Filter out the item with the specified id
-                    collection = collection.filter(
-                        (item) => item[idField] !== id
-                    );
-
-                    const putRequest = store.put({
-                        contractType,
-                        items: collection,
-                    });
-
-                    putRequest.onsuccess = () => resolve();
-                    putRequest.onerror = () => reject(putRequest.error);
-                };
-
-                getRequest.onerror = () => reject(getRequest.error);
+                const store = transaction.objectStore(
+                    STORE_CONTRACT_COLLECTIONS
+                );
+                const request = store.put({
+                    key: collectionKey(contractType),
+                    value: JSON.stringify(filtered),
+                });
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
             });
         } catch (error) {
             console.error(
@@ -335,11 +329,12 @@ class InMemoryContractStore implements ContractStore {
         key: string
     ): Promise<T | null> {
         const db = this.getDb();
-        const result = db.get<{ data?: T }>(STORE_CONTRACT_DATA, [
-            contractId,
-            key,
-        ]);
-        return result?.data ?? null;
+        const result = db.get<{ value?: string }>(
+            STORE_CONTRACTS,
+            contractKey(contractId, key)
+        );
+        if (!result?.value) return null;
+        return JSON.parse(result.value) as T;
     }
 
     async setContractData<T>(
@@ -348,29 +343,33 @@ class InMemoryContractStore implements ContractStore {
         data: T
     ): Promise<void> {
         const db = this.getDb();
-        db.put(STORE_CONTRACT_DATA, { contractId, key, data });
+        db.put(STORE_CONTRACTS, {
+            key: contractKey(contractId, key),
+            value: JSON.stringify(data),
+        });
     }
 
     async deleteContractData(contractId: string, key: string): Promise<void> {
         const db = this.getDb();
-        db.delete(STORE_CONTRACT_DATA, [contractId, key]);
+        db.delete(STORE_CONTRACTS, contractKey(contractId, key));
     }
 
     async clearContractData(): Promise<void> {
         const db = this.getDb();
-        db.clear(STORE_CONTRACT_DATA);
-        db.clear(STORE_COLLECTIONS);
+        db.clear(STORE_CONTRACTS);
+        db.clear(STORE_CONTRACT_COLLECTIONS);
     }
 
     async getContractCollection<T>(
         contractType: string
     ): Promise<ReadonlyArray<T>> {
         const db = this.getDb();
-        const result = db.get<{ items?: ReadonlyArray<T> }>(
-            STORE_COLLECTIONS,
-            contractType
+        const result = db.get<{ value?: string }>(
+            STORE_CONTRACT_COLLECTIONS,
+            collectionKey(contractType)
         );
-        return result?.items ?? [];
+        if (!result?.value) return [];
+        return JSON.parse(result.value) as ReadonlyArray<T>;
     }
 
     async saveToContractCollection<T, K extends keyof T>(
@@ -387,9 +386,7 @@ class InMemoryContractStore implements ContractStore {
         }
 
         const db = this.getDb();
-        const existing =
-            db.get<{ items?: T[] }>(STORE_COLLECTIONS, contractType)?.items ||
-            [];
+        const existing = await this.getContractCollection<T>(contractType);
         const existingIndex = existing.findIndex((i) => i[idField] === itemId);
         const collection =
             existingIndex !== -1
@@ -397,7 +394,10 @@ class InMemoryContractStore implements ContractStore {
                       index === existingIndex ? item : entry
                   )
                 : [...existing, item];
-        db.put(STORE_COLLECTIONS, { contractType, items: collection });
+        db.put(STORE_CONTRACT_COLLECTIONS, {
+            key: collectionKey(contractType),
+            value: JSON.stringify(collection),
+        });
     }
 
     async removeFromContractCollection<T, K extends keyof T>(
@@ -411,11 +411,12 @@ class InMemoryContractStore implements ContractStore {
         }
 
         const db = this.getDb();
-        const existing =
-            db.get<{ items?: T[] }>(STORE_COLLECTIONS, contractType)?.items ||
-            [];
+        const existing = await this.getContractCollection<T>(contractType);
         const collection = existing.filter((item) => item[idField] !== id);
-        db.put(STORE_COLLECTIONS, { contractType, items: collection });
+        db.put(STORE_CONTRACT_COLLECTIONS, {
+            key: collectionKey(contractType),
+            value: JSON.stringify(collection),
+        });
     }
 
     private getDb(): InMemoryDatabase {
@@ -429,21 +430,8 @@ class InMemoryContractStore implements ContractStore {
 /**
  * IndexedDB-based implementation of ContractRepository.
  *
- * This repository stores contract data and collections in IndexedDB with optimized
- * indexes for complex queries. It supports automatic migration from the legacy storage
- * format (version 1) to the new indexed format (version 2).
- *
- * @example
- * ```typescript
- * const repository = new IndexedDBContractRepository('my-wallet-db');
- * await repository.setContractData('contract-id', 'key', data);
- * const data = await repository.getContractData('contract-id', 'key');
- * ```
- */
-/**
- * IndexedDB-based implementation of ContractRepository.
- *
  * Pass `{ inMemory: true }` to use a simple in-memory store (per instance).
+ * Data is stored as JSON strings in key/value stores.
  */
 export class IndexedDBContractRepository implements ContractRepository {
     private readonly store: ContractStore;

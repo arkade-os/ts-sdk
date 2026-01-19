@@ -521,19 +521,6 @@ class InMemoryWalletStore implements WalletStore {
 /**
  * IndexedDB-based implementation of WalletRepository.
  *
- * This repository stores wallet data (VTXOs, UTXOs, transactions, and wallet state)
- * in IndexedDB with optimized indexes for complex queries. It supports automatic
- * migration from the legacy storage format (version 1) to the new indexed format (version 2).
- *
- * @example
- * ```typescript
- * const repository = new IndexedDBWalletRepository('my-wallet-db');
- * const vtxos = await repository.getVtxos(address);
- * ```
- */
-/**
- * IndexedDB-based implementation of WalletRepository.
- *
  * Pass `{ inMemory: true }` to use a simple in-memory store (per instance).
  */
 export class IndexedDBWalletRepository implements WalletRepository {

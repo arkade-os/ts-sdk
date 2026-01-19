@@ -3,8 +3,8 @@ export const STORE_VTXOS = "vtxos";
 export const STORE_UTXOS = "utxos";
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
-export const STORE_CONTRACT_DATA = "contractData";
-export const STORE_COLLECTIONS = "collections";
+export const STORE_CONTRACTS = "contracts";
+export const STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 export const DB_VERSION = 2;
 
 export function initDatabase(db: IDBDatabase): IDBDatabase {
@@ -139,21 +139,15 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
     }
 
     // Create contract stores
-    if (!db.objectStoreNames.contains(STORE_CONTRACT_DATA)) {
-        const contractDataStore = db.createObjectStore(STORE_CONTRACT_DATA, {
-            keyPath: ["contractId", "key"],
+    if (!db.objectStoreNames.contains(STORE_CONTRACTS)) {
+        db.createObjectStore(STORE_CONTRACTS, {
+            keyPath: "key",
         });
-
-        if (!contractDataStore.indexNames.contains("contractId")) {
-            contractDataStore.createIndex("contractId", "contractId", {
-                unique: false,
-            });
-        }
     }
 
-    if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
-        db.createObjectStore(STORE_COLLECTIONS, {
-            keyPath: "contractType",
+    if (!db.objectStoreNames.contains(STORE_CONTRACT_COLLECTIONS)) {
+        db.createObjectStore(STORE_CONTRACT_COLLECTIONS, {
+            keyPath: "key",
         });
     }
     return db;

@@ -5,8 +5,8 @@ import { TaprootControlBlock } from "@scure/btc-signer";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 import {
     DB_VERSION,
-    STORE_COLLECTIONS,
-    STORE_CONTRACT_DATA,
+    STORE_CONTRACTS,
+    STORE_CONTRACT_COLLECTIONS,
     STORE_TRANSACTIONS,
     STORE_UTXOS,
     STORE_VTXOS,
@@ -37,8 +37,8 @@ export {
     STORE_UTXOS,
     STORE_TRANSACTIONS,
     STORE_WALLET_STATE,
-    STORE_CONTRACT_DATA,
-    STORE_COLLECTIONS,
+    STORE_CONTRACTS,
+    STORE_CONTRACT_COLLECTIONS,
     DB_VERSION,
 };
 
