@@ -15,8 +15,8 @@ export type VSize = {
  */
 const getVarIntSize = (n: number): number => {
     if (n < 0xfd) return 1;
-    if (n < 0xffff) return 3;
-    if (n < 0xffffffff) return 5;
+    if (n <= 0xffff) return 3;
+    if (n <= 0xffffffff) return 5;
     return 9;
 };
 
