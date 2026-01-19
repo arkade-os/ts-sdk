@@ -15,42 +15,37 @@ const getTransactionsStorageKey = (address: string) => `tx:${address}`;
 const walletStateStorageKey = "wallet:state";
 
 // Utility functions for (de)serializing complex structures
-const toHex = (b: Uint8Array | undefined) => (b ? hex.encode(b) : undefined);
-
-const fromHex = (h: string | undefined) =>
-    h ? hex.decode(h) : (undefined as any);
-
 const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     ...v,
-    tapTree: toHex(v.tapTree),
+    tapTree: hex.encode(v.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),
-    extraWitness: v.extraWitness?.map(toHex),
+    extraWitness: v.extraWitness?.map(hex.encode),
 });
 
 const serializeUtxo = (u: ExtendedCoin) => ({
     ...u,
-    tapTree: toHex(u.tapTree),
+    tapTree: hex.encode(u.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(u.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(u.intentTapLeafScript),
-    extraWitness: u.extraWitness?.map(toHex),
+    extraWitness: u.extraWitness?.map(hex.encode),
 });
 
 const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
     ...o,
     createdAt: new Date(o.createdAt),
-    tapTree: fromHex(o.tapTree),
+    tapTree: hex.decode(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
-    extraWitness: o.extraWitness?.map(fromHex),
+    extraWitness: o.extraWitness?.map(hex.decode),
 });
 
 const deserializeUtxo = (o: any): ExtendedCoin => ({
     ...o,
-    tapTree: fromHex(o.tapTree),
+    tapTree: hex.decode(o.tapTree),
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
-    extraWitness: o.extraWitness?.map(fromHex),
+    extraWitness: o.extraWitness?.map(hex.decode),
 });
 
 const serializeTapLeaf = ([cb, s]: TapLeafScript) => ({
@@ -59,8 +54,8 @@ const serializeTapLeaf = ([cb, s]: TapLeafScript) => ({
 });
 
 const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
-    const cb = TaprootControlBlock.decode(fromHex(t.cb));
-    const s = fromHex(t.s);
+    const cb = TaprootControlBlock.decode(hex.decode(t.cb));
+    const s = hex.decode(t.s);
     return [cb, s];
 };
 

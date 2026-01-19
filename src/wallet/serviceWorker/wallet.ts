@@ -105,9 +105,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
         const { walletRepository, contractRepository } = options.storage ?? {
-            walletRepository: new IndexedDBWalletRepository(DEFAULT_DB_NAME),
-            contractRepository: new IndexedDBContractRepository(
-                DEFAULT_DB_NAME
+            walletRepository: await IndexedDBWalletRepository.create(
+                DEFAULT_DB_NAME,
+                { inMemory: true }
+            ),
+            contractRepository: await IndexedDBContractRepository.create(
+                DEFAULT_DB_NAME,
+                { inMemory: true }
             ),
         };
 
@@ -373,10 +377,11 @@ export class ServiceWorkerWallet
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
         const { walletRepository, contractRepository } = options.storage ?? {
-            walletRepository: new IndexedDBWalletRepository(DEFAULT_DB_NAME, {
-                inMemory: true,
-            }),
-            contractRepository: new IndexedDBContractRepository(
+            walletRepository: await IndexedDBWalletRepository.create(
+                DEFAULT_DB_NAME,
+                { inMemory: true }
+            ),
+            contractRepository: await IndexedDBContractRepository.create(
                 DEFAULT_DB_NAME,
                 { inMemory: true }
             ),

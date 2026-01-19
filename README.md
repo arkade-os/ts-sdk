@@ -374,6 +374,10 @@ new Worker().start()
 The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 `storage`, the SDK uses in-memory repositories (non-persistent).
 
+Note: `IndexedDB*Repository` requires `indexeddbshim` in Node or other
+non-browser environments. It is a dev dependency of the SDK, so you must
+install and initialize it in your app before using the repositories.
+
 ```typescript
 import {
   SingleKey,
@@ -381,6 +385,9 @@ import {
   IndexedDBWalletRepository,
   IndexedDBContractRepository
 } from '@arkade-os/sdk'
+import setGlobalVars from 'indexeddbshim'
+
+setGlobalVars()
 
 const identity = SingleKey.fromHex('your_private_key_hex')
 
@@ -455,6 +462,17 @@ Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following
 
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
+
+To use IndexedDB repositories in Expo/React Native, install `indexeddbshim` and a
+SQLite-backed WebSQL adapter (e.g., `expo-sqlite` or `react-native-sqlite-storage`),
+then wire the WebSQL `openDatabase` into the shim before creating repositories:
+
+```typescript
+import setGlobalVars from 'indexeddbshim'
+import * as SQLite from 'expo-sqlite'
+
+setGlobalVars(globalThis, { openDatabase: SQLite.openDatabase })
+```
 
 #### Crypto Polyfill Requirement
 

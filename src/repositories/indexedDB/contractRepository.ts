@@ -233,18 +233,6 @@ class IndexedDbContractStore implements ContractStore {
         }
 
         try {
-            const collection =
-                await this.getContractCollection<T>(contractType);
-            const existingIndex = collection.findIndex(
-                (i) => i[idField] === itemId
-            );
-            const updated =
-                existingIndex !== -1
-                    ? collection.map((entry, index) =>
-                          index === existingIndex ? item : entry
-                      )
-                    : [...collection, item];
-
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -254,12 +242,43 @@ class IndexedDbContractStore implements ContractStore {
                 const store = transaction.objectStore(
                     STORE_CONTRACT_COLLECTIONS
                 );
-                const request = store.put({
-                    key: collectionKey(contractType),
-                    value: JSON.stringify(updated),
-                });
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
+                const key = collectionKey(contractType);
+
+                // Read within the same transaction
+                const getRequest = store.get(key);
+
+                getRequest.onerror = () => reject(getRequest.error);
+                getRequest.onsuccess = () => {
+                    try {
+                        const result = getRequest.result as
+                            | { value?: string }
+                            | undefined;
+                        const collection: T[] = result?.value
+                            ? JSON.parse(result.value)
+                            : [];
+
+                        const existingIndex = collection.findIndex(
+                            (i) => i[idField] === itemId
+                        );
+                        const updated =
+                            existingIndex !== -1
+                                ? collection.map((entry, index) =>
+                                      index === existingIndex ? item : entry
+                                  )
+                                : [...collection, item];
+
+                        // Write within the same transaction
+                        const putRequest = store.put({
+                            key,
+                            value: JSON.stringify(updated),
+                        });
+
+                        putRequest.onerror = () => reject(putRequest.error);
+                        putRequest.onsuccess = () => resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
             });
         } catch (error) {
             console.error(
@@ -281,10 +300,6 @@ class IndexedDbContractStore implements ContractStore {
         }
 
         try {
-            const collection =
-                await this.getContractCollection<T>(contractType);
-            const filtered = collection.filter((item) => item[idField] !== id);
-
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -294,12 +309,37 @@ class IndexedDbContractStore implements ContractStore {
                 const store = transaction.objectStore(
                     STORE_CONTRACT_COLLECTIONS
                 );
-                const request = store.put({
-                    key: collectionKey(contractType),
-                    value: JSON.stringify(filtered),
-                });
-                request.onsuccess = () => resolve();
-                request.onerror = () => reject(request.error);
+                const key = collectionKey(contractType);
+
+                // Read within the same transaction
+                const getRequest = store.get(key);
+
+                getRequest.onerror = () => reject(getRequest.error);
+                getRequest.onsuccess = () => {
+                    try {
+                        const result = getRequest.result as
+                            | { value?: string }
+                            | undefined;
+                        const collection: T[] = result?.value
+                            ? JSON.parse(result.value)
+                            : [];
+
+                        const filtered = collection.filter(
+                            (item) => item[idField] !== id
+                        );
+
+                        // Write within the same transaction
+                        const putRequest = store.put({
+                            key,
+                            value: JSON.stringify(filtered),
+                        });
+
+                        putRequest.onerror = () => reject(putRequest.error);
+                        putRequest.onsuccess = () => resolve();
+                    } catch (error) {
+                        reject(error);
+                    }
+                };
             });
         } catch (error) {
             console.error(

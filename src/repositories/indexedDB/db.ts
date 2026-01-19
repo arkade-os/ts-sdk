@@ -109,14 +109,9 @@ export async function openDatabase(
     }
 
     // Return cached instance if available
-    if (dbCache.has(dbName)) {
-        const cached = dbCache.get(dbName)!;
-        if (!cached.version) {
-            // Database was closed, remove from cache
-            dbCache.delete(dbName);
-        } else {
-            return cached;
-        }
+    const cached = dbCache.get(dbName);
+    if (cached) {
+        return cached;
     }
 
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -142,6 +137,7 @@ export function closeDatabase(
 ): void {
     const cached = dbCache.get(dbName);
     if (!cached) return;
+    // cached.close() is handled by the callers
     if (!db || cached === db) {
         dbCache.delete(dbName);
     }

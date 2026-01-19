@@ -128,12 +128,6 @@ export class Worker {
     ) {
         this.walletRepository = storage.walletRepository;
         this.contractRepository = storage.contractRepository;
-        self.addEventListener(
-            "message",
-            async (event: ExtendableMessageEvent) => {
-                await this.handleMessage(event);
-            }
-        );
     }
 
     /**
@@ -181,7 +175,22 @@ export class Worker {
     }
 
     async start(withServiceWorkerUpdate = true) {
-        // No-op for now
+        self.addEventListener(
+            "message",
+            async (event: ExtendableMessageEvent) => {
+                await this.handleMessage(event);
+            }
+        );
+        if (withServiceWorkerUpdate) {
+            // activate service worker immediately
+            self.addEventListener("install", () => {
+                self.skipWaiting();
+            });
+            // take control of clients immediately
+            self.addEventListener("activate", () => {
+                self.clients.claim();
+            });
+        }
     }
 
     async clear() {
