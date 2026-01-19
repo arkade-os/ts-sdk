@@ -299,7 +299,7 @@ export namespace Unroll {
             tx.addInput(input);
         }
 
-        txWeightEstimator.addTxOutput(outputAddress);
+        txWeightEstimator.addOutputAddress(outputAddress, wallet.network);
 
         let feeRate = await wallet.onchainProvider.getFeeRate();
         if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
