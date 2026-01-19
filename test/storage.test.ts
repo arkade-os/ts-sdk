@@ -3,18 +3,12 @@ import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import {
     WalletRepository,
-    WalletRepositoryImpl,
     WalletState,
 } from "../src/repositories/walletRepository";
-import {
-    ContractRepository,
-    ContractRepositoryImpl,
-} from "../src/repositories/contractRepository";
+import { ContractRepository } from "../src/repositories/contractRepository";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
-import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
-import { InMemoryStorageAdapter } from "../src/storage/inMemory";
-import { migrateWalletRepository } from "../src/repositories/migration";
+import { migrateWalletRepository } from "../src/repositories/migrations/fromStorageAdapter";
 import type {
     ExtendedVirtualCoin,
     ExtendedCoin,
@@ -22,6 +16,10 @@ import type {
     TxType,
 } from "../src/wallet";
 import type { TapLeafScript } from "../src/script/base";
+import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
+import { WalletRepositoryImpl } from "../src/repositories/migrations/walletRepositoryImpl";
+import { ContractRepositoryImpl } from "../src/repositories/migrations/contractRepositoryImpl";
+import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 
 type RepositoryTestItem<T> = {
     name: string;

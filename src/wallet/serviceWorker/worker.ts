@@ -18,10 +18,7 @@ import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { hex } from "@scure/base";
-import {
-    WalletRepository,
-    WalletRepositoryImpl,
-} from "../../repositories/walletRepository";
+import { WalletRepository } from "../../repositories/walletRepository";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { ContractRepository } from "../../repositories/contractRepository";
 

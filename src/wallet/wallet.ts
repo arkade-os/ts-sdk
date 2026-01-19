@@ -63,20 +63,16 @@ import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
-import {
-    WalletRepository,
-    WalletRepositoryImpl,
-} from "../repositories/walletRepository";
-import {
-    ContractRepository,
-    ContractRepositoryImpl,
-} from "../repositories/contractRepository";
+import { WalletRepository } from "../repositories/walletRepository";
+import { ContractRepository } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
-import { InMemoryStorageAdapter } from "../storage/inMemory";
 import { Estimator } from "../arkfee";
 import { buildTransactionHistory } from "../utils/transactionHistory";
+import { IndexedDBWalletRepository } from "../repositories/indexedDB/walletRepository";
+import { IndexedDBContractRepository } from "../repositories/indexedDB/contractRepository";
+import { DEFAULT_DB_NAME } from "./serviceWorker/utils";
 
 export type IncomingFunds =
     | {
@@ -220,10 +216,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const walletRepository =
             config.storage?.walletRepository ??
-            new WalletRepositoryImpl(new InMemoryStorageAdapter());
+            (await IndexedDBWalletRepository.create(DEFAULT_DB_NAME, {
+                inMemory: true,
+            }));
+
         const contractRepository =
             config.storage?.contractRepository ??
-            new ContractRepositoryImpl(new InMemoryStorageAdapter());
+            (await IndexedDBContractRepository.create(DEFAULT_DB_NAME, {
+                inMemory: true,
+            }));
 
         return {
             arkProvider,
@@ -276,6 +277,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     async getBoardingAddress(): Promise<string> {
         return this.boardingTapscript.onchainAddress(this.network);
+    }
+
+    async close(): Promise<void> {
+        const walletRepository = this.walletRepository as {
+            close?: () => Promise<void>;
+        };
+        const contractRepository = this.contractRepository as {
+            close?: () => Promise<void>;
+        };
+        await Promise.all([
+            walletRepository.close?.(),
+            contractRepository.close?.(),
+        ]);
     }
 
     async getBalance(): Promise<WalletBalance> {
@@ -712,6 +726,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.contractRepository,
             config.renewalConfig
         );
+    }
+
+    async close(): Promise<void> {
+        await super.close();
     }
 
     /**

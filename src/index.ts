@@ -145,8 +145,6 @@ import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
-import { WalletRepositoryImpl } from "./repositories/walletRepository";
-import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
     validateVtxoTxGraph,
@@ -155,7 +153,7 @@ import {
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
-import { migrateWalletRepository } from "./repositories/migration";
+import { migrateWalletRepository } from "./repositories/migrations/fromStorageAdapter";
 
 export * from "./arkfee";
 
@@ -229,8 +227,6 @@ export {
     networks,
 
     // Repositories
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
     IndexedDBWalletRepository,
     IndexedDBContractRepository,
     migrateWalletRepository,

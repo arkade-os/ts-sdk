@@ -102,16 +102,6 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  */
 export interface WalletConfig extends ReadonlyWalletConfig {
     identity: Identity;
-    arkServerUrl?: string;
-    indexerUrl?: string;
-    esploraUrl?: string;
-    arkServerPublicKey?: string;
-    boardingTimelock?: RelativeTimelock;
-    exitTimelock?: RelativeTimelock;
-    storage: StorageConfig;
-    arkProvider?: ArkProvider;
-    indexerProvider?: IndexerProvider;
-    onchainProvider?: OnchainProvider;
     renewalConfig?: RenewalConfig;
 }
 

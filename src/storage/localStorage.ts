@@ -1,5 +1,8 @@
 import type { StorageAdapter } from "./index";
 
+/**
+ * @deprecated Use repositories instead
+ */
 export class LocalStorageAdapter implements StorageAdapter {
     private getSafeLocalStorage(): Storage | null {
         try {

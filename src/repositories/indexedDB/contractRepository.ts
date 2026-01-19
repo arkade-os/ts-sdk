@@ -1,6 +1,13 @@
 import { ContractRepository } from "../contractRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
-import { openDatabase, STORE_CONTRACT_DATA, STORE_COLLECTIONS } from "./db";
+import {
+    openDatabase,
+    closeDatabase,
+    STORE_CONTRACT_DATA,
+    STORE_COLLECTIONS,
+} from "./db";
+import type { OpenDatabaseOptions } from "./db";
+import { InMemoryDatabase } from "./inMemoryDatabase";
 
 /**
  * IndexedDB-based implementation of ContractRepository.
@@ -18,21 +25,62 @@ import { openDatabase, STORE_CONTRACT_DATA, STORE_COLLECTIONS } from "./db";
  */
 export class IndexedDBContractRepository implements ContractRepository {
     private db: IDBDatabase | null = null;
+    private inMemoryDb: InMemoryDatabase | null = null;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(
+        private readonly dbName: string = DEFAULT_DB_NAME,
+        private readonly options?: OpenDatabaseOptions
+    ) {}
 
     static async create(
-        dbName: string = DEFAULT_DB_NAME
+        dbName: string = DEFAULT_DB_NAME,
+        options?: OpenDatabaseOptions
     ): Promise<IndexedDBContractRepository> {
-        const repository = new IndexedDBContractRepository(dbName);
-        await repository.getDB();
+        const repository = new IndexedDBContractRepository(dbName, options);
+        if (!options?.inMemory) {
+            await repository.getDB();
+        }
         return repository;
     }
 
     private async getDB(): Promise<IDBDatabase> {
+        if (this.options?.inMemory) {
+            throw new Error(
+                "IndexedDB is not available for in-memory repositories"
+            );
+        }
         if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName);
+        this.db = await openDatabase(this.dbName, this.options);
         return this.db;
+    }
+
+    private getInMemoryDb(): InMemoryDatabase {
+        if (!this.options?.inMemory) {
+            throw new Error("In-memory database not enabled");
+        }
+        if (!this.inMemoryDb) {
+            this.inMemoryDb = new InMemoryDatabase();
+        }
+        return this.inMemoryDb;
+    }
+
+    async close(): Promise<void> {
+        if (this.options?.inMemory) {
+            this.inMemoryDb = null;
+            return;
+        }
+        if (!this.db) return;
+        closeDatabase(this.dbName, this.db);
+        this.db.close();
+        this.db = null;
+    }
+
+    [Symbol.dispose](): void {
+        void this.close();
+    }
+
+    [Symbol.asyncDispose](): Promise<void> {
+        return this.close();
     }
 
     // Generic contract metadata
@@ -41,6 +89,14 @@ export class IndexedDBContractRepository implements ContractRepository {
         key: string
     ): Promise<T | null> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const result = db.get<{ data?: T }>(STORE_CONTRACT_DATA, [
+                    contractId,
+                    key,
+                ]);
+                return result?.data ?? null;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -75,6 +131,11 @@ export class IndexedDBContractRepository implements ContractRepository {
         data: T
     ): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                db.put(STORE_CONTRACT_DATA, { contractId, key, data });
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -103,6 +164,11 @@ export class IndexedDBContractRepository implements ContractRepository {
 
     async deleteContractData(contractId: string, key: string): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                db.delete(STORE_CONTRACT_DATA, [contractId, key]);
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -126,6 +192,12 @@ export class IndexedDBContractRepository implements ContractRepository {
 
     async clearContractData(): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                db.clear(STORE_CONTRACT_DATA);
+                db.clear(STORE_COLLECTIONS);
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -167,6 +239,14 @@ export class IndexedDBContractRepository implements ContractRepository {
         contractType: string
     ): Promise<ReadonlyArray<T>> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const result = db.get<{ items?: ReadonlyArray<T> }>(
+                    STORE_COLLECTIONS,
+                    contractType
+                );
+                return result?.items ?? [];
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -209,6 +289,26 @@ export class IndexedDBContractRepository implements ContractRepository {
         }
 
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const existing =
+                    db.get<{ items?: T[] }>(STORE_COLLECTIONS, contractType)
+                        ?.items || [];
+                const existingIndex = existing.findIndex(
+                    (i) => i[idField] === itemId
+                );
+                const collection =
+                    existingIndex !== -1
+                        ? existing.map((entry, index) =>
+                              index === existingIndex ? item : entry
+                          )
+                        : [...existing, item];
+                db.put(STORE_COLLECTIONS, {
+                    contractType,
+                    items: collection,
+                });
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -265,6 +365,20 @@ export class IndexedDBContractRepository implements ContractRepository {
         }
 
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const existing =
+                    db.get<{ items?: T[] }>(STORE_COLLECTIONS, contractType)
+                        ?.items || [];
+                const collection = existing.filter(
+                    (item) => item[idField] !== id
+                );
+                db.put(STORE_COLLECTIONS, {
+                    contractType,
+                    items: collection,
+                });
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(

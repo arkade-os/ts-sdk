@@ -7,6 +7,7 @@ import { WalletRepository, WalletState } from "../walletRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 import {
     openDatabase,
+    closeDatabase,
     STORE_VTXOS,
     STORE_UTXOS,
     STORE_TRANSACTIONS,
@@ -16,7 +17,10 @@ import {
     deserializeVtxo,
     deserializeUtxo,
     SerializedVtxo,
+    SerializedUtxo,
 } from "./db";
+import type { OpenDatabaseOptions } from "./db";
+import { InMemoryDatabase } from "./inMemoryDatabase";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -33,26 +37,77 @@ import {
  */
 export class IndexedDBWalletRepository implements WalletRepository {
     private db: IDBDatabase | null = null;
+    private inMemoryDb: InMemoryDatabase | null = null;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    constructor(
+        private readonly dbName: string = DEFAULT_DB_NAME,
+        private readonly options?: OpenDatabaseOptions
+    ) {}
 
     static async create(
-        dbName: string = DEFAULT_DB_NAME
+        dbName: string = DEFAULT_DB_NAME,
+        options?: OpenDatabaseOptions
     ): Promise<IndexedDBWalletRepository> {
-        const repository = new IndexedDBWalletRepository(dbName);
-        await repository.getDB();
+        const repository = new IndexedDBWalletRepository(dbName, options);
+        if (!options?.inMemory) {
+            await repository.getDB();
+        }
         return repository;
     }
 
     private async getDB(): Promise<IDBDatabase> {
+        if (this.options?.inMemory) {
+            throw new Error(
+                "IndexedDB is not available for in-memory repositories"
+            );
+        }
         if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName);
+        this.db = await openDatabase(this.dbName, this.options);
         return this.db;
+    }
+
+    private getInMemoryDb(): InMemoryDatabase {
+        if (!this.options?.inMemory) {
+            throw new Error("In-memory database not enabled");
+        }
+        if (!this.inMemoryDb) {
+            this.inMemoryDb = new InMemoryDatabase();
+        }
+        return this.inMemoryDb;
+    }
+
+    async close(): Promise<void> {
+        if (this.options?.inMemory) {
+            // Set it free for garbage collection
+            this.inMemoryDb = null;
+            return;
+        }
+        if (!this.db) return;
+        closeDatabase(this.dbName, this.db);
+        this.db.close();
+        this.db = null;
+    }
+
+    [Symbol.dispose](): void {
+        void this.close();
+    }
+
+    [Symbol.asyncDispose](): Promise<void> {
+        return this.close();
     }
 
     // VTXO management
     async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const results = db.getAllByIndex(
+                    STORE_VTXOS,
+                    "address",
+                    address
+                ) as SerializedVtxo[];
+                return results.map(deserializeVtxo);
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([STORE_VTXOS], "readonly");
@@ -79,6 +134,15 @@ export class IndexedDBWalletRepository implements WalletRepository {
         vtxos: ExtendedVirtualCoin[]
     ): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                vtxos.forEach((vtxo) => {
+                    const serialized: SerializedVtxo = serializeVtxo(vtxo);
+                    const item = { address, ...serialized };
+                    db.put(STORE_VTXOS, item);
+                });
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([STORE_VTXOS], "readwrite");
@@ -115,6 +179,17 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
     async clearVtxos(address: string): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                db.deleteWhere(
+                    STORE_VTXOS,
+                    (item) =>
+                        typeof item === "object" &&
+                        item !== null &&
+                        (item as { address?: string }).address === address
+                );
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([STORE_VTXOS], "readwrite");
@@ -145,6 +220,15 @@ export class IndexedDBWalletRepository implements WalletRepository {
     // UTXO management
     async getUtxos(address: string): Promise<ExtendedCoin[]> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const results = db.getAllByIndex(
+                    STORE_UTXOS,
+                    "address",
+                    address
+                ) as SerializedUtxo[];
+                return results.map(deserializeUtxo);
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([STORE_UTXOS], "readonly");
@@ -167,6 +251,15 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
     async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                utxos.forEach((utxo) => {
+                    const serialized = serializeUtxo(utxo);
+                    const item = { address, ...serialized };
+                    db.put(STORE_UTXOS, item);
+                });
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([STORE_UTXOS], "readwrite");
@@ -203,6 +296,17 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
     async clearUtxos(address: string): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                db.deleteWhere(
+                    STORE_UTXOS,
+                    (item) =>
+                        typeof item === "object" &&
+                        item !== null &&
+                        (item as { address?: string }).address === address
+                );
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction([STORE_UTXOS], "readwrite");
@@ -233,6 +337,15 @@ export class IndexedDBWalletRepository implements WalletRepository {
     // Transaction history
     async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const results = db.getAllByIndex(
+                    STORE_TRANSACTIONS,
+                    "address",
+                    address
+                ) as ArkTransaction[];
+                return results.sort((a, b) => a.createdAt - b.createdAt);
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -263,6 +376,20 @@ export class IndexedDBWalletRepository implements WalletRepository {
         txs: ArkTransaction[]
     ): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                txs.forEach((tx) => {
+                    const item = {
+                        address,
+                        ...tx,
+                        keyBoardingTxid: tx.key.boardingTxid,
+                        keyCommitmentTxid: tx.key.commitmentTxid,
+                        keyArkTxid: tx.key.arkTxid,
+                    };
+                    db.put(STORE_TRANSACTIONS, item);
+                });
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -300,6 +427,17 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
     async clearTransactions(address: string): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                db.deleteWhere(
+                    STORE_TRANSACTIONS,
+                    (item) =>
+                        typeof item === "object" &&
+                        item !== null &&
+                        (item as { address?: string }).address === address
+                );
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -333,6 +471,14 @@ export class IndexedDBWalletRepository implements WalletRepository {
     // Wallet state
     async getWalletState(): Promise<WalletState | null> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                const result = db.get<{ data?: WalletState }>(
+                    STORE_WALLET_STATE,
+                    "state"
+                );
+                return result?.data ?? null;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
@@ -360,6 +506,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
     async saveWalletState(state: WalletState): Promise<void> {
         try {
+            if (this.options?.inMemory) {
+                const db = this.getInMemoryDb();
+                db.put(STORE_WALLET_STATE, { key: "state", data: state });
+                return;
+            }
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(

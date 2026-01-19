@@ -3,15 +3,44 @@ import { TapLeafScript } from "../../script/base";
 import { ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
+import {
+    DB_VERSION,
+    STORE_COLLECTIONS,
+    STORE_CONTRACT_DATA,
+    STORE_TRANSACTIONS,
+    STORE_UTXOS,
+    STORE_VTXOS,
+    STORE_WALLET_STATE,
+    initDatabase,
+} from "./schema";
 
-// Store names
-export const STORE_VTXOS = "vtxos";
-export const STORE_UTXOS = "utxos";
-export const STORE_TRANSACTIONS = "transactions";
-export const STORE_WALLET_STATE = "walletState";
-export const STORE_CONTRACT_DATA = "contractData";
-export const STORE_COLLECTIONS = "collections";
-export const DB_VERSION = 2;
+function getGlobalObject(): {
+    globalObject: typeof globalThis;
+} {
+    if (typeof globalThis !== "undefined") {
+        if (typeof globalThis.self === "object" && globalThis.self !== null) {
+            return { globalObject: globalThis.self };
+        }
+        if (
+            typeof globalThis.window === "object" &&
+            globalThis.window !== null
+        ) {
+            return { globalObject: globalThis.window };
+        }
+        return { globalObject: globalThis };
+    }
+    throw new Error("Global object not found");
+}
+
+export {
+    STORE_VTXOS,
+    STORE_UTXOS,
+    STORE_TRANSACTIONS,
+    STORE_WALLET_STATE,
+    STORE_CONTRACT_DATA,
+    STORE_COLLECTIONS,
+    DB_VERSION,
+};
 
 // Serialization helpers
 
@@ -65,6 +94,10 @@ export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
     extraWitness: o.extraWitness?.map(hex.decode),
 });
 
+export type OpenDatabaseOptions = {
+    inMemory?: boolean;
+};
+
 // database instance cache, avoiding multiple open requests
 const dbCache = new Map<string, IDBDatabase>();
 
@@ -72,8 +105,19 @@ const dbCache = new Map<string, IDBDatabase>();
  * Opens an IndexedDB database.
  */
 export async function openDatabase(
-    dbName: string = DEFAULT_DB_NAME
+    dbName: string = DEFAULT_DB_NAME,
+    options?: OpenDatabaseOptions
 ): Promise<IDBDatabase> {
+    if (options?.inMemory) {
+        throw new Error(
+            "In-memory IndexedDB is handled by repository implementations."
+        );
+    }
+    const { globalObject } = getGlobalObject();
+    if (!globalObject.indexedDB) {
+        throw new Error("IndexedDB is not available in this environment");
+    }
+
     // Return cached instance if available
     if (dbCache.has(dbName)) {
         const cached = dbCache.get(dbName)!;
@@ -83,12 +127,6 @@ export async function openDatabase(
         } else {
             return cached;
         }
-    }
-
-    const globalObject = typeof window === "undefined" ? self : window;
-
-    if (!(globalObject && "indexedDB" in globalObject)) {
-        throw new Error("IndexedDB is not available in this environment");
     }
 
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
@@ -108,154 +146,13 @@ export async function openDatabase(
     return db;
 }
 
-function initDatabase(db: IDBDatabase): IDBDatabase {
-    // Create wallet stores
-    if (!db.objectStoreNames.contains(STORE_VTXOS)) {
-        const vtxosStore = db.createObjectStore(STORE_VTXOS, {
-            keyPath: ["address", "txid", "vout"],
-        });
-
-        if (!vtxosStore.indexNames.contains("address")) {
-            vtxosStore.createIndex("address", "address", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("txid")) {
-            vtxosStore.createIndex("txid", "txid", { unique: false });
-        }
-        if (!vtxosStore.indexNames.contains("value")) {
-            vtxosStore.createIndex("value", "value", { unique: false });
-        }
-        if (!vtxosStore.indexNames.contains("status")) {
-            vtxosStore.createIndex("status", "status", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("virtualStatus")) {
-            vtxosStore.createIndex("virtualStatus", "virtualStatus", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("createdAt")) {
-            vtxosStore.createIndex("createdAt", "createdAt", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("isSpent")) {
-            vtxosStore.createIndex("isSpent", "isSpent", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("isUnrolled")) {
-            vtxosStore.createIndex("isUnrolled", "isUnrolled", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("spentBy")) {
-            vtxosStore.createIndex("spentBy", "spentBy", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("settledBy")) {
-            vtxosStore.createIndex("settledBy", "settledBy", {
-                unique: false,
-            });
-        }
-        if (!vtxosStore.indexNames.contains("arkTxId")) {
-            vtxosStore.createIndex("arkTxId", "arkTxId", {
-                unique: false,
-            });
-        }
+export function closeDatabase(
+    dbName: string = DEFAULT_DB_NAME,
+    db?: IDBDatabase | null
+): void {
+    const cached = dbCache.get(dbName);
+    if (!cached) return;
+    if (!db || cached === db) {
+        dbCache.delete(dbName);
     }
-
-    if (!db.objectStoreNames.contains(STORE_UTXOS)) {
-        const utxosStore = db.createObjectStore(STORE_UTXOS, {
-            keyPath: ["address", "txid", "vout"],
-        });
-
-        if (!utxosStore.indexNames.contains("address")) {
-            utxosStore.createIndex("address", "address", {
-                unique: false,
-            });
-        }
-        if (!utxosStore.indexNames.contains("txid")) {
-            utxosStore.createIndex("txid", "txid", { unique: false });
-        }
-        if (!utxosStore.indexNames.contains("value")) {
-            utxosStore.createIndex("value", "value", { unique: false });
-        }
-        if (!utxosStore.indexNames.contains("status")) {
-            utxosStore.createIndex("status", "status", {
-                unique: false,
-            });
-        }
-    }
-
-    if (!db.objectStoreNames.contains(STORE_TRANSACTIONS)) {
-        const transactionsStore = db.createObjectStore(STORE_TRANSACTIONS, {
-            keyPath: [
-                "address",
-                "keyBoardingTxid",
-                "keyCommitmentTxid",
-                "keyArkTxid",
-            ],
-        });
-
-        if (!transactionsStore.indexNames.contains("address")) {
-            transactionsStore.createIndex("address", "address", {
-                unique: false,
-            });
-        }
-        if (!transactionsStore.indexNames.contains("type")) {
-            transactionsStore.createIndex("type", "type", {
-                unique: false,
-            });
-        }
-        if (!transactionsStore.indexNames.contains("amount")) {
-            transactionsStore.createIndex("amount", "amount", {
-                unique: false,
-            });
-        }
-        if (!transactionsStore.indexNames.contains("settled")) {
-            transactionsStore.createIndex("settled", "settled", {
-                unique: false,
-            });
-        }
-        if (!transactionsStore.indexNames.contains("createdAt")) {
-            transactionsStore.createIndex("createdAt", "createdAt", {
-                unique: false,
-            });
-        }
-        if (!transactionsStore.indexNames.contains("arkTxid")) {
-            transactionsStore.createIndex("arkTxid", "key.arkTxid", {
-                unique: false,
-            });
-        }
-    }
-
-    if (!db.objectStoreNames.contains(STORE_WALLET_STATE)) {
-        db.createObjectStore(STORE_WALLET_STATE, {
-            keyPath: "key",
-        });
-    }
-
-    // Create contract stores
-    if (!db.objectStoreNames.contains(STORE_CONTRACT_DATA)) {
-        const contractDataStore = db.createObjectStore(STORE_CONTRACT_DATA, {
-            keyPath: ["contractId", "key"],
-        });
-
-        if (!contractDataStore.indexNames.contains("contractId")) {
-            contractDataStore.createIndex("contractId", "contractId", {
-                unique: false,
-            });
-        }
-    }
-
-    if (!db.objectStoreNames.contains(STORE_COLLECTIONS)) {
-        db.createObjectStore(STORE_COLLECTIONS, {
-            keyPath: "contractType",
-        });
-    }
-    return db;
 }

@@ -1,5 +1,7 @@
-import { StorageAdapter } from "../storage";
-import { WalletRepository, WalletRepositoryImpl } from "./walletRepository";
+import { StorageAdapter } from "../../storage";
+import { WalletRepository } from "../walletRepository";
+
+import { WalletRepositoryImpl } from "./walletRepositoryImpl";
 
 const MIGRATION_KEY = (repoType: "wallet" | "contract") =>
     `migration-from-storage-adapter-${repoType}`;

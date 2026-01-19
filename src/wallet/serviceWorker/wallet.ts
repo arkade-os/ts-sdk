@@ -15,7 +15,6 @@ import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from "../../identity";
-import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
@@ -373,10 +372,14 @@ export class ServiceWorkerWallet
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
+        console.log("Creating ServiceWorkerWallet with options:", options);
         const { walletRepository, contractRepository } = options.storage ?? {
-            walletRepository: new IndexedDBWalletRepository(DEFAULT_DB_NAME),
+            walletRepository: new IndexedDBWalletRepository(DEFAULT_DB_NAME, {
+                inMemory: true,
+            }),
             contractRepository: new IndexedDBContractRepository(
-                DEFAULT_DB_NAME
+                DEFAULT_DB_NAME,
+                { inMemory: true }
             ),
         };
 
