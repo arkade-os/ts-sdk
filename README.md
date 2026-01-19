@@ -16,7 +16,12 @@ npm install @arkade-os/sdk
 ### Creating a Wallet
 
 ```typescript
-import { SingleKey, Wallet } from '@arkade-os/sdk'
+import {
+  SingleKey,
+  Wallet,
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository
+} from '@arkade-os/sdk'
 
 // Create a new in-memory key (or use an external signer)
 const identity = SingleKey.fromHex('your_private_key_hex')
@@ -27,8 +32,11 @@ const wallet = await Wallet.create({
   // Esplora API, can be left empty - mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Optional: specify storage adapter (defaults to InMemoryStorageAdapter)
-  // storage: new LocalStorageAdapter() // for browser persistence
+  // Optional: provide repositories for persistence (defaults to in-memory)
+  // storage: {
+  //   walletRepository: await IndexedDBWalletRepository.create('my-wallet-db'),
+  //   contractRepository: await IndexedDBContractRepository.create('my-wallet-db')
+  // }
 })
 ```
 
@@ -361,47 +369,63 @@ import { Worker } from '@arkade-os/sdk'
 new Worker().start()
 ```
 
-### Storage Adapters
+### Repositories (Storage)
 
-Choose the appropriate storage adapter for your environment:
+The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
+`storage`, the SDK uses in-memory repositories (non-persistent).
 
 ```typescript
-import { 
+import {
   SingleKey,
   Wallet,
-  InMemoryStorageAdapter,     // Works everywhere, data lost on restart
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository
 } from '@arkade-os/sdk'
 
-// Import additional storage adapters as needed:
-import { LocalStorageAdapter } from '@arkade-os/sdk/adapters/localStorage'        // Browser/PWA persistent storage  
-import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'      // Browser/PWA/Service Worker advanced storage
-import { AsyncStorageAdapter } from '@arkade-os/sdk/adapters/asyncStorage'      // React Native persistent storage
-import { FileSystemStorageAdapter } from '@arkade-os/sdk/adapters/fileSystem'   // Node.js file-based storage
+const identity = SingleKey.fromHex('your_private_key_hex')
 
-// Node.js
-const storage = new FileSystemStorageAdapter('./wallet-data')
+const walletRepository = await IndexedDBWalletRepository.create('my-app-db')
+const contractRepository = await IndexedDBContractRepository.create('my-app-db')
 
-// Browser/PWA
-const storage = new LocalStorageAdapter()
-// or for advanced features:
-const storage = new IndexedDBStorageAdapter('my-app', 2)
-
-// React Native
-const storage = new AsyncStorageAdapter()
-
-// Service Worker
-const storage = new IndexedDBStorageAdapter('service-worker-wallet', 2)
-
-// Load identity from storage (simple pattern everywhere)
-const privateKeyHex = await storage.getItem('private-key')
-const identity = SingleKey.fromHex(privateKeyHex)
-
-// Create wallet (same API everywhere)
+// Create wallet with persisted storage
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  storage // optional
+  storage: {
+    walletRepository,
+    contractRepository
+  }
 })
+```
+
+To keep data in memory only, omit `storage` (default) or pass `{ inMemory: true }`
+when creating the repositories.
+
+### Migrating from Repository v1
+
+If you previously used the v1 `StorageAdapter`-based repositories, migrate data
+into the new IndexedDB repositories before use:
+
+```typescript
+import {
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository,
+  migrateWalletRepository,
+  migrateContractRepository
+} from '@arkade-os/sdk'
+import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
+
+const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
+const newDbName = 'my-app-db'
+
+const walletRepository = await IndexedDBWalletRepository.create(newDbName)
+await migrateWalletRepository(oldStorage, walletRepository, [
+  'address-1',
+  'address-2'
+])
+
+await migrateContractRepository(oldStorage, newDbName)
+const contractRepository = await IndexedDBContractRepository.create(newDbName)
 ```
 
 ### Using with Expo/React Native

@@ -1,5 +1,17 @@
+/**
+ * This example shows how to create two wallets using the SDK.
+ * Alice's wallet will be persisted in IndexedDB, while Bob's wallet will be in-memory.
+ *
+ * By inspecting the `D_arkade-service-worker.sqlite` created upon running the code,
+ * you can see the persisted data for Alice's wallet.
+ *
+ * To run it:
+ * ```
+ * $ npx tsx examples/node/multiple-wallets.ts
+ * ```
+ */
+
 import {
-    buildOffchainTx,
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
     SingleKey,
