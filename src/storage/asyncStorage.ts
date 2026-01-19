@@ -49,4 +49,8 @@ export class AsyncStorageAdapter implements StorageAdapter {
             throw error;
         }
     }
+
+    async getAllKeys(): Promise<string[]> {
+        return await this.AsyncStorage.getAllKeys();
+    }
 }

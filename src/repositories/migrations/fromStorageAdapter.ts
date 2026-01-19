@@ -55,12 +55,6 @@ export async function migrateContractRepository(
     const legacy = new ContractRepositoryImpl(storageAdapter);
     const keys = await listStorageKeys(storageAdapter);
 
-    console.log(
-        "Migrating contract repository from storage adapter:",
-        legacy,
-        keys
-    );
-
     for (const key of keys) {
         if (!key.startsWith(CONTRACT_PREFIX)) continue;
         const match = key.match(/^contract:([^:]+):(.+)$/);
@@ -93,23 +87,9 @@ export async function migrateContractRepository(
 async function listStorageKeys(
     storageAdapter: StorageAdapter
 ): Promise<string[]> {
-    const adapterAny = storageAdapter as any;
-
-    if (adapterAny.store instanceof Map) {
-        // trying our luck with in-memory storage
-        return Array.from(adapterAny.store.keys());
+    if (typeof storageAdapter.getAllKeys === "function") {
+        return await storageAdapter.getAllKeys();
     }
-
-    if (adapterAny.dbName && typeof indexedDB !== "undefined") {
-        const dbName = adapterAny.dbName as string;
-        const version = (adapterAny.version as number) ?? undefined;
-        return await listIndexedDbKeys(dbName, version);
-    }
-
-    if (adapterAny.AsyncStorage?.getAllKeys) {
-        return await adapterAny.AsyncStorage.getAllKeys();
-    }
-
     throw new Error("Storage adapter does not support key enumeration");
 }
 
@@ -126,24 +106,4 @@ function inferIdField<T extends Record<string, unknown>>(
     if ("txid" in candidate) return "txid" as keyof T;
     if ("key" in candidate) return "key" as keyof T;
     throw new Error("Cannot infer id field for contract collection");
-}
-
-async function listIndexedDbKeys(
-    dbName: string,
-    version?: number
-): Promise<string[]> {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(dbName, version);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-            const db = request.result;
-            const transaction = db.transaction(["storage"], "readonly");
-            const store = transaction.objectStore("storage");
-            const keysRequest = store.getAllKeys();
-            keysRequest.onerror = () => reject(keysRequest.error);
-            keysRequest.onsuccess = () => {
-                resolve(keysRequest.result as string[]);
-            };
-        };
-    });
 }

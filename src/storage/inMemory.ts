@@ -21,4 +21,8 @@ export class InMemoryStorageAdapter implements StorageAdapter {
     async clear(): Promise<void> {
         this.store.clear();
     }
+
+    async getAllKeys(): Promise<string[]> {
+        return Array.from(this.store.keys());
+    }
 }

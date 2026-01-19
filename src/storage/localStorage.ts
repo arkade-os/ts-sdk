@@ -57,4 +57,19 @@ export class LocalStorageAdapter implements StorageAdapter {
         }
         localStorage.clear();
     }
+
+    async getAllKeys(): Promise<string[]> {
+        const localStorage = this.getSafeLocalStorage();
+        if (!localStorage) {
+            throw new Error(
+                "localStorage is not available in this environment"
+            );
+        }
+        const keys: string[] = [];
+        for (let i = 0; i < localStorage.length; i += 1) {
+            const key = localStorage.key(i);
+            if (key) keys.push(key);
+        }
+        return keys;
+    }
 }

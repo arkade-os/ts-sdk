@@ -111,4 +111,18 @@ export class IndexedDBStorageAdapter implements StorageAdapter {
             console.error("Failed to clear storage:", error);
         }
     }
+
+    async getAllKeys(): Promise<string[]> {
+        const db = await this.getDB();
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(["storage"], "readonly");
+            const store = transaction.objectStore("storage");
+            const request = store.getAllKeys();
+
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                resolve(request.result as string[]);
+            };
+        });
+    }
 }
