@@ -700,9 +700,8 @@ describe("IndexedDB migrations", () => {
         );
 
         const dbName = getUniqueDbName("contract-migration");
-        await migrateContractRepository(storage, dbName);
-
         const repo = await IndexedDBContractRepository.create(dbName);
+        await migrateContractRepository(storage, repo);
 
         const reverseSwapsFixture = JSON.parse(
             fixture["collection:reverseSwaps"]

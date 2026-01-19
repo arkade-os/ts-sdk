@@ -372,7 +372,6 @@ export class ServiceWorkerWallet
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
-        console.log("Creating ServiceWorkerWallet with options:", options);
         const { walletRepository, contractRepository } = options.storage ?? {
             walletRepository: new IndexedDBWalletRepository(DEFAULT_DB_NAME, {
                 inMemory: true,

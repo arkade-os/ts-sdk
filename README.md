@@ -424,8 +424,8 @@ await migrateWalletRepository(oldStorage, walletRepository, [
   'address-2'
 ])
 
-await migrateContractRepository(oldStorage, newDbName)
 const contractRepository = await IndexedDBContractRepository.create(newDbName)
+await migrateContractRepository(oldStorage, contractRepository)
 ```
 
 ### Using with Expo/React Native
