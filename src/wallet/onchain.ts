@@ -91,6 +91,27 @@ export class OnchainWallet implements AnchorBumper {
         return onchainTotal;
     }
 
+    /**
+     * Iteratively selects coins and estimates transaction fees until convergence.
+     *
+     * This method handles the circular dependency between coin selection and fee
+     * estimation: the fee depends on transaction size, which depends on the number
+     * of inputs (selected coins) and whether a change output is needed.
+     *
+     * The algorithm iterates up to 10 times, refining the fee estimate based on
+     * the actual transaction structure. It resolves dust oscillation loops that
+     * occur when the change amount hovers near the dust threshold—adding/removing
+     * the change output causes the fee to fluctuate, preventing convergence.
+     * When a lower fee is computed (indicating the change output was dropped),
+     * the function accepts this state to guarantee termination.
+     *
+     * @param coins - Available coins to select from
+     * @param amount - Target send amount in satoshis
+     * @param feeRate - Fee rate in sat/vbyte
+     * @param recipientAddress - Destination address for size estimation
+     * @returns Selected inputs, change amount, and calculated fee
+     * @throws Error if fee estimation fails to converge within max iterations
+     */
     private estimateFeesAndSelectCoins(
         coins: Coin[],
         amount: number,
