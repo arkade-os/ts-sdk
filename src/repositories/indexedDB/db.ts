@@ -94,10 +94,6 @@ export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
     extraWitness: o.extraWitness?.map(hex.decode),
 });
 
-export type OpenDatabaseOptions = {
-    inMemory?: boolean;
-};
-
 // database instance cache, avoiding multiple open requests
 const dbCache = new Map<string, IDBDatabase>();
 
@@ -105,14 +101,8 @@ const dbCache = new Map<string, IDBDatabase>();
  * Opens an IndexedDB database.
  */
 export async function openDatabase(
-    dbName: string = DEFAULT_DB_NAME,
-    options?: OpenDatabaseOptions
+    dbName: string = DEFAULT_DB_NAME
 ): Promise<IDBDatabase> {
-    if (options?.inMemory) {
-        throw new Error(
-            "In-memory IndexedDB is handled by repository implementations."
-        );
-    }
     const { globalObject } = getGlobalObject();
     if (!globalObject.indexedDB) {
         throw new Error("IndexedDB is not available in this environment");
