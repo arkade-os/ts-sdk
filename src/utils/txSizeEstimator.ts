@@ -101,7 +101,7 @@ export class TxWeightEstimator {
         return this;
     }
 
-    private addP2WPKHOutput(): TxWeightEstimator {
+    addP2WPKHOutput(): TxWeightEstimator {
         this.outputCount++;
         this.outputSize +=
             TxWeightEstimator.OUTPUT_SIZE +
@@ -109,7 +109,7 @@ export class TxWeightEstimator {
         return this;
     }
 
-    private addP2TROutput(): TxWeightEstimator {
+    addP2TROutput(): TxWeightEstimator {
         this.outputCount++;
         this.outputSize +=
             TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2TR_OUTPUT_SIZE;
@@ -117,19 +117,22 @@ export class TxWeightEstimator {
     }
 
     /**
-     * Adds an output by decoding the address to get the exact script size.
+     * Adds an output given a raw script.
      * Cost = 8 bytes (amount) + varint(scriptLen) + scriptLen
      */
-    addOutputAddress(address: string, network: Network): TxWeightEstimator {
-        // Decode address to get internal Payment object (works for Legacy, Segwit, Taproot)
-        const payment = Address(network).decode(address);
-        // Encode payment to get the actual Script bytes
-        const script = OutScript.encode(payment);
-        const scriptLen = script.length;
-
+    addOutputScript(script: Uint8Array): TxWeightEstimator {
         this.outputCount++;
-        this.outputSize += 8 + getVarIntSize(scriptLen) + scriptLen;
+        this.outputSize += 8 + getVarIntSize(script.length) + script.length;
         return this;
+    }
+
+    /**
+     * Adds an output by decoding the address to get the exact script size.
+     */
+    addOutputAddress(address: string, network: Network): TxWeightEstimator {
+        const payment = Address(network).decode(address);
+        const script = OutScript.encode(payment);
+        return this.addOutputScript(script);
     }
 
     vsize(): VSize {
