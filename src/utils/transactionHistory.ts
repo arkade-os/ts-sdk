@@ -18,11 +18,12 @@ const txKey: TxKey = {
  * @param {Set<string>} commitmentsToIgnore - A set of commitment IDs that should be excluded from processing.
  * @return {ExtendedArkTransaction[]} A sorted array of extended Ark transactions, representing the transaction history.
  */
-export function buildTransactionHistory(
+export async function buildTransactionHistory(
     vtxos: VirtualCoin[],
     allBoardingTxs: ArkTransaction[],
-    commitmentsToIgnore: Set<string>
-): ExtendedArkTransaction[] {
+    commitmentsToIgnore: Set<string>,
+    getTxCreatedAt?: (txid: string) => Promise<number>
+): Promise<ExtendedArkTransaction[]> {
     const fromOldestVtxo = [...vtxos].sort(
         (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
     );
@@ -83,6 +84,16 @@ export function buildTransactionHistory(
                     (_) => _.txid === vtxo.arkTxId
                 );
 
+                // We want to find all the other VTXOs spent by the same transaction to
+                // calculate the full amount of the change.
+                const allSpent = fromOldestVtxo.filter(
+                    (v) => v.arkTxId === vtxo.arkTxId
+                );
+                const spentAmount = allSpent.reduce(
+                    (acc, v) => acc + v.value,
+                    0
+                );
+
                 let txAmount = 0;
                 let txTime = 0;
                 if (changes.length > 0) {
@@ -90,21 +101,14 @@ export function buildTransactionHistory(
                         (acc, v) => acc + v.value,
                         0
                     );
-                    // We want to find all the other VTXOs spent by the same transaction to
-                    // calculate the full amount of the change.
-                    const allSpent = fromOldestVtxo.filter(
-                        (v) => v.arkTxId === vtxo.arkTxId
-                    );
-                    const spentAmount = allSpent.reduce(
-                        (acc, v) => acc + v.value,
-                        0
-                    );
                     txAmount = spentAmount - changeAmount;
                     txTime = changes[0].createdAt.getTime();
                 } else {
-                    txAmount = vtxo.value;
+                    txAmount = spentAmount;
                     // TODO: fetch the vtxo with /v1/indexer/vtxos?outpoints=<vtxo.arkTxid:0> to know when the tx was made
-                    txTime = vtxo.createdAt.getTime() + 1;
+                    txTime = getTxCreatedAt
+                        ? await getTxCreatedAt(vtxo.arkTxId!)
+                        : vtxo.createdAt.getTime() + 1;
                 }
 
                 sent.push({
