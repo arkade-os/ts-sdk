@@ -111,6 +111,7 @@ services:
         - FULMINE_DISABLE_TELEMETRY=true
         - FULMINE_SWAP_TIMEOUT=120
         - FULMINE_SCHEDULER_POLL_INTERVAL=10
+        - FULMINE_DELEGATE_ENABLED=true
         ports:
         - "7000:7000"
         - "7001:7001"
