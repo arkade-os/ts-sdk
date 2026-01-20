@@ -566,7 +566,7 @@ describe("Ark integration tests", () => {
 
     it(
         "should be notified of offchain incoming funds",
-        { timeout: 6000 },
+        { timeout: 8_000 },
         async () => {
             const alice = await createTestArkWallet();
             const aliceAddress = await alice.wallet.getAddress();

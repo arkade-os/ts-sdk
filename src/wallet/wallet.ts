@@ -63,20 +63,17 @@ import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
-import { InMemoryStorageAdapter } from "../storage/inMemory";
-import {
-    WalletRepository,
-    WalletRepositoryImpl,
-} from "../repositories/walletRepository";
-import {
-    ContractRepository,
-    ContractRepositoryImpl,
-} from "../repositories/contractRepository";
+import { WalletRepository } from "../repositories/walletRepository";
+import { ContractRepository } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { buildTransactionHistory } from "../utils/transactionHistory";
+import {
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
+} from "../repositories";
 
 export type IncomingFunds =
     | {
@@ -218,10 +215,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Save tapscripts
         const offchainTapscript = bareVtxoTapscript;
 
-        // Set up storage and repositories
-        const storage = config.storage || new InMemoryStorageAdapter();
-        const walletRepository = new WalletRepositoryImpl(storage);
-        const contractRepository = new ContractRepositoryImpl(storage);
+        const walletRepository =
+            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            config.storage?.contractRepository ??
+            new IndexedDBContractRepository();
 
         return {
             arkProvider,

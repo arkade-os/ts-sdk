@@ -101,6 +101,7 @@
         "eventsource": "4.0.0",
         "glob": "11.0.3",
         "husky": "9.1.7",
+        "indexeddbshim": "16.1.0",
         "prettier": "3.6.2",
         "rimraf": "^6.0.1",
         "typedoc": "^0.28.12",
@@ -126,6 +127,10 @@
             "esbuild": ">=0.25.0",
             "brace-expansion": ">=2.0.2",
             "minimatch": "9.0.3"
-        }
+        },
+        "onlyBuiltDependencies": [
+            "canvas",
+            "sqlite3"
+        ]
     }
 }
