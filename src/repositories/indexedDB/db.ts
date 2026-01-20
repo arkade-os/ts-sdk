@@ -95,7 +95,7 @@ export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
 });
 
 // database instance cache, avoiding multiple open requests
-const dbCache = new Map<string, IDBDatabase>();
+const dbCache = new Map<string, Promise<IDBDatabase>>();
 // track reference counts for each database to avoid closing it prematurely
 const refCounts = new Map<string, number>();
 
@@ -110,42 +110,51 @@ export async function openDatabase(
         throw new Error("IndexedDB is not available in this environment");
     }
 
-    // Return cached instance if available
+    // Return cached promise if available (handles concurrent calls)
     const cached = dbCache.get(dbName);
     if (cached) {
         refCounts.set(dbName, (refCounts.get(dbName) ?? 0) + 1);
         return cached;
     }
 
-    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+    const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
         const request = globalObject.indexedDB.open(dbName, DB_VERSION);
-        request.onerror = () => reject(request.error);
+        console.log("Opening DB with version:", DB_VERSION);
+
+        request.onerror = () => {
+            dbCache.delete(dbName); // Clean up on failure
+            reject(request.error);
+        };
         request.onsuccess = () => {
-            const db = request.result;
-            dbCache.set(dbName, db);
-            refCounts.set(dbName, 1);
-            resolve(db);
+            resolve(request.result);
         };
         request.onupgradeneeded = () => {
             const db = request.result;
             initDatabase(db);
         };
+        request.onblocked = () => {
+            console.warn(
+                "Database upgrade blocked - close other tabs/connections"
+            );
+        };
     });
 
-    return db;
+    // Cache immediately before awaiting
+    dbCache.set(dbName, dbPromise);
+    refCounts.set(dbName, 1);
+
+    return dbPromise;
 }
 
 /**
  * Decrements the reference count and closes the database when no references remain.
  * Returns true if the database was actually closed.
  */
-export function closeDatabase(
-    dbName: string = DEFAULT_DB_NAME,
-    db?: IDBDatabase | null
-): boolean {
-    const cached = dbCache.get(dbName);
-    if (!cached) return false;
-    if (db && cached !== db) return false; // Not the cached instance
+export async function closeDatabase(
+    dbName: string = DEFAULT_DB_NAME
+): Promise<boolean> {
+    const cachedPromise = dbCache.get(dbName);
+    if (!cachedPromise) return false;
 
     const count = (refCounts.get(dbName) ?? 1) - 1;
     if (count > 0) {
@@ -156,6 +165,12 @@ export function closeDatabase(
     // Last reference — actually close
     refCounts.delete(dbName);
     dbCache.delete(dbName);
-    cached.close();
+
+    try {
+        const db = await cachedPromise;
+        db.close();
+    } catch {
+        // DB failed to open, nothing to close
+    }
     return true;
 }
