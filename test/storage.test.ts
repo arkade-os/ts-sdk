@@ -51,7 +51,7 @@ const walletRepositoryImplementations: Array<
         name: "IndexedDBWalletRepository",
         factory: async () => {
             const dbName = getUniqueDbName("wallet-idb");
-            return IndexedDBWalletRepository.create(dbName);
+            return new IndexedDBWalletRepository(dbName);
         },
     },
 ];
@@ -75,7 +75,7 @@ const contractRepositoryImplementations: Array<
         name: "IndexedDBContractRepository",
         factory: async () => {
             const dbName = getUniqueDbName("contract-idb");
-            return await IndexedDBContractRepository.create(dbName);
+            return new IndexedDBContractRepository(dbName);
         },
     },
 ];
@@ -626,7 +626,7 @@ describe("IndexedDB migrations", () => {
         await walletRepoV1.saveTransactions(testAddress2, [tx3]);
         await walletRepoV1.saveWalletState(walletState);
 
-        const walletRepoV2 = await IndexedDBWalletRepository.create(newDbName);
+        const walletRepoV2 = new IndexedDBWalletRepository(newDbName);
 
         await migrateWalletRepository(oldStorage, walletRepoV2, [
             testAddress1,
@@ -690,13 +690,9 @@ describe("IndexedDB migrations", () => {
                 storage.setItem(key, value)
             )
         );
-        await storage.setItem(
-            "contract:test-contract:metadata",
-            JSON.stringify({ name: "example" })
-        );
 
         const dbName = getUniqueDbName("contract-migration");
-        const repo = await IndexedDBContractRepository.create(dbName);
+        const repo = new IndexedDBContractRepository(dbName);
         await migrateContractRepository(storage, repo);
 
         const reverseSwapsFixture = JSON.parse(
@@ -717,12 +713,6 @@ describe("IndexedDB migrations", () => {
         const submarineSwaps =
             await repo.getContractCollection("submarineSwaps");
         expect(submarineSwaps).toEqual(submarineSwapsFixture);
-
-        const contractData = await repo.getContractData(
-            "test-contract",
-            "metadata"
-        );
-        expect(contractData).toEqual({ name: "example" });
 
         const migration = await storage.getItem(
             "migration-from-storage-adapter-contract"
@@ -746,7 +736,7 @@ describe("IndexedDB migrations", () => {
             "done"
         );
 
-        const walletRepoV2 = await IndexedDBWalletRepository.create(newDbName);
+        const walletRepoV2 = new IndexedDBWalletRepository(newDbName);
 
         await migrateWalletRepository(oldStorage, walletRepoV2, [testAddress]);
 

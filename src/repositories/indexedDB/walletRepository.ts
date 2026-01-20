@@ -26,27 +26,11 @@ import {
 export class IndexedDBWalletRepository implements WalletRepository {
     private db: IDBDatabase | null = null;
 
-    private constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
-
-    static async create(
-        dbName: string = DEFAULT_DB_NAME
-    ): Promise<IndexedDBWalletRepository> {
-        const repository = new IndexedDBWalletRepository(dbName);
-        await repository.getDB();
-        return repository;
-    }
-
-    async close(): Promise<void> {
-        if (!this.db) return;
-        closeDatabase(this.dbName, this.db);
-        this.db.close();
-        this.db = null;
-    }
+    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     async [Symbol.asyncDispose](): Promise<void> {
         if (!this.db) return;
         closeDatabase(this.dbName, this.db);
-        this.db.close();
         this.db = null;
     }
 

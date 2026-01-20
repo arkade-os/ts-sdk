@@ -216,12 +216,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const offchainTapscript = bareVtxoTapscript;
 
         const walletRepository =
-            config.storage?.walletRepository ??
-            (await IndexedDBWalletRepository.create());
+            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
 
         const contractRepository =
             config.storage?.contractRepository ??
-            (await IndexedDBContractRepository.create());
+            new IndexedDBContractRepository();
 
         return {
             arkProvider,

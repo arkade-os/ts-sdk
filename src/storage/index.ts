@@ -6,5 +6,4 @@ export interface StorageAdapter {
     setItem(key: string, value: string): Promise<void>;
     removeItem(key: string): Promise<void>;
     clear(): Promise<void>;
-    getAllKeys?(): Promise<string[]>;
 }

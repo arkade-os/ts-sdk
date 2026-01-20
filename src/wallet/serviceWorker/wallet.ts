@@ -108,11 +108,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     ): Promise<ServiceWorkerReadonlyWallet> {
         const walletRepository =
             options.storage?.walletRepository ??
-            (await IndexedDBWalletRepository.create());
+            new IndexedDBWalletRepository();
 
         const contractRepository =
             options.storage?.contractRepository ??
-            (await IndexedDBContractRepository.create());
+            new IndexedDBContractRepository();
 
         // Create the wallet instance
         const wallet = new ServiceWorkerReadonlyWallet(
@@ -377,11 +377,11 @@ export class ServiceWorkerWallet
     ): Promise<ServiceWorkerWallet> {
         const walletRepository =
             options.storage?.walletRepository ??
-            (await IndexedDBWalletRepository.create());
+            new IndexedDBWalletRepository();
 
         const contractRepository =
             options.storage?.contractRepository ??
-            (await IndexedDBContractRepository.create());
+            new IndexedDBContractRepository();
 
         // Extract identity and check if it can expose private key
         const identity = isPrivateKeyIdentity(options.identity)

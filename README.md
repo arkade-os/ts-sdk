@@ -34,8 +34,8 @@ const wallet = await Wallet.create({
   arkServerUrl: 'https://mutinynet.arkade.sh',
   // Optional: provide repositories for persistence (defaults to IndexedDB)
   // storage: {
-  //   walletRepository: await IndexedDBWalletRepository.create('my-wallet-db'),
-  //   contractRepository: await IndexedDBContractRepository.create('my-wallet-db')
+  //   walletRepository: new IndexedDBWalletRepository('my-wallet-db'),
+  //   contractRepository: new IndexedDBContractRepository('my-wallet-db')
   // }
 })
 ```
@@ -390,14 +390,27 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
 > const newDbName = 'my-app-db'
 >
-> const walletRepository = await IndexedDBWalletRepository.create(newDbName)
+> const walletRepository = new IndexedDBWalletRepository(newDbName)
 > await migrateWalletRepository(oldStorage, walletRepository, [
 >   'address-1',
 >   'address-2'
 > ])
 >
-> const contractRepository = await IndexedDBContractRepository.create(newDbName)
+> const contractRepository = new IndexedDBContractRepository(newDbName)
 > await migrateContractRepository(oldStorage, contractRepository)
+> ```
+>  
+> If you persisted custom data in the ContractRepository via its `setContractData` method, 
+> or a custom collection via `saveToContractCollection`, you'll need to migrate it manually:
+> 
+> ```typescript
+> // Custom data stored in the ContractRepository
+> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
+> const oldRepo = new ContractRepositoryImpl(storageAdapter)
+> const customContract = await oldRepo.getContractData('my-contract', 'status')
+> await contractRepository.setContractData('my-contract', 'status', customData)
+> const customCollection = await oldRepo.getContractCollection('swaps')
+> await contractRepository.saveToContractCollection('swaps', customCollection)
 > ```
 
 Note: `IndexedDB*Repository` requires [indexeddbshim](https://github.com/indexeddbshim/indexeddbshim) in Node or other

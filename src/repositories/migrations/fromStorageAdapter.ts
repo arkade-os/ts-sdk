@@ -42,9 +42,26 @@ export async function migrateWalletRepository(
     await storageAdapter.setItem(MIGRATION_KEY("wallet"), "done");
 }
 
-const CONTRACT_PREFIX = "contract:";
-const COLLECTION_PREFIX = "collection:";
+const COLLECTION_KEYS = [
+    {
+        collectionName: "reverseSwaps",
+        idField: "id",
+    },
+    { collectionName: "submarineSwaps", idField: "id" },
+    { collectionName: "commitmentTxs", idField: "txid" },
+];
 
+/**
+ * It migrates only the default keys created by the legacy implementation:
+ *  - "collection:reverseSwaps"
+ *  - "collection:submarineSwaps"
+ *  - "collection:commitmentTxs"
+ *
+ *  Any other key requires manual intervention.
+ *
+ * @param storageAdapter
+ * @param fresh
+ */
 export async function migrateContractRepository(
     storageAdapter: StorageAdapter,
     fresh: ContractRepository
@@ -53,57 +70,17 @@ export async function migrateContractRepository(
     if (migration == "done") return;
 
     const legacy = new ContractRepositoryImpl(storageAdapter);
-    const keys = await listStorageKeys(storageAdapter);
 
-    for (const key of keys) {
-        if (!key.startsWith(CONTRACT_PREFIX)) continue;
-        const match = key.match(/^contract:([^:]+):(.+)$/);
-        if (!match) continue;
-        const [, contractId, dataKey] = match;
-        const value = await legacy.getContractData(contractId, dataKey);
-        if (value === null) continue;
-        await fresh.setContractData(contractId, dataKey, value);
-    }
-
-    for (const key of keys) {
-        if (!key.startsWith(COLLECTION_PREFIX)) continue;
-        const match = key.match(/^collection:(.+)$/);
-        if (!match) continue;
-        const [, contractType] = match;
+    for (const { collectionName, idField } of COLLECTION_KEYS) {
         const collection =
             await legacy.getContractCollection<Record<string, unknown>>(
-                contractType
+                collectionName
             );
         if (!collection.length) continue;
-        const idField = inferIdField(collection);
         for (const item of collection) {
-            await fresh.saveToContractCollection(contractType, item, idField);
+            await fresh.saveToContractCollection(collectionName, item, idField);
         }
     }
 
     await storageAdapter.setItem(MIGRATION_KEY("contract"), "done");
-}
-
-async function listStorageKeys(
-    storageAdapter: StorageAdapter
-): Promise<string[]> {
-    if (typeof storageAdapter.getAllKeys === "function") {
-        return await storageAdapter.getAllKeys();
-    }
-    throw new Error("Storage adapter does not support key enumeration");
-}
-
-function inferIdField<T extends Record<string, unknown>>(
-    items: ReadonlyArray<T>
-): keyof T {
-    const candidate = items.find((item) => item && typeof item === "object") as
-        | T
-        | undefined;
-    if (!candidate) {
-        throw new Error("Cannot infer id field for empty collection");
-    }
-    if ("id" in candidate) return "id" as keyof T;
-    if ("txid" in candidate) return "txid" as keyof T;
-    if ("key" in candidate) return "key" as keyof T;
-    throw new Error("Cannot infer id field for contract collection");
 }

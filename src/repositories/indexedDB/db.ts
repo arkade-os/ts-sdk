@@ -96,9 +96,11 @@ export const deserializeUtxo = (o: SerializedUtxo): ExtendedCoin => ({
 
 // database instance cache, avoiding multiple open requests
 const dbCache = new Map<string, IDBDatabase>();
+// track reference counts for each database to avoid closing it prematurely
+const refCounts = new Map<string, number>();
 
 /**
- * Opens an IndexedDB database.
+ * Opens an IndexedDB database and increments the reference count.
  */
 export async function openDatabase(
     dbName: string = DEFAULT_DB_NAME
@@ -111,6 +113,7 @@ export async function openDatabase(
     // Return cached instance if available
     const cached = dbCache.get(dbName);
     if (cached) {
+        refCounts.set(dbName, (refCounts.get(dbName) ?? 0) + 1);
         return cached;
     }
 
@@ -120,6 +123,7 @@ export async function openDatabase(
         request.onsuccess = () => {
             const db = request.result;
             dbCache.set(dbName, db);
+            refCounts.set(dbName, 1);
             resolve(db);
         };
         request.onupgradeneeded = () => {
@@ -131,14 +135,27 @@ export async function openDatabase(
     return db;
 }
 
+/**
+ * Decrements the reference count and closes the database when no references remain.
+ * Returns true if the database was actually closed.
+ */
 export function closeDatabase(
     dbName: string = DEFAULT_DB_NAME,
     db?: IDBDatabase | null
-): void {
+): boolean {
     const cached = dbCache.get(dbName);
-    if (!cached) return;
-    // cached.close() is handled by the callers
-    if (!db || cached === db) {
-        dbCache.delete(dbName);
+    if (!cached) return false;
+    if (db && cached !== db) return false; // Not the cached instance
+
+    const count = (refCounts.get(dbName) ?? 1) - 1;
+    if (count > 0) {
+        refCounts.set(dbName, count);
+        return false;
     }
+
+    // Last reference — actually close
+    refCounts.delete(dbName);
+    dbCache.delete(dbName);
+    cached.close();
+    return true;
 }
