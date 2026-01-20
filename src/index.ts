@@ -153,6 +153,8 @@ import {
 import { buildForfeitTx } from "./forfeit";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
+import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
+import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
 import {
     migrateWalletRepository,
     migrateContractRepository,
@@ -232,6 +234,8 @@ export {
     // Repositories
     IndexedDBWalletRepository,
     IndexedDBContractRepository,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
     migrateWalletRepository,
     migrateContractRepository,
 

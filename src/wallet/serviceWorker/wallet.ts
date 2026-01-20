@@ -20,6 +20,10 @@ import { ContractRepository } from "../../repositories/contractRepository";
 import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
 import { IndexedDBWalletRepository } from "../../repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "../../repositories/indexedDB/contractRepository";
+import {
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
+} from "../../repositories";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -104,16 +108,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
-        const { walletRepository, contractRepository } = options.storage ?? {
-            walletRepository: await IndexedDBWalletRepository.create(
-                DEFAULT_DB_NAME,
-                { inMemory: true }
-            ),
-            contractRepository: await IndexedDBContractRepository.create(
-                DEFAULT_DB_NAME,
-                { inMemory: true }
-            ),
-        };
+        const walletRepository =
+            options.storage?.walletRepository ?? new InMemoryWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ??
+            new InMemoryContractRepository();
 
         // Create the wallet instance
         const wallet = new ServiceWorkerReadonlyWallet(
@@ -376,16 +376,12 @@ export class ServiceWorkerWallet
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
-        const { walletRepository, contractRepository } = options.storage ?? {
-            walletRepository: await IndexedDBWalletRepository.create(
-                DEFAULT_DB_NAME,
-                { inMemory: true }
-            ),
-            contractRepository: await IndexedDBContractRepository.create(
-                DEFAULT_DB_NAME,
-                { inMemory: true }
-            ),
-        };
+        const walletRepository =
+            options.storage?.walletRepository ?? new InMemoryWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ??
+            new InMemoryContractRepository();
 
         // Extract identity and check if it can expose private key
         const identity = isPrivateKeyIdentity(options.identity)

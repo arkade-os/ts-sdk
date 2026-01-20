@@ -8,6 +8,8 @@ import {
 import { ContractRepository } from "../src/repositories/contractRepository";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
+import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
+import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import {
     migrateWalletRepository,
     migrateContractRepository,
@@ -33,6 +35,10 @@ type RepositoryTestItem<T> = {
 const walletRepositoryImplementations: Array<
     RepositoryTestItem<WalletRepository>
 > = [
+    {
+        name: "InMemoryWalletRepository",
+        factory: async () => new InMemoryWalletRepository(),
+    },
     {
         name: "WalletRepositoryImpl (InMemoryStorage)",
         factory: async () => {
@@ -60,6 +66,10 @@ const walletRepositoryImplementations: Array<
 const contractRepositoryImplementations: Array<
     RepositoryTestItem<ContractRepository>
 > = [
+    {
+        name: "InMemoryContractRepository",
+        factory: async () => new InMemoryContractRepository(),
+    },
     {
         name: "ContractRepositoryImpl (InMemoryStorage)",
         factory: async () => {

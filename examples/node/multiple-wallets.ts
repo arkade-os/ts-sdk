@@ -85,7 +85,7 @@ async function main() {
     console.log("[Alice]\tRetrieved contract data:", aliceSavedData);
 
     console.log(
-        "Only Alice's data is present in IndexedDB contractData table, check the .sqlite file to verify this."
+        "Only Alice's data is present in IndexedDB `contracts` table, check the .sqlite file to verify this."
     );
 }
 

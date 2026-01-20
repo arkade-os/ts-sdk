@@ -73,6 +73,10 @@ import { buildTransactionHistory } from "../utils/transactionHistory";
 import { IndexedDBWalletRepository } from "../repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "../repositories/indexedDB/contractRepository";
 import { DEFAULT_DB_NAME } from "./serviceWorker/utils";
+import {
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
+} from "../repositories";
 
 export type IncomingFunds =
     | {
@@ -215,16 +219,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const offchainTapscript = bareVtxoTapscript;
 
         const walletRepository =
-            config.storage?.walletRepository ??
-            (await IndexedDBWalletRepository.create(DEFAULT_DB_NAME, {
-                inMemory: true,
-            }));
+            config.storage?.walletRepository ?? new InMemoryWalletRepository();
 
         const contractRepository =
             config.storage?.contractRepository ??
-            (await IndexedDBContractRepository.create(DEFAULT_DB_NAME, {
-                inMemory: true,
-            }));
+            new InMemoryContractRepository();
 
         return {
             arkProvider,

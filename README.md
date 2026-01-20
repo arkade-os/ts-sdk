@@ -405,8 +405,7 @@ const wallet = await Wallet.create({
 })
 ```
 
-To keep data in memory only, omit `storage` (default) or pass `{ inMemory: true }`
-when creating the repositories.
+If you omit `storage`, the SDK uses in-memory repositories (ephemeral).
 
 ### Migrating from Repository v1
 

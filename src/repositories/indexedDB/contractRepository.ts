@@ -6,45 +6,27 @@ import {
     STORE_CONTRACTS,
     STORE_CONTRACT_COLLECTIONS,
 } from "./db";
-import { InMemoryDatabase } from "./inMemoryDatabase";
-
-type ContractStore = {
-    init?: () => Promise<void>;
-    close: () => Promise<void>;
-    getContractData: <T>(contractId: string, key: string) => Promise<T | null>;
-    setContractData: <T>(
-        contractId: string,
-        key: string,
-        data: T
-    ) => Promise<void>;
-    deleteContractData: (contractId: string, key: string) => Promise<void>;
-    clearContractData: () => Promise<void>;
-    getContractCollection: <T>(
-        contractType: string
-    ) => Promise<ReadonlyArray<T>>;
-    saveToContractCollection: <T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ) => Promise<void>;
-    removeFromContractCollection: <T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ) => Promise<void>;
-};
 
 const contractKey = (contractId: string, key: string) =>
     `contract:${contractId}:${key}`;
 const collectionKey = (contractType: string) => `collection:${contractType}`;
 
-class IndexedDbContractStore implements ContractStore {
+/**
+ * IndexedDB-based implementation of ContractRepository.
+ *
+ * Data is stored as JSON strings in key/value stores.
+ */
+export class IndexedDBContractRepository implements ContractRepository {
     private db: IDBDatabase | null = null;
 
-    constructor(private readonly dbName: string) {}
+    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
-    async init(): Promise<void> {
-        await this.getDB();
+    static async create(
+        dbName: string = DEFAULT_DB_NAME
+    ): Promise<IndexedDBContractRepository> {
+        const repository = new IndexedDBContractRepository(dbName);
+        await repository.getDB();
+        return repository;
     }
 
     async close(): Promise<void> {
@@ -52,6 +34,14 @@ class IndexedDbContractStore implements ContractStore {
         closeDatabase(this.dbName, this.db);
         this.db.close();
         this.db = null;
+    }
+
+    [Symbol.dispose](): void {
+        void this.close();
+    }
+
+    [Symbol.asyncDispose](): Promise<void> {
+        return this.close();
     }
 
     async getContractData<T>(
@@ -354,199 +344,5 @@ class IndexedDbContractStore implements ContractStore {
         if (this.db) return this.db;
         this.db = await openDatabase(this.dbName);
         return this.db;
-    }
-}
-
-class InMemoryContractStore implements ContractStore {
-    private db: InMemoryDatabase | null = new InMemoryDatabase();
-
-    async close(): Promise<void> {
-        this.db = null;
-    }
-
-    async getContractData<T>(
-        contractId: string,
-        key: string
-    ): Promise<T | null> {
-        const db = this.getDb();
-        const result = db.get<{ value?: string }>(
-            STORE_CONTRACTS,
-            contractKey(contractId, key)
-        );
-        if (!result?.value) return null;
-        return JSON.parse(result.value) as T;
-    }
-
-    async setContractData<T>(
-        contractId: string,
-        key: string,
-        data: T
-    ): Promise<void> {
-        const db = this.getDb();
-        db.put(STORE_CONTRACTS, {
-            key: contractKey(contractId, key),
-            value: JSON.stringify(data),
-        });
-    }
-
-    async deleteContractData(contractId: string, key: string): Promise<void> {
-        const db = this.getDb();
-        db.delete(STORE_CONTRACTS, contractKey(contractId, key));
-    }
-
-    async clearContractData(): Promise<void> {
-        const db = this.getDb();
-        db.clear(STORE_CONTRACTS);
-        db.clear(STORE_CONTRACT_COLLECTIONS);
-    }
-
-    async getContractCollection<T>(
-        contractType: string
-    ): Promise<ReadonlyArray<T>> {
-        const db = this.getDb();
-        const result = db.get<{ value?: string }>(
-            STORE_CONTRACT_COLLECTIONS,
-            collectionKey(contractType)
-        );
-        if (!result?.value) return [];
-        return JSON.parse(result.value) as ReadonlyArray<T>;
-    }
-
-    async saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void> {
-        // Validate that the item has the required id field
-        const itemId = item[idField];
-        if (itemId === undefined || itemId === null) {
-            throw new Error(
-                `Item is missing required field '${String(idField)}'`
-            );
-        }
-
-        const db = this.getDb();
-        const existing = await this.getContractCollection<T>(contractType);
-        const existingIndex = existing.findIndex((i) => i[idField] === itemId);
-        const collection =
-            existingIndex !== -1
-                ? existing.map((entry, index) =>
-                      index === existingIndex ? item : entry
-                  )
-                : [...existing, item];
-        db.put(STORE_CONTRACT_COLLECTIONS, {
-            key: collectionKey(contractType),
-            value: JSON.stringify(collection),
-        });
-    }
-
-    async removeFromContractCollection<T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ): Promise<void> {
-        // Validate input parameters
-        if (id === undefined || id === null) {
-            throw new Error(`Invalid id provided for removal: ${String(id)}`);
-        }
-
-        const db = this.getDb();
-        const existing = await this.getContractCollection<T>(contractType);
-        const collection = existing.filter((item) => item[idField] !== id);
-        db.put(STORE_CONTRACT_COLLECTIONS, {
-            key: collectionKey(contractType),
-            value: JSON.stringify(collection),
-        });
-    }
-
-    private getDb(): InMemoryDatabase {
-        if (!this.db) {
-            throw new Error("In-memory database has been closed");
-        }
-        return this.db;
-    }
-}
-
-/**
- * IndexedDB-based implementation of ContractRepository.
- *
- * Pass `{ inMemory: true }` to use a simple in-memory store (per instance).
- * Data is stored as JSON strings in key/value stores.
- */
-export class IndexedDBContractRepository implements ContractRepository {
-    private readonly store: ContractStore;
-
-    constructor(
-        dbName: string = DEFAULT_DB_NAME,
-        options?: { inMemory?: boolean }
-    ) {
-        this.store = options?.inMemory
-            ? new InMemoryContractStore()
-            : new IndexedDbContractStore(dbName);
-    }
-
-    static async create(
-        dbName: string = DEFAULT_DB_NAME,
-        options?: { inMemory?: boolean }
-    ): Promise<IndexedDBContractRepository> {
-        const repository = new IndexedDBContractRepository(dbName, options);
-        await repository.store.init?.();
-        return repository;
-    }
-
-    async close(): Promise<void> {
-        await this.store.close();
-    }
-
-    [Symbol.dispose](): void {
-        void this.close();
-    }
-
-    [Symbol.asyncDispose](): Promise<void> {
-        return this.close();
-    }
-
-    getContractData<T>(contractId: string, key: string): Promise<T | null> {
-        return this.store.getContractData(contractId, key);
-    }
-
-    setContractData<T>(
-        contractId: string,
-        key: string,
-        data: T
-    ): Promise<void> {
-        return this.store.setContractData(contractId, key, data);
-    }
-
-    deleteContractData(contractId: string, key: string): Promise<void> {
-        return this.store.deleteContractData(contractId, key);
-    }
-
-    clearContractData(): Promise<void> {
-        return this.store.clearContractData();
-    }
-
-    getContractCollection<T>(contractType: string): Promise<ReadonlyArray<T>> {
-        return this.store.getContractCollection(contractType);
-    }
-
-    saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void> {
-        return this.store.saveToContractCollection(contractType, item, idField);
-    }
-
-    removeFromContractCollection<T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ): Promise<void> {
-        return this.store.removeFromContractCollection(
-            contractType,
-            id,
-            idField
-        );
     }
 }

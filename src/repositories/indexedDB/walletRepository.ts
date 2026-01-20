@@ -19,31 +19,21 @@ import {
     SerializedVtxo,
     SerializedUtxo,
 } from "./db";
-import { InMemoryDatabase } from "./inMemoryDatabase";
 
-type WalletStore = {
-    init?: () => Promise<void>;
-    close: () => Promise<void>;
-    getVtxos: (address: string) => Promise<ExtendedVirtualCoin[]>;
-    saveVtxos: (address: string, vtxos: ExtendedVirtualCoin[]) => Promise<void>;
-    clearVtxos: (address: string) => Promise<void>;
-    getUtxos: (address: string) => Promise<ExtendedCoin[]>;
-    saveUtxos: (address: string, utxos: ExtendedCoin[]) => Promise<void>;
-    clearUtxos: (address: string) => Promise<void>;
-    getTransactionHistory: (address: string) => Promise<ArkTransaction[]>;
-    saveTransactions: (address: string, txs: ArkTransaction[]) => Promise<void>;
-    clearTransactions: (address: string) => Promise<void>;
-    getWalletState: () => Promise<WalletState | null>;
-    saveWalletState: (state: WalletState) => Promise<void>;
-};
-
-class IndexedDbWalletStore implements WalletStore {
+/**
+ * IndexedDB-based implementation of WalletRepository.
+ */
+export class IndexedDBWalletRepository implements WalletRepository {
     private db: IDBDatabase | null = null;
 
-    constructor(private readonly dbName: string) {}
+    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
-    async init(): Promise<void> {
-        await this.getDB();
+    static async create(
+        dbName: string = DEFAULT_DB_NAME
+    ): Promise<IndexedDBWalletRepository> {
+        const repository = new IndexedDBWalletRepository(dbName);
+        await repository.getDB();
+        return repository;
     }
 
     async close(): Promise<void> {
@@ -51,6 +41,14 @@ class IndexedDbWalletStore implements WalletStore {
         closeDatabase(this.dbName, this.db);
         this.db.close();
         this.db = null;
+    }
+
+    [Symbol.dispose](): void {
+        void this.close();
+    }
+
+    [Symbol.asyncDispose](): Promise<void> {
+        return this.close();
     }
 
     async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
@@ -385,218 +383,5 @@ class IndexedDbWalletStore implements WalletStore {
         if (this.db) return this.db;
         this.db = await openDatabase(this.dbName);
         return this.db;
-    }
-}
-
-class InMemoryWalletStore implements WalletStore {
-    private db: InMemoryDatabase | null = new InMemoryDatabase();
-
-    async close(): Promise<void> {
-        this.db = null;
-    }
-
-    async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        const db = this.getDb();
-        const results = db.getAllByIndex(
-            STORE_VTXOS,
-            "address",
-            address
-        ) as SerializedVtxo[];
-        return results.map(deserializeVtxo);
-    }
-
-    async saveVtxos(
-        address: string,
-        vtxos: ExtendedVirtualCoin[]
-    ): Promise<void> {
-        const db = this.getDb();
-        vtxos.forEach((vtxo) => {
-            const serialized: SerializedVtxo = serializeVtxo(vtxo);
-            const item = { address, ...serialized };
-            db.put(STORE_VTXOS, item);
-        });
-    }
-
-    async clearVtxos(address: string): Promise<void> {
-        const db = this.getDb();
-        db.deleteWhere(
-            STORE_VTXOS,
-            (item) =>
-                typeof item === "object" &&
-                item !== null &&
-                (item as { address?: string }).address === address
-        );
-    }
-
-    async getUtxos(address: string): Promise<ExtendedCoin[]> {
-        const db = this.getDb();
-        const results = db.getAllByIndex(
-            STORE_UTXOS,
-            "address",
-            address
-        ) as SerializedUtxo[];
-        return results.map(deserializeUtxo);
-    }
-
-    async saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
-        const db = this.getDb();
-        utxos.forEach((utxo) => {
-            const serialized = serializeUtxo(utxo);
-            const item = { address, ...serialized };
-            db.put(STORE_UTXOS, item);
-        });
-    }
-
-    async clearUtxos(address: string): Promise<void> {
-        const db = this.getDb();
-        db.deleteWhere(
-            STORE_UTXOS,
-            (item) =>
-                typeof item === "object" &&
-                item !== null &&
-                (item as { address?: string }).address === address
-        );
-    }
-
-    async getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        const db = this.getDb();
-        const results = db.getAllByIndex(
-            STORE_TRANSACTIONS,
-            "address",
-            address
-        ) as ArkTransaction[];
-        return results.sort((a, b) => a.createdAt - b.createdAt);
-    }
-
-    async saveTransactions(
-        address: string,
-        txs: ArkTransaction[]
-    ): Promise<void> {
-        const db = this.getDb();
-        txs.forEach((tx) => {
-            const item = {
-                address,
-                ...tx,
-                keyBoardingTxid: tx.key.boardingTxid,
-                keyCommitmentTxid: tx.key.commitmentTxid,
-                keyArkTxid: tx.key.arkTxid,
-            };
-            db.put(STORE_TRANSACTIONS, item);
-        });
-    }
-
-    async clearTransactions(address: string): Promise<void> {
-        const db = this.getDb();
-        db.deleteWhere(
-            STORE_TRANSACTIONS,
-            (item) =>
-                typeof item === "object" &&
-                item !== null &&
-                (item as { address?: string }).address === address
-        );
-    }
-
-    async getWalletState(): Promise<WalletState | null> {
-        const db = this.getDb();
-        const result = db.get<{ data?: WalletState }>(
-            STORE_WALLET_STATE,
-            "state"
-        );
-        return result?.data ?? null;
-    }
-
-    async saveWalletState(state: WalletState): Promise<void> {
-        const db = this.getDb();
-        db.put(STORE_WALLET_STATE, { key: "state", data: state });
-    }
-
-    private getDb(): InMemoryDatabase {
-        if (!this.db) {
-            throw new Error("In-memory database has been closed");
-        }
-        return this.db;
-    }
-}
-
-/**
- * IndexedDB-based implementation of WalletRepository.
- *
- * Pass `{ inMemory: true }` to use a simple in-memory store (per instance).
- */
-export class IndexedDBWalletRepository implements WalletRepository {
-    private readonly store: WalletStore;
-
-    constructor(
-        dbName: string = DEFAULT_DB_NAME,
-        options?: { inMemory?: boolean }
-    ) {
-        this.store = options?.inMemory
-            ? new InMemoryWalletStore()
-            : new IndexedDbWalletStore(dbName);
-    }
-
-    static async create(
-        dbName: string = DEFAULT_DB_NAME,
-        options?: { inMemory?: boolean }
-    ): Promise<IndexedDBWalletRepository> {
-        const repository = new IndexedDBWalletRepository(dbName, options);
-        await repository.store.init?.();
-        return repository;
-    }
-
-    async close(): Promise<void> {
-        await this.store.close();
-    }
-
-    [Symbol.dispose](): void {
-        void this.close();
-    }
-
-    [Symbol.asyncDispose](): Promise<void> {
-        return this.close();
-    }
-
-    getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
-        return this.store.getVtxos(address);
-    }
-
-    saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void> {
-        return this.store.saveVtxos(address, vtxos);
-    }
-
-    clearVtxos(address: string): Promise<void> {
-        return this.store.clearVtxos(address);
-    }
-
-    getUtxos(address: string): Promise<ExtendedCoin[]> {
-        return this.store.getUtxos(address);
-    }
-
-    saveUtxos(address: string, utxos: ExtendedCoin[]): Promise<void> {
-        return this.store.saveUtxos(address, utxos);
-    }
-
-    clearUtxos(address: string): Promise<void> {
-        return this.store.clearUtxos(address);
-    }
-
-    getTransactionHistory(address: string): Promise<ArkTransaction[]> {
-        return this.store.getTransactionHistory(address);
-    }
-
-    saveTransactions(address: string, txs: ArkTransaction[]): Promise<void> {
-        return this.store.saveTransactions(address, txs);
-    }
-
-    clearTransactions(address: string): Promise<void> {
-        return this.store.clearTransactions(address);
-    }
-
-    getWalletState(): Promise<WalletState | null> {
-        return this.store.getWalletState();
-    }
-
-    saveWalletState(state: WalletState): Promise<void> {
-        return this.store.saveWalletState(state);
     }
 }
