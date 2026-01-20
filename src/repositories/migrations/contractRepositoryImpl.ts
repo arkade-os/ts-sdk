@@ -5,6 +5,9 @@ const getContractStorageKey = (id: string, key: string) =>
     `contract:${id}:${key}`;
 const getCollectionStorageKey = (type: string) => `collection:${type}`;
 
+/**
+ * @deprecated This is only to be used in migration from storage V1
+ */
 export class ContractRepositoryImpl implements ContractRepository {
     private storage: StorageAdapter;
 

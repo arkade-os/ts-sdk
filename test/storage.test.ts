@@ -40,13 +40,6 @@ const walletRepositoryImplementations: Array<
         factory: async () => new InMemoryWalletRepository(),
     },
     {
-        name: "WalletRepositoryImpl (InMemoryStorage)",
-        factory: async () => {
-            const storage = new InMemoryStorageAdapter();
-            return new WalletRepositoryImpl(storage);
-        },
-    },
-    {
         name: "WalletRepositoryImpl (IndexedDBStorage)",
         factory: async () => {
             const dbName = getUniqueDbName("wallet-repo");
@@ -69,13 +62,6 @@ const contractRepositoryImplementations: Array<
     {
         name: "InMemoryContractRepository",
         factory: async () => new InMemoryContractRepository(),
-    },
-    {
-        name: "ContractRepositoryImpl (InMemoryStorage)",
-        factory: async () => {
-            const storage = new InMemoryStorageAdapter();
-            return new ContractRepositoryImpl(storage);
-        },
     },
     {
         name: "ContractRepositoryImpl (IndexedDBStorage)",
