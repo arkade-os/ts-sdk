@@ -78,4 +78,9 @@ export class InMemoryContractRepository implements ContractRepository {
         const next = existing.filter((item) => item[idField] !== id);
         this.collections.set(contractType, next);
     }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        // nothing to dispose, data is ephemeral and scoped to the instance
+        return;
+    }
 }

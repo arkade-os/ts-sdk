@@ -1,4 +1,4 @@
-export interface ContractRepository {
+export interface ContractRepository extends AsyncDisposable {
     // Generic contract metadata (for SDK users like boltz-swap)
     getContractData<T>(contractId: string, key: string): Promise<T | null>;
     setContractData<T>(contractId: string, key: string, data: T): Promise<void>;

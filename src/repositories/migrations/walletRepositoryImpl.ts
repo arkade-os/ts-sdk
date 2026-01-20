@@ -209,4 +209,9 @@ export class WalletRepositoryImpl implements WalletRepository {
             JSON.stringify(state)
         );
     }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        // deprecated StorageAdapter doesn't have a `close()` method
+        return;
+    }
 }

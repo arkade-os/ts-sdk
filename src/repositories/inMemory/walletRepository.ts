@@ -78,6 +78,11 @@ export class InMemoryWalletRepository implements WalletRepository {
     async saveWalletState(state: WalletState): Promise<void> {
         this.walletState = state;
     }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        // nothing to dispose, data is ephemeral and scoped to the instance
+        return;
+    }
 }
 
 function serializeTxKey(tx: ArkTransaction): string {

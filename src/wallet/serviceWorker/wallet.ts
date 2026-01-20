@@ -17,9 +17,7 @@ import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
-import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
-import { IndexedDBWalletRepository } from "../../repositories/indexedDB/walletRepository";
-import { IndexedDBContractRepository } from "../../repositories/indexedDB/contractRepository";
+import { setupServiceWorker } from "./utils";
 import {
     InMemoryContractRepository,
     InMemoryWalletRepository,

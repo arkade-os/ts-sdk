@@ -29,19 +29,11 @@ export class IndexedDBContractRepository implements ContractRepository {
         return repository;
     }
 
-    async close(): Promise<void> {
+    async [Symbol.asyncDispose](): Promise<void> {
         if (!this.db) return;
         closeDatabase(this.dbName, this.db);
         this.db.close();
         this.db = null;
-    }
-
-    [Symbol.dispose](): void {
-        void this.close();
-    }
-
-    [Symbol.asyncDispose](): Promise<void> {
-        return this.close();
     }
 
     async getContractData<T>(

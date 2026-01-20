@@ -163,7 +163,13 @@ export class ContractRepositoryImpl implements ContractRepository {
         }
     }
 
+    // used only for tests
     async clearContractData(): Promise<void> {
         await this.storage.clear();
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        // deprecated StorageAdapter doesn't have a `close()` method
+        return;
     }
 }

@@ -5,7 +5,7 @@ export interface WalletState {
     settings?: Record<string, any>;
 }
 
-export interface WalletRepository {
+export interface WalletRepository extends AsyncDisposable {
     // VTXO management
     getVtxos(address: string): Promise<ExtendedVirtualCoin[]>;
     saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void>;
