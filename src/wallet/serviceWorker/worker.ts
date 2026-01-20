@@ -24,6 +24,10 @@ import {
 } from "../../repositories/walletRepository";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
+import {
+    DelegatorProvider,
+    RestDelegatorProvider,
+} from "../../providers/delegator";
 
 class ReadonlyHandler {
     constructor(protected readonly wallet: ReadonlyWallet) {}
@@ -80,6 +84,12 @@ class ReadonlyHandler {
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
         return undefined;
     }
+
+    async handleDelegate(): Promise<
+        Awaited<ReturnType<Wallet["delegate"]>> | undefined
+    > {
+        return undefined;
+    }
 }
 
 class Handler extends ReadonlyHandler {
@@ -105,6 +115,16 @@ class Handler extends ReadonlyHandler {
         ...args: Parameters<Wallet["sendBitcoin"]>
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
         return this.wallet.sendBitcoin(...args);
+    }
+
+    async handleDelegate(): Promise<
+        Awaited<ReturnType<Wallet["delegate"]>> | undefined
+    > {
+        const spendableVtxos = (
+            await this.wallet.getVtxos({ withRecoverable: true })
+        ).filter((v) => !v.isSpent);
+        if (spendableVtxos.length === 0) return;
+        return this.wallet.delegate(spendableVtxos);
     }
 }
 
@@ -295,6 +315,9 @@ export class Worker {
                     await this.sendMessageToAllClients(
                         Response.vtxoUpdate(newVtxos, spentVtxos)
                     );
+
+                    // delegate vtxos
+                    await this.handler?.handleDelegate();
                 }
                 if (funds.type === "utxo") {
                     const utxos = funds.coins.map((utxo) =>
@@ -342,9 +365,14 @@ export class Worker {
         }
 
         const message = event.data;
-        const { arkServerPublicKey, arkServerUrl } = message;
+        const { arkServerPublicKey, arkServerUrl, delegatorUrl } = message;
         this.arkProvider = new RestArkProvider(arkServerUrl);
         this.indexerProvider = new RestIndexerProvider(arkServerUrl);
+
+        let delegatorProvider: DelegatorProvider | undefined;
+        if (delegatorUrl) {
+            delegatorProvider = new RestDelegatorProvider(delegatorUrl);
+        }
 
         try {
             if (
@@ -360,6 +388,7 @@ export class Worker {
                     arkServerUrl,
                     arkServerPublicKey,
                     storage: this.storage, // Use unified storage for wallet too
+                    delegatorProvider,
                 });
                 this.handler = new Handler(wallet);
             } else if (
@@ -377,6 +406,7 @@ export class Worker {
                     arkServerUrl,
                     arkServerPublicKey,
                     storage: this.storage, // Use unified storage for wallet too
+                    delegatorProvider,
                 });
                 this.handler = new ReadonlyHandler(wallet);
             } else {

@@ -77,6 +77,7 @@ interface ServiceWorkerWalletOptions {
     dbName?: string;
     dbVersion?: number;
     identity: ReadonlyIdentity | Identity;
+    delegatorUrl?: string;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -139,6 +140,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             key: { publicKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
+            delegatorUrl: options.delegatorUrl,
         };
 
         // Initialize the service worker
@@ -411,6 +413,7 @@ export class ServiceWorkerWallet
             key: { privateKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
+            delegatorUrl: options.delegatorUrl,
         };
 
         // Initialize the service worker
