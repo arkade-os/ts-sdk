@@ -71,8 +71,8 @@ import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import {
-    InMemoryContractRepository,
-    InMemoryWalletRepository,
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
 } from "../repositories";
 
 export type IncomingFunds =
@@ -216,11 +216,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const offchainTapscript = bareVtxoTapscript;
 
         const walletRepository =
-            config.storage?.walletRepository ?? new InMemoryWalletRepository();
+            config.storage?.walletRepository ??
+            (await IndexedDBWalletRepository.create());
 
         const contractRepository =
             config.storage?.contractRepository ??
-            new InMemoryContractRepository();
+            (await IndexedDBContractRepository.create());
 
         return {
             arkProvider,

@@ -14,6 +14,8 @@
 import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
     SingleKey,
     Wallet,
 } from "../../src";
@@ -34,11 +36,15 @@ async function main() {
     const bob = SingleKey.fromRandomBytes();
     const alice = SingleKey.fromRandomBytes();
 
-    // default, in-memory wallet
+    // in-memory wallet
     const bobWallet = await Wallet.create({
         identity: bob,
         arkServerUrl: "http://localhost:7070",
         esploraUrl: "http://localhost:3000",
+        storage: {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        },
     });
 
     console.log("[Bob]\tWallet created successfully!");
@@ -48,11 +54,7 @@ async function main() {
         identity: alice,
         arkServerUrl: "http://localhost:7070",
         esploraUrl: "http://localhost:3000",
-        storage: {
-            // This wallet will be persisted in IndexedDB because we pass the storage options
-            walletRepository: await IndexedDBWalletRepository.create(),
-            contractRepository: await IndexedDBContractRepository.create(),
-        },
+        // This wallet will be persisted in IndexedDB by default
     });
 
     console.log("[Alice]\tWallet created successfully!");

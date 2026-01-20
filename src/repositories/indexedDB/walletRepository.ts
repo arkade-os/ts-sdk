@@ -26,7 +26,7 @@ import {
 export class IndexedDBWalletRepository implements WalletRepository {
     private db: IDBDatabase | null = null;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    private constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     static async create(
         dbName: string = DEFAULT_DB_NAME

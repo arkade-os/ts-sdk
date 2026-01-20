@@ -32,7 +32,7 @@ const wallet = await Wallet.create({
   // Esplora API, can be left empty - mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Optional: provide repositories for persistence (defaults to in-memory)
+  // Optional: provide repositories for persistence (defaults to IndexedDB)
   // storage: {
   //   walletRepository: await IndexedDBWalletRepository.create('my-wallet-db'),
   //   contractRepository: await IndexedDBContractRepository.create('my-wallet-db')
@@ -372,66 +372,76 @@ new Worker().start()
 ### Repositories (Storage)
 
 The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
-`storage`, the SDK uses in-memory repositories (non-persistent).
+`storage`, the SDK uses IndexedDB repositories with the default database name.
 
-Note: `IndexedDB*Repository` requires `indexeddbshim` in Node or other
-non-browser environments. It is a dev dependency of the SDK, so you must
-install and initialize it in your app before using the repositories.
+> [!WARNING]
+> If you previously used the v1 `StorageAdapter`-based repositories, migrate
+> data into the new IndexedDB repositories before use:
+>
+> ```typescript
+> import {
+>   IndexedDBWalletRepository,
+>   IndexedDBContractRepository,
+>   migrateWalletRepository,
+>   migrateContractRepository
+> } from '@arkade-os/sdk'
+> import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
+>
+> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
+> const newDbName = 'my-app-db'
+>
+> const walletRepository = await IndexedDBWalletRepository.create(newDbName)
+> await migrateWalletRepository(oldStorage, walletRepository, [
+>   'address-1',
+>   'address-2'
+> ])
+>
+> const contractRepository = await IndexedDBContractRepository.create(newDbName)
+> await migrateContractRepository(oldStorage, contractRepository)
+> ```
+
+Note: `IndexedDB*Repository` requires [indexeddbshim](https://github.com/indexeddbshim/indexeddbshim) in Node or other
+**non-browser environments**. It is a dev dependency of the SDK, so you must
+install and initialize it in your app before using the repositories. This
+also applies when you rely on the default storage behavior (no `storage`).
+
+Please see the working example in [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts).
 
 ```typescript
-import {
-  SingleKey,
-  Wallet,
-  IndexedDBWalletRepository,
-  IndexedDBContractRepository
-} from '@arkade-os/sdk'
+import { SingleKey, Wallet } from '@arkade-os/sdk'
 import setGlobalVars from 'indexeddbshim'
 
 setGlobalVars()
 
 const identity = SingleKey.fromHex('your_private_key_hex')
 
-const walletRepository = await IndexedDBWalletRepository.create('my-app-db')
-const contractRepository = await IndexedDBContractRepository.create('my-app-db')
+// Create wallet with default IndexedDB storage
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+})
+```
 
-// Create wallet with persisted storage
+If you want a custom database name or a different repository implementation,
+pass `storage` explicitly.
+
+For ephemeral storage (no persistence), pass the in-memory repositories:
+
+```typescript
+import {
+  InMemoryWalletRepository,
+  InMemoryContractRepository,
+  Wallet
+} from '@arkade-os/sdk'
+
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
   storage: {
-    walletRepository,
-    contractRepository
+    walletRepository: new InMemoryWalletRepository(),
+    contractRepository: new InMemoryContractRepository()
   }
 })
-```
-
-If you omit `storage`, the SDK uses in-memory repositories (ephemeral).
-
-### Migrating from Repository v1
-
-If you previously used the v1 `StorageAdapter`-based repositories, migrate data
-into the new IndexedDB repositories before use:
-
-```typescript
-import {
-  IndexedDBWalletRepository,
-  IndexedDBContractRepository,
-  migrateWalletRepository,
-  migrateContractRepository
-} from '@arkade-os/sdk'
-import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
-
-const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
-const newDbName = 'my-app-db'
-
-const walletRepository = await IndexedDBWalletRepository.create(newDbName)
-await migrateWalletRepository(oldStorage, walletRepository, [
-  'address-1',
-  'address-2'
-])
-
-const contractRepository = await IndexedDBContractRepository.create(newDbName)
-await migrateContractRepository(oldStorage, contractRepository)
 ```
 
 ### Using with Expo/React Native

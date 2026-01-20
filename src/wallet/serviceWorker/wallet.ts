@@ -19,8 +19,8 @@ import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "./utils";
 import {
-    InMemoryContractRepository,
-    InMemoryWalletRepository,
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
 } from "../../repositories";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
@@ -107,11 +107,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
         const walletRepository =
-            options.storage?.walletRepository ?? new InMemoryWalletRepository();
+            options.storage?.walletRepository ??
+            (await IndexedDBWalletRepository.create());
 
         const contractRepository =
             options.storage?.contractRepository ??
-            new InMemoryContractRepository();
+            (await IndexedDBContractRepository.create());
 
         // Create the wallet instance
         const wallet = new ServiceWorkerReadonlyWallet(
@@ -375,11 +376,12 @@ export class ServiceWorkerWallet
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
         const walletRepository =
-            options.storage?.walletRepository ?? new InMemoryWalletRepository();
+            options.storage?.walletRepository ??
+            (await IndexedDBWalletRepository.create());
 
         const contractRepository =
             options.storage?.contractRepository ??
-            new InMemoryContractRepository();
+            (await IndexedDBContractRepository.create());
 
         // Extract identity and check if it can expose private key
         const identity = isPrivateKeyIdentity(options.identity)

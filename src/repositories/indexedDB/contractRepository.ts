@@ -19,7 +19,7 @@ const collectionKey = (contractType: string) => `collection:${contractType}`;
 export class IndexedDBContractRepository implements ContractRepository {
     private db: IDBDatabase | null = null;
 
-    constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+    private constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
 
     static async create(
         dbName: string = DEFAULT_DB_NAME
