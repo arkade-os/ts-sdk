@@ -2289,5 +2289,146 @@
             }
         ],
         "expectedBalance": 0
+    },
+    {
+        "address": "ark1qq4hfssprtcgnjzf8qlw2f78yvjau5kldfugg29k34y7j96q2w4t4gz8x3nqgeqmmu2mdmweqlkgk2w4xyujxkg00sh9rq9dkr5e80weu5067j",
+        "vtxos": [
+            {
+                "txid": "5351ab01e3b7dbe4cde88fc0f5e122d6509e99a768f58a69e1025bafd05ced70",
+                "vout": 0,
+                "value": 800,
+                "status": {
+                    "confirmed": true,
+                    "isLeaf": true
+                },
+                "virtualStatus": {
+                    "state": "settled",
+                    "commitmentTxIds": [
+                        "7f6190187c4f8562540a5ea0f44d087fbba2c748d152cfe3df706e7cb14188e4"
+                    ],
+                    "batchExpiry": 1768510324000
+                },
+                "spentBy": "d338ff9fe6d3fbbdb78c9f973d49dbc9da3cc94b5495974ca04db3aac8668c78",
+                "settledBy": "",
+                "arkTxId": "cd6d9132fe5f19705590931b5d51575fbc2cae86e203b0d9dacf0dbe413deee2",
+                "createdAt": "2025-12-16T20:47:48.000Z",
+                "isUnrolled": false,
+                "isSpent": true
+            },
+            {
+                "txid": "0a4c42621fce12144960bc7d2c427bb8f4a1cd039b0213dc06b23186612af826",
+                "vout": 0,
+                "value": 1000,
+                "status": {
+                    "confirmed": false,
+                    "isLeaf": false
+                },
+                "virtualStatus": {
+                    "state": "preconfirmed",
+                    "commitmentTxIds": [
+                        "99df593ad9ce1df99eb3c181e37d5a4657e0062b2406cc0dc0c6a7858f876506"
+                    ],
+                    "batchExpiry": 1768509550000
+                },
+                "spentBy": "27737c5310fa4fed55200ca612bf02940f9b39966bc98fc73233a6795e83d958",
+                "settledBy": "",
+                "arkTxId": "2f866038dac0f3f88b6cbd959e9c095bb0af68f12c58d6f0d5ac0e202b8de776",
+                "createdAt": "2025-12-16T20:38:45.000Z",
+                "isUnrolled": false,
+                "isSpent": true
+            },
+            {
+                "txid": "2f866038dac0f3f88b6cbd959e9c095bb0af68f12c58d6f0d5ac0e202b8de776",
+                "vout": 1,
+                "value": 700,
+                "status": {
+                    "confirmed": false,
+                    "isLeaf": false
+                },
+                "virtualStatus": {
+                    "state": "preconfirmed",
+                    "commitmentTxIds": [
+                        "99df593ad9ce1df99eb3c181e37d5a4657e0062b2406cc0dc0c6a7858f876506"
+                    ],
+                    "batchExpiry": 1768509550000
+                },
+                "spentBy": "4c5511979741ad702f33590ff1a2b99730fc919fbcf0e3aa3965893029b9c651",
+                "settledBy": "",
+                "arkTxId": "cd6d9132fe5f19705590931b5d51575fbc2cae86e203b0d9dacf0dbe413deee2",
+                "createdAt": "2025-12-17T10:53:41.000Z",
+                "isUnrolled": false,
+                "isSpent": true
+            }
+        ],
+        "allBoardingTxs": [
+            {
+                "key": {
+                    "boardingTxid": "99df593ad9ce1df99eb3c181e37d5a4657e0062b2406cc0dc0c6a7858f876506",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 800,
+                "type": "RECEIVED",
+                "settled": true,
+                "createdAt": 1765918004000
+            }
+        ],
+        "commitmentsToIgnore": [
+            "7f6190187c4f8562540a5ea0f44d087fbba2c748d152cfe3df706e7cb14188e4"
+        ],
+        "sendAllTxTime": {
+            "cd6d9132fe5f19705590931b5d51575fbc2cae86e203b0d9dacf0dbe413deee2": 1765971916000
+        },
+        "expected": [
+            {
+                "key": {
+                    "arkTxid": "cd6d9132fe5f19705590931b5d51575fbc2cae86e203b0d9dacf0dbe413deee2",
+                    "commitmentTxid": "",
+                    "boardingTxid": ""
+                },
+                "amount": 1500,
+                "type": "SENT",
+                "settled": true,
+                "tag": "offchain",
+                "createdAt": 1765971916000
+            },
+            {
+                "key": {
+                    "arkTxid": "2f866038dac0f3f88b6cbd959e9c095bb0af68f12c58d6f0d5ac0e202b8de776",
+                    "commitmentTxid": "",
+                    "boardingTxid": ""
+                },
+                "amount": 300,
+                "type": "SENT",
+                "settled": true,
+                "tag": "offchain",
+                "createdAt": 1765968821000
+            },
+            {
+                "key": {
+                    "boardingTxid": "99df593ad9ce1df99eb3c181e37d5a4657e0062b2406cc0dc0c6a7858f876506",
+                    "commitmentTxid": "",
+                    "arkTxid": ""
+                },
+                "amount": 800,
+                "type": "RECEIVED",
+                "settled": true,
+                "tag": "boarding",
+                "createdAt": 1765918004000
+            },
+            {
+                "key": {
+                    "arkTxid": "0a4c42621fce12144960bc7d2c427bb8f4a1cd039b0213dc06b23186612af826",
+                    "commitmentTxid": "",
+                    "boardingTxid": ""
+                },
+                "amount": 1000,
+                "type": "RECEIVED",
+                "settled": true,
+                "tag": "offchain",
+                "createdAt": 1765917525000
+            }
+        ],
+        "expectedBalance": 0
     }
 ]
