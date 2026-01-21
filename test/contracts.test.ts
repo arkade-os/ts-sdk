@@ -10,12 +10,12 @@ import {
     isArkContract,
 } from "../src/contracts";
 import type { Contract, ContractVtxo, ContractState } from "../src/contracts";
-import { InMemoryStorageAdapter } from "../src/storage/inMemory";
-import { ContractManagerRepositoryImpl } from "../src/repositories/contractRepository";
+import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
 import type { VirtualCoin, ExtendedVirtualCoin } from "../src/wallet";
 import { DefaultVtxo } from "../src/script/default";
 import { DefaultContractHandler } from "../src/contracts/handlers/default";
+import { ContractRepository } from "../src/repositories";
 
 // Test keys for creating valid contracts
 const TEST_PUB_KEY = new Uint8Array(32).fill(1);
@@ -66,13 +66,14 @@ const createMockVtxo = (overrides: Partial<VirtualCoin> = {}): VirtualCoin => ({
 // Helper to create a mock ExtendedVirtualCoin
 const createMockExtendedVtxo = (
     overrides: Partial<ExtendedVirtualCoin> = {}
-): ExtendedVirtualCoin => ({
-    ...createMockVtxo(),
-    forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
-    intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
-    tapTree: new Uint8Array(64),
-    ...overrides,
-});
+): ExtendedVirtualCoin =>
+    ({
+        ...createMockVtxo(),
+        forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
+        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        tapTree: new Uint8Array(64),
+        ...overrides,
+    }) as ExtendedVirtualCoin;
 
 // Helper to create a mock ContractVtxo
 const createMockContractVtxo = (
@@ -106,12 +107,10 @@ describe("Contracts", () => {
     });
 
     describe("ContractRepository", () => {
-        let storage: InMemoryStorageAdapter;
-        let repository: ContractManagerRepositoryImpl;
+        let repository: ContractRepository;
 
         beforeEach(() => {
-            storage = new InMemoryStorageAdapter();
-            repository = new ContractManagerRepositoryImpl(storage);
+            repository = new InMemoryContractRepository();
         });
 
         it("should save and retrieve contract", async () => {
@@ -362,13 +361,11 @@ describe("Contracts", () => {
     describe("ContractManager", () => {
         let manager: ContractManager;
         let mockIndexer: IndexerProvider;
-        let storage: InMemoryStorageAdapter;
-        let repository: ContractManagerRepositoryImpl;
+        let repository: ContractRepository;
 
         beforeEach(async () => {
             mockIndexer = createMockIndexerProvider();
-            storage = new InMemoryStorageAdapter();
-            repository = new ContractManagerRepositoryImpl(storage);
+            repository = new InMemoryContractRepository();
 
             manager = new ContractManager({
                 indexerProvider: mockIndexer,
@@ -559,14 +556,12 @@ describe("Contracts", () => {
     });
 
     describe("Handler param validation", () => {
-        let storage: InMemoryStorageAdapter;
-        let repository: ContractManagerRepositoryImpl;
+        let repository: ContractRepository;
         let manager: ContractManager;
         let mockIndexer: IndexerProvider;
 
         beforeEach(async () => {
-            storage = new InMemoryStorageAdapter();
-            repository = new ContractManagerRepositoryImpl(storage);
+            repository = new InMemoryContractRepository();
             mockIndexer = createMockIndexerProvider();
 
             manager = new ContractManager({
@@ -578,8 +573,8 @@ describe("Contracts", () => {
             await manager.initialize();
         });
 
-        it("should reject contract with invalid params", async () => {
-            await expect(
+        it("should reject contract with invalid params", () => {
+            expect(
                 manager.createContract({
                     type: "default",
                     params: {}, // Missing required pubKey and serverPubKey
@@ -589,8 +584,8 @@ describe("Contracts", () => {
             ).rejects.toThrow();
         });
 
-        it("should reject contract with mismatched script", async () => {
-            await expect(
+        it("should reject contract with mismatched script", () => {
+            expect(
                 manager.createContract({
                     type: "default",
                     params: createDefaultParams(),
@@ -621,7 +616,6 @@ describe("Contracts", () => {
             mockIndexer = createMockIndexerProvider();
             watcher = new ContractWatcher({
                 indexerProvider: mockIndexer,
-                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
             });
         });
 
@@ -679,14 +673,12 @@ describe("Contracts", () => {
     });
 
     describe("Multiple event callbacks", () => {
-        let storage: InMemoryStorageAdapter;
-        let repository: ContractManagerRepositoryImpl;
+        let repository: ContractRepository;
         let manager: ContractManager;
         let mockIndexer: IndexerProvider;
 
         beforeEach(async () => {
-            storage = new InMemoryStorageAdapter();
-            repository = new ContractManagerRepositoryImpl(storage);
+            repository = new InMemoryContractRepository();
             mockIndexer = createMockIndexerProvider();
 
             manager = new ContractManager({

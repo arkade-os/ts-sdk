@@ -1,4 +1,9 @@
-import { ContractRepository } from "../contractRepository";
+import {
+    ContractFilter,
+    ContractRepository,
+    CONTRACTS_COLLECTION,
+} from "../contractRepository";
+import { Contract } from "../../contracts";
 
 const contractKey = (contractId: string, key: string) =>
     `contract:${contractId}:${key}`;
@@ -77,6 +82,62 @@ export class InMemoryContractRepository implements ContractRepository {
         const existing = (this.collections.get(contractType) as T[]) ?? [];
         const next = existing.filter((item) => item[idField] !== id);
         this.collections.set(contractType, next);
+    }
+
+    // Contract entity management methods
+
+    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
+        const contracts =
+            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
+
+        if (!filter) {
+            return [...contracts];
+        }
+
+        return contracts.filter((c) => {
+            // Filter by ID
+            if (filter.id !== undefined && c.id !== filter.id) {
+                return false;
+            }
+
+            // Filter by multiple IDs
+            if (filter.ids !== undefined && !filter.ids.includes(c.id)) {
+                return false;
+            }
+
+            // Filter by script
+            if (filter.script !== undefined && c.script !== filter.script) {
+                return false;
+            }
+
+            // Filter by state(s)
+            if (filter.state !== undefined) {
+                const states = Array.isArray(filter.state)
+                    ? filter.state
+                    : [filter.state];
+                if (!states.includes(c.state)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+    }
+
+    async saveContract(contract: Contract): Promise<void> {
+        await this.saveToContractCollection(
+            CONTRACTS_COLLECTION,
+            contract,
+            "id"
+        );
+    }
+
+    async deleteContract(id: string): Promise<void> {
+        await this.removeFromContractCollection<Contract, "id">(
+            CONTRACTS_COLLECTION,
+            id,
+            "id"
+        );
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

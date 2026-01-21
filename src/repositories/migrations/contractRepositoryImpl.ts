@@ -1,5 +1,10 @@
 import { StorageAdapter } from "../../storage";
-import { ContractRepository } from "../contractRepository";
+import {
+    ContractFilter,
+    ContractRepository,
+    CONTRACTS_COLLECTION,
+} from "../contractRepository";
+import { Contract } from "../../contracts";
 
 export const getContractStorageKey = (id: string, key: string) =>
     `contract:${id}:${key}`;
@@ -164,6 +169,26 @@ export class ContractRepositoryImpl implements ContractRepository {
             );
             throw error; // Rethrow to notify caller of failure
         }
+    }
+
+    // The following methods are implemented for compatibility with the new ContractRepository interface
+    // but aren't used.
+    async getContracts(_?: ContractFilter): Promise<Contract[]> {
+        throw new TypeError(
+            "Method not implemented, this is a legacy class and should only be used for migrating data."
+        );
+    }
+
+    async saveContract(_: Contract): Promise<void> {
+        throw new TypeError(
+            "Method not implemented, this is a legacy class and should only be used for migrating data."
+        );
+    }
+
+    async deleteContract(_: string): Promise<void> {
+        throw new TypeError(
+            "Method not implemented, this is a legacy class and should only be used for migrating data."
+        );
     }
 
     // used only for tests

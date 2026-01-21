@@ -151,7 +151,6 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
-import { ContractManagerRepository } from "./repositories/contractRepository";
 import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
@@ -412,7 +411,6 @@ export type {
     StorageConfig,
 
     // Contract types
-    ContractManagerRepository,
     Contract,
     ContractVtxo,
     ContractState,

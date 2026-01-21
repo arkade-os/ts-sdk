@@ -1,6 +1,5 @@
 import { hex } from "@scure/base";
 import { IndexerProvider } from "../providers/indexer";
-import { ContractManagerRepository } from "../repositories/contractRepository";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -18,6 +17,7 @@ import {
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
+import { ContractRepository } from "../repositories";
 
 /**
  * Configuration for the ContractManager.
@@ -27,7 +27,7 @@ export interface ContractManagerConfig {
     indexerProvider: IndexerProvider;
 
     /** The contract repository for persistence */
-    contractRepository: ContractManagerRepository;
+    contractRepository: ContractRepository;
 
     /** The wallet repository for VTXO storage (single source of truth) */
     walletRepository?: WalletRepository;

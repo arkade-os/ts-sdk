@@ -21,7 +21,6 @@ import {
     BatchStartedEvent,
     SignedIntent,
     TreeNoncesEvent,
-    PendingTx,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -64,10 +63,7 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
 import { WalletRepository } from "../repositories/walletRepository";
-import {
-    ContractRepository,
-    ContractManagerRepository,
-} from "../repositories/contractRepository";
+import { ContractRepository } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
@@ -79,15 +75,14 @@ import {
 } from "../repositories";
 import {
     ContractManager,
-    ContractManagerConfig,
     CreateContractParams,
 } from "../contracts/contractManager";
 import {
     Contract,
     ContractVtxo,
-    ContractEvent,
     ContractEventCallback,
 } from "../contracts/types";
+import {} from "../repositories/contractRepository";
 
 export type IncomingFunds =
     | {
@@ -1692,8 +1687,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private async initializeContractManager(): Promise<ContractManager> {
         const manager = new ContractManager({
             indexerProvider: this.indexerProvider,
-            contractRepository: this
-                .contractRepository as ContractManagerRepository,
+            contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
             extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
             getDefaultAddress: () => this.getAddress(),
