@@ -33,6 +33,7 @@ import {
     TxKey,
     GetVtxosFilter,
     TapLeaves,
+    StorageConfig,
     isSpendable,
     isSubdust,
     isRecoverable,
@@ -144,17 +145,23 @@ import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
-import { WalletRepositoryImpl } from "./repositories/walletRepository";
-import {
-    ContractRepositoryImpl,
-    ContractManagerRepository,
-} from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import { ContractManagerRepository } from "./repositories/contractRepository";
+import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
+import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
+import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
+import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
+import {
+    migrateWalletRepository,
+    migrateContractRepository,
+} from "./repositories/migrations/fromStorageAdapter";
+
+export * from "./arkfee";
 
 // Contracts
 import {
@@ -260,8 +267,12 @@ export {
     networks,
 
     // Repositories
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    migrateWalletRepository,
+    migrateContractRepository,
 
     // Intent proof
     Intent,
@@ -396,6 +407,9 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Storage
+    StorageConfig,
 
     // Contract types
     ContractManagerRepository,

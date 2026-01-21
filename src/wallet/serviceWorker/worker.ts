@@ -4,28 +4,23 @@ declare const self: ServiceWorkerGlobalScope;
 
 import { ReadonlySingleKey, SingleKey } from "../../identity/singleKey";
 import {
-    ArkTransaction,
     ExtendedCoin,
     ExtendedVirtualCoin,
     isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
+    StorageConfig,
 } from "..";
 import { ReadonlyWallet, Wallet } from "../wallet";
 import { Request } from "./request";
 import { Response } from "./response";
 import { ArkProvider, RestArkProvider } from "../../providers/ark";
-import { vtxosToTxs } from "../../utils/transactionHistory";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { hex } from "@scure/base";
-import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
-import {
-    WalletRepository,
-    WalletRepositoryImpl,
-} from "../../repositories/walletRepository";
+import { WalletRepository } from "../../repositories/walletRepository";
 import { extendCoin, extendVirtualCoin } from "../utils";
-import { DEFAULT_DB_NAME } from "./utils";
+import { ContractRepository } from "../../repositories/contractRepository";
 
 class ReadonlyHandler {
     constructor(protected readonly wallet: ReadonlyWallet) {}
@@ -60,8 +55,8 @@ class ReadonlyHandler {
         return this.wallet.getBoardingAddress();
     }
 
-    getBoardingTxs() {
-        return this.wallet.getBoardingTxs();
+    getTransactionHistory() {
+        return this.wallet.getTransactionHistory();
     }
 
     async handleReload(
@@ -123,17 +118,16 @@ export class Worker {
     private indexerProvider: IndexerProvider | undefined;
     private incomingFundsSubscription: (() => void) | undefined;
     private walletRepository: WalletRepository;
-    private storage: IndexedDBStorageAdapter;
+    private contractRepository: ContractRepository;
 
     constructor(
-        readonly dbName: string = DEFAULT_DB_NAME,
-        readonly dbVersion: number = 1,
+        storage: StorageConfig,
         private readonly messageCallback: (
             message: ExtendableMessageEvent
         ) => void = () => {}
     ) {
-        this.storage = new IndexedDBStorageAdapter(dbName, dbVersion);
-        this.walletRepository = new WalletRepositoryImpl(this.storage);
+        this.walletRepository = storage.walletRepository;
+        this.contractRepository = storage.contractRepository;
     }
 
     /**
@@ -180,37 +174,6 @@ export class Worker {
         return await this.walletRepository.getUtxos(address);
     }
 
-    private async getTransactionHistory(): Promise<ArkTransaction[]> {
-        if (!this.handler) return [];
-
-        let txs: ArkTransaction[] = [];
-
-        try {
-            const { boardingTxs, commitmentsToIgnore: roundsToIgnore } =
-                await this.handler.getBoardingTxs();
-
-            const { spendable, spent } = await this.getAllVtxos();
-
-            // convert VTXOs to offchain transactions
-            const offchainTxs = vtxosToTxs(spendable, spent, roundsToIgnore);
-
-            txs = [...boardingTxs, ...offchainTxs];
-
-            // sort transactions by creation time in descending order (newest first)
-            txs.sort(
-                // place createdAt = 0 (unconfirmed txs) first, then descending
-                (a, b) => {
-                    if (a.createdAt === 0) return -1;
-                    if (b.createdAt === 0) return 1;
-                    return b.createdAt - a.createdAt;
-                }
-            );
-        } catch (error: unknown) {
-            console.error("Error getting transaction history:", error);
-        }
-        return txs;
-    }
-
     async start(withServiceWorkerUpdate = true) {
         self.addEventListener(
             "message",
@@ -232,12 +195,6 @@ export class Worker {
 
     async clear() {
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
-
-        // Clear storage - this replaces vtxoRepository.close()
-        await this.storage.clear();
-
-        // Reset in-memory caches by recreating the repository
-        this.walletRepository = new WalletRepositoryImpl(this.storage);
 
         this.handler = undefined;
         this.arkProvider = undefined;
@@ -293,7 +250,7 @@ export class Worker {
         );
 
         // Get transaction history to cache boarding txs
-        const txs = await this.getTransactionHistory();
+        const txs = await this.handler.getTransactionHistory();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
         // unsubscribe previous subscription if any
@@ -392,7 +349,10 @@ export class Worker {
                     identity,
                     arkServerUrl,
                     arkServerPublicKey,
-                    storage: this.storage, // Use unified storage for wallet too
+                    storage: {
+                        walletRepository: this.walletRepository,
+                        contractRepository: this.contractRepository,
+                    },
                 });
                 this.handler = new Handler(wallet);
             } else if (
@@ -409,7 +369,10 @@ export class Worker {
                     identity,
                     arkServerUrl,
                     arkServerPublicKey,
-                    storage: this.storage, // Use unified storage for wallet too
+                    storage: {
+                        walletRepository: this.walletRepository,
+                        contractRepository: this.contractRepository,
+                    },
                 });
                 this.handler = new ReadonlyHandler(wallet);
             } else {
@@ -790,7 +753,7 @@ export class Worker {
         }
 
         try {
-            const txs = await this.getTransactionHistory();
+            const txs = await this.handler.getTransactionHistory();
             event.source?.postMessage(
                 Response.transactionHistory(message.id, txs)
             );

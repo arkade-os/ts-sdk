@@ -11,7 +11,7 @@ import {
 } from "../src/contracts";
 import type { Contract, ContractVtxo, ContractState } from "../src/contracts";
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
-import { ContractRepositoryImpl } from "../src/repositories/contractRepository";
+import { ContractManagerRepositoryImpl } from "../src/repositories/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
 import type { VirtualCoin, ExtendedVirtualCoin } from "../src/wallet";
 import { DefaultVtxo } from "../src/script/default";
@@ -107,11 +107,11 @@ describe("Contracts", () => {
 
     describe("ContractRepository", () => {
         let storage: InMemoryStorageAdapter;
-        let repository: ContractRepositoryImpl;
+        let repository: ContractManagerRepositoryImpl;
 
         beforeEach(() => {
             storage = new InMemoryStorageAdapter();
-            repository = new ContractRepositoryImpl(storage);
+            repository = new ContractManagerRepositoryImpl(storage);
         });
 
         it("should save and retrieve contract", async () => {
@@ -363,12 +363,12 @@ describe("Contracts", () => {
         let manager: ContractManager;
         let mockIndexer: IndexerProvider;
         let storage: InMemoryStorageAdapter;
-        let repository: ContractRepositoryImpl;
+        let repository: ContractManagerRepositoryImpl;
 
         beforeEach(async () => {
             mockIndexer = createMockIndexerProvider();
             storage = new InMemoryStorageAdapter();
-            repository = new ContractRepositoryImpl(storage);
+            repository = new ContractManagerRepositoryImpl(storage);
 
             manager = new ContractManager({
                 indexerProvider: mockIndexer,
@@ -560,13 +560,13 @@ describe("Contracts", () => {
 
     describe("Handler param validation", () => {
         let storage: InMemoryStorageAdapter;
-        let repository: ContractRepositoryImpl;
+        let repository: ContractManagerRepositoryImpl;
         let manager: ContractManager;
         let mockIndexer: IndexerProvider;
 
         beforeEach(async () => {
             storage = new InMemoryStorageAdapter();
-            repository = new ContractRepositoryImpl(storage);
+            repository = new ContractManagerRepositoryImpl(storage);
             mockIndexer = createMockIndexerProvider();
 
             manager = new ContractManager({
@@ -680,13 +680,13 @@ describe("Contracts", () => {
 
     describe("Multiple event callbacks", () => {
         let storage: InMemoryStorageAdapter;
-        let repository: ContractRepositoryImpl;
+        let repository: ContractManagerRepositoryImpl;
         let manager: ContractManager;
         let mockIndexer: IndexerProvider;
 
         beforeEach(async () => {
             storage = new InMemoryStorageAdapter();
-            repository = new ContractRepositoryImpl(storage);
+            repository = new ContractManagerRepositoryImpl(storage);
             mockIndexer = createMockIndexerProvider();
 
             manager = new ContractManager({

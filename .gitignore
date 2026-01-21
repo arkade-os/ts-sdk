@@ -4,3 +4,4 @@ docs/
 .mintlify-last
 .idea
 .claude/
+*.sqlite

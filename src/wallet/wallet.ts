@@ -4,7 +4,6 @@ import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
-import { vtxosToTxs } from "../utils/transactionHistory";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import { getNetwork, Network, NetworkName } from "../networks";
@@ -64,19 +63,20 @@ import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
-import { InMemoryStorageAdapter } from "../storage/inMemory";
-import {
-    WalletRepository,
-    WalletRepositoryImpl,
-} from "../repositories/walletRepository";
+import { WalletRepository } from "../repositories/walletRepository";
 import {
     ContractRepository,
     ContractManagerRepository,
-    ContractRepositoryImpl,
 } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
+import { Estimator } from "../arkfee";
+import { buildTransactionHistory } from "../utils/transactionHistory";
+import {
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
+} from "../repositories";
 import {
     ContractManager,
     ContractManagerConfig,
@@ -229,10 +229,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // Save tapscripts
         const offchainTapscript = bareVtxoTapscript;
 
-        // Set up storage and repositories
-        const storage = config.storage || new InMemoryStorageAdapter();
-        const walletRepository = new WalletRepositoryImpl(storage);
-        const contractRepository = new ContractRepositoryImpl(storage);
+        const walletRepository =
+            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            config.storage?.contractRepository ??
+            new IndexedDBContractRepository();
 
         return {
             arkProvider,
@@ -394,37 +396,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
 
-        const spendableVtxos = [];
-        const spentVtxos = [];
+        const getTxCreatedAt = (txid: string) =>
+            this.indexerProvider
+                .getVtxos({ outpoints: [{ txid, vout: 0 }] })
+                .then((res) => res.vtxos[0]?.createdAt.getTime() || 0);
 
-        for (const vtxo of response.vtxos) {
-            if (isSpendable(vtxo)) {
-                spendableVtxos.push(vtxo);
-            } else {
-                spentVtxos.push(vtxo);
-            }
-        }
-
-        // convert VTXOs to offchain transactions
-        const offchainTxs = vtxosToTxs(
-            spendableVtxos,
-            spentVtxos,
-            commitmentsToIgnore
+        return buildTransactionHistory(
+            response.vtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            getTxCreatedAt
         );
-
-        const txs = [...boardingTxs, ...offchainTxs];
-
-        // sort transactions by creation time in descending order (newest first)
-        txs.sort(
-            // place createdAt = 0 (unconfirmed txs) first, then descending
-            (a, b) => {
-                if (a.createdAt === 0) return -1;
-                if (b.createdAt === 0) return 1;
-                return b.createdAt - a.createdAt;
-            }
-        );
-
-        return txs;
     }
 
     async getBoardingTxs(): Promise<{
@@ -997,6 +979,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // if no params are provided, use all non expired boarding utxos and offchain vtxos as inputs
         // and send all to the offchain address
         if (!params) {
+            const { fees } = await this.arkProvider.getInfo();
+            const estimator = new Estimator(fees.intentFee);
+
             let amount = 0;
 
             const exitScript = CSVMultisigTapscript.decode(
@@ -1009,28 +994,69 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
             );
 
-            amount += boardingUtxos.reduce(
-                (sum, input) => sum + input.value,
-                0
-            );
+            const filteredBoardingUtxos = [];
+            for (const utxo of boardingUtxos) {
+                const inputFee = estimator.evalOnchainInput({
+                    amount: BigInt(utxo.value),
+                });
+                if (inputFee.value >= utxo.value) {
+                    // skip if fees are greater than the utxo value
+                    continue;
+                }
+
+                filteredBoardingUtxos.push(utxo);
+                amount += utxo.value - inputFee.satoshis;
+            }
 
             const vtxos = await this.getVtxos({ withRecoverable: true });
-            amount += vtxos.reduce((sum, input) => sum + input.value, 0);
 
-            const inputs = [...boardingUtxos, ...vtxos];
+            const filteredVtxos = [];
+            for (const vtxo of vtxos) {
+                const inputFee = estimator.evalOffchainInput({
+                    amount: BigInt(vtxo.value),
+                    type:
+                        vtxo.virtualStatus.state === "swept"
+                            ? "recoverable"
+                            : "vtxo",
+                    weight: 0,
+                    birth: vtxo.createdAt,
+                    expiry: vtxo.virtualStatus.batchExpiry
+                        ? new Date(vtxo.virtualStatus.batchExpiry * 1000)
+                        : new Date(),
+                });
+                if (inputFee.value >= vtxo.value) {
+                    // skip if fees are greater than the vtxo value
+                    continue;
+                }
 
+                filteredVtxos.push(vtxo);
+                amount += vtxo.value - inputFee.satoshis;
+            }
+
+            const inputs = [...filteredBoardingUtxos, ...filteredVtxos];
             if (inputs.length === 0) {
                 throw new Error("No inputs found");
             }
 
+            const output = {
+                address: await this.getAddress(),
+                amount: BigInt(amount),
+            };
+
+            const outputFee = estimator.evalOffchainOutput({
+                amount: output.amount,
+                script: hex.encode(ArkAddress.decode(output.address).pkScript),
+            });
+
+            output.amount -= BigInt(outputFee.satoshis);
+
+            if (output.amount <= this.dustAmount) {
+                throw new Error("Output amount is below dust limit");
+            }
+
             params = {
                 inputs,
-                outputs: [
-                    {
-                        address: await this.getAddress(),
-                        amount: BigInt(amount),
-                    },
-                ],
+                outputs: [output],
             };
         }
 

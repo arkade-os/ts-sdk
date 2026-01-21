@@ -3,11 +3,11 @@ import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
+import { ContractRepository, WalletRepository } from "../repositories";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -30,7 +30,7 @@ export interface BaseWalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
-    storage?: StorageAdapter;
+    storage?: StorageConfig;
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
@@ -111,6 +111,11 @@ export interface WalletConfig extends ReadonlyWalletConfig {
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
 }
 
+export type StorageConfig = {
+    walletRepository: WalletRepository;
+    contractRepository: ContractRepository;
+};
+
 /**
  * Provider class constructor interface for dependency injection.
  * Ensures provider classes follow the consistent constructor pattern.
@@ -152,6 +157,7 @@ export interface SettleParams {
 
 export interface Status {
     confirmed: boolean;
+    isLeaf?: boolean;
     block_height?: number;
     block_hash?: string;
     block_time?: number;

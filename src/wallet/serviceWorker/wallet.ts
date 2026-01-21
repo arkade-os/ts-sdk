@@ -7,19 +7,21 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    StorageConfig,
     IReadonlyWallet,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity, ReadonlySingleKey } from "../../identity";
-import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
+import { Identity, ReadonlyIdentity } from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
-import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
-import { ContractRepositoryImpl } from "../../repositories/contractRepository";
-import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
+import { setupServiceWorker } from "./utils";
+import {
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
+} from "../../repositories";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -74,8 +76,7 @@ interface ServiceWorkerWalletOptions {
     arkServerPublicKey?: string;
     arkServerUrl: string;
     esploraUrl?: string;
-    dbName?: string;
-    dbVersion?: number;
+    storage?: StorageConfig;
     identity: ReadonlyIdentity | Identity;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
@@ -84,19 +85,6 @@ export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
 
 export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
-};
-
-const createCommon = (options: ServiceWorkerWalletCreateOptions) => {
-    // Default to IndexedDB for service worker context
-    const storage = new IndexedDBStorageAdapter(
-        options.dbName || DEFAULT_DB_NAME,
-        options.dbVersion
-    );
-    // Create repositories
-    return {
-        walletRepo: new WalletRepositoryImpl(storage),
-        contractRepo: new ContractRepositoryImpl(storage),
-    };
 };
 
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
@@ -118,14 +106,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
-        const { walletRepo, contractRepo } = createCommon(options);
+        const walletRepository =
+            options.storage?.walletRepository ??
+            new IndexedDBWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ??
+            new IndexedDBContractRepository();
 
         // Create the wallet instance
         const wallet = new ServiceWorkerReadonlyWallet(
             options.serviceWorker,
             options.identity,
-            walletRepo,
-            contractRepo
+            walletRepository,
+            contractRepository
         );
 
         const publicKey = await options.identity
@@ -381,7 +375,13 @@ export class ServiceWorkerWallet
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
-        const { walletRepo, contractRepo } = createCommon(options);
+        const walletRepository =
+            options.storage?.walletRepository ??
+            new IndexedDBWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ??
+            new IndexedDBContractRepository();
 
         // Extract identity and check if it can expose private key
         const identity = isPrivateKeyIdentity(options.identity)
@@ -400,8 +400,8 @@ export class ServiceWorkerWallet
         const wallet = new ServiceWorkerWallet(
             options.serviceWorker,
             identity,
-            walletRepo,
-            contractRepo
+            walletRepository,
+            contractRepository
         );
 
         // Initialize the service worker with the config

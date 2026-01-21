@@ -16,7 +16,12 @@ npm install @arkade-os/sdk
 ### Creating a Wallet
 
 ```typescript
-import { SingleKey, Wallet } from '@arkade-os/sdk'
+import {
+  SingleKey,
+  Wallet,
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository
+} from '@arkade-os/sdk'
 
 // Create a new in-memory key (or use an external signer)
 const identity = SingleKey.fromHex('your_private_key_hex')
@@ -27,8 +32,11 @@ const wallet = await Wallet.create({
   // Esplora API, can be left empty - mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Optional: specify storage adapter (defaults to InMemoryStorageAdapter)
-  // storage: new LocalStorageAdapter() // for browser persistence
+  // Optional: provide repositories for persistence (defaults to IndexedDB)
+  // storage: {
+  //   walletRepository: new IndexedDBWalletRepository('my-wallet-db'),
+  //   contractRepository: new IndexedDBContractRepository('my-wallet-db')
+  // }
 })
 ```
 
@@ -164,9 +172,8 @@ const boardingUtxos = await wallet.getBoardingUtxos()
 ```typescript
 // Send bitcoin via Ark
 const txid = await wallet.sendBitcoin({
-  address: 'tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx',
-  amount: 50000,  // in satoshis
-  feeRate: 1      // optional, in sats/vbyte
+  address: 'ark1qq4...', // ark address
+  amount: 50000,         // in satoshis
 })
 ```
 
@@ -362,46 +369,91 @@ import { Worker } from '@arkade-os/sdk'
 new Worker().start()
 ```
 
-### Storage Adapters
+### Repositories (Storage)
 
-Choose the appropriate storage adapter for your environment:
+The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
+`storage`, the SDK uses IndexedDB repositories with the default database name.
+
+> [!WARNING]
+> If you previously used the v1 `StorageAdapter`-based repositories, migrate
+> data into the new IndexedDB repositories before use:
+>
+> ```typescript
+> import {
+>   IndexedDBWalletRepository,
+>   IndexedDBContractRepository,
+>   migrateWalletRepository,
+>   migrateContractRepository
+> } from '@arkade-os/sdk'
+> import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
+>
+> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
+> const newDbName = 'my-app-db'
+>
+> const walletRepository = new IndexedDBWalletRepository(newDbName)
+> await migrateWalletRepository(oldStorage, walletRepository, [
+>   'address-1',
+>   'address-2'
+> ])
+>
+> const contractRepository = new IndexedDBContractRepository(newDbName)
+> await migrateContractRepository(oldStorage, contractRepository)
+> ```
+>  
+> If you persisted custom data in the ContractRepository via its `setContractData` method, 
+> or a custom collection via `saveToContractCollection`, you'll need to migrate it manually:
+> 
+> ```typescript
+> // Custom data stored in the ContractRepository
+> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
+> const oldRepo = new ContractRepositoryImpl(storageAdapter)
+> const customContract = await oldRepo.getContractData('my-contract', 'status')
+> await contractRepository.setContractData('my-contract', 'status', customData)
+> const customCollection = await oldRepo.getContractCollection('swaps')
+> await contractRepository.saveToContractCollection('swaps', customCollection)
+> ```
+
+Note: `IndexedDB*Repository` requires [indexeddbshim](https://github.com/indexeddbshim/indexeddbshim) in Node or other
+**non-browser environments**. It is a dev dependency of the SDK, so you must
+install and initialize it in your app before using the repositories. This
+also applies when you rely on the default storage behavior (no `storage`).
+
+Please see the working example in [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts).
 
 ```typescript
-import { 
-  SingleKey,
-  Wallet,
-  InMemoryStorageAdapter,     // Works everywhere, data lost on restart
-} from '@arkade-os/sdk'
+import { SingleKey, Wallet } from '@arkade-os/sdk'
+import setGlobalVars from 'indexeddbshim'
 
-// Import additional storage adapters as needed:
-import { LocalStorageAdapter } from '@arkade-os/sdk/adapters/localStorage'        // Browser/PWA persistent storage  
-import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'      // Browser/PWA/Service Worker advanced storage
-import { AsyncStorageAdapter } from '@arkade-os/sdk/adapters/asyncStorage'      // React Native persistent storage
-import { FileSystemStorageAdapter } from '@arkade-os/sdk/adapters/fileSystem'   // Node.js file-based storage
+setGlobalVars()
 
-// Node.js
-const storage = new FileSystemStorageAdapter('./wallet-data')
+const identity = SingleKey.fromHex('your_private_key_hex')
 
-// Browser/PWA
-const storage = new LocalStorageAdapter()
-// or for advanced features:
-const storage = new IndexedDBStorageAdapter('my-app', 1)
-
-// React Native  
-const storage = new AsyncStorageAdapter()
-
-// Service Worker
-const storage = new IndexedDBStorageAdapter('service-worker-wallet', 1)
-
-// Load identity from storage (simple pattern everywhere)
-const privateKeyHex = await storage.getItem('private-key')
-const identity = SingleKey.fromHex(privateKeyHex)
-
-// Create wallet (same API everywhere)
+// Create wallet with default IndexedDB storage
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  storage // optional
+})
+```
+
+If you want a custom database name or a different repository implementation,
+pass `storage` explicitly.
+
+For ephemeral storage (no persistence), pass the in-memory repositories:
+
+```typescript
+import {
+  InMemoryWalletRepository,
+  InMemoryContractRepository,
+  Wallet
+} from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  storage: {
+    walletRepository: new InMemoryWalletRepository(),
+    contractRepository: new InMemoryContractRepository()
+  }
 })
 ```
 
@@ -432,6 +484,17 @@ Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following
 
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
+
+To use IndexedDB repositories in Expo/React Native, install `indexeddbshim` and a
+SQLite-backed WebSQL adapter (e.g., `expo-sqlite` or `react-native-sqlite-storage`),
+then wire the WebSQL `openDatabase` into the shim before creating repositories:
+
+```typescript
+import setGlobalVars from 'indexeddbshim'
+import * as SQLite from 'expo-sqlite'
+
+setGlobalVars(globalThis, { openDatabase: SQLite.openDatabase })
+```
 
 #### Crypto Polyfill Requirement
 

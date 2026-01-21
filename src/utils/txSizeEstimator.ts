@@ -1,6 +1,23 @@
+import { Address, OutScript } from "@scure/btc-signer";
+import { Network } from "../networks";
+
 export type VSize = {
     value: bigint;
     fee(feeRate: bigint): bigint;
+};
+
+/**
+ * Calculates the byte size required to store a variable-length integer (VarInt).
+ * Bitcoin uses VarInts to compact integer data (like array lengths).
+ *
+ * @param n - The integer value to check
+ * @returns The size in bytes (1, 3, 5, or 9)
+ */
+const getVarIntSize = (n: number): number => {
+    if (n < 0xfd) return 1;
+    if (n <= 0xffff) return 3;
+    if (n <= 0xffffffff) return 5;
+    return 9;
 };
 
 export class TxWeightEstimator {
@@ -8,7 +25,7 @@ export class TxWeightEstimator {
     static readonly INPUT_SIZE = 32 + 4 + 1 + 4;
     static readonly BASE_CONTROL_BLOCK_SIZE = 1 + 32;
     static readonly OUTPUT_SIZE = 8 + 1;
-    static readonly P2WKH_OUTPUT_SIZE = 1 + 1 + 20;
+    static readonly P2WPKH_OUTPUT_SIZE = 1 + 1 + 20;
     static readonly BASE_TX_SIZE = 8 + 2; // Version + LockTime
     static readonly WITNESS_HEADER_SIZE = 2; // Flag + Marker
     static readonly WITNESS_SCALE_FACTOR = 4;
@@ -78,17 +95,17 @@ export class TxWeightEstimator {
             leafControlBlockSize;
 
         this.inputCount++;
-        this.inputWitnessSize += leafWitnessSize + controlBlockWitnessSize;
+        this.inputWitnessSize += leafWitnessSize + 1 + controlBlockWitnessSize;
         this.inputSize += TxWeightEstimator.INPUT_SIZE;
         this.hasWitness = true;
-        this.inputCount++;
         return this;
     }
 
-    addP2WKHOutput(): TxWeightEstimator {
+    addP2WPKHOutput(): TxWeightEstimator {
         this.outputCount++;
         this.outputSize +=
-            TxWeightEstimator.OUTPUT_SIZE + TxWeightEstimator.P2WKH_OUTPUT_SIZE;
+            TxWeightEstimator.OUTPUT_SIZE +
+            TxWeightEstimator.P2WPKH_OUTPUT_SIZE;
         return this;
     }
 
@@ -99,14 +116,26 @@ export class TxWeightEstimator {
         return this;
     }
 
-    vsize(): VSize {
-        const getVarIntSize = (n: number): number => {
-            if (n < 0xfd) return 1;
-            if (n < 0xffff) return 3;
-            if (n < 0xffffffff) return 5;
-            return 9;
-        };
+    /**
+     * Adds an output given a raw script.
+     * Cost = 8 bytes (amount) + varint(scriptLen) + scriptLen
+     */
+    addOutputScript(script: Uint8Array): TxWeightEstimator {
+        this.outputCount++;
+        this.outputSize += 8 + getVarIntSize(script.length) + script.length;
+        return this;
+    }
 
+    /**
+     * Adds an output by decoding the address to get the exact script size.
+     */
+    addOutputAddress(address: string, network: Network): TxWeightEstimator {
+        const payment = Address(network).decode(address);
+        const script = OutScript.encode(payment);
+        return this.addOutputScript(script);
+    }
+
+    vsize(): VSize {
         const inputCount = getVarIntSize(this.inputCount);
         const outputCount = getVarIntSize(this.outputCount);
 

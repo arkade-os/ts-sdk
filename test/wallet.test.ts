@@ -186,7 +186,64 @@ describe("Wallet", () => {
                     block_time: 1600000000,
                 },
             },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 1,
+                value: 7000,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 2,
+                value: 1000,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 3,
+                value: 6500,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 4,
+                value: 12000,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
+            {
+                txid: hex.encode(new Uint8Array(32).fill(1)),
+                vout: 5,
+                value: 1400,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(2)),
+                    block_time: 1600000000,
+                },
+            },
         ];
+        const mockTxId = hex.encode(new Uint8Array(32).fill(1));
+        const mockFeeRate = 3;
 
         beforeEach(() => {
             mockFetch.mockReset();
@@ -204,6 +261,213 @@ describe("Wallet", () => {
                     amount: -1000,
                 })
             ).rejects.toThrow("Amount must be positive");
+        });
+
+        it("should throw error when funds are insufficient", async () => {
+            const mockFeeRate = 3;
+            const mockTxId = hex.encode(new Uint8Array(32).fill(1));
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockUTXOs),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ "1": mockFeeRate }),
+            });
+
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 12500000,
+                })
+            ).rejects.toThrow("Insufficient funds");
+        });
+
+        it("should throw when amount is below dust", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 545,
+                })
+            ).rejects.toThrow("Amount is below dust limit");
+        });
+
+        it("should send funds when change amount is below dust", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockUTXOs),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ "1": mockFeeRate }),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                text: () => Promise.resolve(mockTxId),
+            });
+
+            expect(
+                await wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 111500, // With selection of 100000 and 12000, the change is less than dust(546sats)
+                })
+            ).toEqual(mockTxId);
+        });
+
+        it("should send amount with correct fees", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockUTXOs),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ "1": mockFeeRate }),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                text: () => Promise.resolve(mockTxId),
+            });
+
+            expect(
+                await wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: 115000,
+                })
+            ).toEqual(mockTxId);
+        });
+
+        it("should calculate different tx sizes for Segwit vs Taproot", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            const coins: Coin[] = [
+                {
+                    txid: hex.encode(new Uint8Array(32).fill(1)),
+                    vout: 0,
+                    value: 100_000_000,
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_hash: "",
+                        block_time: 0,
+                    },
+                },
+            ];
+            const feeRate = 10;
+
+            const mockCalls = () => {
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve(coins),
+                });
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ "1": feeRate }),
+                });
+                mockFetch.mockResolvedValueOnce({
+                    ok: true,
+                    text: () => Promise.resolve("txid_mock"),
+                });
+            };
+
+            // 1. Send to Native Segwit Address (tb1q...)
+            // We expect a smaller output size (~31 bytes)
+            const segwitAddr = "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx";
+            mockCalls();
+            await wallet.send({ address: segwitAddr, amount: 50_000 });
+
+            // Extract the hex from the broadcast call (3rd call, 2nd arg is init object with body)
+            const segwitTxHex = mockFetch.mock.calls[2][1].body;
+            const segwitSize = segwitTxHex.length / 2;
+
+            mockFetch.mockReset();
+
+            // 2. Send to Taproot Address (Wallet Address is P2TR)
+            // We expect a larger output size (~43 bytes)
+            const taprootAddr = wallet.address;
+            mockCalls();
+            await wallet.send({ address: taprootAddr, amount: 50_000 });
+
+            const taprootTxHex = mockFetch.mock.calls[2][1].body;
+            const taprootSize = taprootTxHex.length / 2;
+
+            expect(segwitSize).toBeLessThan(taprootSize);
+        });
+
+        it("should resolve oscillation when change is near dust limit", async () => {
+            const wallet = await OnchainWallet.create(
+                mockIdentity,
+                "mutinynet"
+            );
+
+            const feeRate = 10;
+            // Calculations for the edge case:
+            // Tx with 1 input, 1 output (no change) ≈ 111 vBytes. Fee ≈ 1110.
+            // Tx with 1 input, 2 outputs (change) ≈ 154 vBytes. Fee ≈ 1540.
+            // Difference (cost of change output) ≈ 430 sats.
+            // Dust limit = 546 sats.
+            // We need: Remaining Amount (after fee) to be > 546 BUT < (546 + 430).
+            // Let's target Remaining = 800.
+
+            const sendAmount = 50_000;
+            const approxFeeNoChange = 1110;
+            const inputAmount = sendAmount + approxFeeNoChange + 800;
+
+            const coins: Coin[] = [
+                {
+                    txid: hex.encode(new Uint8Array(32).fill(2)),
+                    vout: 0,
+                    value: inputAmount,
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_hash: "",
+                        block_time: 0,
+                    },
+                },
+            ];
+
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(coins),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve({ "1": feeRate }),
+            });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                text: () => Promise.resolve("txid_mock"),
+            });
+
+            await expect(
+                wallet.send({
+                    address: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                    amount: sendAmount,
+                })
+            ).resolves.toBeDefined();
         });
     });
 
@@ -225,8 +489,9 @@ describe("Wallet", () => {
                 "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
             fees: {
                 intentFee: {
-                    onchainInput: "1000",
+                    onchainInput: "200.0",
                     onchainOutput: "1000",
+                    offchainOutput: "amount * 0.1",
                 },
                 txFeeRate: "100",
             },
@@ -254,7 +519,7 @@ describe("Wallet", () => {
             expect(boardingAddress).toBeDefined();
         });
 
-        it("should convert intentFee.onchainInput and intentFee.onchainOutput to bigint", async () => {
+        it("should return intentFee config as strings", async () => {
             mockFetch.mockResolvedValueOnce({
                 ok: true,
                 json: () => Promise.resolve(mockArkInfo),
@@ -262,8 +527,9 @@ describe("Wallet", () => {
 
             const provider = new RestArkProvider("http://localhost:7070");
             const info = await provider.getInfo();
-            expect(info.fees.intentFee.onchainInput).toBe(BigInt(1000));
-            expect(info.fees.intentFee.onchainOutput).toBe(BigInt(1000));
+            expect(info.fees.intentFee.onchainInput).toBe("200.0");
+            expect(info.fees.intentFee.onchainOutput).toBe("1000");
+            expect(info.fees.intentFee.offchainOutput).toBe("amount * 0.1");
         });
     });
 

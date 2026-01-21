@@ -2,6 +2,9 @@ import * as fs from "fs/promises";
 import * as path from "path";
 import type { StorageAdapter } from "./index";
 
+/**
+ * @deprecated Use repositories instead
+ */
 export class FileSystemStorageAdapter implements StorageAdapter {
     private readonly basePath: string;
 

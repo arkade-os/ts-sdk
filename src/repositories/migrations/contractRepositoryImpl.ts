@@ -1,73 +1,14 @@
-import { Contract, ContractState } from "../contracts/types";
-import {
-    getCollectionStorageKey,
-    getContractStorageKey,
-} from "./migrations/contractRepositoryImpl";
-import { StorageAdapter } from "../storage";
+import { StorageAdapter } from "../../storage";
+import { ContractRepository } from "../contractRepository";
+
+export const getContractStorageKey = (id: string, key: string) =>
+    `contract:${id}:${key}`;
+export const getCollectionStorageKey = (type: string) => `collection:${type}`;
 
 /**
- * Filter options for querying contracts.
+ * @deprecated This is only to be used in migration from storage V1
  */
-export interface ContractFilter {
-    /** Filter by contract ID */
-    id?: string;
-    /** Filter by multiple contract IDs */
-    ids?: string[];
-    /** Filter by script */
-    script?: string;
-    /** Filter by state(s) */
-    state?: ContractState | ContractState[];
-}
-
-/** Storage key for the contracts collection */
-const CONTRACTS_COLLECTION = "ark_contracts";
-
-export interface ContractRepository extends AsyncDisposable {
-    // Generic contract metadata (for SDK users like boltz-swap)
-    getContractData<T>(contractId: string, key: string): Promise<T | null>;
-    setContractData<T>(contractId: string, key: string, data: T): Promise<void>;
-    deleteContractData(contractId: string, key: string): Promise<void>;
-    clearContractData(): Promise<void>;
-
-    // Contract collections (following boltz-swap pattern) - with type-safe id fields
-    getContractCollection<T>(contractType: string): Promise<ReadonlyArray<T>>;
-    saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void>;
-    removeFromContractCollection<T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ): Promise<void>;
-}
-
-/**
- * Extended repository interface for ContractManager functionality.
- * Implementations must provide these methods to use ContractManager.
- */
-export interface ContractManagerRepository extends ContractRepository {
-    /**
-     * Get contracts with optional filter.
-     * Returns all contracts if no filter provided.
-     */
-    getContracts(filter?: ContractFilter): Promise<Contract[]>;
-
-    /**
-     * Save or update a contract.
-     */
-    saveContract(contract: Contract): Promise<void>;
-
-    /**
-     * Delete a contract by ID.
-     */
-    deleteContract(id: string): Promise<void>;
-}
-
-export class ContractManagerRepositoryImpl
-    implements ContractManagerRepository
-{
+export class ContractRepositoryImpl implements ContractRepository {
     private storage: StorageAdapter;
 
     constructor(storage: StorageAdapter) {
@@ -225,64 +166,9 @@ export class ContractManagerRepositoryImpl
         }
     }
 
+    // used only for tests
     async clearContractData(): Promise<void> {
         await this.storage.clear();
-    }
-
-    // Contract entity management methods
-
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        const contracts =
-            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
-
-        if (!filter) {
-            return [...contracts];
-        }
-
-        return contracts.filter((c) => {
-            // Filter by ID
-            if (filter.id !== undefined && c.id !== filter.id) {
-                return false;
-            }
-
-            // Filter by multiple IDs
-            if (filter.ids !== undefined && !filter.ids.includes(c.id)) {
-                return false;
-            }
-
-            // Filter by script
-            if (filter.script !== undefined && c.script !== filter.script) {
-                return false;
-            }
-
-            // Filter by state(s)
-            if (filter.state !== undefined) {
-                const states = Array.isArray(filter.state)
-                    ? filter.state
-                    : [filter.state];
-                if (!states.includes(c.state)) {
-                    return false;
-                }
-            }
-
-            return true;
-        });
-    }
-
-    async saveContract(contract: Contract): Promise<void> {
-        await this.saveToContractCollection(
-            CONTRACTS_COLLECTION,
-            contract,
-            "id"
-        );
-    }
-
-    async deleteContract(id: string): Promise<void> {
-        await this.removeFromContractCollection<Contract, "id">(
-            CONTRACTS_COLLECTION,
-            id,
-            "id"
-        );
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
