@@ -378,10 +378,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
 
+        const getTxCreatedAt = (txid: string) =>
+            this.indexerProvider
+                .getVtxos({ outpoints: [{ txid, vout: 0 }] })
+                .then((res) => res.vtxos[0]?.createdAt.getTime() || 0);
+
         return buildTransactionHistory(
             response.vtxos,
             boardingTxs,
-            commitmentsToIgnore
+            commitmentsToIgnore,
+            getTxCreatedAt
         );
     }
 

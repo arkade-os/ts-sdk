@@ -13,6 +13,8 @@ import { VtxoScript } from "../script/base";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
+import { OnchainWallet } from "./onchain";
+import { DUST_AMOUNT } from "./utils";
 
 export namespace Unroll {
     export enum StepType {
@@ -297,7 +299,7 @@ export namespace Unroll {
             tx.addInput(input);
         }
 
-        txWeightEstimator.addP2TROutput();
+        txWeightEstimator.addOutputAddress(outputAddress, wallet.network);
 
         let feeRate = await wallet.onchainProvider.getFeeRate();
         if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
@@ -308,7 +310,12 @@ export namespace Unroll {
             throw new Error("fee amount is greater than the total amount");
         }
 
-        tx.addOutputAddress(outputAddress, totalAmount - feeAmount);
+        const sendAmount = totalAmount - feeAmount;
+        if (sendAmount < BigInt(DUST_AMOUNT)) {
+            throw new Error("send amount is less than dust amount");
+        }
+
+        tx.addOutputAddress(outputAddress, sendAmount);
 
         const signedTx = await wallet.identity.sign(tx);
         signedTx.finalize();

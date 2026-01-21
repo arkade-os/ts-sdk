@@ -63,7 +63,7 @@ describe("buildTransactionHistory", () => {
 
             const boardingBatchTxids = new Set<string>();
 
-            const transactions = buildTransactionHistory(
+            const transactions = await buildTransactionHistory(
                 [resultVtxo0, spentVtxo],
                 [],
                 boardingBatchTxids
@@ -154,7 +154,7 @@ describe("buildTransactionHistory", () => {
                 isSpent: false,
             };
 
-            const transactions = buildTransactionHistory(
+            const transactions = await buildTransactionHistory(
                 [resultVtxo0, resultVtxo1],
                 [],
                 new Set<string>()
@@ -200,7 +200,7 @@ describe("buildTransactionHistory", () => {
             const spent: VirtualCoin[] = [];
             const boardingBatchTxids = new Set<string>();
 
-            const transactions = buildTransactionHistory(
+            const transactions = await buildTransactionHistory(
                 [receivedVtxo],
                 [],
                 boardingBatchTxids
@@ -224,15 +224,21 @@ describe("buildTransactionHistory", () => {
                 commitmentsToIgnore,
                 expected,
                 expectedBalance,
+                sendAllTxTime,
             }) => {
                 it(`should handle history from ${address}`, async () => {
-                    const transactions = buildTransactionHistory(
+                    const getTxCreatedAt = sendAllTxTime
+                        ? (txid: string) =>
+                              Promise.resolve((sendAllTxTime as any)[txid] ?? 0)
+                        : undefined;
+                    const transactions = await buildTransactionHistory(
                         vtxos.map((_) => ({
                             ..._,
                             createdAt: new Date(_.createdAt),
                         })) as VirtualCoin[],
                         allBoardingTxs as ArkTransaction[],
-                        new Set(commitmentsToIgnore)
+                        new Set(commitmentsToIgnore),
+                        getTxCreatedAt
                     );
                     expect(transactions).toStrictEqual(expected);
 
