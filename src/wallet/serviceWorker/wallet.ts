@@ -350,6 +350,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
         throw new UnexpectedResponseError(response);
     }
+
+    async getContractManager() {
+        return undefined;
+    }
 }
 
 export class ServiceWorkerWallet

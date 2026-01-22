@@ -12,6 +12,10 @@ export interface ContractFilter {
     script?: string;
     /** Filter by state(s) */
     state?: ContractState | ContractState[];
+    /** Filter by contract type */
+    type?: string;
+    /** Filter by multiple contract types */
+    types?: string[];
 }
 
 /** Storage key for the contracts collection */

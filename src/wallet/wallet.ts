@@ -351,6 +351,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
     }
 
+    // TODO: use contract manager (and repo) will be offline-first
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const address = await this.getAddress();
 
@@ -671,7 +672,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     private async initializeContractManager(): Promise<ContractManager> {
-        const manager = new ContractManager({
+        const manager = await ContractManager.create({
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
@@ -679,8 +680,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
             getDefaultAddress: () => this.getAddress(),
             watcherConfig: this.watcherConfig,
         });
-
-        await manager.initialize();
 
         // Register the wallet's default address as a contract
         // This ensures it's watched alongside any external contracts
@@ -703,81 +702,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
         });
 
         return manager;
-    }
-
-    /**
-     * Register an external contract to watch.
-     *
-     * Convenience method that delegates to ContractManager.
-     *
-     * @param params - Contract parameters
-     * @returns The created contract
-     */
-    async registerContract(params: CreateContractParams): Promise<Contract> {
-        const manager = await this.getContractManager();
-        return manager.createContract(params);
-    }
-
-    /**
-     * Get all registered contracts.
-     */
-    async getContracts(): Promise<Contract[]> {
-        const manager = await this.getContractManager();
-        return manager.getAllContracts();
-    }
-
-    /**
-     * Get active contracts only.
-     */
-    async getActiveContracts(): Promise<Contract[]> {
-        const manager = await this.getContractManager();
-        return manager.getActiveContracts();
-    }
-
-    /**
-     * Get a contract by ID.
-     */
-    async getContractById(id: string): Promise<Contract | null> {
-        const manager = await this.getContractManager();
-        return manager.getContract(id);
-    }
-
-    /**
-     * Deactivate a contract (stop watching it).
-     */
-    async deactivateContract(contractId: string): Promise<void> {
-        const manager = await this.getContractManager();
-        await manager.deactivateContract(contractId);
-    }
-
-    /**
-     * Update a contract's runtime data (e.g., set preimage for HTLC).
-     */
-    async updateContractData(
-        contractId: string,
-        data: Record<string, string>
-    ): Promise<void> {
-        const manager = await this.getContractManager();
-        await manager.updateContractData(contractId, data);
-    }
-
-    /**
-     * Get VTXOs for all active contracts.
-     */
-    async getContractVtxos(): Promise<Map<string, ContractVtxo[]>> {
-        const manager = await this.getContractManager();
-        return manager.getContractVtxos({ activeOnly: true });
-    }
-
-    /**
-     * Start watching for contract events.
-     *
-     * @param callback - Event callback
-     * @returns Stop watching function
-     */
-    async watchContracts(callback: ContractEventCallback): Promise<() => void> {
-        const manager = await this.getContractManager();
-        return manager.onContractEvent(callback);
     }
 }
 

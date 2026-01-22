@@ -1,13 +1,13 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
-import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
+import { VirtualCoin } from "../wallet";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
     ContractVtxo,
-    ContractEvent,
     ContractEventCallback,
     GetContractVtxosOptions,
     ContractBalance,
+    ContractEvent,
 } from "./types";
 
 /**
@@ -18,7 +18,7 @@ export interface ContractWatcherConfig {
     indexerProvider: IndexerProvider;
 
     /** The wallet repository for VTXO persistence (optional) */
-    walletRepository?: WalletRepository;
+    walletRepository: WalletRepository;
 
     /**
      * Interval for failsafe polling (ms).
@@ -183,38 +183,21 @@ export class ContractWatcher {
     }
 
     /**
-     * Set a contract's active state.
+     * Get an in-memory contract by ID.
      */
-    async setContractActive(
-        contractId: string,
-        active: boolean
-    ): Promise<void> {
-        const state = this.contracts.get(contractId);
-        if (state) {
-            state.contract.state = active ? "active" : "inactive";
-
-            if (this.isWatching) {
-                await this.updateSubscription();
-            }
-        }
-    }
-
-    /**
-     * Get a contract by ID.
-     */
-    getContract(contractId: string): Contract | undefined {
+    private getContract(contractId: string): Contract | undefined {
         return this.contracts.get(contractId)?.contract;
     }
 
     /**
-     * Get all contracts.
+     * Get all in-memory contracts.
      */
-    getAllContracts(): Contract[] {
+    private getAllContracts(): Contract[] {
         return Array.from(this.contracts.values()).map((s) => s.contract);
     }
 
     /**
-     * Get all active contracts.
+     * Get all active in-memory contracts.
      */
     getActiveContracts(): Contract[] {
         return this.getAllContracts().filter((c) => c.state === "active");
@@ -223,7 +206,7 @@ export class ContractWatcher {
     /**
      * Get the scripts of all active contracts.
      */
-    getActiveScripts(): string[] {
+    private getActiveScripts(): string[] {
         return this.getActiveContracts().map((c) => c.script);
     }
 
@@ -237,7 +220,7 @@ export class ContractWatcher {
      * This ensures we continue monitoring contracts even after they're
      * deactivated, as long as they have unspent VTXOs.
      */
-    getScriptsToWatch(): string[] {
+    private getScriptsToWatch(): string[] {
         const scripts = new Set<string>();
 
         for (const [, state] of this.contracts) {
@@ -257,57 +240,32 @@ export class ContractWatcher {
     }
 
     /**
-     * Find contract ID by script.
-     */
-    getContractByScript(script: string): string | undefined {
-        return this.scriptToContract.get(script);
-    }
-
-    /**
      * Get VTXOs for contracts, grouped by contract ID.
-     *
-     * By default, reads from cached storage. Use `refresh: true` to force
-     * fetching from the API and updating the cache.
+     * Uses Repository.
      */
-    async getContractVtxos(
-        options: GetContractVtxosOptions = {},
-        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+    private async getContractVtxos(
+        options: Pick<
+            GetContractVtxosOptions,
+            "activeOnly" | "includeSpent" | "contractIds"
+        > = {}
     ): Promise<Map<string, ContractVtxo[]>> {
+        // TODO: filter here?
         const {
             activeOnly = true,
-            contractIds,
             includeSpent = false,
-            refresh = false,
+            contractIds,
         } = options;
-
-        // Determine which contracts to query
-        let contractsToQuery = Array.from(this.contracts.values());
-
-        if (activeOnly) {
-            contractsToQuery = contractsToQuery.filter(
-                (s) => s.contract.state === "active"
-            );
-        }
-
-        if (contractIds?.length) {
-            const idSet = new Set(contractIds);
-            contractsToQuery = contractsToQuery.filter((s) =>
-                idSet.has(s.contract.id)
-            );
-        }
-
-        if (contractsToQuery.length === 0) {
-            return new Map();
-        }
-
-        const result = new Map<string, ContractVtxo[]>();
         const repo = this.config.walletRepository;
 
-        // Try cache first for all contracts (if not forcing refresh)
-        const contractsNeedingFetch: ContractState[] = [];
+        const contractsToQuery = Array.from(this.contracts.values());
 
-        if (!refresh && repo) {
-            for (const state of contractsToQuery) {
+        const asyncResults = contractsToQuery
+            .filter((_) => {
+                if (contractIds && !contractIds.includes(_.contract.id))
+                    return false;
+                return activeOnly ? _.contract.state === "active" : true;
+            })
+            .map(async (state): Promise<[[string, ContractVtxo[]]] | []> => {
                 // Use contract address as cache key
                 const cached = await repo.getVtxos(state.contract.address);
                 if (cached.length > 0) {
@@ -319,125 +277,22 @@ export class ContractWatcher {
                     const filtered = includeSpent
                         ? contractVtxos
                         : contractVtxos.filter((v) => !v.isSpent);
-                    result.set(state.contract.id, filtered);
-                } else {
-                    contractsNeedingFetch.push(state);
+                    return [[state.contract.id, filtered]];
                 }
-            }
-        } else {
-            contractsNeedingFetch.push(...contractsToQuery);
-        }
-
-        // Fetch remaining from API in bulk
-        if (contractsNeedingFetch.length > 0) {
-            const fetched = await this.fetchContractVtxosBulk(
-                contractsNeedingFetch.map((s) => s.contract),
-                includeSpent,
-                extendVtxo
-            );
-
-            // Merge results and persist to cache
-            for (const [contractId, vtxos] of fetched) {
-                result.set(contractId, vtxos);
-                if (repo) {
-                    const contract = contractsNeedingFetch.find(
-                        (s) => s.contract.id === contractId
-                    )?.contract;
-                    if (contract) {
-                        // Save using contract address as key
-                        await repo.saveVtxos(contract.address, vtxos);
-                    }
-                }
-            }
-        }
-
-        return result;
-    }
-
-    /**
-     * Fetch VTXOs for multiple contracts from the API.
-     * Fetches each contract separately since VirtualCoin doesn't include script.
-     * Uses server-side filtering and handles pagination.
-     */
-    private async fetchContractVtxosBulk(
-        contracts: Contract[],
-        includeSpent: boolean,
-        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
-    ): Promise<Map<string, ContractVtxo[]>> {
-        const result = new Map<string, ContractVtxo[]>();
-
-        // Fetch each contract separately (VirtualCoin doesn't have script field)
-        await Promise.all(
-            contracts.map(async (contract) => {
-                const vtxos = await this.fetchContractVtxosPaginated(
-                    contract,
-                    includeSpent,
-                    extendVtxo
-                );
-                result.set(contract.id, vtxos);
-            })
-        );
-
-        return result;
-    }
-
-    /**
-     * Fetch all VTXOs for a single contract with pagination.
-     */
-    private async fetchContractVtxosPaginated(
-        contract: Contract,
-        includeSpent: boolean,
-        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
-    ): Promise<ContractVtxo[]> {
-        const PAGE_SIZE = 100;
-        const allVtxos: ContractVtxo[] = [];
-        let pageIndex = 0;
-        let hasMore = true;
-
-        // Use server-side filtering when possible
-        const opts = includeSpent ? {} : { spendableOnly: true };
-
-        while (hasMore) {
-            const { vtxos, page } = await this.config.indexerProvider.getVtxos({
-                scripts: [contract.script],
-                ...opts,
-                pageIndex,
-                pageSize: PAGE_SIZE,
+                return [];
             });
 
-            for (const vtxo of vtxos) {
-                const ext = extendVtxo
-                    ? extendVtxo(vtxo)
-                    : (vtxo as ExtendedVirtualCoin);
-
-                allVtxos.push({
-                    ...ext,
-                    contractId: contract.id,
-                });
-            }
-
-            // Check if there are more pages
-            hasMore = page ? vtxos.length === PAGE_SIZE : false;
-            pageIndex++;
-        }
-
-        return allVtxos;
+        const results = await Promise.all(asyncResults);
+        return new Map(results.flat(1));
     }
 
     /**
      * Get balance summary for a specific contract.
      */
-    async getContractBalance(
-        contractId: string,
-        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
-    ): Promise<ContractBalance> {
-        const vtxosMap = await this.getContractVtxos(
-            {
-                activeOnly: false,
-                contractIds: [contractId],
-            },
-            extendVtxo
-        );
+    async getContractBalance(contractId: string): Promise<ContractBalance> {
+        const vtxosMap = await this.getContractVtxos({
+            activeOnly: false,
+        });
 
         const vtxos = vtxosMap.get(contractId) || [];
 
@@ -546,7 +401,7 @@ export class ContractWatcher {
     /**
      * Check for expired contracts and update their state.
      */
-    checkExpiredContracts(): Contract[] {
+    private checkExpiredContracts(): Contract[] {
         const now = Date.now();
         const expired: Contract[] = [];
 
@@ -594,6 +449,10 @@ export class ContractWatcher {
         } catch (error) {
             console.error("ContractWatcher connection failed:", error);
             this.connectionState = "disconnected";
+            this.eventCallback?.({
+                type: "connection_reset",
+                timestamp: Date.now(),
+            });
             this.scheduleReconnect();
         }
     }
@@ -674,7 +533,6 @@ export class ContractWatcher {
             const vtxosMap = await this.getContractVtxos({
                 activeOnly: false,
                 contractIds,
-                refresh: true,
             });
 
             for (const contractId of contractIds) {
@@ -770,32 +628,20 @@ export class ContractWatcher {
             return;
         }
 
-        try {
-            const subscription = this.config.indexerProvider.getSubscription(
-                this.subscriptionId,
-                this.abortController.signal
-            );
+        const subscription = this.config.indexerProvider.getSubscription(
+            this.subscriptionId,
+            this.abortController.signal
+        );
 
-            for await (const update of subscription) {
-                if (!this.isWatching) break;
-                this.handleSubscriptionUpdate(update);
-            }
+        for await (const update of subscription) {
+            if (!this.isWatching) break;
+            this.handleSubscriptionUpdate(update);
+        }
 
-            // Stream ended normally - reconnect if still watching
-            if (this.isWatching) {
-                this.connectionState = "disconnected";
-                this.scheduleReconnect();
-            }
-        } catch (error) {
-            if (this.isWatching) {
-                console.error("ContractWatcher subscription error:", error);
-                this.connectionState = "disconnected";
-
-                // Poll immediately after failure to catch any missed events
-                await this.pollAllContracts().catch(() => {});
-
-                this.scheduleReconnect();
-            }
+        // Stream ended normally - reconnect if still watching
+        if (this.isWatching) {
+            this.connectionState = "disconnected";
+            this.scheduleReconnect();
         }
     }
 
@@ -834,7 +680,7 @@ export class ContractWatcher {
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
         scripts: string[],
-        eventType: "vtxo_received" | "vtxo_spent",
+        eventType: ContractEvent["type"],
         timestamp: number
     ): void {
         // If we have exactly one script, all VTXOs belong to that contract
@@ -849,7 +695,7 @@ export class ContractWatcher {
                         const key = `${vtxo.txid}:${vtxo.vout}`;
                         if (eventType === "vtxo_received") {
                             state.lastKnownVtxos.set(key, vtxo);
-                        } else {
+                        } else if (eventType === "vtxo_spent") {
                             state.lastKnownVtxos.delete(key);
                         }
                     }
@@ -887,25 +733,59 @@ export class ContractWatcher {
     private emitVtxoEvent(
         contractId: string,
         vtxos: VirtualCoin[],
-        eventType: "vtxo_received" | "vtxo_spent",
+        eventType: ContractEvent["type"],
         timestamp: number
     ): void {
+        if (!this.eventCallback) return;
         const state = this.contracts.get(contractId);
-        if (!state || !this.eventCallback) return;
-
-        this.eventCallback({
-            type: eventType,
-            contractId,
-            vtxos: vtxos.map((v) => ({
-                ...v,
-                contractId,
-                // These fields may not be available from basic VirtualCoin
-                forfeitTapLeafScript: undefined as any,
-                intentTapLeafScript: undefined as any,
-                tapTree: undefined as any,
-            })),
-            contract: state.contract,
-            timestamp,
-        });
+        // ensure we check somehow regularly
+        this.checkExpiredContracts();
+        switch (eventType) {
+            case "vtxo_received":
+                if (!state) return;
+                this.eventCallback({
+                    type: "vtxo_received",
+                    vtxos: vtxos.map((v) => ({
+                        ...v,
+                        contractId,
+                        // These fields may not be available from basic VirtualCoin
+                        forfeitTapLeafScript: undefined as any,
+                        intentTapLeafScript: undefined as any,
+                        tapTree: undefined as any,
+                    })),
+                    contractId,
+                    contract: state.contract,
+                    timestamp,
+                });
+                return;
+            case "vtxo_spent":
+                if (!state) return;
+                this.eventCallback({
+                    type: "vtxo_spent",
+                    vtxos: vtxos.map((v) => ({
+                        ...v,
+                        contractId,
+                        // These fields may not be available from basic VirtualCoin
+                        forfeitTapLeafScript: undefined as any,
+                        intentTapLeafScript: undefined as any,
+                        tapTree: undefined as any,
+                    })),
+                    contractId,
+                    contract: state.contract,
+                    timestamp,
+                });
+                return;
+            case "contract_expired":
+                if (!state) return;
+                this.eventCallback({
+                    type: "contract_expired",
+                    contractId,
+                    contract: state.contract,
+                    timestamp,
+                });
+                return;
+            default:
+                return;
+        }
     }
 }

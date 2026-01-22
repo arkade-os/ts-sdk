@@ -8,6 +8,7 @@ import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
+import { ContractManager } from "../contracts";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -287,4 +288,12 @@ export interface IReadonlyWallet {
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
+
+    /**
+     * Returns the contract manager associated with this wallet, if any.
+     * This is useful for querying contract state and watching for contract events.
+     */
+    getContractManager(): Promise<ContractManager | undefined>;
+
+    // TODO: add methods to query the contract manager because it will run in the SW
 }

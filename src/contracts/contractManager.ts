@@ -3,11 +3,11 @@ import { IndexerProvider } from "../providers/indexer";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
-    ContractVtxo,
-    ContractState,
+    ContractBalance,
     ContractEvent,
     ContractEventCallback,
-    ContractBalance,
+    ContractState,
+    ContractVtxo,
     ContractWithVtxos,
     GetContractsFilter,
     GetContractVtxosOptions,
@@ -15,9 +15,11 @@ import {
     PathSelection,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
+import { ContractVtxoCache, IndexerContractVtxoCache } from "./contractCache";
 import { contractHandlers } from "./handlers";
-import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
+import { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
 import { ContractRepository } from "../repositories";
+import { Response } from "../wallet/serviceWorker/response";
 
 /**
  * Options for getting spendable paths.
@@ -42,7 +44,10 @@ export interface ContractManagerConfig {
     contractRepository: ContractRepository;
 
     /** The wallet repository for VTXO storage (single source of truth) */
-    walletRepository?: WalletRepository;
+    walletRepository: WalletRepository;
+
+    /** Optional VTXO cache to centralize data retrieval */
+    vtxoCache?: ContractVtxoCache;
 
     /** Function to extend VirtualCoin to ExtendedVirtualCoin */
     extendVtxo: (vtxo: VirtualCoin) => ExtendedVirtualCoin;
@@ -108,12 +113,19 @@ export type CreateContractParams = Omit<
 export class ContractManager {
     private config: ContractManagerConfig;
     private watcher: ContractWatcher;
+    private vtxoCache: ContractVtxoCache;
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
 
-    constructor(config: ContractManagerConfig) {
+    private constructor(config: ContractManagerConfig) {
         this.config = config;
+        this.vtxoCache =
+            config.vtxoCache ||
+            new IndexerContractVtxoCache(
+                config.indexerProvider,
+                config.walletRepository
+            );
 
         // Create watcher with wallet repository for VTXO caching
         this.watcher = new ContractWatcher({
@@ -121,6 +133,18 @@ export class ContractManager {
             walletRepository: config.walletRepository,
             ...config.watcherConfig,
         });
+    }
+
+    /**
+     * Static factory method for creating a new ContractManager, handles initialization.
+     * @param config
+     */
+    static async create(
+        config: ContractManagerConfig
+    ): Promise<ContractManager> {
+        const cm = new ContractManager(config);
+        await cm.initialize();
+        return cm;
     }
 
     /**
@@ -137,9 +161,16 @@ export class ContractManager {
         // Load persisted contracts
         const contracts = await this.config.contractRepository.getContracts();
 
-        // Check for expired contracts
+        // fetch latest VTXOs for all contracts, ensure cache is up to date
+        await this.vtxoCache.getContractVtxos(contracts, {
+            refresh: true,
+            includeSpent: true,
+        });
+
+        // add all contracts to the watcher
         const now = Date.now();
         for (const contract of contracts) {
+            // Check for expired contracts
             if (
                 contract.state === "active" &&
                 contract.expiresAt &&
@@ -225,6 +256,12 @@ export class ContractManager {
         // Persist
         await this.config.contractRepository.saveContract(contract);
 
+        // ensure cache is up to date for the contract
+        await this.vtxoCache.getContractVtxos([contract], {
+            refresh: true,
+            includeSpent: true,
+        });
+
         // Add to watcher
         await this.watcher.addContract(contract);
 
@@ -236,7 +273,10 @@ export class ContractManager {
      */
     async getContract(id: string): Promise<Contract | null> {
         this.ensureInitialized();
-        return this.watcher.getContract(id) || null;
+        const result = await this.config.contractRepository.getContracts({
+            id,
+        });
+        return result[0] ?? null;
     }
 
     /**
@@ -253,17 +293,19 @@ export class ContractManager {
     /**
      * Get all contracts.
      */
-    getAllContracts(): Contract[] {
+    async getAllContracts(): Promise<Contract[]> {
         this.ensureInitialized();
-        return this.watcher.getAllContracts();
+        return await this.config.contractRepository.getContracts();
     }
 
     /**
      * Get all active contracts.
      */
-    getActiveContracts(): Contract[] {
+    async getActiveContracts(): Promise<Contract[]> {
         this.ensureInitialized();
-        return this.watcher.getActiveContracts();
+        return await this.config.contractRepository.getContracts({
+            state: "active",
+        });
     }
 
     /**
@@ -294,7 +336,8 @@ export class ContractManager {
     ): Promise<Contract[] | ContractWithVtxos[]> {
         this.ensureInitialized();
 
-        let contracts = this.watcher.getAllContracts();
+        // TODO: filter here
+        let contracts = await this.config.contractRepository.getContracts();
 
         if (!filter) {
             return contracts;
@@ -319,11 +362,7 @@ export class ContractManager {
         // Include VTXOs in result
         if (filter.withVtxos) {
             // Fetch all VTXOs in bulk
-            const vtxosMap = await this.getContractVtxos({
-                activeOnly: false,
-                contractIds: contracts.map((c) => c.id),
-            });
-
+            const vtxosMap = await this.getVtxosForContracts(contracts);
             return contracts.map((contract) => ({
                 contract,
                 vtxos: vtxosMap.get(contract.id) || [],
@@ -380,7 +419,7 @@ export class ContractManager {
 
         const updated: Contract = { ...contract, state };
         await this.config.contractRepository.saveContract(updated);
-        await this.watcher.setContractActive(id, state === "active");
+        await this.watcher.updateContract(updated);
     }
 
     /**
@@ -443,7 +482,23 @@ export class ContractManager {
         options?: GetContractVtxosOptions
     ): Promise<Map<string, ContractVtxo[]>> {
         this.ensureInitialized();
-        return this.watcher.getContractVtxos(options, this.config.extendVtxo);
+        const contracts = await this.getAllContracts();
+        return this.vtxoCache.getContractVtxos(
+            contracts,
+            options,
+            this.config.extendVtxo
+        );
+    }
+
+    private async getVtxosForContracts(
+        contracts: Contract[]
+    ): Promise<Map<string, ContractVtxo[]>> {
+        this.ensureInitialized();
+        return this.vtxoCache.getContractVtxos(
+            contracts,
+            {},
+            this.config.extendVtxo
+        );
     }
 
     /**
@@ -462,10 +517,34 @@ export class ContractManager {
      */
     async getContractBalance(contractId: string): Promise<ContractBalance> {
         this.ensureInitialized();
-        return this.watcher.getContractBalance(
-            contractId,
-            this.config.extendVtxo
-        );
+        const vtxosMap = await this.getContractVtxos({
+            activeOnly: false,
+            contractIds: [contractId],
+        });
+
+        const vtxos = vtxosMap.get(contractId) || [];
+
+        let total = 0;
+        let spendable = 0;
+
+        for (const vtxo of vtxos) {
+            if (vtxo.isSpent) continue;
+
+            total += vtxo.value;
+
+            if (
+                vtxo.virtualStatus.state === "settled" ||
+                vtxo.virtualStatus.state === "preconfirmed"
+            ) {
+                spendable += vtxo.value;
+            }
+        }
+
+        return {
+            total,
+            spendable,
+            vtxoCount: vtxos.filter((v) => !v.isSpent).length,
+        };
     }
 
     /**
@@ -474,7 +553,7 @@ export class ContractManager {
     async getAllBalances(): Promise<Map<string, ContractBalance>> {
         this.ensureInitialized();
 
-        const contracts = this.getAllContracts();
+        const contracts = await this.getAllContracts();
         const balances = new Map<string, ContractBalance>();
 
         for (const contract of contracts) {
@@ -512,10 +591,12 @@ export class ContractManager {
      * @param contractId - The contract ID
      * @param options - Options for getting spendable paths
      */
-    getSpendablePaths(options: GetSpendablePathsOptions): PathSelection[] {
+    async getSpendablePaths(
+        options: GetSpendablePathsOptions
+    ): Promise<PathSelection[]> {
         const { contractId, collaborative = true, walletPubKey } = options;
 
-        const contract = this.watcher.getContract(contractId);
+        const contract = await this.getContract(contractId);
         if (!contract) return [];
 
         const handler = contractHandlers.get(contract.type);
@@ -538,15 +619,17 @@ export class ContractManager {
      * @param collaborative - Whether collaborative spending is available
      * @param walletPubKey - Wallet's public key (hex) to determine role
      */
-    canSpend(
+    async canSpend(
         contractId: string,
         collaborative: boolean = true,
         walletPubKey?: string
-    ): boolean {
-        return (
-            this.getSpendablePaths({ contractId, collaborative, walletPubKey })
-                .length > 0
-        );
+    ): Promise<boolean> {
+        const spendablePaths = await this.getSpendablePaths({
+            contractId,
+            collaborative,
+            walletPubKey,
+        });
+        return spendablePaths.length > 0;
     }
 
     /**
@@ -555,8 +638,10 @@ export class ContractManager {
      * @param contractId - The contract ID
      * @param collaborative - Whether collaborative spending is available
      */
-    getSpendingPath(contractId: string, collaborative: boolean = true) {
-        const contract = this.watcher.getContract(contractId);
+    async getSpendingPath(contractId: string, collaborative: boolean = true) {
+        const [contract] = await this.config.contractRepository.getContracts({
+            id: contractId,
+        });
         if (!contract) return null;
 
         const handler = contractHandlers.get(contract.type);
@@ -620,9 +705,35 @@ export class ContractManager {
     /**
      * Handle events from the watcher.
      */
-    private handleContractEvent(event: ContractEvent): void {
-        // Check for contract expiration
-        this.watcher.checkExpiredContracts();
+    private async handleContractEvent(event: ContractEvent) {
+        switch (event.type) {
+            // Every time there is a VTXO event for a contract, refresh all its VTXOs
+            case "vtxo_received":
+            case "vtxo_spent":
+                {
+                    if (event.contract) {
+                        this.vtxoCache.getContractVtxos([event.contract], {
+                            includeSpent: true,
+                            refresh: true,
+                        });
+                    }
+                }
+                break;
+            case "connection_reset":
+                // Refetch all VTXOs for all active contracts
+                const activeWatchedContracts =
+                    this.watcher.getActiveContracts();
+                await this.vtxoCache.getContractVtxos(activeWatchedContracts, {
+                    includeSpent: true,
+                    refresh: true,
+                });
+                break;
+            case "contract_expired":
+                // just update DB
+                await this.config.contractRepository.saveContract(
+                    event.contract
+                );
+        }
 
         // Forward to all callbacks
         this.emitEvent(event);

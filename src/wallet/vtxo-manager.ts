@@ -223,8 +223,6 @@ export function getExpiringAndRecoverableVtxos(
  * ```
  */
 export class VtxoManager {
-    private _contractManager?: ContractManager;
-
     constructor(
         readonly wallet: IWallet,
         readonly renewalConfig?: RenewalConfig
@@ -235,20 +233,7 @@ export class VtxoManager {
      * Returns undefined for non-Wallet implementations (e.g., ServiceWorkerWallet).
      */
     private async getContractManager(): Promise<ContractManager | undefined> {
-        if (this._contractManager) {
-            return this._contractManager;
-        }
-
-        // Check if wallet has getContractManager method
-        if (
-            "getContractManager" in this.wallet &&
-            typeof this.wallet.getContractManager === "function"
-        ) {
-            this._contractManager = await this.wallet.getContractManager();
-            return this._contractManager;
-        }
-
-        return undefined;
+        return this.wallet.getContractManager();
     }
 
     // ========== Contract Manager Integration ==========

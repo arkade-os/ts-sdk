@@ -209,23 +209,30 @@ export interface ContractHandler<
 }
 
 /**
- * Event types emitted by the contract watcher.
- */
-export type ContractEventType =
-    | "vtxo_received"
-    | "vtxo_spent"
-    | "contract_expired";
-
-/**
  * Event emitted when contract-related changes occur.
  */
-export interface ContractEvent {
-    type: ContractEventType;
-    contractId: string;
-    vtxos?: ContractVtxo[];
-    contract?: Contract;
-    timestamp: number;
-}
+export type ContractEvent =
+    | {
+          type: "vtxo_received";
+          contractId: string;
+          vtxos: ContractVtxo[];
+          contract: Contract;
+          timestamp: number;
+      }
+    | {
+          type: "vtxo_spent";
+          contractId: string;
+          vtxos: ContractVtxo[];
+          contract: Contract;
+          timestamp: number;
+      }
+    | {
+          type: "contract_expired";
+          contractId: string;
+          contract: Contract;
+          timestamp: number;
+      }
+    | { type: "connection_reset"; timestamp: number };
 
 /**
  * Callback for contract events.
@@ -261,14 +268,14 @@ export interface GetContractVtxosOptions {
     /** Only return VTXOs from active contracts */
     activeOnly?: boolean;
 
-    /** Filter by specific contract IDs */
-    contractIds?: string[];
-
     /** Include spent VTXOs */
     includeSpent?: boolean;
 
     /** Force refresh from API instead of using cached data */
     refresh?: boolean;
+
+    /** Filter by contract ID(s) */
+    contractIds?: string[];
 }
 
 /**
