@@ -85,6 +85,7 @@ import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegatorProvider } from "../providers/delegator";
 import { buildTransactionHistory } from "../utils/transactionHistory";
+import { DelegateVtxo } from "../script/delegate";
 
 export type IncomingFunds =
     | {
@@ -123,7 +124,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly onchainProvider: OnchainProvider,
         readonly indexerProvider: IndexerProvider,
         readonly arkServerPublicKey: Bytes,
-        readonly offchainTapscript: DefaultVtxo.Script,
+        readonly offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
@@ -220,15 +221,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
                   .then((info) => hex.decode(info.pubkey).slice(1))
             : undefined;
 
-        const offchainTapscript = new DefaultVtxo.Script({
+        const offchainOptions = {
             pubKey,
             serverPubKey,
             csvTimelock: exitTimelock,
-            delegatePubKey,
-        });
+        };
+        const offchainTapscript = !delegatePubKey
+            ? new DefaultVtxo.Script(offchainOptions)
+            : new DelegateVtxo.Script({ ...offchainOptions, delegatePubKey });
         const boardingTapscript = new DefaultVtxo.Script({
-            pubKey,
-            serverPubKey,
+            ...offchainOptions,
             csvTimelock: boardingTimelock,
         });
 
@@ -652,7 +654,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         readonly arkProvider: ArkProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
-        offchainTapscript: DefaultVtxo.Script,
+        offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
