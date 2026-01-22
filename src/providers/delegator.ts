@@ -62,10 +62,13 @@ export class RestDelegatorProvider implements DelegatorProvider {
         }
 
         const data = await response.json();
+        if (!data.pubkey || !data.fee || !data.delegatorAddress) {
+            throw new Error("Invalid delegate info");
+        }
         return {
-            pubkey: data.pubkey ?? "",
-            fee: data.fee ?? "",
-            delegatorAddress: data.delegatorAddress ?? "",
+            pubkey: data.pubkey,
+            fee: data.fee,
+            delegatorAddress: data.delegatorAddress,
         };
     }
 }
