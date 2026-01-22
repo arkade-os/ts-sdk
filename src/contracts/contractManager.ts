@@ -206,10 +206,13 @@ export class ContractManager {
         // Use provided ID or default to script (scripts are unique identifiers)
         const id = params.id || params.script;
 
-        // Check if contract already exists
+        // Check if contract already exists and verify it's the same type to avoid silent mismatches
         const existing = await this.getContract(id);
         if (existing) {
-            return existing;
+            if (existing.type === params.type) return existing;
+            throw new Error(
+                `Contract with ID ${id} already exists with with type ${existing.type}.`
+            );
         }
 
         const contract: Contract = {
