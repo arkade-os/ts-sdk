@@ -1057,8 +1057,9 @@ describe("Delegate", () => {
         const vtxoBeforeDelegate = vtxos[0];
         expect(vtxoBeforeDelegate.txid).toBeDefined();
 
-        await alice.wallet.delegate(
+        await alice.wallet.delegatorManager?.delegate(
             [vtxoBeforeDelegate],
+            await alice.wallet.getAddress(),
             new Date(Date.now() + 1000)
         );
 

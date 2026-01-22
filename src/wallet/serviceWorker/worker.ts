@@ -28,6 +28,7 @@ import {
     DelegatorProvider,
     RestDelegatorProvider,
 } from "../../providers/delegator";
+import { DelegatorManager } from "../delegator";
 
 class ReadonlyHandler {
     constructor(protected readonly wallet: ReadonlyWallet) {}
@@ -86,7 +87,7 @@ class ReadonlyHandler {
     }
 
     async handleDelegate(): Promise<
-        Awaited<ReturnType<Wallet["delegate"]>> | undefined
+        Awaited<ReturnType<DelegatorManager["delegate"]>> | undefined
     > {
         return undefined;
     }
@@ -118,13 +119,17 @@ class Handler extends ReadonlyHandler {
     }
 
     async handleDelegate(): Promise<
-        Awaited<ReturnType<Wallet["delegate"]>> | undefined
+        Awaited<ReturnType<DelegatorManager["delegate"]>> | undefined
     > {
+        if (!this.wallet.delegatorManager) return;
         const spendableVtxos = (
             await this.wallet.getVtxos({ withRecoverable: true })
         ).filter((v) => !v.isSpent);
         if (spendableVtxos.length === 0) return;
-        return this.wallet.delegate(spendableVtxos);
+        return this.wallet.delegatorManager.delegate(
+            spendableVtxos,
+            await this.wallet.getAddress()
+        );
     }
 }
 

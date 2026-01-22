@@ -6,12 +6,14 @@ import {
     TAPROOT_UNSPENDABLE_KEY,
     NETWORK,
 } from "@scure/btc-signer";
+import * as bip68 from "bip68";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { ArkAddress } from "./address";
 import {
+    CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
     CSVMultisigTapscript,
 } from "./tapscript";
@@ -144,3 +146,28 @@ export class VtxoScript {
 }
 
 export type EncodedVtxoScript = { tapTree: Bytes };
+
+export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
+    let sequence: number | undefined = undefined;
+
+    try {
+        const scriptWithLeafVersion = tapLeafScript[1];
+        const script = scriptWithLeafVersion.subarray(
+            0,
+            scriptWithLeafVersion.length - 1
+        );
+        try {
+            const params = CSVMultisigTapscript.decode(script).params;
+            sequence = bip68.encode(
+                params.timelock.type === "blocks"
+                    ? { blocks: Number(params.timelock.value) }
+                    : { seconds: Number(params.timelock.value) }
+            );
+        } catch {
+            const params = CLTVMultisigTapscript.decode(script).params;
+            sequence = Number(params.absoluteTimelock);
+        }
+    } catch {}
+
+    return sequence;
+}

@@ -1,0 +1,320 @@
+import { TransactionOutput } from "@scure/btc-signer/psbt";
+import {
+    ArkAddress,
+    ArkProvider,
+    decodeTapscript,
+    Estimator,
+    ExtendedCoin,
+    ExtendedVirtualCoin,
+    Identity,
+    Intent,
+    isRecoverable,
+    MultisigTapscript,
+    SignedIntent,
+    Transaction,
+    VtxoScript,
+} from "..";
+import { DelegatorProvider } from "../providers/delegator";
+import { base64, hex } from "@scure/base";
+import { scriptFromTapLeafScript } from "../script/base";
+import { buildForfeitTxWithOutput } from "../forfeit";
+import { Address, OutScript, SigHash } from "@scure/btc-signer";
+import { Bytes } from "@scure/btc-signer/utils";
+
+export interface DelegatorManager {
+    delegate(
+        vtxos: ExtendedVirtualCoin[],
+        destination: string,
+        delegateAt?: Date
+    ): Promise<void>;
+}
+
+export class DelegatorManagerImpl implements DelegatorManager {
+    constructor(
+        readonly delegatorProvider: DelegatorProvider,
+        readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
+        readonly identity: Identity
+    ) {}
+
+    async delegate(
+        vtxos: ExtendedVirtualCoin[],
+        destination: string,
+        delegateAt?: Date
+    ): Promise<void> {
+        if (vtxos.length === 0) {
+            return;
+        }
+
+        const groupByExpiry: Map<number, ExtendedVirtualCoin[]> = new Map();
+        let recoverableVtxos: ExtendedVirtualCoin[] = [];
+
+        for (const vtxo of vtxos) {
+            if (isRecoverable(vtxo)) {
+                recoverableVtxos.push(vtxo);
+                continue;
+            }
+
+            const expiry = vtxo.virtualStatus.batchExpiry;
+            if (!expiry) continue;
+
+            const dayKey = getDayTimestamp(expiry);
+            groupByExpiry.set(dayKey, [
+                ...(groupByExpiry.get(dayKey) ?? []),
+                vtxo,
+            ]);
+        }
+
+        const destinationScript = ArkAddress.decode(destination).pkScript;
+
+        if (groupByExpiry.size === 0) {
+            return delegate(
+                this.identity,
+                this.delegatorProvider,
+                this.arkInfoProvider,
+                recoverableVtxos,
+                destinationScript,
+                delegateAt
+            );
+        }
+
+        // search for the earliest group, include recoverable vtxos into it
+        const entries = Array.from(groupByExpiry.entries());
+        let earliestGroup = entries[0][0];
+        for (const [dayKey] of entries) {
+            earliestGroup = Math.min(earliestGroup, dayKey);
+        }
+
+        groupByExpiry.set(earliestGroup, [
+            ...(groupByExpiry.get(earliestGroup) ?? []),
+            ...recoverableVtxos,
+        ]);
+
+        await Promise.allSettled(
+            entries.map(async ([, vtxosGroup]) => {
+                return delegate(
+                    this.identity,
+                    this.delegatorProvider,
+                    this.arkInfoProvider,
+                    vtxosGroup,
+                    destinationScript
+                );
+            })
+        );
+    }
+}
+
+/**
+ * Delegates virtual coins to a delegator provider, allowing them to manage the coins renewal
+ * on behalf of the wallet.
+ * @param vtxos - Array of extended virtual coins to delegate. Must not be empty.
+ * @param delegateAt - Optional Date specifying when the delegation
+ *                     should occur. If not provided, defaults to 12 hours before the earliest
+ *                     expiry time of the provided vtxos.
+ */
+async function delegate(
+    identity: Identity,
+    delegatorProvider: DelegatorProvider,
+    arkInfoProvider: Pick<ArkProvider, "getInfo">,
+    vtxos: ExtendedVirtualCoin[],
+    destinationScript: Bytes,
+    delegateAt?: Date
+): Promise<void> {
+    if (vtxos.length === 0) {
+        throw new Error("unable to delegate: no vtxos provided");
+    }
+
+    if (!delegatorProvider) {
+        throw new Error(
+            "unable to delegate: delegator provider not configured"
+        );
+    }
+
+    if (!delegateAt) {
+        const expireAt = vtxos.reduce(
+            (min, coin) => Math.min(min, coin.virtualStatus.batchExpiry ?? 0),
+            Number.MAX_SAFE_INTEGER
+        );
+        if (expireAt === Number.MAX_SAFE_INTEGER) {
+            throw new Error("unable to delegate: no vtxos with a valid expiry");
+        }
+
+        // delegate 12 hours before the expiry
+        delegateAt = new Date((expireAt - 12 * 60 * 60) * 1000);
+    }
+
+    const { fees, dust, forfeitAddress } = await arkInfoProvider.getInfo();
+
+    const deletageAtSeconds = delegateAt.getTime() / 1000;
+    const estimator = new Estimator({
+        ...fees.intentFee,
+        // replace now() function with the delegateAt timestamp
+        offchainInput: fees.intentFee.offchainInput?.replace(
+            "now()",
+            `double(${deletageAtSeconds})`
+        ),
+        offchainOutput: fees.intentFee.offchainOutput?.replace(
+            "now()",
+            `double(${deletageAtSeconds})`
+        ),
+    });
+
+    let amount = 0n;
+    for (const coin of vtxos) {
+        const inputFee = estimator.evalOffchainInput({
+            amount: BigInt(coin.value),
+            type: "vtxo",
+            weight: 0,
+            birth: coin.createdAt,
+            expiry: coin.virtualStatus.batchExpiry
+                ? new Date(coin.virtualStatus.batchExpiry * 1000)
+                : undefined,
+        });
+        if (inputFee.value >= coin.value) {
+            continue;
+        }
+        amount += BigInt(coin.value) - BigInt(inputFee.value);
+    }
+    const { delegatorAddress, pubkey, fee } =
+        await delegatorProvider.getDelegateInfo();
+
+    const outputs = [];
+
+    if (fee !== "0") {
+        outputs.push({
+            script: ArkAddress.decode(delegatorAddress).pkScript,
+            amount: BigInt(Number(fee)) * BigInt(vtxos.length),
+        });
+    }
+
+    const outputFee = outputs.reduce((fee, output) => {
+        if (!output.amount || !output.script) return fee;
+        return (
+            fee +
+            estimator.evalOffchainOutput({
+                amount: output.amount,
+                script: hex.encode(output.script),
+            }).satoshis
+        );
+    }, 0);
+
+    if (amount - BigInt(outputFee) <= dust) {
+        throw new Error("Amount is below dust limit, cannot delegate");
+    }
+    amount -= BigInt(outputFee);
+
+    outputs.push({
+        script: destinationScript,
+        amount: amount,
+    });
+
+    const registerIntent = await makeSignedDelegateIntent(
+        identity,
+        vtxos,
+        outputs,
+        [],
+        [pubkey],
+        deletageAtSeconds
+    );
+
+    const forfeitOutputScript = OutScript.encode(
+        Address().decode(forfeitAddress)
+    );
+
+    const forfeits = await Promise.all(
+        vtxos.map(async (coin) => {
+            const forfeit = await makeDelegateForfeitTx(
+                coin,
+                dust,
+                pubkey,
+                forfeitOutputScript,
+                identity
+            );
+            return base64.encode(forfeit.toPSBT());
+        })
+    );
+
+    await delegatorProvider.delegate(registerIntent, forfeits);
+}
+
+async function makeDelegateForfeitTx(
+    input: ExtendedVirtualCoin,
+    connectorAmount: bigint,
+    delegatePubkey: string,
+    forfeitOutputScript: Bytes,
+    identity: Identity
+): Promise<Transaction> {
+    if (delegatePubkey.length === 66) {
+        delegatePubkey = delegatePubkey.slice(2);
+    }
+
+    const vtxoScript = VtxoScript.decode(input.tapTree);
+    const delegateTapLeaf = vtxoScript.leaves.find((tapLeaf) => {
+        const arkTapscript = decodeTapscript(scriptFromTapLeafScript(tapLeaf));
+        if (!MultisigTapscript.is(arkTapscript)) return false;
+        if (
+            !arkTapscript.params.pubkeys
+                .map(hex.encode)
+                .includes(delegatePubkey)
+        )
+            return false;
+        return true;
+    });
+
+    if (!delegateTapLeaf) {
+        throw new Error(
+            `delegate tap leaf not found for input: ${input.txid}:${input.vout}`
+        );
+    }
+
+    const tx = buildForfeitTxWithOutput(
+        [
+            {
+                txid: input.txid,
+                index: input.vout,
+                witnessUtxo: {
+                    amount: BigInt(input.value),
+                    script: VtxoScript.decode(input.tapTree).pkScript,
+                },
+                sighashType: SigHash.ALL_ANYONECANPAY,
+                tapLeafScript: [delegateTapLeaf],
+            },
+        ],
+        {
+            script: forfeitOutputScript,
+            amount: BigInt(input.value) + connectorAmount,
+        }
+    );
+
+    return identity.sign(tx);
+}
+
+async function makeSignedDelegateIntent(
+    identity: Identity,
+    coins: ExtendedCoin[],
+    outputs: TransactionOutput[],
+    onchainOutputsIndexes: number[],
+    cosignerPubKeys: string[],
+    validAt: number
+): Promise<SignedIntent<Intent.RegisterMessage>> {
+    const message: Intent.RegisterMessage = {
+        type: "register",
+        onchain_output_indexes: onchainOutputsIndexes,
+        valid_at: Math.floor(validAt),
+        expire_at: 0,
+        cosigners_public_keys: cosignerPubKeys,
+    };
+
+    const proof = Intent.create(message, coins, outputs);
+    const signedProof = await identity.sign(proof);
+
+    return {
+        proof: base64.encode(signedProof.toPSBT()),
+        message,
+    };
+}
+
+function getDayTimestamp(timestamp: number): number {
+    const date = new Date(timestamp * 1000);
+    date.setHours(0, 0, 0, 0);
+    return date.getTime();
+}

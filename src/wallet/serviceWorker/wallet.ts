@@ -13,7 +13,7 @@ import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity, ReadonlySingleKey } from "../../identity";
+import { Identity, ReadonlyIdentity } from "../../identity";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { WalletRepositoryImpl } from "../../repositories/walletRepository";
