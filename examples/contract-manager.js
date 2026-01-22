@@ -9,17 +9,31 @@
 // - Path selection for spending contracts
 // - Optional auto-sweeping of spendable VTXOs
 //
-// Usage:
-// node examples/contract-manager.js [arkdExec]
+// The easiest way to run this example is by using `test:setup` script.
 //
-import { SingleKey, Wallet, VHTLC, networks } from "../dist/esm/index.js";
+// Usage:
+// $ pnpm test:setup
+// $ node examples/contract-manager.js [arkdExec]
+//
+import {
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    SingleKey,
+    Wallet,
+    VHTLC,
+    networks,
+} from "../dist/esm/index.js";
 import { hash160, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { execSync } from "child_process";
 
-const SERVER_PUBLIC_KEY = hex.decode(
-    "e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdb"
-);
+const signerPubkeyRaw = execSync(
+    "curl -s http://localhost:7070/v1/info | jq -r '.signerPubkey'"
+)
+    .toString()
+    .trim();
+
+const SERVER_PUBLIC_KEY = hex.decode(signerPubkeyRaw.slice(2));
 
 const arkdExec = process.argv[2] || "docker exec -t arkd";
 
@@ -35,12 +49,18 @@ const preimageHash = hash160(secret);
 async function main() {
     console.log("=== Contract Manager Example ===\n");
 
+    const storage = {
+        walletRepository: new InMemoryWalletRepository(),
+        contractRepository: new InMemoryContractRepository(),
+    };
+
     // Create Alice's wallet
     console.log("Creating Alice's wallet...");
     const aliceWallet = await Wallet.create({
         identity: alice,
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
+        storage,
     });
 
     const alicePubKey = await alice.xOnlyPublicKey();
@@ -131,14 +151,24 @@ async function main() {
 
     // Check spendable paths (Alice is sender, no preimage yet)
     console.log("\nChecking spendable paths for Alice (sender)...");
-    let paths = manager.getSpendablePaths(
-        contract.id,
-        true,
-        hex.encode(alicePubKey)
-    );
+    let paths = manager.getSpendablePaths({
+        contractId: contract.id,
+        collaborative: true,
+        walletPubKey: hex.encode(alicePubKey),
+    });
     console.log("Spendable paths:", paths.length);
     if (paths.length === 0) {
         console.log("  (No paths available yet - refund timelock not reached)");
+    } else {
+        for (const path of paths) {
+            console.log("  - Leaf available");
+            if (path.extraWitness) {
+                console.log("    Requires extra witness (preimage)");
+            }
+            if (path.sequence) {
+                console.log("    Sequence:", path.sequence);
+            }
+        }
     }
 
     // Simulate: Bob reveals the preimage (e.g., Lightning payment succeeded)

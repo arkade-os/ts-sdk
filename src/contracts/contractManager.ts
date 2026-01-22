@@ -20,6 +20,18 @@ import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
 import { ContractRepository } from "../repositories";
 
 /**
+ * Options for getting spendable paths.
+ */
+export type GetSpendablePathsOptions = {
+    /** The contract ID */
+    contractId: string;
+    /** Whether collaborative spending is available (default: true) */
+    collaborative?: boolean;
+    /** Wallet's public key (hex) to determine role */
+    walletPubKey?: string;
+};
+
+/**
  * Configuration for the ContractManager.
  */
 export interface ContractManagerConfig {
@@ -504,14 +516,11 @@ export class ContractManager {
      * Get spendable paths for a contract.
      *
      * @param contractId - The contract ID
-     * @param collaborative - Whether collaborative spending is available
-     * @param walletPubKey - Wallet's public key (hex) to determine role
+     * @param options - Options for getting spendable paths
      */
-    getSpendablePaths(
-        contractId: string,
-        collaborative: boolean = true,
-        walletPubKey?: string
-    ): PathSelection[] {
+    getSpendablePaths(options: GetSpendablePathsOptions): PathSelection[] {
+        const { contractId, collaborative = true, walletPubKey } = options;
+
         const contract = this.watcher.getContract(contractId);
         if (!contract) return [];
 
@@ -541,7 +550,7 @@ export class ContractManager {
         walletPubKey?: string
     ): boolean {
         return (
-            this.getSpendablePaths(contractId, collaborative, walletPubKey)
+            this.getSpendablePaths({ contractId, collaborative, walletPubKey })
                 .length > 0
         );
     }

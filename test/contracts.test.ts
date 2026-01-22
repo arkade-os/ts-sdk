@@ -29,10 +29,12 @@ const testDefaultScript = new DefaultVtxo.Script({
 const TEST_DEFAULT_SCRIPT = hex.encode(testDefaultScript.pkScript);
 
 // Helper to create valid default contract params
-const createDefaultParams = () => ({
-    pubKey: hex.encode(TEST_PUB_KEY),
-    serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
-});
+const createDefaultParams = () =>
+    DefaultContractHandler.serializeParams({
+        pubKey: TEST_PUB_KEY,
+        serverPubKey: TEST_SERVER_PUB_KEY,
+        csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+    });
 
 // Mock IndexerProvider
 const createMockIndexerProvider = (): IndexerProvider => ({
@@ -718,6 +720,11 @@ describe("Contracts", () => {
             const params = {
                 pubKey: hex.encode(TEST_PUB_KEY),
                 serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
+                csvTimelock: DefaultContractHandler.serializeParams({
+                    pubKey: TEST_PUB_KEY,
+                    serverPubKey: TEST_SERVER_PUB_KEY,
+                    csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+                }).csvTimelock,
             };
 
             const script = DefaultContractHandler.createScript(params);
@@ -730,6 +737,7 @@ describe("Contracts", () => {
             const original = {
                 pubKey: TEST_PUB_KEY,
                 serverPubKey: TEST_SERVER_PUB_KEY,
+                csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
             };
 
             const serialized = DefaultContractHandler.serializeParams(original);

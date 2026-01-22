@@ -6,6 +6,7 @@ import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
+import { timelockToSequence } from "../contracts/handlers/default";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
@@ -1699,6 +1700,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // Register the wallet's default address as a contract
         // This ensures it's watched alongside any external contracts
         // Contract ID defaults to script, so no need to specify id explicitly
+        const csvTimelock =
+            this.offchainTapscript.options.csvTimelock ??
+            DefaultVtxo.Script.DEFAULT_TIMELOCK;
         await manager.createContract({
             type: "default",
             params: {
@@ -1706,6 +1710,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 serverPubKey: hex.encode(
                     this.offchainTapscript.options.serverPubKey
                 ),
+                csvTimelock: timelockToSequence(csvTimelock).toString(),
             },
             script: this.defaultContractId,
             address: await this.getAddress(),

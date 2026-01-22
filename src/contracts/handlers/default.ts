@@ -40,6 +40,7 @@ export function sequenceToTimelock(sequence: number): RelativeTimelock {
 export interface DefaultContractParams {
     pubKey: Uint8Array;
     serverPubKey: Uint8Array;
+    csvTimelock: RelativeTimelock;
 }
 
 /**
@@ -64,13 +65,18 @@ export const DefaultContractHandler: ContractHandler<
         return {
             pubKey: hex.encode(params.pubKey),
             serverPubKey: hex.encode(params.serverPubKey),
+            csvTimelock: timelockToSequence(params.csvTimelock).toString(),
         };
     },
 
     deserializeParams(params: Record<string, string>): DefaultContractParams {
+        const csvTimelock = params.csvTimelock
+            ? sequenceToTimelock(Number(params.csvTimelock))
+            : DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return {
             pubKey: hex.decode(params.pubKey),
             serverPubKey: hex.decode(params.serverPubKey),
+            csvTimelock,
         };
     },
 

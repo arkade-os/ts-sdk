@@ -22,8 +22,13 @@ export enum ChainTxType {
 }
 
 export interface PageResponse {
+    /** Current page index **/
     current: number;
+
+    /** Next page index **/
     next: number;
+
+    /** Total pages given the page-size used in the query **/
     total: number;
 }
 
