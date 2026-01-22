@@ -65,6 +65,11 @@ export interface BaseWalletConfig {
  */
 export interface ReadonlyWalletConfig extends BaseWalletConfig {
     identity: ReadonlyIdentity;
+    /**
+     * Configuration for the ContractManager's watcher.
+     * Controls reconnection behavior and failsafe polling.
+     */
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
 }
 
 /**
@@ -104,11 +109,6 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
 export interface WalletConfig extends ReadonlyWalletConfig {
     identity: Identity;
     renewalConfig?: RenewalConfig;
-    /**
-     * Configuration for the ContractManager's watcher.
-     * Controls reconnection behavior and failsafe polling.
-     */
-    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
 }
 
 export type StorageConfig = {

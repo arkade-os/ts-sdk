@@ -22,7 +22,7 @@ import {
     Wallet,
     VHTLC,
     networks,
-} from "../dist/esm/index.js";
+} from "../src/index";
 import { hash160, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { execSync } from "child_process";
@@ -35,7 +35,7 @@ const signerPubkeyRaw = execSync(
 
 const SERVER_PUBLIC_KEY = hex.decode(signerPubkeyRaw.slice(2));
 
-const arkdExec = process.argv[2] || "docker exec -t arkd";
+const arkdExec = process.argv[2] || "docker exec -t ark";
 
 // Alice is the sender (e.g., paying for a Lightning invoice)
 const alice = SingleKey.fromHex(hex.encode(randomPrivateKeyBytes()));
@@ -114,14 +114,13 @@ async function main() {
         },
         script: swapScript,
         address: swapAddress,
-        autoSweep: false, // We'll handle spending manually in this example
     });
 
     console.log("Contract registered with ID:", contract.id);
 
     // Start watching for events
     console.log("\nStarting contract watcher...");
-    const stopWatching = await manager.startWatching((event) => {
+    const stopWatching = manager.onContractEvent((event) => {
         console.log(`\n[Event] ${event.type} on contract ${event.contractId}`);
         if (event.vtxos?.length) {
             console.log(`  VTXOs: ${event.vtxos.length}`);
@@ -131,6 +130,7 @@ async function main() {
                 );
             }
         }
+        stopWatching();
     });
 
     // Fund the VHTLC address
@@ -138,14 +138,16 @@ async function main() {
     console.log(`\nFunding VHTLC with ${fundAmount} sats...`);
     await fundAddress(swapAddress, fundAmount);
 
-    // Wait a moment for the watcher to detect the new VTXO
-    await sleep(3000);
+    // Wait a moment for updated
+    await sleep(1000);
+
+    // Forcing poll to detect funds in case websocket isn't available
+    await manager.forcePoll();
 
     // Check contract balance
     const balance = await manager.getContractBalance(contract.id);
     console.log("\nContract balance:");
-    console.log("  Settled:", balance.settled, "sats");
-    console.log("  Preconfirmed:", balance.preconfirmed, "sats");
+    console.log("  Total:", balance.total, "sats");
     console.log("  Spendable:", balance.spendable, "sats");
     console.log("  VTXO count:", balance.vtxoCount);
 
@@ -184,7 +186,11 @@ async function main() {
     console.log(
         "\nChecking spendable paths for Bob (receiver with preimage)..."
     );
-    paths = manager.getSpendablePaths(contract.id, true, hex.encode(bobPubKey));
+    paths = manager.getSpendablePaths({
+        contractId: contract.id,
+        collaborative: true,
+        walletPubKey: hex.encode(bobPubKey),
+    });
     console.log("Spendable paths:", paths.length);
     for (const path of paths) {
         console.log("  - Leaf available");
@@ -216,22 +222,23 @@ async function main() {
 
     // Clean up
     console.log("\nStopping watcher...");
-    stopWatching();
+    manager.dispose();
 
     console.log("\n=== Example Complete ===");
+    return 0;
 }
 
 // WARNING: arkdExec is passed directly to shell. Only use trusted values.
 // For production code, use execFileSync with separated arguments to prevent
 // command injection vulnerabilities.
-async function fundAddress(address, amount) {
+async function fundAddress(address: string, amount: number) {
     execSync(
         `${arkdExec} ark send --to ${address} --amount ${amount} --password secret`,
         { stdio: "inherit" }
     );
 }
 
-function sleep(ms) {
+function sleep(ms: number) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 

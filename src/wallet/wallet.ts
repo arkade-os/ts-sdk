@@ -1,7 +1,7 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
+import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
@@ -14,14 +14,14 @@ import {
     OnchainProvider,
 } from "../providers/onchain";
 import {
-    BatchFinalizationEvent,
-    SettlementEvent,
-    TreeSigningStartedEvent,
     ArkProvider,
-    RestArkProvider,
+    BatchFinalizationEvent,
     BatchStartedEvent,
+    RestArkProvider,
+    SettlementEvent,
     SignedIntent,
     TreeNoncesEvent,
+    TreeSigningStartedEvent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -80,10 +80,9 @@ import {
 } from "../contracts/contractManager";
 import {
     Contract,
-    ContractVtxo,
     ContractEventCallback,
+    ContractVtxo,
 } from "../contracts/types";
-import {} from "../repositories/contractRepository";
 
 export type IncomingFunds =
     | {
@@ -116,6 +115,10 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 }
 
 export class ReadonlyWallet implements IReadonlyWallet {
+    private _contractManager?: ContractManager;
+    private _contractManagerInitializing?: Promise<ContractManager>;
+    protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
@@ -126,8 +129,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
-        public readonly contractRepository: ContractRepository
-    ) {}
+        public readonly contractRepository: ContractRepository,
+        watcherConfig?: ReadonlyWalletConfig["watcherConfig"]
+    ) {
+        this.watcherConfig = watcherConfig;
+    }
 
     /**
      * Protected helper to set up shared wallet configuration.
@@ -266,7 +272,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.boardingTapscript,
             setup.dustAmount,
             setup.walletRepository,
-            setup.contractRepository
+            setup.contractRepository,
+            config.watcherConfig
         );
     }
 
@@ -603,6 +610,175 @@ export class ReadonlyWallet implements IReadonlyWallet {
             )
             .map((_) => _.arkTxId!);
     }
+
+    // ========================================================================
+    // Contract Management
+    // ========================================================================
+
+    /**
+     * Get the ContractManager for managing contracts including the wallet's default address.
+     *
+     * The ContractManager handles:
+     * - The wallet's default receiving address (as a "default" contract)
+     * - External contracts (Boltz swaps, HTLCs, etc.)
+     * - Multi-contract watching with resilient connections
+     *
+     * @example
+     * ```typescript
+     * const manager = await wallet.getContractManager();
+     *
+     * // Create a contract for a Boltz swap
+     * const contract = await manager.createContract({
+     *   label: "Boltz Swap",
+     *   type: "vhtlc",
+     *   params: { ... },
+     *   script: swapScript,
+     *   address: swapAddress,
+     * });
+     *
+     * // Start watching for events (includes wallet's default address)
+     * const stop = await manager.startWatching((event) => {
+     *   console.log(`${event.type} on ${event.contractId}`);
+     * });
+     * ```
+     */
+    async getContractManager(): Promise<ContractManager> {
+        // Return existing manager if already initialized
+        if (this._contractManager) {
+            return this._contractManager;
+        }
+
+        // If initialization is in progress, wait for it
+        if (this._contractManagerInitializing) {
+            return this._contractManagerInitializing;
+        }
+
+        // Start initialization and store the promise
+        this._contractManagerInitializing = this.initializeContractManager();
+
+        try {
+            const manager = await this._contractManagerInitializing;
+            this._contractManager = manager;
+            return manager;
+        } catch (error) {
+            // Clear the initializing promise so subsequent calls can retry
+            this._contractManagerInitializing = undefined;
+            throw error;
+        } finally {
+            // Clear the initializing promise after completion
+            this._contractManagerInitializing = undefined;
+        }
+    }
+
+    private async initializeContractManager(): Promise<ContractManager> {
+        const manager = new ContractManager({
+            indexerProvider: this.indexerProvider,
+            contractRepository: this.contractRepository,
+            walletRepository: this.walletRepository,
+            extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
+            getDefaultAddress: () => this.getAddress(),
+            watcherConfig: this.watcherConfig,
+        });
+
+        await manager.initialize();
+
+        // Register the wallet's default address as a contract
+        // This ensures it's watched alongside any external contracts
+        // Contract ID defaults to script, so no need to specify id explicitly
+        const csvTimelock =
+            this.offchainTapscript.options.csvTimelock ??
+            DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        await manager.createContract({
+            type: "default",
+            params: {
+                pubKey: hex.encode(this.offchainTapscript.options.pubKey),
+                serverPubKey: hex.encode(
+                    this.offchainTapscript.options.serverPubKey
+                ),
+                csvTimelock: timelockToSequence(csvTimelock).toString(),
+            },
+            script: this.defaultContractId,
+            address: await this.getAddress(),
+            state: "active",
+        });
+
+        return manager;
+    }
+
+    /**
+     * Register an external contract to watch.
+     *
+     * Convenience method that delegates to ContractManager.
+     *
+     * @param params - Contract parameters
+     * @returns The created contract
+     */
+    async registerContract(params: CreateContractParams): Promise<Contract> {
+        const manager = await this.getContractManager();
+        return manager.createContract(params);
+    }
+
+    /**
+     * Get all registered contracts.
+     */
+    async getContracts(): Promise<Contract[]> {
+        const manager = await this.getContractManager();
+        return manager.getAllContracts();
+    }
+
+    /**
+     * Get active contracts only.
+     */
+    async getActiveContracts(): Promise<Contract[]> {
+        const manager = await this.getContractManager();
+        return manager.getActiveContracts();
+    }
+
+    /**
+     * Get a contract by ID.
+     */
+    async getContractById(id: string): Promise<Contract | null> {
+        const manager = await this.getContractManager();
+        return manager.getContract(id);
+    }
+
+    /**
+     * Deactivate a contract (stop watching it).
+     */
+    async deactivateContract(contractId: string): Promise<void> {
+        const manager = await this.getContractManager();
+        await manager.deactivateContract(contractId);
+    }
+
+    /**
+     * Update a contract's runtime data (e.g., set preimage for HTLC).
+     */
+    async updateContractData(
+        contractId: string,
+        data: Record<string, string>
+    ): Promise<void> {
+        const manager = await this.getContractManager();
+        await manager.updateContractData(contractId, data);
+    }
+
+    /**
+     * Get VTXOs for all active contracts.
+     */
+    async getContractVtxos(): Promise<Map<string, ContractVtxo[]>> {
+        const manager = await this.getContractManager();
+        return manager.getContractVtxos({ activeOnly: true });
+    }
+
+    /**
+     * Start watching for contract events.
+     *
+     * @param callback - Event callback
+     * @returns Stop watching function
+     */
+    async watchContracts(callback: ContractEventCallback): Promise<() => void> {
+        const manager = await this.getContractManager();
+        return manager.onContractEvent(callback);
+    }
 }
 
 /**
@@ -647,10 +823,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
 
-    private _contractManager?: ContractManager;
-    private _contractManagerInitializing?: Promise<ContractManager>;
-    private readonly watcherConfig?: WalletConfig["watcherConfig"];
-
     protected constructor(
         identity: Identity,
         network: Network,
@@ -680,7 +852,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boardingTapscript,
             dustAmount,
             walletRepository,
-            contractRepository
+            contractRepository,
+            watcherConfig
         );
         this.identity = identity;
         this.renewalConfig = {
@@ -688,7 +861,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
-        this.watcherConfig = watcherConfig;
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -771,7 +943,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.boardingTapscript,
             this.dustAmount,
             this.walletRepository,
-            this.contractRepository
+            this.contractRepository,
+            this.watcherConfig
         );
     }
 
@@ -1601,198 +1774,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         return inputs;
-    }
-
-    // ========================================================================
-    // Contract Management
-    // ========================================================================
-
-    /**
-     * Check if the wallet's ContractRepository supports ContractManager functionality.
-     * Returns true if the repository implements ContractManagerRepository methods.
-     */
-    supportsContractManager(): boolean {
-        const repo = this.contractRepository as unknown as Record<
-            string,
-            unknown
-        >;
-        return (
-            typeof repo.getContracts === "function" &&
-            typeof repo.saveContract === "function"
-        );
-    }
-
-    /**
-     * Get the ContractManager for managing contracts including the wallet's default address.
-     *
-     * The ContractManager handles:
-     * - The wallet's default receiving address (as a "default" contract)
-     * - External contracts (Boltz swaps, HTLCs, etc.)
-     * - Multi-contract watching with resilient connections
-     *
-     * @example
-     * ```typescript
-     * const manager = await wallet.getContractManager();
-     *
-     * // Create a contract for a Boltz swap
-     * const contract = await manager.createContract({
-     *   label: "Boltz Swap",
-     *   type: "vhtlc",
-     *   params: { ... },
-     *   script: swapScript,
-     *   address: swapAddress,
-     * });
-     *
-     * // Start watching for events (includes wallet's default address)
-     * const stop = await manager.startWatching((event) => {
-     *   console.log(`${event.type} on ${event.contractId}`);
-     * });
-     * ```
-     */
-    async getContractManager(): Promise<ContractManager> {
-        if (!this.supportsContractManager()) {
-            throw new Error(
-                "ContractManager requires a ContractManagerRepository. " +
-                    "The provided ContractRepository does not implement the required methods. " +
-                    "Use ContractRepositoryImpl or implement ContractManagerRepository."
-            );
-        }
-
-        // Return existing manager if already initialized
-        if (this._contractManager) {
-            return this._contractManager;
-        }
-
-        // If initialization is in progress, wait for it
-        if (this._contractManagerInitializing) {
-            return this._contractManagerInitializing;
-        }
-
-        // Start initialization and store the promise
-        this._contractManagerInitializing = this.initializeContractManager();
-
-        try {
-            const manager = await this._contractManagerInitializing;
-            this._contractManager = manager;
-            return manager;
-        } catch (error) {
-            // Clear the initializing promise so subsequent calls can retry
-            this._contractManagerInitializing = undefined;
-            throw error;
-        } finally {
-            // Clear the initializing promise after completion
-            this._contractManagerInitializing = undefined;
-        }
-    }
-
-    private async initializeContractManager(): Promise<ContractManager> {
-        const manager = new ContractManager({
-            indexerProvider: this.indexerProvider,
-            contractRepository: this.contractRepository,
-            walletRepository: this.walletRepository,
-            extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
-            getDefaultAddress: () => this.getAddress(),
-            watcherConfig: this.watcherConfig,
-        });
-
-        await manager.initialize();
-
-        // Register the wallet's default address as a contract
-        // This ensures it's watched alongside any external contracts
-        // Contract ID defaults to script, so no need to specify id explicitly
-        const csvTimelock =
-            this.offchainTapscript.options.csvTimelock ??
-            DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        await manager.createContract({
-            type: "default",
-            params: {
-                pubKey: hex.encode(this.offchainTapscript.options.pubKey),
-                serverPubKey: hex.encode(
-                    this.offchainTapscript.options.serverPubKey
-                ),
-                csvTimelock: timelockToSequence(csvTimelock).toString(),
-            },
-            script: this.defaultContractId,
-            address: await this.getAddress(),
-            state: "active",
-        });
-
-        return manager;
-    }
-
-    /**
-     * Register an external contract to watch.
-     *
-     * Convenience method that delegates to ContractManager.
-     *
-     * @param params - Contract parameters
-     * @returns The created contract
-     */
-    async registerContract(params: CreateContractParams): Promise<Contract> {
-        const manager = await this.getContractManager();
-        return manager.createContract(params);
-    }
-
-    /**
-     * Get all registered contracts.
-     */
-    async getContracts(): Promise<Contract[]> {
-        const manager = await this.getContractManager();
-        return manager.getAllContracts();
-    }
-
-    /**
-     * Get active contracts only.
-     */
-    async getActiveContracts(): Promise<Contract[]> {
-        const manager = await this.getContractManager();
-        return manager.getActiveContracts();
-    }
-
-    /**
-     * Get a contract by ID.
-     */
-    async getContractById(id: string): Promise<Contract | null> {
-        const manager = await this.getContractManager();
-        return manager.getContract(id);
-    }
-
-    /**
-     * Deactivate a contract (stop watching it).
-     */
-    async deactivateContract(contractId: string): Promise<void> {
-        const manager = await this.getContractManager();
-        await manager.deactivateContract(contractId);
-    }
-
-    /**
-     * Update a contract's runtime data (e.g., set preimage for HTLC).
-     */
-    async updateContractData(
-        contractId: string,
-        data: Record<string, string>
-    ): Promise<void> {
-        const manager = await this.getContractManager();
-        await manager.updateContractData(contractId, data);
-    }
-
-    /**
-     * Get VTXOs for all active contracts.
-     */
-    async getContractVtxos(): Promise<Map<string, ContractVtxo[]>> {
-        const manager = await this.getContractManager();
-        return manager.getContractVtxos({ activeOnly: true });
-    }
-
-    /**
-     * Start watching for contract events.
-     *
-     * @param callback - Event callback
-     * @returns Stop function
-     */
-    async watchContracts(callback: ContractEventCallback): Promise<() => void> {
-        const manager = await this.getContractManager();
-        return manager.startWatching(callback);
     }
 
     /**

@@ -264,15 +264,6 @@ export class ContractManager {
     }
 
     /**
-     * Get contracts by state.
-     * @deprecated Use getContracts({ state }) instead
-     */
-    async getContractsByState(state: ContractState): Promise<Contract[]> {
-        this.ensureInitialized();
-        return this.config.contractRepository.getContracts({ state });
-    }
-
-    /**
      * Get contracts with optional filters.
      *
      * @param filter - Optional filter criteria
@@ -604,15 +595,12 @@ export class ContractManager {
     }
 
     /**
-     * Start watching for contract events.
+     * Forces a poll operation to manually check for updates or changes.
      *
-     * @deprecated Use `onContractEvent()` instead. Watching starts automatically on `initialize()`.
-     * @param callback - Event callback
-     * @returns Stop function (only removes callback, does not stop watching)
+     * @return {Promise<void>} A promise that resolves when the poll operation is complete.
      */
-    async startWatching(callback: ContractEventCallback): Promise<() => void> {
-        this.ensureInitialized();
-        return this.onContractEvent(callback);
+    forcePoll(): Promise<void> {
+        return this.watcher.forcePoll();
     }
 
     /**

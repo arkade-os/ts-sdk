@@ -544,11 +544,10 @@ const contract = await manager.createContract({
   },
   script: swapScript,
   address: swapAddress,
-  autoSweep: true, // Automatically sweep when spendable
 })
 
-// Start watching all contracts (wallet address + external contracts)
-const stopWatching = await manager.startWatching((event) => {
+// Listen for all contracts events (wallet address + external contracts)
+const unsubscribe = await manager.onContractEvent((event) => {
   switch (event.type) {
     case 'vtxo_received':
       console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractId}`)
@@ -578,7 +577,7 @@ const balances = await manager.getAllBalances()
 const sweepResults = await manager.sweepAll()
 
 // Stop watching
-stopWatching()
+unsubscribe()
 ```
 
 The watcher features:

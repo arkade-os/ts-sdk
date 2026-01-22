@@ -469,6 +469,7 @@ export class ContractWatcher {
      * Start watching for VTXO events across all active contracts.
      */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
+        console.log("--->>>> ContractWatcher: start watching...");
         if (this.isWatching) {
             throw new Error("Already watching");
         }
@@ -625,10 +626,6 @@ export class ContractWatcher {
             this.config.maxReconnectDelayMs
         );
 
-        console.log(
-            `ContractWatcher: Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`
-        );
-
         this.reconnectTimeoutId = setTimeout(() => {
             this.reconnectTimeoutId = undefined;
             this.connect();
@@ -645,6 +642,7 @@ export class ContractWatcher {
 
         this.failsafePollIntervalId = setInterval(() => {
             if (this.isWatching) {
+                console.log("--->>>> polling failsafe...");
                 this.pollAllContracts().catch((error) => {
                     console.error(
                         "ContractWatcher failsafe poll failed:",
