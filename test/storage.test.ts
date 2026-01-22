@@ -774,7 +774,7 @@ describe("IndexedDB migrations", () => {
             getContractCollection: vi.fn(),
             saveToContractCollection: vi.fn(),
         };
-        await migrateContractRepository(oldStorage, walletRepoV2 as any);
+        await migrateContractRepository(oldStorage, contractRepoV2 as any);
         expect(contractRepoV2.getContractCollection).not.toHaveBeenCalled();
         expect(contractRepoV2.saveToContractCollection).not.toHaveBeenCalled();
     });

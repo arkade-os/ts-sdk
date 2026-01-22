@@ -469,7 +469,6 @@ export class ContractWatcher {
      * Start watching for VTXO events across all active contracts.
      */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
-        console.log("--->>>> ContractWatcher: start watching...");
         if (this.isWatching) {
             throw new Error("Already watching");
         }
@@ -642,7 +641,6 @@ export class ContractWatcher {
 
         this.failsafePollIntervalId = setInterval(() => {
             if (this.isWatching) {
-                console.log("--->>>> polling failsafe...");
                 this.pollAllContracts().catch((error) => {
                     console.error(
                         "ContractWatcher failsafe poll failed:",

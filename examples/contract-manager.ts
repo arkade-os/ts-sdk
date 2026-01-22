@@ -61,6 +61,8 @@ async function main() {
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
         storage,
+        // force refresh in 2s at most for the example to run quickly
+        watcherConfig: { failsafePollIntervalMs: 2000 },
     });
 
     const alicePubKey = await alice.xOnlyPublicKey();
@@ -118,8 +120,7 @@ async function main() {
 
     console.log("Contract registered with ID:", contract.id);
 
-    // Start watching for events
-    console.log("\nStarting contract watcher...");
+    console.log("\nSubscribing to contract events...");
     const stopWatching = manager.onContractEvent((event) => {
         console.log(`\n[Event] ${event.type} on contract ${event.contractId}`);
         if (event.vtxos?.length) {
@@ -130,7 +131,6 @@ async function main() {
                 );
             }
         }
-        stopWatching();
     });
 
     // Fund the VHTLC address
@@ -139,10 +139,7 @@ async function main() {
     await fundAddress(swapAddress, fundAmount);
 
     // Wait a moment for updated
-    await sleep(1000);
-
-    // Forcing poll to detect funds in case websocket isn't available
-    await manager.forcePoll();
+    await sleep(4000);
 
     // Check contract balance
     const balance = await manager.getContractBalance(contract.id);
@@ -222,6 +219,7 @@ async function main() {
 
     // Clean up
     console.log("\nStopping watcher...");
+    stopWatching();
     manager.dispose();
 
     console.log("\n=== Example Complete ===");

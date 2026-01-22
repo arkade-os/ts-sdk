@@ -595,15 +595,6 @@ export class ContractManager {
     }
 
     /**
-     * Forces a poll operation to manually check for updates or changes.
-     *
-     * @return {Promise<void>} A promise that resolves when the poll operation is complete.
-     */
-    forcePoll(): Promise<void> {
-        return this.watcher.forcePoll();
-    }
-
-    /**
      * Check if currently watching.
      */
     isWatching(): boolean {

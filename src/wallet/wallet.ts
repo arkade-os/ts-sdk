@@ -637,7 +637,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * });
      *
      * // Start watching for events (includes wallet's default address)
-     * const stop = await manager.startWatching((event) => {
+     * const stop = await manager.onContractEvent((event) => {
      *   console.log(`${event.type} on ${event.contractId}`);
      * });
      * ```
