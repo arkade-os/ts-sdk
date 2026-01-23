@@ -1,9 +1,10 @@
 import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
 import type {
+    Contract,
     ContractState,
     GetContractsFilter,
-    GetContractVtxosOptions,
 } from "../../contracts";
+import { GetSpendablePathsOptions } from "../../contracts/contractManager";
 
 /**
  * Request is the namespace that contains the request types for the service worker.
@@ -24,12 +25,16 @@ export namespace Request {
         | "GET_STATUS"
         | "CLEAR"
         // Contract operations
-        | "GET_CONTRACTS"
-        | "GET_CONTRACT"
         | "CREATE_CONTRACT"
+        | "GET_CONTRACTS"
+        | "GET_CONTRACTS_WITH_VTXOS"
+        | "UPDATE_CONTRACT"
         | "UPDATE_CONTRACT_STATE"
-        | "GET_CONTRACT_VTXOS"
-        | "GET_CONTRACT_BALANCE";
+        | "DELETE_CONTRACT"
+        | "GET_SPENDABLE_PATHS"
+        | "IS_CONTRACT_MANAGER_WATCHING"
+        | "SUBSCRIBE_CONTRACT_EVENTS"
+        | "UNSUBSCRIBE_CONTRACT_EVENTS";
 
     export interface Base {
         type: Type;
@@ -188,17 +193,15 @@ export namespace Request {
         return message.type === "GET_CONTRACTS";
     }
 
-    export interface GetContract extends Base {
-        type: "GET_CONTRACT";
-        contractId: string;
+    export interface GetContractsWithVtxos extends Base {
+        type: "GET_CONTRACTS_WITH_VTXOS";
+        filter?: GetContractsFilter;
     }
 
-    export function isGetContract(message: Base): message is GetContract {
-        return (
-            message.type === "GET_CONTRACT" &&
-            "contractId" in message &&
-            typeof message.contractId === "string"
-        );
+    export function isGetContractsVtxos(
+        message: Base
+    ): message is GetContractsWithVtxos {
+        return message.type === "GET_CONTRACTS_WITH_VTXOS";
     }
 
     export interface CreateContract extends Base {
@@ -230,6 +233,22 @@ export namespace Request {
         );
     }
 
+    export interface UpdateContract extends Base {
+        type: "UPDATE_CONTRACT";
+        contractId: string;
+        updates: Partial<Omit<Contract, "id" | "createdAt">>;
+    }
+
+    export function isUpdateContract(message: Base): message is UpdateContract {
+        return (
+            message.type === "UPDATE_CONTRACT" &&
+            "contractId" in message &&
+            typeof message.contractId === "string" &&
+            "updates" in message &&
+            typeof message.updates === "object"
+        );
+    }
+
     export interface UpdateContractState extends Base {
         type: "UPDATE_CONTRACT_STATE";
         contractId: string;
@@ -250,29 +269,57 @@ export namespace Request {
         );
     }
 
-    export interface GetContractVtxos extends Base {
-        type: "GET_CONTRACT_VTXOS";
-        options?: GetContractVtxosOptions;
-    }
-
-    export function isGetContractVtxos(
-        message: Base
-    ): message is GetContractVtxos {
-        return message.type === "GET_CONTRACT_VTXOS";
-    }
-
-    export interface GetContractBalance extends Base {
-        type: "GET_CONTRACT_BALANCE";
+    export interface DeleteContract extends Base {
+        type: "DELETE_CONTRACT";
         contractId: string;
     }
 
-    export function isGetContractBalance(
-        message: Base
-    ): message is GetContractBalance {
+    export function isDeleteContract(message: Base): message is DeleteContract {
         return (
-            message.type === "GET_CONTRACT_BALANCE" &&
+            message.type === "DELETE_CONTRACT" &&
             "contractId" in message &&
             typeof message.contractId === "string"
         );
+    }
+
+    export interface GetSpendablePaths extends Base {
+        type: "GET_SPENDABLE_PATHS";
+        options: GetSpendablePathsOptions;
+    }
+
+    export function isGetSpendablePaths(
+        message: Base
+    ): message is GetSpendablePaths {
+        return message.type === "GET_SPENDABLE_PATHS";
+    }
+
+    export interface isContractManagerWatching extends Base {
+        type: "IS_CONTRACT_MANAGER_WATCHING";
+    }
+
+    export function isIsContractWatching(
+        message: Base
+    ): message is isContractManagerWatching {
+        return message.type === "IS_CONTRACT_MANAGER_WATCHING";
+    }
+
+    export interface SubscribeContractEvents extends Base {
+        type: "SUBSCRIBE_CONTRACT_EVENTS";
+    }
+
+    export function isSubscribeContractEvents(
+        message: Base
+    ): message is SubscribeContractEvents {
+        return message.type === "SUBSCRIBE_CONTRACT_EVENTS";
+    }
+
+    export interface UnsubscribeContractEvents extends Base {
+        type: "UNSUBSCRIBE_CONTRACT_EVENTS";
+    }
+
+    export function isUnsubscribeContractEvents(
+        message: Base
+    ): message is UnsubscribeContractEvents {
+        return message.type === "UNSUBSCRIBE_CONTRACT_EVENTS";
     }
 }

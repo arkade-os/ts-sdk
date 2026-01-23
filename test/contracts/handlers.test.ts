@@ -5,6 +5,32 @@ import {
     timelockToSequence,
 } from "../../src/contracts/handlers/default";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
+import { Contract, contractHandlers, DefaultVtxo } from "../../src";
+import {
+    createDefaultContractParams,
+    TEST_PUB_KEY,
+    TEST_SERVER_PUB_KEY,
+} from "./helpers";
+
+describe("Contract Registry", () => {
+    it("should have default handler registered", () => {
+        expect(contractHandlers.has("default")).toBe(true);
+        const handler = contractHandlers.get("default");
+        expect(handler).toBeDefined();
+        expect(handler?.type).toBe("default");
+    });
+
+    it("should have VHTLC handler registered", () => {
+        expect(contractHandlers.has("vhtlc")).toBe(true);
+        const handler = contractHandlers.get("vhtlc");
+        expect(handler).toBeDefined();
+        expect(handler?.type).toBe("vhtlc");
+    });
+
+    it("should return undefined for unregistered handler", () => {
+        expect(contractHandlers.get("custom")).toBeUndefined();
+    });
+});
 
 describe("DefaultContractHandler", () => {
     it("creates a script matching the expected pkScript", () => {
@@ -28,6 +54,111 @@ describe("DefaultContractHandler", () => {
         const script = DefaultContractHandler.createScript(params.params);
 
         expect(hex.encode(script.pkScript)).toEqual(params.script);
+    });
+
+    it("should create script from params", () => {
+        const params = {
+            pubKey: hex.encode(TEST_PUB_KEY),
+            serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
+            csvTimelock: DefaultContractHandler.serializeParams({
+                pubKey: TEST_PUB_KEY,
+                serverPubKey: TEST_SERVER_PUB_KEY,
+                csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+            }).csvTimelock,
+        };
+
+        const script = DefaultContractHandler.createScript(params);
+
+        expect(script).toBeDefined();
+        expect(script.pkScript).toBeDefined();
+    });
+
+    it("should serialize and deserialize params", () => {
+        const original = {
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        };
+
+        const serialized = DefaultContractHandler.serializeParams(original);
+        const deserialized =
+            DefaultContractHandler.deserializeParams(serialized);
+
+        expect(deserialized.pubKey).toBeInstanceOf(Uint8Array);
+        expect(deserialized.serverPubKey).toBeInstanceOf(Uint8Array);
+        expect(Array.from(deserialized.pubKey)).toEqual(
+            Array.from(TEST_PUB_KEY)
+        );
+    });
+
+    it("should select forfeit path when collaborative", () => {
+        const params = createDefaultContractParams();
+        const script = DefaultContractHandler.createScript(params);
+        const contract: Contract = {
+            id: "test",
+            type: "default",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const path = DefaultContractHandler.selectPath(script, contract, {
+            collaborative: true,
+            currentTime: Date.now(),
+        });
+
+        expect(path).toBeDefined();
+        expect(path?.leaf).toBeDefined();
+    });
+
+    it("should select exit path when not collaborative", () => {
+        const params = createDefaultContractParams();
+        const script = DefaultContractHandler.createScript(params);
+        const contract: Contract = {
+            id: "test",
+            type: "default",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const path = DefaultContractHandler.selectPath(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+        });
+
+        expect(path).toBeDefined();
+        expect(path?.leaf).toBeDefined();
+    });
+
+    it("should return multiple spendable paths", () => {
+        const params = createDefaultContractParams();
+        const script = DefaultContractHandler.createScript(params);
+        const contract: Contract = {
+            id: "test",
+            type: "default",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const paths = DefaultContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: true,
+                currentTime: Date.now(),
+            }
+        );
+
+        // Should have both forfeit and exit paths when collaborative
+        expect(paths.length).toBeGreaterThanOrEqual(2);
     });
 });
 

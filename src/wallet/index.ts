@@ -8,7 +8,13 @@ import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
-import { ContractManager } from "../contracts";
+import {
+    Contract,
+    ContractEventCallback,
+    ContractManager,
+    CreateContractParams,
+} from "../contracts";
+import { IContractManager } from "../contracts/contractManager";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -290,10 +296,8 @@ export interface IReadonlyWallet {
     getTransactionHistory(): Promise<ArkTransaction[]>;
 
     /**
-     * Returns the contract manager associated with this wallet, if any.
+     * Returns the contract manager associated with this wallet.
      * This is useful for querying contract state and watching for contract events.
      */
-    getContractManager(): Promise<ContractManager | undefined>;
-
-    // TODO: add methods to query the contract manager because it will run in the SW
+    getContractManager(): Promise<IContractManager>;
 }

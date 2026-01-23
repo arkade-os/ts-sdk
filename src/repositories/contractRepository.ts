@@ -10,8 +10,10 @@ export interface ContractFilter {
     ids?: string[];
     /** Filter by script */
     script?: string;
-    /** Filter by state(s) */
-    state?: ContractState | ContractState[];
+    /** Filter by state */
+    state?: ContractState;
+    /** Filter by multiples states */
+    states?: ContractState[];
     /** Filter by contract type */
     type?: string;
     /** Filter by multiple contract types */

@@ -14,6 +14,8 @@ import type {
     ContractVtxo,
     ContractBalance,
     ContractEvent,
+    ContractWithVtxos,
+    PathSelection,
 } from "../../contracts";
 
 function getRandomId(): string {
@@ -48,8 +50,22 @@ export namespace Response {
         | "CONTRACT"
         | "CONTRACT_CREATED"
         | "CONTRACT_STATE_UPDATED"
+        | "CONTRACT_UPDATED"
+        | "CONTRACT_DATA_UPDATED"
+        | "CONTRACT_DELETED"
         | "CONTRACT_VTXOS"
+        | "CONTRACT_VTXOS_FOR_CONTRACT"
         | "CONTRACT_BALANCE"
+        | "CONTRACT_BALANCES"
+        | "TOTAL_CONTRACT_BALANCE"
+        | "SPENDABLE_PATHS"
+        | "CAN_SPEND"
+        | "SPENDING_PATH"
+        | "CONTRACTS_WITH_VTXOS"
+        | "CONTRACT_WATCHING"
+        | "CONTRACT_EVENTS_SUBSCRIBED"
+        | "CONTRACT_EVENTS_UNSUBSCRIBED"
+        | "CONTRACT_MANAGER_DISPOSED"
         | "CONTRACT_EVENT";
 
     export interface Base {
@@ -427,6 +443,33 @@ export namespace Response {
         };
     }
 
+    export interface ContractsWithVtxos extends Base {
+        type: "CONTRACTS_WITH_VTXOS";
+        success: true;
+        contracts: ContractWithVtxos[];
+    }
+
+    export function isContractsWithVtxos(
+        response: Base
+    ): response is ContractsWithVtxos {
+        return (
+            response.type === "CONTRACTS_WITH_VTXOS" &&
+            response.success === true
+        );
+    }
+
+    export function contractsWithVtxos(
+        id: string,
+        contracts: ContractWithVtxos[]
+    ): ContractsWithVtxos {
+        return {
+            type: "CONTRACTS_WITH_VTXOS",
+            success: true,
+            contracts,
+            id,
+        };
+    }
+
     export interface ContractResponse extends Base {
         type: "CONTRACT";
         success: true;
@@ -497,6 +540,75 @@ export namespace Response {
         };
     }
 
+    export interface ContractUpdated extends Base {
+        type: "CONTRACT_UPDATED";
+        success: true;
+        contract: Contract;
+    }
+
+    export function isContractUpdated(
+        response: Base
+    ): response is ContractUpdated {
+        return (
+            response.type === "CONTRACT_UPDATED" && response.success === true
+        );
+    }
+
+    export function contractUpdated(
+        id: string,
+        contract: Contract
+    ): ContractUpdated {
+        return {
+            type: "CONTRACT_UPDATED",
+            success: true,
+            contract,
+            id,
+        };
+    }
+
+    export interface ContractDataUpdated extends Base {
+        type: "CONTRACT_DATA_UPDATED";
+        success: true;
+    }
+
+    export function isContractDataUpdated(
+        response: Base
+    ): response is ContractDataUpdated {
+        return (
+            response.type === "CONTRACT_DATA_UPDATED" &&
+            response.success === true
+        );
+    }
+
+    export function contractDataUpdated(id: string): ContractDataUpdated {
+        return {
+            type: "CONTRACT_DATA_UPDATED",
+            success: true,
+            id,
+        };
+    }
+
+    export interface ContractDeleted extends Base {
+        type: "CONTRACT_DELETED";
+        success: true;
+    }
+
+    export function isContractDeleted(
+        response: Base
+    ): response is ContractDeleted {
+        return (
+            response.type === "CONTRACT_DELETED" && response.success === true
+        );
+    }
+
+    export function contractDeleted(id: string): ContractDeleted {
+        return {
+            type: "CONTRACT_DELETED",
+            success: true,
+            id,
+        };
+    }
+
     export interface ContractVtxosResponse extends Base {
         type: "CONTRACT_VTXOS";
         success: true;
@@ -515,6 +627,33 @@ export namespace Response {
     ): ContractVtxosResponse {
         return {
             type: "CONTRACT_VTXOS",
+            success: true,
+            vtxos,
+            id,
+        };
+    }
+
+    export interface ContractVtxosForContractResponse extends Base {
+        type: "CONTRACT_VTXOS_FOR_CONTRACT";
+        success: true;
+        vtxos: ContractVtxo[];
+    }
+
+    export function isContractVtxosForContract(
+        response: Base
+    ): response is ContractVtxosForContractResponse {
+        return (
+            response.type === "CONTRACT_VTXOS_FOR_CONTRACT" &&
+            response.success === true
+        );
+    }
+
+    export function contractVtxosForContract(
+        id: string,
+        vtxos: ContractVtxo[]
+    ): ContractVtxosForContractResponse {
+        return {
+            type: "CONTRACT_VTXOS_FOR_CONTRACT",
             success: true,
             vtxos,
             id,
@@ -543,6 +682,224 @@ export namespace Response {
             type: "CONTRACT_BALANCE",
             success: true,
             balance,
+            id,
+        };
+    }
+
+    export interface ContractBalancesResponse extends Base {
+        type: "CONTRACT_BALANCES";
+        success: true;
+        balances: Map<string, ContractBalance>;
+    }
+
+    export function isContractBalances(
+        response: Base
+    ): response is ContractBalancesResponse {
+        return (
+            response.type === "CONTRACT_BALANCES" && response.success === true
+        );
+    }
+
+    export function contractBalances(
+        id: string,
+        balances: Map<string, ContractBalance>
+    ): ContractBalancesResponse {
+        return {
+            type: "CONTRACT_BALANCES",
+            success: true,
+            balances,
+            id,
+        };
+    }
+
+    export interface TotalContractBalanceResponse extends Base {
+        type: "TOTAL_CONTRACT_BALANCE";
+        success: true;
+        balance: ContractBalance;
+    }
+
+    export function isTotalContractBalance(
+        response: Base
+    ): response is TotalContractBalanceResponse {
+        return (
+            response.type === "TOTAL_CONTRACT_BALANCE" &&
+            response.success === true
+        );
+    }
+
+    export function totalContractBalance(
+        id: string,
+        balance: ContractBalance
+    ): TotalContractBalanceResponse {
+        return {
+            type: "TOTAL_CONTRACT_BALANCE",
+            success: true,
+            balance,
+            id,
+        };
+    }
+
+    export interface SpendablePathsResponse extends Base {
+        type: "SPENDABLE_PATHS";
+        success: true;
+        paths: PathSelection[];
+    }
+
+    export function isSpendablePaths(
+        response: Base
+    ): response is SpendablePathsResponse {
+        return response.type === "SPENDABLE_PATHS" && response.success === true;
+    }
+
+    export function spendablePaths(
+        id: string,
+        paths: PathSelection[]
+    ): SpendablePathsResponse {
+        return {
+            type: "SPENDABLE_PATHS",
+            success: true,
+            paths,
+            id,
+        };
+    }
+
+    export interface CanSpendResponse extends Base {
+        type: "CAN_SPEND";
+        success: true;
+        canSpend: boolean;
+    }
+
+    export function isCanSpend(response: Base): response is CanSpendResponse {
+        return response.type === "CAN_SPEND" && response.success === true;
+    }
+
+    export function canSpend(id: string, canSpend: boolean): CanSpendResponse {
+        return {
+            type: "CAN_SPEND",
+            success: true,
+            canSpend,
+            id,
+        };
+    }
+
+    export interface SpendingPathResponse extends Base {
+        type: "SPENDING_PATH";
+        success: true;
+        path: PathSelection | null;
+    }
+
+    export function isSpendingPath(
+        response: Base
+    ): response is SpendingPathResponse {
+        return response.type === "SPENDING_PATH" && response.success === true;
+    }
+
+    export function spendingPath(
+        id: string,
+        path: PathSelection | null
+    ): SpendingPathResponse {
+        return {
+            type: "SPENDING_PATH",
+            success: true,
+            path,
+            id,
+        };
+    }
+
+    export interface ContractWatchingResponse extends Base {
+        type: "CONTRACT_WATCHING";
+        success: true;
+        isWatching: boolean;
+    }
+
+    export function isContractWatching(
+        response: Base
+    ): response is ContractWatchingResponse {
+        return (
+            response.type === "CONTRACT_WATCHING" && response.success === true
+        );
+    }
+
+    export function contractWatching(
+        id: string,
+        isWatching: boolean
+    ): ContractWatchingResponse {
+        return {
+            type: "CONTRACT_WATCHING",
+            success: true,
+            isWatching,
+            id,
+        };
+    }
+
+    export interface ContractEventsSubscribed extends Base {
+        type: "CONTRACT_EVENTS_SUBSCRIBED";
+        success: true;
+    }
+
+    export function isContractEventsSubscribed(
+        response: Base
+    ): response is ContractEventsSubscribed {
+        return (
+            response.type === "CONTRACT_EVENTS_SUBSCRIBED" &&
+            response.success === true
+        );
+    }
+
+    export function contractEventsSubscribed(
+        id: string
+    ): ContractEventsSubscribed {
+        return {
+            type: "CONTRACT_EVENTS_SUBSCRIBED",
+            success: true,
+            id,
+        };
+    }
+
+    export interface ContractEventsUnsubscribed extends Base {
+        type: "CONTRACT_EVENTS_UNSUBSCRIBED";
+        success: true;
+    }
+
+    export function isContractEventsUnsubscribed(
+        response: Base
+    ): response is ContractEventsUnsubscribed {
+        return (
+            response.type === "CONTRACT_EVENTS_UNSUBSCRIBED" &&
+            response.success === true
+        );
+    }
+
+    export function contractEventsUnsubscribed(
+        id: string
+    ): ContractEventsUnsubscribed {
+        return {
+            type: "CONTRACT_EVENTS_UNSUBSCRIBED",
+            success: true,
+            id,
+        };
+    }
+
+    export interface ContractManagerDisposed extends Base {
+        type: "CONTRACT_MANAGER_DISPOSED";
+        success: true;
+    }
+
+    export function isContractManagerDisposed(
+        response: Base
+    ): response is ContractManagerDisposed {
+        return (
+            response.type === "CONTRACT_MANAGER_DISPOSED" &&
+            response.success === true
+        );
+    }
+
+    export function contractManagerDisposed(
+        id: string
+    ): ContractManagerDisposed {
+        return {
+            type: "CONTRACT_MANAGER_DISPOSED",
+            success: true,
             id,
         };
     }

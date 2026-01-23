@@ -1,7 +1,18 @@
 import { IndexerProvider } from "../providers/indexer";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
-import { Contract, ContractVtxo, GetContractVtxosOptions } from "./types";
+import { Contract, ContractVtxo } from "./types";
+
+/**
+ * Options for querying contract VTXOs.
+ */
+export interface GetContractVtxosOptions {
+    /** Include spent VTXOs */
+    includeSpent?: boolean;
+
+    /** Force refresh from API instead of using cached data */
+    refresh?: boolean;
+}
 
 /**
  * Cache abstraction for contract VTXO data.
@@ -48,72 +59,77 @@ export class IndexerContractVtxoCache implements ContractVtxoCache {
         options: GetContractVtxosOptions = {},
         extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
     ): Promise<Map<string, ContractVtxo[]>> {
-        const {
-            activeOnly = true,
-            includeSpent = false,
-            refresh = false,
-        } = options;
+        const { includeSpent = false, refresh = false } = options;
 
         if (refresh) {
             this.invalidateCache();
         }
 
-        let contractsToQuery = contracts;
-
-        if (activeOnly) {
-            contractsToQuery = contractsToQuery.filter(
-                (c) => c.state === "active"
-            );
-        }
-
-        if (contractsToQuery.length === 0) {
+        if (contracts.length === 0) {
             return new Map();
         }
 
         const result = new Map<string, ContractVtxo[]>();
-        const contractsNeedingFetch: Contract[] = [];
         const repo = this.walletRepository;
-
         if (Date.now() - this.cachedAt > this.ttl) {
-            for (const contract of contractsToQuery) {
-                const cached = await repo.getVtxos(contract.address);
-                if (cached.length > 0) {
-                    const contractVtxos: ContractVtxo[] = cached.map((v) => ({
-                        ...v,
-                        contractId: contract.id,
-                    }));
-                    const filtered = includeSpent
-                        ? contractVtxos
-                        : contractVtxos.filter((v) => !v.isSpent);
-                    result.set(contract.id, filtered);
-                } else {
-                    contractsNeedingFetch.push(contract);
-                }
+            return await this.fetchContractVxosFromIndexer(
+                contracts,
+                includeSpent,
+                extendVtxo
+            );
+        }
+
+        // contracts for which the cache has zero VTXOs - we'll fetch them from the indexer
+        const contractsNeedingFetch: Contract[] = [];
+
+        for (const contract of contracts) {
+            const cached = await repo.getVtxos(contract.address);
+            if (cached.length > 0) {
+                const contractVtxos: ContractVtxo[] = cached.map((v) => ({
+                    ...v,
+                    contractId: contract.id,
+                }));
+                const filtered = includeSpent
+                    ? contractVtxos
+                    : contractVtxos.filter((v) => !v.isSpent);
+                result.set(contract.id, filtered);
+            } else {
+                contractsNeedingFetch.push(contract);
             }
-        } else {
-            contractsNeedingFetch.concat(contractsToQuery);
         }
 
         if (contractsNeedingFetch.length > 0) {
-            const fetched = await this.fetchContractVtxosBulk(
+            const vtxosFromRemote = await this.fetchContractVxosFromIndexer(
                 contractsNeedingFetch,
                 includeSpent,
                 extendVtxo
             );
-
-            for (const [contractId, vtxos] of fetched) {
+            for (const [contractId, vtxos] of vtxosFromRemote) {
                 result.set(contractId, vtxos);
-                if (repo) {
-                    const contract = contractsNeedingFetch.find(
-                        (c) => c.id === contractId
-                    );
-                    if (contract) {
-                        await repo.saveVtxos(contract.address, vtxos);
-                    }
-                }
             }
         }
 
+        return result;
+    }
+
+    private async fetchContractVxosFromIndexer(
+        contracts: Contract[],
+        includeSpent: boolean,
+        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+    ): Promise<Map<string, ContractVtxo[]>> {
+        const fetched = await this.fetchContractVtxosBulk(
+            contracts,
+            includeSpent,
+            extendVtxo
+        );
+        const result = new Map<string, ContractVtxo[]>();
+        for (const [contractId, vtxos] of fetched) {
+            result.set(contractId, vtxos);
+            const contract = contracts.find((c) => c.id === contractId);
+            if (contract) {
+                await this.walletRepository.saveVtxos(contract.address, vtxos);
+            }
+        }
         return result;
     }
 

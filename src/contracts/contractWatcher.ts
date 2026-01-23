@@ -5,7 +5,6 @@ import {
     Contract,
     ContractVtxo,
     ContractEventCallback,
-    GetContractVtxosOptions,
     ContractBalance,
     ContractEvent,
 } from "./types";
@@ -108,7 +107,6 @@ export class ContractWatcher {
     private reconnectAttempts = 0;
     private reconnectTimeoutId?: ReturnType<typeof setTimeout>;
     private failsafePollIntervalId?: ReturnType<typeof setInterval>;
-    private lastPollTime = 0;
 
     constructor(config: ContractWatcherConfig) {
         this.config = {
@@ -141,7 +139,7 @@ export class ContractWatcher {
             // Poll first to discover VTXOs (may affect whether we watch this contract)
             await this.pollContracts([contract.id]);
             // Update subscription based on active state and VTXOs
-            await this.updateSubscription();
+            await this.tryUpdateSubscription();
         }
     }
 
@@ -163,7 +161,7 @@ export class ContractWatcher {
         existing.contract = contract;
 
         if (this.isWatching) {
-            await this.updateSubscription();
+            await this.tryUpdateSubscription();
         }
     }
 
@@ -177,22 +175,15 @@ export class ContractWatcher {
             this.contracts.delete(contractId);
 
             if (this.isWatching) {
-                await this.updateSubscription();
+                await this.tryUpdateSubscription();
             }
         }
     }
 
     /**
-     * Get an in-memory contract by ID.
-     */
-    private getContract(contractId: string): Contract | undefined {
-        return this.contracts.get(contractId)?.contract;
-    }
-
-    /**
      * Get all in-memory contracts.
      */
-    private getAllContracts(): Contract[] {
+    getAllContracts(): Contract[] {
         return Array.from(this.contracts.values()).map((s) => s.contract);
     }
 
@@ -201,13 +192,6 @@ export class ContractWatcher {
      */
     getActiveContracts(): Contract[] {
         return this.getAllContracts().filter((c) => c.state === "active");
-    }
-
-    /**
-     * Get the scripts of all active contracts.
-     */
-    private getActiveScripts(): string[] {
-        return this.getActiveContracts().map((c) => c.script);
     }
 
     /**
@@ -243,18 +227,11 @@ export class ContractWatcher {
      * Get VTXOs for contracts, grouped by contract ID.
      * Uses Repository.
      */
-    private async getContractVtxos(
-        options: Pick<
-            GetContractVtxosOptions,
-            "activeOnly" | "includeSpent" | "contractIds"
-        > = {}
-    ): Promise<Map<string, ContractVtxo[]>> {
-        // TODO: filter here?
-        const {
-            activeOnly = true,
-            includeSpent = false,
-            contractIds,
-        } = options;
+    private async getContractVtxos(options: {
+        includeSpent?: boolean;
+        contractIds?: string[];
+    }): Promise<Map<string, ContractVtxo[]>> {
+        const { contractIds, includeSpent } = options;
         const repo = this.config.walletRepository;
 
         const contractsToQuery = Array.from(this.contracts.values());
@@ -263,7 +240,7 @@ export class ContractWatcher {
             .filter((_) => {
                 if (contractIds && !contractIds.includes(_.contract.id))
                     return false;
-                return activeOnly ? _.contract.state === "active" : true;
+                return true;
             })
             .map(async (state): Promise<[[string, ContractVtxo[]]] | []> => {
                 // Use contract address as cache key
@@ -284,40 +261,6 @@ export class ContractWatcher {
 
         const results = await Promise.all(asyncResults);
         return new Map(results.flat(1));
-    }
-
-    /**
-     * Get balance summary for a specific contract.
-     */
-    async getContractBalance(contractId: string): Promise<ContractBalance> {
-        const vtxosMap = await this.getContractVtxos({
-            activeOnly: false,
-        });
-
-        const vtxos = vtxosMap.get(contractId) || [];
-
-        let total = 0;
-        let spendable = 0;
-
-        for (const vtxo of vtxos) {
-            if (vtxo.isSpent) continue;
-
-            total += vtxo.value;
-
-            // Spendable = settled or preconfirmed (not swept)
-            if (
-                vtxo.virtualStatus.state === "settled" ||
-                vtxo.virtualStatus.state === "preconfirmed"
-            ) {
-                spendable += vtxo.value;
-            }
-        }
-
-        return {
-            total,
-            spendable,
-            vtxoCount: vtxos.filter((v) => !v.isSpent).length,
-        };
     }
 
     /**
@@ -399,9 +342,9 @@ export class ContractWatcher {
     }
 
     /**
-     * Check for expired contracts and update their state.
+     * Check for expired contracts, update their state, and emit events.
      */
-    private checkExpiredContracts(): Contract[] {
+    private checkExpiredContracts(): void {
         const now = Date.now();
         const expired: Contract[] = [];
 
@@ -412,7 +355,7 @@ export class ContractWatcher {
                 contract.expiresAt &&
                 contract.expiresAt <= now
             ) {
-                contract.state = "expired";
+                contract.state = "inactive";
                 expired.push(contract);
 
                 this.eventCallback?.({
@@ -423,8 +366,6 @@ export class ContractWatcher {
                 });
             }
         }
-
-        return expired;
     }
 
     /**
@@ -445,7 +386,7 @@ export class ContractWatcher {
             this.reconnectAttempts = 0;
 
             // Start listening
-            this.listenLoop();
+            await this.listenLoop();
         } catch (error) {
             console.error("ContractWatcher connection failed:", error);
             this.connectionState = "disconnected";
@@ -526,13 +467,12 @@ export class ContractWatcher {
         if (!this.eventCallback) return;
 
         const now = Date.now();
-        this.lastPollTime = now;
 
         try {
-            // Always refresh from API when polling to detect changes
+            // Load all the VTXOs for these contracts, from DB
             const vtxosMap = await this.getContractVtxos({
-                activeOnly: false,
                 contractIds,
+                includeSpent: false, // only spendable ones!
             });
 
             for (const contractId of contractIds) {
@@ -543,19 +483,18 @@ export class ContractWatcher {
                 const currentKeys = new Set(
                     currentVtxos.map((v) => `${v.txid}:${v.vout}`)
                 );
-                const previousKeys = new Set(state.lastKnownVtxos.keys());
 
-                // Find new VTXOs
+                // Find new VTXOs and add them to the contract's state
                 const newVtxos: VirtualCoin[] = [];
                 for (const vtxo of currentVtxos) {
                     const key = `${vtxo.txid}:${vtxo.vout}`;
-                    if (!previousKeys.has(key)) {
+                    if (!state.lastKnownVtxos.has(key)) {
                         newVtxos.push(vtxo);
                         state.lastKnownVtxos.set(key, vtxo);
                     }
                 }
 
-                // Find spent/swept VTXOs
+                // Find spent VTXOs and remove them from the contract's state
                 const spentVtxos: VirtualCoin[] = [];
                 for (const [key, vtxo] of state.lastKnownVtxos) {
                     if (!currentKeys.has(key)) {
@@ -588,6 +527,14 @@ export class ContractWatcher {
         } catch (error) {
             console.error("ContractWatcher poll failed:", error);
             // Don't throw - polling failures shouldn't crash the watcher
+        }
+    }
+
+    private async tryUpdateSubscription() {
+        try {
+            await this.updateSubscription();
+        } catch (error) {
+            // nothing, the connection will be retried later
         }
     }
 
@@ -625,6 +572,10 @@ export class ContractWatcher {
      */
     private async listenLoop(): Promise<void> {
         if (!this.subscriptionId || !this.abortController || !this.isWatching) {
+            if (this.isWatching) {
+                this.connectionState = "disconnected";
+                this.scheduleReconnect();
+            }
             return;
         }
 

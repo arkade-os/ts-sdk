@@ -1,11 +1,12 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { TapLeafScript, VtxoScript } from "../script/base";
 import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
+import { ContractFilter } from "../repositories";
 
 /**
  * Contract state indicating whether it should be actively monitored.
  */
-export type ContractState = "active" | "inactive" | "expired";
+export type ContractState = "active" | "inactive";
 
 /**
  * Represents a contract that can receive and manage VTXOs.
@@ -240,43 +241,18 @@ export type ContractEvent =
 export type ContractEventCallback = (event: ContractEvent) => void;
 
 /**
- * Options for querying contracts.
+ * Options for retrieving contracts from the Contract Manager.
+ * Currently an alias of the repository's filter type but can be extended in the future.
  */
-export interface GetContractsFilter {
-    /** Filter by contract state(s) */
-    state?: ContractState | ContractState[];
-
-    /** Filter by contract type(s) */
-    type?: string | string[];
-
-    /** Include VTXOs for each contract in the result */
-    withVtxos?: boolean;
-}
+export type GetContractsFilter = ContractFilter;
 
 /**
  * Contract with its VTXOs included.
  */
-export interface ContractWithVtxos {
+export type ContractWithVtxos = {
     contract: Contract;
     vtxos: ContractVtxo[];
-}
-
-/**
- * Options for querying contract VTXOs.
- */
-export interface GetContractVtxosOptions {
-    /** Only return VTXOs from active contracts */
-    activeOnly?: boolean;
-
-    /** Include spent VTXOs */
-    includeSpent?: boolean;
-
-    /** Force refresh from API instead of using cached data */
-    refresh?: boolean;
-
-    /** Filter by contract ID(s) */
-    contractIds?: string[];
-}
+};
 
 /**
  * Summary of a contract's balance.

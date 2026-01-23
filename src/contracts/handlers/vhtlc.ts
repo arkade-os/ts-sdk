@@ -222,21 +222,21 @@ export const VHTLCContractHandler: ContractHandler<
             if (role === "sender" && BigInt(currentTimeSec) >= refundLocktime) {
                 paths.push({ leaf: script.refundWithoutReceiver() });
             }
-        }
-
-        // Unilateral paths (always include if role matches, CSV checked at tx time)
-        if (role === "receiver" && preimage) {
-            paths.push({
-                leaf: script.unilateralClaim(),
-                extraWitness: [hex.decode(preimage)],
-                sequence: Number(contract.params.claimDelay),
-            });
-        }
-        if (role === "sender") {
-            paths.push({
-                leaf: script.unilateralRefundWithoutReceiver(),
-                sequence: Number(contract.params.refundNoReceiverDelay),
-            });
+        } else {
+            // Unilateral paths (always include if role matches, CSV checked at tx time)
+            if (role === "receiver" && preimage) {
+                paths.push({
+                    leaf: script.unilateralClaim(),
+                    extraWitness: [hex.decode(preimage)],
+                    sequence: Number(contract.params.claimDelay),
+                });
+            }
+            if (role === "sender") {
+                paths.push({
+                    leaf: script.unilateralRefundWithoutReceiver(),
+                    sequence: Number(contract.params.refundNoReceiverDelay),
+                });
+            }
         }
 
         return paths;

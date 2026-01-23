@@ -51,8 +51,8 @@ export namespace VHTLC {
     }
 
     export class Script extends VtxoScript {
-        readonly claimScript: string;
-        readonly refundScript: string;
+        readonly claimScript: string; // happy path
+        readonly refundScript: string; // happy rollback, don't return it
         readonly refundWithoutReceiverScript: string;
         readonly unilateralClaimScript: string;
         readonly unilateralRefundScript: string;

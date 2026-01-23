@@ -7,7 +7,10 @@ import {
     isSubdust,
 } from ".";
 import { SettlementEvent } from "../providers/ark";
-import { ContractManager } from "../contracts/contractManager";
+import {
+    ContractManager,
+    IContractManager,
+} from "../contracts/contractManager";
 
 export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
@@ -227,38 +230,6 @@ export class VtxoManager {
         readonly wallet: IWallet,
         readonly renewalConfig?: RenewalConfig
     ) {}
-
-    /**
-     * Get the ContractManager if the wallet supports it.
-     * Returns undefined for non-Wallet implementations (e.g., ServiceWorkerWallet).
-     */
-    private async getContractManager(): Promise<ContractManager | undefined> {
-        return this.wallet.getContractManager();
-    }
-
-    // ========== Contract Manager Integration ==========
-
-    /**
-     * Get the total balance across all contracts (wallet + external).
-     * Only available when using the Wallet class.
-     *
-     * @returns Contract balance totals, or undefined if ContractManager not available
-     */
-    async getTotalContractBalance(): Promise<
-        | {
-              total: number;
-              spendable: number;
-              vtxoCount: number;
-          }
-        | undefined
-    > {
-        const manager = await this.getContractManager();
-        if (!manager) {
-            return undefined;
-        }
-
-        return manager.getTotalContractBalance();
-    }
 
     // ========== Recovery Methods ==========
 
