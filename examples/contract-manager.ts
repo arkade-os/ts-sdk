@@ -27,6 +27,11 @@ import { hash160, randomPrivateKeyBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { execSync } from "child_process";
 
+// EventSource is used to listen to contract events from the watcher.
+// It is not available in Node.js by default, so we need to polyfill it.
+import { EventSource } from "eventsource";
+globalThis.EventSource = EventSource;
+
 const signerPubkeyRaw = execSync(
     "curl -s http://localhost:7070/v1/info | jq -r '.signerPubkey'"
 )
@@ -122,12 +127,21 @@ async function main() {
 
     console.log("\nSubscribing to contract events...");
     const stopWatching = manager.onContractEvent((event) => {
+        if (
+            event.type === "connection_reset" ||
+            event.type === "contract_expired"
+        ) {
+            console.log(
+                `\n[Event] ${event.type} received from ContractManager.`
+            );
+            return;
+        }
         console.log(`\n[Event] ${event.type} on contract ${event.contractId}`);
         if (event.vtxos?.length) {
-            console.log(`  VTXOs: ${event.vtxos.length}`);
+            console.log(`\tVTXOs: ${event.vtxos.length}`);
             for (const vtxo of event.vtxos) {
                 console.log(
-                    `    - ${vtxo.txid}:${vtxo.vout} (${vtxo.value} sats)`
+                    `\t\t- ${vtxo.txid}:${vtxo.vout} (${vtxo.value} sats)`
                 );
             }
         }
@@ -138,19 +152,26 @@ async function main() {
     console.log(`\nFunding VHTLC with ${fundAmount} sats...`);
     await fundAddress(swapAddress, fundAmount);
 
-    // Wait a moment for updated
+    // Wait a moment for updates
     await sleep(4000);
 
     // Check contract balance
-    const balance = await manager.getContractBalance(contract.id);
-    console.log("\nContract balance:");
-    console.log("  Total:", balance.total, "sats");
-    console.log("  Spendable:", balance.spendable, "sats");
-    console.log("  VTXO count:", balance.vtxoCount);
+    const [contractWithVtxos] = await manager.getContractsWithVtxos({
+        id: contract.id,
+    });
+    console.log("\nChecking contract VTXOs:");
+    contractWithVtxos.vtxos.forEach((vtxo) => {
+        console.log(`\t\t- ${vtxo.txid}:${vtxo.vout} (${vtxo.value}sats)`);
+        console.log(
+            `\t\t\t virtualStatus: ${JSON.stringify(vtxo.virtualStatus)}`
+        );
+        console.log(`\t\t\t status: ${JSON.stringify(vtxo.status)}`);
+        console.log(`\t\t\t isSpent: ${JSON.stringify(vtxo.isSpent)}`);
+    });
 
     // Check spendable paths (Alice is sender, no preimage yet)
     console.log("\nChecking spendable paths for Alice (sender)...");
-    let paths = manager.getSpendablePaths({
+    let paths = await manager.getSpendablePaths({
         contractId: contract.id,
         collaborative: true,
         walletPubKey: hex.encode(alicePubKey),
@@ -175,15 +196,17 @@ async function main() {
     console.log("Bob reveals preimage:", hex.encode(secret));
 
     // Update contract with the revealed preimage
-    await manager.updateContractData(contract.id, {
-        preimage: hex.encode(secret),
+    await manager.updateContract(contract.id, {
+        data: {
+            preimage: hex.encode(secret),
+        },
     });
 
     // Now check Bob's spendable paths
     console.log(
         "\nChecking spendable paths for Bob (receiver with preimage)..."
     );
-    paths = manager.getSpendablePaths({
+    paths = await manager.getSpendablePaths({
         contractId: contract.id,
         collaborative: true,
         walletPubKey: hex.encode(bobPubKey),
@@ -199,20 +222,9 @@ async function main() {
         }
     }
 
-    // Get all balances (wallet + contracts)
-    console.log("\nAll contract balances:");
-    const allBalances = await manager.getAllBalances();
-    for (const [contractId, bal] of allBalances) {
-        const c = await manager.getContract(contractId);
-        const label = c?.label || contractId;
-        console.log(
-            `  ${label}: ${bal.spendable} sats (${bal.vtxoCount} VTXOs)`
-        );
-    }
-
     // List all contracts
     console.log("\nRegistered contracts:");
-    const contracts = manager.getAllContracts();
+    const contracts = await manager.getContracts();
     for (const c of contracts) {
         console.log(`  - ${c.id} (${c.type}, ${c.state})`);
     }
