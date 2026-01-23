@@ -1064,7 +1064,7 @@ describe("Delegate", () => {
         );
 
         // wait for the delegate to be completed
-        await new Promise((resolve) => setTimeout(resolve, 10000));
+        await new Promise((resolve) => setTimeout(resolve, 20_000));
 
         vtxos = await alice.wallet.getVtxos();
         expect(vtxos).toHaveLength(1);

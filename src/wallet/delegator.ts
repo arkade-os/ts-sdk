@@ -20,6 +20,7 @@ import { scriptFromTapLeafScript } from "../script/base";
 import { buildForfeitTxWithOutput } from "../forfeit";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils";
+import { getNetwork, NetworkName } from "../networks";
 
 export interface DelegatorManager {
     delegate(
@@ -45,6 +46,21 @@ export class DelegatorManagerImpl implements DelegatorManager {
             return;
         }
 
+        const destinationScript = ArkAddress.decode(destination).pkScript;
+
+        // if explicit delegateAt is provided, delegate all vtxos at once without sorting
+        if (delegateAt) {
+            return delegate(
+                this.identity,
+                this.delegatorProvider,
+                this.arkInfoProvider,
+                vtxos,
+                destinationScript,
+                delegateAt
+            );
+        }
+
+        // if no explicit delegateAt is provided, sort vtxos by expiry and delegate in groups of the same expiry day
         const groupByExpiry: Map<number, ExtendedVirtualCoin[]> = new Map();
         let recoverableVtxos: ExtendedVirtualCoin[] = [];
 
@@ -64,8 +80,7 @@ export class DelegatorManagerImpl implements DelegatorManager {
             ]);
         }
 
-        const destinationScript = ArkAddress.decode(destination).pkScript;
-
+        // if no groups, it means we only need to delegate the recoverable vtxos
         if (groupByExpiry.size === 0) {
             return delegate(
                 this.identity,
@@ -89,7 +104,7 @@ export class DelegatorManagerImpl implements DelegatorManager {
             ...recoverableVtxos,
         ]);
 
-        await Promise.allSettled(
+        const result = await Promise.allSettled(
             Array.from(groupByExpiry.entries()).map(async ([, vtxosGroup]) =>
                 delegate(
                     this.identity,
@@ -100,6 +115,12 @@ export class DelegatorManagerImpl implements DelegatorManager {
                 )
             )
         );
+
+        for (const resultItem of result) {
+            if (resultItem.status === "rejected") {
+                console.error("delegate error", resultItem.reason);
+            }
+        }
     }
 }
 
@@ -144,7 +165,8 @@ async function delegate(
         }
     }
 
-    const { fees, dust, forfeitAddress } = await arkInfoProvider.getInfo();
+    const { fees, dust, forfeitAddress, network } =
+        await arkInfoProvider.getInfo();
 
     const deletageAtSeconds = delegateAt.getTime() / 1000;
     const estimator = new Estimator({
@@ -219,7 +241,7 @@ async function delegate(
     );
 
     const forfeitOutputScript = OutScript.encode(
-        Address().decode(forfeitAddress)
+        Address(getNetwork(network as NetworkName)).decode(forfeitAddress)
     );
 
     const forfeits = await Promise.all(
