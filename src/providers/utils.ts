@@ -15,8 +15,9 @@ export async function* eventSourceIterator(
         }
     };
 
-    const errorHandler = () => {
-        const error = new Error("EventSource error");
+    const errorHandler: EventListenerOrEventListenerObject = (event: Event) => {
+        const error = new Error(JSON.stringify(event));
+        error.name = "EventSourceError";
 
         if (errorResolve) {
             errorResolve(error);

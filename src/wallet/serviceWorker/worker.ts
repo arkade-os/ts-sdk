@@ -124,7 +124,7 @@ class Handler extends ReadonlyHandler {
         if (!this.wallet.delegatorManager) return;
         const spendableVtxos = (
             await this.wallet.getVtxos({ withRecoverable: true })
-        ).filter((v) => !v.isSpent);
+        ).filter(isSpendable);
         if (spendableVtxos.length === 0) return;
         return this.wallet.delegatorManager.delegate(
             spendableVtxos,
