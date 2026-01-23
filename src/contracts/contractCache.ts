@@ -130,6 +130,7 @@ export class IndexerContractVtxoCache implements ContractVtxoCache {
                 await this.walletRepository.saveVtxos(contract.address, vtxos);
             }
         }
+        this.cachedAt = Date.now();
         return result;
     }
 

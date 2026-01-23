@@ -263,9 +263,7 @@ export namespace Request {
             "contractId" in message &&
             typeof message.contractId === "string" &&
             "state" in message &&
-            (message.state === "active" ||
-                message.state === "inactive" ||
-                message.state === "expired")
+            (message.state === "active" || message.state === "inactive")
         );
     }
 
