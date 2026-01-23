@@ -90,15 +90,15 @@ export class DelegatorManagerImpl implements DelegatorManager {
         ]);
 
         await Promise.allSettled(
-            entries.map(async ([, vtxosGroup]) => {
-                return delegate(
+            Array.from(groupByExpiry.entries()).map(async ([, vtxosGroup]) =>
+                delegate(
                     this.identity,
                     this.delegatorProvider,
                     this.arkInfoProvider,
                     vtxosGroup,
                     destinationScript
-                );
-            })
+                )
+            )
         );
     }
 }
@@ -130,16 +130,18 @@ async function delegate(
     }
 
     if (!delegateAt) {
-        const expireAt = vtxos.reduce(
-            (min, coin) => Math.min(min, coin.virtualStatus.batchExpiry ?? 0),
-            Number.MAX_SAFE_INTEGER
-        );
+        const expireAt = vtxos
+            .filter((coin) => coin.virtualStatus.batchExpiry)
+            .reduce(
+                (min, coin) => Math.min(min, coin.virtualStatus.batchExpiry!),
+                Number.MAX_SAFE_INTEGER
+            );
         if (expireAt === Number.MAX_SAFE_INTEGER) {
-            throw new Error("unable to delegate: no vtxos with a valid expiry");
+            delegateAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
+        } else {
+            // delegate 12 hours before the expiry
+            delegateAt = new Date((expireAt - 12 * 60 * 60) * 1000);
         }
-
-        // delegate 12 hours before the expiry
-        delegateAt = new Date((expireAt - 12 * 60 * 60) * 1000);
     }
 
     const { fees, dust, forfeitAddress } = await arkInfoProvider.getInfo();
@@ -315,6 +317,6 @@ async function makeSignedDelegateIntent(
 
 function getDayTimestamp(timestamp: number): number {
     const date = new Date(timestamp * 1000);
-    date.setHours(0, 0, 0, 0);
+    date.setUTCHours(0, 0, 0, 0);
     return date.getTime();
 }
