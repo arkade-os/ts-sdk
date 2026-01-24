@@ -81,6 +81,7 @@
         "audit": "pnpm audit",
         "preinstall": "npx only-allow pnpm",
         "prepare": "husky",
+        "prepack": "pnpm run build",
         "prepublishOnly": "pnpm run build",
         "release": "bash scripts/release.sh",
         "release:dry-run": "bash scripts/release.sh --dry-run",
