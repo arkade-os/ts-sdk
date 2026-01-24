@@ -32,61 +32,40 @@ export class RestDelegatorProvider implements DelegatorProvider {
         forfeits: string[]
     ): Promise<void> {
         const url = `${this.url}/api/v1/delegate`;
-        try {
-            const response = await fetch(url, {
-                method: "POST",
-                mode: "cors",
-                headers: {
-                    "Content-Type": "application/json",
+        const response = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                intent: {
+                    proof: intent.proof,
+                    message: Intent.encodeMessage(intent.message),
                 },
-                body: JSON.stringify({
-                    intent: {
-                        proof: intent.proof,
-                        message: Intent.encodeMessage(intent.message),
-                    },
-                    forfeits,
-                }),
-            });
+                forfeits,
+            }),
+        });
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Failed to delegate: ${errorText}`);
-            }
-        } catch (error) {
-            if (error instanceof TypeError && error.message.includes("fetch")) {
-                throw new Error(
-                    `CORS error: The delegator server at ${this.url} does not allow requests from this origin. Please ensure the server has CORS headers configured.`
-                );
-            }
-            throw error;
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to delegate: ${errorText}`);
         }
     }
 
     async getDelegateInfo(): Promise<DelegateInfo> {
         const url = `${this.url}/api/v1/delegate/info`;
-        try {
-            const response = await fetch(url, {
-                mode: "cors",
-            });
+        const response = await fetch(url);
 
-            if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Failed to get delegate info: ${errorText}`);
-            }
-
-            const data = await response.json();
-            if (!isDelegateInfo(data)) {
-                throw new Error("Invalid delegate info");
-            }
-            return data;
-        } catch (error) {
-            if (error instanceof TypeError && error.message.includes("fetch")) {
-                throw new Error(
-                    `CORS error: The delegator server at ${this.url} does not allow requests from this origin. Please ensure the server has CORS headers configured.`
-                );
-            }
-            throw error;
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Failed to get delegate info: ${errorText}`);
         }
+
+        const data = await response.json();
+        if (!isDelegateInfo(data)) {
+            throw new Error("Invalid delegate info");
+        }
+        return data;
     }
 }
 
