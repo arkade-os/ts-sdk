@@ -4,7 +4,7 @@ import {
     type IUpdater,
     type RequestEnvelope,
     type ResponseEnvelope,
-} from "../src/wallet/serviceWorker/worker";
+} from "../src/serviceWorker/worker";
 
 type TestUpdater = IUpdater<RequestEnvelope, ResponseEnvelope>;
 

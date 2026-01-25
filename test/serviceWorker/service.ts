@@ -1,4 +1,4 @@
-import { ArkSW } from "../../src/wallet/serviceWorker/worker";
+import { ArkSW } from "../../src/serviceWorker/worker";
 import { WalletUpdater } from "../../src/wallet/serviceWorker/wallet";
 
 // ensure crypto is available in the service worker context

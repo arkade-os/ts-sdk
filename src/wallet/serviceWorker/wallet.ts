@@ -10,18 +10,33 @@ import {
     StorageConfig,
     IReadonlyWallet,
 } from "..";
-import { Request } from "./request";
-import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
-import { setupServiceWorker } from "./utils";
+import { setupServiceWorker } from "../../serviceWorker/utils";
 import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
 } from "../../repositories";
+import {
+    RequestClear,
+    RequestGetAddress,
+    RequestGetBalance,
+    RequestGetBoardingAddress,
+    RequestGetBoardingUtxos,
+    RequestGetStatus,
+    RequestGetTransactionHistory,
+    RequestGetVtxos,
+    RequestInitWallet,
+    RequestReloadWallet,
+    RequestSendBitcoin,
+    RequestSettle,
+    WalletUpdater,
+    WalletUpdaterRequest,
+    WalletUpdaterResponse,
+} from "./wallet-updater";
 import type {
     Contract,
     ContractEventCallback,
@@ -101,6 +116,15 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
 };
 
+const toWalletUpdaterRequest = (
+    p: Partial<WalletUpdaterRequest>
+): WalletUpdaterRequest =>
+    ({
+        ...p,
+        id: getRandomId(),
+        tag: WalletUpdater.messageTag,
+    }) as WalletUpdaterRequest;
+
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
@@ -141,12 +165,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             .then(hex.encode);
 
         // Initialize the service worker with the config
-        const initMessage: Request.InitWallet = {
-            type: "INIT_WALLET",
+        const initMessage: RequestInitWallet = {
             id: getRandomId(),
-            key: { publicKey },
-            arkServerUrl: options.arkServerUrl,
-            arkServerPublicKey: options.arkServerPublicKey,
+            tag: WalletUpdater.messageTag,
+            type: "INIT_WALLET",
+            payload: {
+                key: { publicKey },
+                arkServerUrl: options.arkServerUrl,
+                arkServerPublicKey: options.arkServerPublicKey,
+            },
         };
 
         // Initialize the service worker
@@ -185,16 +212,16 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         );
 
         // Use the existing create method
-        return ServiceWorkerReadonlyWallet.create({
+        return await ServiceWorkerReadonlyWallet.create({
             ...options,
             serviceWorker,
         });
     }
 
     // send a message and wait for a response
-    protected async sendMessage<T extends Request.Base>(
-        message: T
-    ): Promise<Response.Base> {
+    protected async sendMessage(
+        message: WalletUpdaterRequest
+    ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const messageHandler = (event: MessageEvent) => {
                 const response = event.data as Response.Base;
@@ -223,9 +250,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async clear() {
-        const message: Request.Clear = {
-            type: "CLEAR",
+        const message: RequestClear = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "CLEAR",
         };
         // Clear page-side storage to maintain parity with SW
         try {
@@ -239,9 +267,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getAddress(): Promise<string> {
-        const message: Request.GetAddress = {
-            type: "GET_ADDRESS",
+        const message: RequestGetAddress = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "GET_ADDRESS",
         };
 
         try {
@@ -256,9 +285,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getBoardingAddress(): Promise<string> {
-        const message: Request.GetBoardingAddress = {
-            type: "GET_BOARDING_ADDRESS",
+        const message: RequestGetBoardingAddress = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "GET_BOARDING_ADDRESS",
         };
 
         try {
@@ -273,9 +303,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getBalance(): Promise<WalletBalance> {
-        const message: Request.GetBalance = {
-            type: "GET_BALANCE",
+        const message: RequestGetBalance = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "GET_BALANCE",
         };
 
         try {
@@ -290,9 +321,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const message: Request.GetBoardingUtxos = {
-            type: "GET_BOARDING_UTXOS",
+        const message: RequestGetBoardingUtxos = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "GET_BOARDING_UTXOS",
         };
 
         try {
@@ -307,9 +339,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getStatus(): Promise<Response.WalletStatus["status"]> {
-        const message: Request.GetStatus = {
-            type: "GET_STATUS",
+        const message: RequestGetStatus = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "GET_STATUS",
         };
         const response = await this.sendMessage(message);
         if (Response.isWalletStatus(response)) {
@@ -319,9 +352,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const message: Request.GetTransactionHistory = {
-            type: "GET_TRANSACTION_HISTORY",
+        const message: RequestGetTransactionHistory = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "GET_TRANSACTION_HISTORY",
         };
 
         try {
@@ -336,10 +370,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        const message: Request.GetVtxos = {
-            type: "GET_VTXOS",
+        const message: RequestGetVtxos = {
             id: getRandomId(),
-            filter,
+            tag: WalletUpdater.messageTag,
+            type: "GET_VTXOS",
+            payload: { filter },
         };
 
         try {
@@ -354,9 +389,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async reload(): Promise<boolean> {
-        const message: Request.ReloadWallet = {
-            type: "RELOAD_WALLET",
+        const message: RequestReloadWallet = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "RELOAD_WALLET",
         };
         const response = await this.sendMessage(message);
         if (Response.isWalletReloaded(response)) {
@@ -611,12 +647,15 @@ export class ServiceWorkerWallet
         );
 
         // Initialize the service worker with the config
-        const initMessage: Request.InitWallet = {
+        const initMessage: RequestInitWallet = {
+            tag: WalletUpdater.messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            key: { privateKey },
-            arkServerUrl: options.arkServerUrl,
-            arkServerPublicKey: options.arkServerPublicKey,
+            payload: {
+                key: { privateKey },
+                arkServerUrl: options.arkServerUrl,
+                arkServerPublicKey: options.arkServerPublicKey,
+            },
         };
 
         // Initialize the service worker
@@ -662,10 +701,11 @@ export class ServiceWorkerWallet
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        const message: Request.SendBitcoin = {
-            type: "SEND_BITCOIN",
-            params,
+        const message: RequestSendBitcoin = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "SEND_BITCOIN",
+            payload: { params },
         };
 
         try {
@@ -683,10 +723,11 @@ export class ServiceWorkerWallet
         params?: SettleParams,
         callback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        const message: Request.Settle = {
-            type: "SETTLE",
-            params,
+        const message: RequestSettle = {
             id: getRandomId(),
+            tag: WalletUpdater.messageTag,
+            type: "SETTLE",
+            payload: { params },
         };
 
         try {
