@@ -4,6 +4,7 @@ import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
+import { Worker } from "./serviceWorker/worker";
 import {
     VtxoScript,
     EncodedVtxoScript,
@@ -61,9 +62,6 @@ import {
 } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./serviceWorker/utils";
-import { Worker } from "./serviceWorker/worker";
-import { Request } from "./wallet/serviceWorker/request";
-import { Response } from "./wallet/serviceWorker/response";
 import {
     ESPLORA_URL,
     EsploraProvider,
@@ -229,8 +227,6 @@ export {
     Worker,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
-    Request,
-    Response,
 
     // Tapscript
     decodeTapscript,

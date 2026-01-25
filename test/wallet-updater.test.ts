@@ -1,5 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
-import { WalletUpdater } from "../src/wallet/serviceWorker/wallet";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+import { WalletUpdater } from "../src/wallet/serviceWorker/wallet-updater";
+import { InMemoryContractRepository, InMemoryWalletRepository } from "../src";
 
 const baseMessage = (id: string = "1") => ({
     id,
@@ -7,8 +9,26 @@ const baseMessage = (id: string = "1") => ({
 });
 
 describe("WalletUpdater handleMessage", () => {
+    let updater: WalletUpdater;
+
+    beforeEach(() => {
+        updater = new WalletUpdater(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository()
+        );
+    });
+
+    const init = () =>
+        updater.handleMessage({
+            ...baseMessage(),
+            type: "INIT_WALLET",
+            payload: {
+                key: { publicKey: "00" },
+                arkServerUrl: "http://example.com",
+            },
+        } as any);
+
     it("initializes the wallet on INIT_WALLET", async () => {
-        const updater = new WalletUpdater();
         const initSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).handleInitWallet = initSpy;
 
@@ -31,8 +51,7 @@ describe("WalletUpdater handleMessage", () => {
         });
     });
 
-    it("returns a tagged error when the handler is missing", async () => {
-        const updater = new WalletUpdater();
+    it("returns a tagged error when the wallet is missing", async () => {
         const response = await updater.handleMessage({
             ...baseMessage(),
             type: "GET_ADDRESS",
@@ -44,8 +63,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles SETTLE messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const settleSpy = vi.fn().mockResolvedValue({
             type: "SETTLE_SUCCESS",
             payload: { txid: "tx" },
@@ -67,8 +85,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles SEND_BITCOIN messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const sendSpy = vi.fn().mockResolvedValue({
             type: "SEND_BITCOIN_SUCCESS",
             payload: { txid: "tx" },
@@ -90,8 +107,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles SIGN_TRANSACTION messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const signedTx = { id: "signed-tx" };
         const signSpy = vi.fn().mockResolvedValue({
             type: "SIGN_TRANSACTION",
@@ -114,8 +130,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_ADDRESS messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {
+        (updater as any).wallet = {
             getAddress: vi.fn().mockResolvedValue("bc1-test"),
         };
 
@@ -133,8 +148,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_BOARDING_ADDRESS messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {
+        (updater as any).wallet = {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
         };
 
@@ -152,8 +166,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_BALANCE messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const balance = {
             boarding: { confirmed: 1, unconfirmed: 0, total: 1 },
             settled: 1,
@@ -177,8 +190,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_VTXOS messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const vtxos = [{ id: "v1" }];
         (updater as any).handleGetVtxos = vi.fn().mockResolvedValue(vtxos);
 
@@ -197,8 +209,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_BOARDING_UTXOS messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const utxos = [
             { txid: "tx", vout: 0, value: 1, status: { confirmed: true } },
         ];
@@ -217,8 +228,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_TRANSACTION_HISTORY messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const transactions = [{ txid: "tx" }];
         (updater as any).getTransactionHistory = vi
             .fn()
@@ -237,9 +247,8 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_STATUS messages", async () => {
-        const updater = new WalletUpdater();
         const pubkey = new Uint8Array([1, 2, 3]);
-        (updater as any).handler = {
+        (updater as any).wallet = {
             identity: {
                 xOnlyPublicKey: vi.fn().mockResolvedValue(pubkey),
             },
@@ -261,8 +270,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles CLEAR messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const clearSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).clear = clearSpy;
 
@@ -280,8 +288,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles RELOAD_WALLET messages", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
         const reloadSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).onWalletInitialized = reloadSpy;
 
@@ -299,8 +306,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("returns a tagged error for unknown message types", async () => {
-        const updater = new WalletUpdater();
-        (updater as any).handler = {};
+        (updater as any).wallet = {};
 
         const response = await updater.handleMessage({
             ...baseMessage(),

@@ -22,17 +22,40 @@ import {
 } from "../../repositories";
 import {
     RequestClear,
+    RequestCreateContract,
+    RequestDeleteContract,
     RequestGetAddress,
     RequestGetBalance,
     RequestGetBoardingAddress,
     RequestGetBoardingUtxos,
+    RequestGetContracts,
+    RequestGetContractsWithVtxos,
     RequestGetStatus,
+    RequestGetSpendablePaths,
     RequestGetTransactionHistory,
     RequestGetVtxos,
     RequestInitWallet,
+    RequestIsContractManagerWatching,
     RequestReloadWallet,
     RequestSendBitcoin,
     RequestSettle,
+    RequestUpdateContract,
+    ResponseGetAddress,
+    ResponseGetBalance,
+    ResponseGetBoardingAddress,
+    ResponseGetBoardingUtxos,
+    ResponseGetContracts,
+    ResponseGetContractsWithVtxos,
+    ResponseGetStatus,
+    ResponseGetSpendablePaths,
+    ResponseGetTransactionHistory,
+    ResponseGetVtxos,
+    ResponseIsContractManagerWatching,
+    ResponseReloadWallet,
+    ResponseSendBitcoin,
+    ResponseUpdateContract,
+    ResponseCreateContract,
+    ResponseContractEvent,
     WalletUpdater,
     WalletUpdaterRequest,
     WalletUpdaterResponse,
@@ -59,15 +82,6 @@ const isPrivateKeyIdentity = (
 ): identity is PrivateKeyIdentity => {
     return typeof (identity as any).toHex === "function";
 };
-
-class UnexpectedResponseError extends Error {
-    constructor(response: Response.Base) {
-        super(
-            `Unexpected response type. Got: ${JSON.stringify(response, null, 2)}`
-        );
-        this.name = "UnexpectedResponseError";
-    }
-}
 
 /**
  * Service Worker-based wallet implementation for browser environments.
@@ -116,14 +130,14 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
 };
 
-const toWalletUpdaterRequest = (
-    p: Partial<WalletUpdaterRequest>
-): WalletUpdaterRequest =>
-    ({
-        ...p,
-        id: getRandomId(),
-        tag: WalletUpdater.messageTag,
-    }) as WalletUpdaterRequest;
+class UnexpectedResponseError extends Error {
+    constructor(response: WalletUpdaterResponse) {
+        super(
+            `Unexpected response from WalletUpdater: ${response.type ?? "unknown"}`
+        );
+        this.name = "UnexpectedResponseError";
+    }
+}
 
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
@@ -220,32 +234,30 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     // send a message and wait for a response
     protected async sendMessage(
-        message: WalletUpdaterRequest
+        request: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
-            const messageHandler = (event: MessageEvent) => {
-                const response = event.data as Response.Base;
-                if (response.id === "") {
-                    reject(new Error("Invalid response id"));
+            const messageHandler = (
+                event: MessageEvent<WalletUpdaterResponse>
+            ) => {
+                const response = event.data;
+                if (request.id !== response.id) {
                     return;
                 }
-                if (response.id !== message.id) {
-                    return;
-                }
+
                 navigator.serviceWorker.removeEventListener(
                     "message",
                     messageHandler
                 );
-
-                if (!response.success) {
-                    reject(new Error((response as Response.Error).message));
+                if (response.error) {
+                    reject(response.error);
                 } else {
                     resolve(response);
                 }
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
-            this.serviceWorker.postMessage(message);
+            this.serviceWorker.postMessage(request);
         });
     }
 
@@ -275,10 +287,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isAddress(response)) {
-                return response.address;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetAddress).payload.address;
         } catch (error) {
             throw new Error(`Failed to get address: ${error}`);
         }
@@ -293,10 +302,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isBoardingAddress(response)) {
-                return response.address;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetBoardingAddress).payload.address;
         } catch (error) {
             throw new Error(`Failed to get boarding address: ${error}`);
         }
@@ -311,10 +317,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isBalance(response)) {
-                return response.balance;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetBalance).payload;
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
         }
@@ -329,26 +332,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isBoardingUtxos(response)) {
-                return response.boardingUtxos;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetBoardingUtxos).payload.utxos;
         } catch (error) {
             throw new Error(`Failed to get boarding UTXOs: ${error}`);
         }
     }
 
-    async getStatus(): Promise<Response.WalletStatus["status"]> {
+    async getStatus(): Promise<ResponseGetStatus["payload"]> {
         const message: RequestGetStatus = {
             id: getRandomId(),
             tag: WalletUpdater.messageTag,
             type: "GET_STATUS",
         };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletStatus(response)) {
-            return response.status;
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetStatus).payload;
+        } catch (error) {
+            throw new Error(`Failed to get status: ${error}`);
         }
-        throw new UnexpectedResponseError(response);
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
@@ -360,10 +361,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isTransactionHistory(response)) {
-                return response.transactions;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetTransactionHistory).payload
+                .transactions;
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
         }
@@ -379,10 +378,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isVtxos(response)) {
-                return response.vtxos;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetVtxos).payload.vtxos;
         } catch (error) {
             throw new Error(`Failed to get vtxos: ${error}`);
         }
@@ -394,34 +390,36 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             tag: WalletUpdater.messageTag,
             type: "RELOAD_WALLET",
         };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletReloaded(response)) {
-            return response.success;
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseReloadWallet).payload.reloaded;
+        } catch (error) {
+            throw new Error(`Failed to reload wallet: ${error}`);
         }
-        throw new UnexpectedResponseError(response);
     }
 
     async getContractManager(): Promise<IContractManager> {
         const wallet = this;
 
-        const sendContractMessage = async <T extends Request.Base>(
+        const sendContractMessage = async <T extends WalletUpdaterRequest>(
             message: T
-        ): Promise<Response.Base> => {
-            return wallet.sendMessage(message);
+        ): Promise<WalletUpdaterResponse> => {
+            return wallet.sendMessage(message as WalletUpdaterRequest);
         };
 
         const manager: IContractManager = {
             async createContract(
                 params: CreateContractParams
             ): Promise<Contract> {
-                const message: Request.CreateContract = {
+                const message: RequestCreateContract = {
                     type: "CREATE_CONTRACT",
                     id: getRandomId(),
-                    params,
+                    tag: WalletUpdater.messageTag,
+                    payload: params,
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isContractCreated(response)) {
-                    return response.contract;
+                if (response.type === "CONTRACT_CREATED") {
+                    return (response as ResponseCreateContract).payload.contract;
                 }
                 throw new UnexpectedResponseError(response);
             },
@@ -429,14 +427,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             async getContracts(
                 filter?: GetContractsFilter
             ): Promise<Contract[]> {
-                const message: Request.GetContracts = {
+                const message: RequestGetContracts = {
                     type: "GET_CONTRACTS",
                     id: getRandomId(),
-                    filter,
+                    tag: WalletUpdater.messageTag,
+                    payload: { filter },
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isContracts(response)) {
-                    return response.contracts;
+                if (response.type === "CONTRACTS") {
+                    return (response as ResponseGetContracts).payload.contracts;
                 }
                 throw new UnexpectedResponseError(response);
             },
@@ -444,14 +443,16 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             async getContractsWithVtxos(
                 filter: GetContractsFilter
             ): Promise<ContractWithVtxos[]> {
-                const message: Request.GetContractsWithVtxos = {
+                const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
-                    filter,
+                    tag: WalletUpdater.messageTag,
+                    payload: { filter },
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isContractsWithVtxos(response)) {
-                    return response.contracts;
+                if (response.type === "CONTRACTS_WITH_VTXOS") {
+                    return (response as ResponseGetContractsWithVtxos).payload
+                        .contracts;
                 }
                 throw new UnexpectedResponseError(response);
             },
@@ -460,15 +461,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 script: string,
                 updates: Partial<Omit<Contract, "script" | "createdAt">>
             ): Promise<Contract> {
-                const message: Request.UpdateContract = {
+                const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
                     contractScript: script,
                     updates,
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isContractUpdated(response)) {
-                    return response.contract;
+                if (response.type === "CONTRACT_UPDATED") {
+                    return (response as ResponseUpdateContract).payload.contract;
                 }
                 throw new UnexpectedResponseError(response);
             },
@@ -477,27 +478,27 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 script: string,
                 state: ContractState
             ): Promise<void> {
-                const message: Request.UpdateContract = {
+                const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
                     contractScript: script,
                     updates: { state },
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isContractUpdated(response)) {
+                if (response.type === "CONTRACT_UPDATED") {
                     return;
                 }
                 throw new UnexpectedResponseError(response);
             },
 
             async deleteContract(script: string): Promise<void> {
-                const message: Request.DeleteContract = {
+                const message: RequestDeleteContract = {
                     type: "DELETE_CONTRACT",
                     id: getRandomId(),
                     contractScript: script,
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isContractDeleted(response)) {
+                if (response.type === "CONTRACT_DELETED") {
                     return;
                 }
                 throw new UnexpectedResponseError(response);
@@ -506,14 +507,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             async getSpendablePaths(
                 options: GetSpendablePathsOptions
             ): Promise<PathSelection[]> {
-                const message: Request.GetSpendablePaths = {
+                const message: RequestGetSpendablePaths = {
                     type: "GET_SPENDABLE_PATHS",
                     id: getRandomId(),
-                    options,
+                    tag: WalletUpdater.messageTag,
+                    payload: { options },
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isSpendablePaths(response)) {
-                    return response.paths;
+                if (response.type === "SPENDABLE_PATHS") {
+                    return (response as ResponseGetSpendablePaths).payload.paths;
                 }
                 throw new UnexpectedResponseError(response);
             },
@@ -534,17 +536,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             },
 
             onContractEvent(callback: ContractEventCallback): () => void {
-                // TODO: the subscription model requires scheduler to be present
-                // (the `tick` method) in service worker
-                const message: Request.SubscribeContractEvents = {
-                    type: "SUBSCRIBE_CONTRACT_EVENTS",
-                    id: getRandomId(),
-                };
-
                 const messageHandler = (event: MessageEvent) => {
-                    const response = event.data as Response.Base;
-                    if (Response.isContractEvent(response)) {
-                        callback(response.event);
+                    const response = event.data as WalletUpdaterResponse;
+                    if (response.type === "CONTRACT_EVENT") {
+                        callback(
+                            (response as ResponseContractEvent).payload.event
+                        );
                     }
                 };
 
@@ -552,30 +549,25 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     "message",
                     messageHandler
                 );
-                wallet.serviceWorker.postMessage(message);
 
                 return () => {
-                    const unsubscribeMessage: Request.UnsubscribeContractEvents =
-                        {
-                            type: "UNSUBSCRIBE_CONTRACT_EVENTS",
-                            id: getRandomId(),
-                        };
                     navigator.serviceWorker.removeEventListener(
                         "message",
                         messageHandler
                     );
-                    wallet.serviceWorker.postMessage(unsubscribeMessage);
                 };
             },
 
             async isWatching(): Promise<boolean> {
-                const message: Request.isContractManagerWatching = {
+                const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",
                     id: getRandomId(),
+                    tag: WalletUpdater.messageTag,
                 };
                 const response = await sendContractMessage(message);
-                if (Response.isContractWatching(response)) {
-                    return response.isWatching;
+                if (response.type === "CONTRACT_WATCHING") {
+                    return (response as ResponseIsContractManagerWatching)
+                        .payload.isWatching;
                 }
                 throw new UnexpectedResponseError(response);
             },
@@ -705,15 +697,12 @@ export class ServiceWorkerWallet
             id: getRandomId(),
             tag: WalletUpdater.messageTag,
             type: "SEND_BITCOIN",
-            payload: { params },
+            payload: params,
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isSendBitcoinSuccess(response)) {
-                return response.txid;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseSendBitcoin).payload.txid;
         } catch (error) {
             throw new Error(`Failed to send bitcoin: ${error}`);
         }
@@ -732,27 +721,27 @@ export class ServiceWorkerWallet
 
         try {
             return new Promise((resolve, reject) => {
-                const messageHandler = (event: MessageEvent) => {
-                    const response = event.data as Response.Base;
+                const messageHandler = (
+                    event: MessageEvent<WalletUpdaterResponse>
+                ) => {
+                    const response = event.data;
                     if (response.id !== message.id) {
                         return;
                     }
 
-                    if (!response.success) {
+                    if (response.error) {
                         navigator.serviceWorker.removeEventListener(
                             "message",
                             messageHandler
                         );
-                        reject(new Error((response as Response.Error).message));
+                        reject(response.error);
                         return;
                     }
 
                     switch (response.type) {
                         case "SETTLE_EVENT":
                             if (callback) {
-                                callback(
-                                    (response as Response.SettleEvent).event
-                                );
+                                callback(response.payload);
                             }
                             break;
                         case "SETTLE_SUCCESS":
@@ -760,10 +749,12 @@ export class ServiceWorkerWallet
                                 "message",
                                 messageHandler
                             );
-                            resolve((response as Response.SettleSuccess).txid);
+                            resolve(response.payload.txid);
                             break;
                         default:
-                            break;
+                            console.error(
+                                `Unexpected response type for SETTLE request: ${response.type}`
+                            );
                     }
                 };
 
