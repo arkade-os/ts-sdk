@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-    ArkSW,
+    Worker,
     type IUpdater,
     type RequestEnvelope,
     type ResponseEnvelope,
@@ -84,7 +84,7 @@ describe("ArkSW", () => {
             handleMessage,
         };
 
-        const sw = new ArkSW({ updaters: [updater] });
+        const sw = new Worker({ updaters: [updater] });
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -116,7 +116,7 @@ describe("ArkSW", () => {
             handleMessage,
         };
 
-        const sw = new ArkSW({ updaters: [updater] });
+        const sw = new Worker({ updaters: [updater] });
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -142,7 +142,7 @@ describe("ArkSW", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new ArkSW({ updaters: [updater], tickIntervalMs: 10 });
+        const sw = new Worker({ updaters: [updater], tickIntervalMs: 10 });
         await sw.start();
 
         const [firstId] = Array.from(activeTimeouts);
@@ -171,7 +171,7 @@ describe("ArkSW", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new ArkSW({ updaters: [updater] });
+        const sw = new Worker({ updaters: [updater] });
         await sw.start();
 
         const firstRun = (sw as any).runTick();
@@ -202,7 +202,7 @@ describe("ArkSW", () => {
             handleMessage: vi.fn().mockResolvedValue({ tag: "b", id: "1" }),
         };
 
-        const sw = new ArkSW({ updaters: [updaterA, updaterB] });
+        const sw = new Worker({ updaters: [updaterA, updaterB] });
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -236,7 +236,7 @@ describe("ArkSW", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new ArkSW({ updaters: [updater] });
+        const sw = new Worker({ updaters: [updater] });
         await sw.start();
         await (sw as any).runTick();
 

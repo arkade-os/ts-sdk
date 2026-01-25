@@ -5,6 +5,17 @@ import {
 } from "../../providers/ark";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
 import { ContractRepository, WalletRepository } from "../../repositories";
+import type {
+    Contract,
+    ContractEvent,
+    ContractWithVtxos,
+    GetContractsFilter,
+    PathSelection,
+} from "../../contracts";
+import type {
+    CreateContractParams,
+    GetSpendablePathsOptions,
+} from "../../contracts/contractManager";
 import {
     ArkTransaction,
     ExtendedCoin,
@@ -43,7 +54,7 @@ export type ResponseInitWallet = ResponseEnvelope & {
 
 export type RequestSettle = RequestEnvelope & {
     type: "SETTLE";
-    payload: SettleParams;
+    payload: { params?: SettleParams };
 };
 export type ResponseSettle = ResponseEnvelope & {
     type: "SETTLE_SUCCESS";
@@ -134,6 +145,72 @@ export type ResponseReloadWallet = ResponseEnvelope & {
     payload: { reloaded: boolean };
 };
 
+export type RequestCreateContract = RequestEnvelope & {
+    type: "CREATE_CONTRACT";
+    payload: CreateContractParams;
+};
+export type ResponseCreateContract = ResponseEnvelope & {
+    type: "CONTRACT_CREATED";
+    payload: { contract: Contract };
+};
+
+export type RequestGetContracts = RequestEnvelope & {
+    type: "GET_CONTRACTS";
+    payload: { filter?: GetContractsFilter };
+};
+export type ResponseGetContracts = ResponseEnvelope & {
+    type: "CONTRACTS";
+    payload: { contracts: Contract[] };
+};
+
+export type RequestGetContractsWithVtxos = RequestEnvelope & {
+    type: "GET_CONTRACTS_WITH_VTXOS";
+    payload: { filter?: GetContractsFilter };
+};
+export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
+    type: "CONTRACTS_WITH_VTXOS";
+    payload: { contracts: ContractWithVtxos[] };
+};
+
+export type RequestUpdateContract = RequestEnvelope & {
+    type: "UPDATE_CONTRACT";
+    payload: {
+        contractId: string;
+        updates: Partial<Omit<Contract, "id" | "createdAt">>;
+    };
+};
+export type ResponseUpdateContract = ResponseEnvelope & {
+    type: "CONTRACT_UPDATED";
+    payload: { contract: Contract };
+};
+
+export type RequestDeleteContract = RequestEnvelope & {
+    type: "DELETE_CONTRACT";
+    payload: { contractId: string };
+};
+export type ResponseDeleteContract = ResponseEnvelope & {
+    type: "CONTRACT_DELETED";
+    payload: { deleted: boolean };
+};
+
+export type RequestGetSpendablePaths = RequestEnvelope & {
+    type: "GET_SPENDABLE_PATHS";
+    payload: { options: GetSpendablePathsOptions };
+};
+export type ResponseGetSpendablePaths = ResponseEnvelope & {
+    type: "SPENDABLE_PATHS";
+    payload: { paths: PathSelection[] };
+};
+
+export type RequestIsContractManagerWatching = RequestEnvelope & {
+    type: "IS_CONTRACT_MANAGER_WATCHING";
+};
+export type ResponseIsContractManagerWatching = ResponseEnvelope & {
+    type: "CONTRACT_WATCHING";
+    payload: { isWatching: boolean };
+};
+
+// broadcast messages
 export type ResponseSettleEvent = ResponseEnvelope & {
     broadcast: true;
     type: "SETTLE_EVENT";
@@ -148,6 +225,11 @@ export type ResponseVtxoUpdate = ResponseEnvelope & {
     broadcast: true;
     type: "VTXO_UPDATE";
     payload: { newVtxos: ExtendedCoin[]; spentVtxos: ExtendedCoin[] };
+};
+export type ResponseContractEvent = ResponseEnvelope & {
+    broadcast: true;
+    type: "CONTRACT_EVENT";
+    payload: { event: ContractEvent };
 };
 
 // WalletUpdater
@@ -164,7 +246,14 @@ export type WalletUpdaterRequest =
     | RequestGetStatus
     | RequestClear
     | RequestReloadWallet
-    | RequestSignTransaction;
+    | RequestSignTransaction
+    | RequestCreateContract
+    | RequestGetContracts
+    | RequestGetContractsWithVtxos
+    | RequestUpdateContract
+    | RequestDeleteContract
+    | RequestGetSpendablePaths
+    | RequestIsContractManagerWatching;
 
 export type WalletUpdaterResponse =
     | ResponseInitWallet
@@ -182,7 +271,15 @@ export type WalletUpdaterResponse =
     | ResponseReloadWallet
     | ResponseUtxoUpdate
     | ResponseVtxoUpdate
-    | ResponseSignTransaction;
+    | ResponseSignTransaction
+    | ResponseCreateContract
+    | ResponseGetContracts
+    | ResponseGetContractsWithVtxos
+    | ResponseUpdateContract
+    | ResponseDeleteContract
+    | ResponseGetSpendablePaths
+    | ResponseIsContractManagerWatching
+    | ResponseContractEvent;
 
 export class WalletUpdater
     implements IUpdater<WalletUpdaterRequest, WalletUpdaterResponse>
@@ -198,11 +295,12 @@ export class WalletUpdater
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private incomingFundsSubscription: (() => void) | undefined;
+    private contractEventsSubscription: (() => void) | undefined;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
 
     constructor(
-        private walletRepository: WalletRepository,
-        private contractRepository: ContractRepository
+        private readonly walletRepository: WalletRepository,
+        private readonly contractRepository: ContractRepository
     ) {}
 
     // lifecycle methods
@@ -363,6 +461,80 @@ export class WalletUpdater
                     return this.tagged({
                         id,
                         ...response,
+                    });
+                }
+                case "CREATE_CONTRACT": {
+                    const manager = await this.wallet.getContractManager();
+                    const contract = await manager.createContract(
+                        message.payload
+                    );
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_CREATED",
+                        payload: { contract },
+                    });
+                }
+                case "GET_CONTRACTS": {
+                    const manager = await this.wallet.getContractManager();
+                    const contracts = await manager.getContracts(
+                        message.payload.filter
+                    );
+                    return this.tagged({
+                        id,
+                        type: "CONTRACTS",
+                        payload: { contracts },
+                    });
+                }
+                case "GET_CONTRACTS_WITH_VTXOS": {
+                    const manager = await this.wallet.getContractManager();
+                    const contracts = await manager.getContractsWithVtxos(
+                        message.payload.filter
+                    );
+                    return this.tagged({
+                        id,
+                        type: "CONTRACTS_WITH_VTXOS",
+                        payload: { contracts },
+                    });
+                }
+                case "UPDATE_CONTRACT": {
+                    const manager = await this.wallet.getContractManager();
+                    const contract = await manager.updateContract(
+                        message.payload.contractId,
+                        message.payload.updates
+                    );
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_UPDATED",
+                        payload: { contract },
+                    });
+                }
+                case "DELETE_CONTRACT": {
+                    const manager = await this.wallet.getContractManager();
+                    await manager.deleteContract(message.payload.contractId);
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_DELETED",
+                        payload: { deleted: true },
+                    });
+                }
+                case "GET_SPENDABLE_PATHS": {
+                    const manager = await this.wallet.getContractManager();
+                    const paths = await manager.getSpendablePaths(
+                        message.payload.options
+                    );
+                    return this.tagged({
+                        id,
+                        type: "SPENDABLE_PATHS",
+                        payload: { paths },
+                    });
+                }
+                case "IS_CONTRACT_MANAGER_WATCHING": {
+                    const manager = await this.wallet.getContractManager();
+                    const isWatching = await manager.isWatching();
+                    return this.tagged({
+                        id,
+                        type: "CONTRACT_WATCHING",
+                        payload: { isWatching },
                     });
                 }
                 default:
@@ -620,6 +792,8 @@ export class WalletUpdater
                 }
             }
         );
+
+        await this.ensureContractEventBroadcasting();
     }
 
     private async getAllVtxos() {
@@ -638,7 +812,7 @@ export class WalletUpdater
             throw new Error("Wallet handler not initialized");
         }
         const txid = await this.withWallet((w) =>
-            w.settle(message.payload, (e) => {
+            w.settle(message.payload.params, (e) => {
                 this.scheduleForNextTick(() =>
                     this.tagged({
                         id: message.id,
@@ -717,6 +891,10 @@ export class WalletUpdater
     private async clear() {
         if (!this.wallet) return;
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+        if (this.contractEventsSubscription) {
+            this.contractEventsSubscription();
+            this.contractEventsSubscription = undefined;
+        }
 
         // Clear page-side storage to maintain parity with SW
         try {
@@ -729,6 +907,27 @@ export class WalletUpdater
         this.wallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
+    }
+
+    private async ensureContractEventBroadcasting() {
+        if (!this.wallet) return;
+        if (this.contractEventsSubscription) return;
+        try {
+            const manager = await this.wallet.getContractManager();
+            this.contractEventsSubscription = manager.onContractEvent(
+                (event) => {
+                    this.scheduleForNextTick(() =>
+                        this.tagged({
+                            type: "CONTRACT_EVENT",
+                            broadcast: true,
+                            payload: { event },
+                        })
+                    );
+                }
+            );
+        } catch (error) {
+            console.error("Error subscribing to contract events:", error);
+        }
     }
 
     private async withWallet<T>(

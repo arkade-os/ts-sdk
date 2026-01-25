@@ -4,8 +4,6 @@ import {
     getActiveServiceWorker,
     setupServiceWorkerOnce,
 } from "./service-worker-manager";
-import { ReadonlyWallet, Wallet } from "../wallet/wallet";
-import { ExtendedVirtualCoin } from "../wallet";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -45,7 +43,7 @@ type WorkerOptions = {
     debug?: boolean;
 };
 
-export class ArkSW {
+export class Worker {
     private updaters: Map<string, IUpdater>;
     private tickIntervalMs: number;
     private running = false;
@@ -247,100 +245,5 @@ export class ArkSW {
     static async setup(path: string) {
         await setupServiceWorkerOnce(path);
         return getActiveServiceWorker(path);
-    }
-}
-
-export class ReadonlyHandler {
-    constructor(protected readonly wallet: ReadonlyWallet) {}
-
-    get offchainTapscript() {
-        return this.wallet.offchainTapscript;
-    }
-    get boardingTapscript() {
-        return this.wallet.boardingTapscript;
-    }
-    get onchainProvider() {
-        return this.wallet.onchainProvider;
-    }
-    get dustAmount() {
-        return this.wallet.dustAmount;
-    }
-    get identity() {
-        return this.wallet.identity;
-    }
-
-    notifyIncomingFunds(
-        ...args: Parameters<ReadonlyWallet["notifyIncomingFunds"]>
-    ) {
-        return this.wallet.notifyIncomingFunds(...args);
-    }
-
-    getAddress() {
-        return this.wallet.getAddress();
-    }
-
-    getBoardingAddress() {
-        return this.wallet.getBoardingAddress();
-    }
-
-    getBoardingTxs() {
-        return this.wallet.getBoardingTxs();
-    }
-
-    async handleReload(
-        _: ExtendedVirtualCoin[]
-    ): Promise<Awaited<ReturnType<Wallet["finalizePendingTxs"]>>> {
-        const pending = await this.wallet.fetchPendingTxs();
-        return { pending, finalized: [] };
-    }
-
-    async handleSettle(
-        ..._: Parameters<Wallet["settle"]>
-    ): Promise<Awaited<ReturnType<Wallet["settle"]>> | undefined> {
-        return undefined;
-    }
-
-    async handleSendBitcoin(
-        ..._: Parameters<Wallet["sendBitcoin"]>
-    ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
-        return undefined;
-    }
-
-    async handleSignTransaction(
-        ..._: Parameters<Wallet["identity"]["sign"]>
-    ): Promise<Awaited<ReturnType<Wallet["identity"]["sign"]>> | undefined> {
-        return undefined;
-    }
-}
-
-export class Handler extends ReadonlyHandler {
-    constructor(protected readonly wallet: Wallet) {
-        super(wallet);
-    }
-
-    async handleReload(vtxos: ExtendedVirtualCoin[]) {
-        return this.wallet.finalizePendingTxs(
-            vtxos.filter(
-                (vtxo) =>
-                    vtxo.virtualStatus.state !== "swept" &&
-                    vtxo.virtualStatus.state !== "settled"
-            )
-        );
-    }
-
-    async handleSettle(...args: Parameters<Wallet["settle"]>) {
-        return this.wallet.settle(...args);
-    }
-
-    async handleSendBitcoin(
-        ...args: Parameters<Wallet["sendBitcoin"]>
-    ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
-        return this.wallet.sendBitcoin(...args);
-    }
-
-    async handleSignTransaction(
-        ...args: Parameters<Wallet["identity"]["sign"]>
-    ) {
-        return this.wallet.identity.sign(...args);
     }
 }
