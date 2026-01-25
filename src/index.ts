@@ -60,8 +60,8 @@ import {
     ServiceWorkerReadonlyWallet,
 } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
-import { setupServiceWorker } from "./wallet/serviceWorker/utils";
-import { Worker } from "./wallet/serviceWorker/worker";
+import { setupServiceWorker } from "./serviceWorker/utils";
+import { Worker } from "./serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
 import {
