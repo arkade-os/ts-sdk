@@ -110,14 +110,25 @@ export class InMemoryContractRepository implements ContractRepository {
                 return false;
             }
 
-            // Filter by state(s)
-            if (filter.state !== undefined) {
-                const states = Array.isArray(filter.state)
-                    ? filter.state
-                    : [filter.state];
-                if (!states.includes(c.state)) {
-                    return false;
-                }
+            // Filter by states
+            if (
+                filter.states !== undefined &&
+                !filter.states.includes(c.state)
+            ) {
+                return false;
+            }
+
+            // Filter by state
+            if (filter.state !== undefined && filter.state !== c.state) {
+                return false;
+            }
+
+            if (filter.type !== undefined && filter.type !== c.type) {
+                return false;
+            }
+
+            if (filter.types !== undefined && !filter.types.includes(c.type)) {
+                return false;
             }
 
             return true;
