@@ -80,6 +80,9 @@ export class DelegatorManagerImpl implements DelegatorManager {
             ]);
         }
 
+        console.debug("groupByExpiry", groupByExpiry);
+        console.debug("recoverableVtxos", recoverableVtxos);
+
         // if no groups, it means we only need to delegate the recoverable vtxos
         if (groupByExpiry.size === 0) {
             return delegate(
