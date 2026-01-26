@@ -80,9 +80,6 @@ export class DelegatorManagerImpl implements DelegatorManager {
             ]);
         }
 
-        console.debug("groupByExpiry", groupByExpiry);
-        console.debug("recoverableVtxos", recoverableVtxos);
-
         // if no groups, it means we only need to delegate the recoverable vtxos
         if (groupByExpiry.size === 0) {
             return delegate(
@@ -167,11 +164,11 @@ async function delegate(
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
             // delegate 10% before the expiry
-            const remainingTime = expireAt * 1000 - Date.now();
+            const remainingTime = expireAt - Date.now();
             if (remainingTime <= 0) {
                 delegateAt = new Date(Date.now() + 1 * 60 * 1000);
             } else {
-                delegateAt = new Date(expireAt * 1000 - remainingTime * 0.1);
+                delegateAt = new Date(expireAt - remainingTime * 0.1);
             }
         }
     }
@@ -202,7 +199,7 @@ async function delegate(
             weight: 0,
             birth: coin.createdAt,
             expiry: coin.virtualStatus.batchExpiry
-                ? new Date(coin.virtualStatus.batchExpiry * 1000)
+                ? new Date(coin.virtualStatus.batchExpiry)
                 : undefined,
         });
         if (inputFee.value >= coin.value) {
@@ -350,7 +347,7 @@ async function makeSignedDelegateIntent(
 }
 
 function getDayTimestamp(timestamp: number): number {
-    const date = new Date(timestamp * 1000);
+    const date = new Date(timestamp);
     date.setUTCHours(0, 0, 0, 0);
     return date.getTime();
 }
