@@ -7,7 +7,6 @@
 // - Automatic reconnection with exponential backoff
 // - Failsafe polling to catch missed events
 // - Path selection for spending contracts
-// - Optional auto-sweeping of spendable VTXOs
 //
 // The easiest way to run this example is by using `test:setup` script.
 //
