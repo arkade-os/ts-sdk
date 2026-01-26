@@ -6,7 +6,6 @@ import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
-import { timelockToSequence } from "../contracts/handlers/default";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
     ESPLORA_URL,
@@ -83,6 +82,7 @@ import {
     ContractEventCallback,
     ContractVtxo,
 } from "../contracts/types";
+import { timelockToSequence } from "../contracts/handlers/helpers";
 
 export type IncomingFunds =
     | {
@@ -1698,31 +1698,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         return inputs;
-    }
-
-    /**
-     * Internal method to sweep contract VTXOs via settlement.
-     */
-    private async sweepContractVtxos(
-        vtxos: ContractVtxo[],
-        destination: string
-    ): Promise<string> {
-        if (vtxos.length === 0) {
-            throw new Error("No VTXOs to sweep");
-        }
-
-        const totalValue = vtxos.reduce((sum, v) => sum + v.value, 0);
-
-        // Use settle to move the VTXOs
-        return this.settle({
-            inputs: vtxos,
-            outputs: [
-                {
-                    address: destination,
-                    amount: BigInt(totalValue),
-                },
-            ],
-        });
     }
 }
 

@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
-import {
-    DefaultContractHandler,
-    timelockToSequence,
-} from "../../src/contracts/handlers/default";
+import { DefaultContractHandler } from "../../src/contracts/handlers/default";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
 import { Contract, contractHandlers, DefaultVtxo } from "../../src";
 import {
@@ -11,6 +8,7 @@ import {
     TEST_PUB_KEY,
     TEST_SERVER_PUB_KEY,
 } from "./helpers";
+import { timelockToSequence } from "../../src/contracts/handlers/helpers";
 
 describe("Contract Registry", () => {
     it("should have default handler registered", () => {
