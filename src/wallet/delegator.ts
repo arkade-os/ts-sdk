@@ -162,7 +162,12 @@ async function delegate(
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
             // delegate 10% before the expiry
-            delegateAt = new Date(Math.floor(0.9 * expireAt) * 1000);
+            const remainingTime = expireAt * 1000 - Date.now();
+            if (remainingTime <= 0) {
+                delegateAt = new Date(Date.now() + 1 * 60 * 1000);
+            } else {
+                delegateAt = new Date(expireAt * 1000 - remainingTime * 0.1);
+            }
         }
     }
     console.debug("delegate", { delegateAt });
