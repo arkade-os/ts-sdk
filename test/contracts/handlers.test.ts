@@ -160,6 +160,61 @@ describe("DefaultContractHandler", () => {
         // Should have both forfeit and exit paths when collaborative
         expect(paths.length).toBeGreaterThanOrEqual(2);
     });
+
+    it("should include sequence on exit path when csvTimelock is set", () => {
+        const params = createDefaultContractParams();
+        const script = DefaultContractHandler.createScript(params);
+        const contract: Contract = {
+            id: "test",
+            type: "default",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const paths = DefaultContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+            }
+        );
+
+        expect(paths).toHaveLength(1);
+        expect(paths[0].sequence).toBe(Number(params.csvTimelock));
+    });
+
+    it("should omit sequence on exit path when csvTimelock is missing", () => {
+        const params = {
+            pubKey: hex.encode(TEST_PUB_KEY),
+            serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
+        };
+        const script = DefaultContractHandler.createScript(params);
+        const contract: Contract = {
+            id: "test",
+            type: "default",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const paths = DefaultContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+            }
+        );
+
+        expect(paths).toHaveLength(1);
+        expect(paths[0].sequence).toBeUndefined();
+    });
 });
 
 describe("VHTLCContractHandler", () => {

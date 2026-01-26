@@ -96,7 +96,7 @@ export const DefaultContractHandler: ContractHandler<
 
     getSpendablePaths(
         script: DefaultVtxo.Script,
-        _contract: Contract,
+        contract: Contract,
         context: PathContext
     ): PathSelection[] {
         const paths: PathSelection[] = [];
@@ -107,7 +107,11 @@ export const DefaultContractHandler: ContractHandler<
         }
 
         // Exit path always available (CSV checked at tx time)
-        paths.push({ leaf: script.exit() });
+        const exitPath: PathSelection = { leaf: script.exit() };
+        if (contract.params.csvTimelock) {
+            exitPath.sequence = Number(contract.params.csvTimelock);
+        }
+        paths.push(exitPath);
 
         return paths;
     },
