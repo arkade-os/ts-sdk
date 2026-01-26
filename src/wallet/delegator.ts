@@ -172,8 +172,6 @@ async function delegate(
             }
         }
     }
-    console.debug("delegate", { delegateAt });
-
     const { fees, dust, forfeitAddress, network } =
         await arkInfoProvider.getInfo();
 
@@ -260,16 +258,18 @@ async function delegate(
     );
 
     const forfeits = await Promise.all(
-        vtxos.map(async (coin) => {
-            const forfeit = await makeDelegateForfeitTx(
-                coin,
-                dust,
-                pubkey,
-                forfeitOutputScript,
-                identity
-            );
-            return base64.encode(forfeit.toPSBT());
-        })
+        vtxos
+            .filter((v) => !isRecoverable(v))
+            .map(async (coin) => {
+                const forfeit = await makeDelegateForfeitTx(
+                    coin,
+                    dust,
+                    pubkey,
+                    forfeitOutputScript,
+                    identity
+                );
+                return base64.encode(forfeit.toPSBT());
+            })
     );
 
     await delegatorProvider.delegate(registerIntent, forfeits);

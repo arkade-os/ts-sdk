@@ -348,6 +348,11 @@ export class Worker {
                 }
             }
         );
+
+        // delegate vtxos
+        await this.handler.handleDelegate().catch((error) => {
+            console.error("Error delegating vtxos:", error);
+        });
     }
 
     private async handleClear(event: ExtendableMessageEvent) {
