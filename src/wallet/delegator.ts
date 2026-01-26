@@ -211,11 +211,12 @@ async function delegate(
         await delegatorProvider.getDelegateInfo();
 
     const outputs = [];
+    const delegatorFee = BigInt(Number(fee)) * BigInt(vtxos.length);
 
     if (fee !== "0") {
         outputs.push({
             script: ArkAddress.decode(delegatorAddress).pkScript,
-            amount: BigInt(Number(fee)) * BigInt(vtxos.length),
+            amount: delegatorFee,
         });
     }
 
@@ -234,6 +235,11 @@ async function delegate(
         throw new Error("Amount is below dust limit, cannot delegate");
     }
     amount -= BigInt(outputFee);
+
+    amount -= delegatorFee;
+    if (amount <= dust) {
+        throw new Error("Amount is below dust limit, cannot delegate");
+    }
 
     outputs.push({
         script: destinationScript,
