@@ -158,12 +158,14 @@ async function delegate(
                 Number.MAX_SAFE_INTEGER
             );
         if (expireAt === Number.MAX_SAFE_INTEGER) {
-            delegateAt = new Date(Date.now() + 12 * 60 * 60 * 1000);
+            // if no expiry (recoverable vtxos), delegate 1 minute from now
+            delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            // delegate 12 hours before the expiry
-            delegateAt = new Date((expireAt - 12 * 60 * 60) * 1000);
+            // delegate 10% before the expiry
+            delegateAt = new Date(Math.floor(0.9 * expireAt) * 1000);
         }
     }
+    console.debug("delegate", { delegateAt });
 
     const { fees, dust, forfeitAddress, network } =
         await arkInfoProvider.getInfo();
