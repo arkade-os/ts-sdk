@@ -1,8 +1,4 @@
-import {
-    ContractFilter,
-    ContractRepository,
-    CONTRACTS_COLLECTION,
-} from "../contractRepository";
+import { ContractFilter, ContractRepository } from "../contractRepository";
 import { Contract } from "../../contracts";
 
 const contractKey = (contractId: string, key: string) =>
@@ -16,32 +12,6 @@ export class InMemoryContractRepository implements ContractRepository {
     private readonly contractData = new Map<string, unknown>();
     private readonly collections = new Map<string, unknown[]>();
     private readonly contractsById = new Map<string, Contract>();
-
-    async getContractData<T>(
-        contractId: string,
-        key: string
-    ): Promise<T | null> {
-        const value = this.contractData.get(contractKey(contractId, key));
-        return (value as T | undefined) ?? null;
-    }
-
-    async setContractData<T>(
-        contractId: string,
-        key: string,
-        data: T
-    ): Promise<void> {
-        this.contractData.set(contractKey(contractId, key), data);
-    }
-
-    async deleteContractData(contractId: string, key: string): Promise<void> {
-        this.contractData.delete(contractKey(contractId, key));
-    }
-
-    async clearContractData(): Promise<void> {
-        this.contractData.clear();
-        this.collections.clear();
-        this.contractsById.clear();
-    }
 
     async getContractCollection<T>(
         contractType: string
@@ -72,25 +42,16 @@ export class InMemoryContractRepository implements ContractRepository {
         this.collections.set(contractType, next);
     }
 
-    async removeFromContractCollection<T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ): Promise<void> {
-        if (id === undefined || id === null) {
-            throw new Error(`Invalid id provided for removal: ${String(id)}`);
-        }
-
-        const existing = (this.collections.get(contractType) as T[]) ?? [];
-        const next = existing.filter((item) => item[idField] !== id);
-        this.collections.set(contractType, next);
+    async clear(): Promise<void> {
+        this.contractData.clear();
+        this.collections.clear();
+        this.contractsById.clear();
     }
 
-// Contract entity management methods
+    // Contract entity management methods
 
     async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        const contracts =
-            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
+        const contracts = this.contractsById.values();
 
         if (!filter) {
             return [...contracts];
@@ -105,14 +66,18 @@ export class InMemoryContractRepository implements ContractRepository {
                 : value === criterion;
         };
 
-        return contracts.filter((c) => {
-            return (
-                matches(c.id, filter.id) &&
-                matches(c.script, filter.script) &&
-                matches(c.state, filter.state) &&
-                matches(c.type, filter.type)
-            );
-        });
+        const results: Contract[] = [];
+        for (const contract of contracts) {
+            if (
+                matches(contract.id, filter.id) &&
+                matches(contract.script, filter.script) &&
+                matches(contract.state, filter.state) &&
+                matches(contract.type, filter.type)
+            ) {
+                results.push(contract);
+            }
+        }
+        return results;
     }
 
     async saveContract(contract: Contract): Promise<void> {
@@ -122,7 +87,6 @@ export class InMemoryContractRepository implements ContractRepository {
     async deleteContract(id: string): Promise<void> {
         this.contractsById.delete(id);
     }
-
 
     async [Symbol.asyncDispose](): Promise<void> {
         // nothing to dispose, data is ephemeral and scoped to the instance

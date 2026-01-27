@@ -188,7 +188,7 @@ export class ContractRepositoryImpl implements ContractRepository {
     }
 
     // used only for tests
-    async clearContractData(): Promise<void> {
+    async clear(): Promise<void> {
         await this.storage.clear();
     }
 

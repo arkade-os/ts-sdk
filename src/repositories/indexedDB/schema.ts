@@ -5,9 +5,10 @@ export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
 export const STORE_COMMITMENT_TXS = "commitmentTxs";
 export const STORE_CONTRACTS = "contracts";
-export const STORE_CONTRACTS_V2 = "contractsV2";
-export const STORE_CONTRACT_COLLECTIONS = "contractsCollections";
-export const DB_VERSION = 4;
+// @deprecated use only for migrations
+export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
+
+export const DB_VERSION = 2;
 
 export function initDatabase(db: IDBDatabase): IDBDatabase {
     // Create wallet stores
@@ -154,13 +155,7 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
 
     // Create contract stores
     if (!db.objectStoreNames.contains(STORE_CONTRACTS)) {
-        db.createObjectStore(STORE_CONTRACTS, {
-            keyPath: "key",
-        });
-    }
-
-    if (!db.objectStoreNames.contains(STORE_CONTRACTS_V2)) {
-        const contractsStore = db.createObjectStore(STORE_CONTRACTS_V2, {
+        const contractsStore = db.createObjectStore(STORE_CONTRACTS, {
             keyPath: "id",
         });
 
@@ -181,8 +176,8 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
         }
     }
 
-    if (!db.objectStoreNames.contains(STORE_CONTRACT_COLLECTIONS)) {
-        db.createObjectStore(STORE_CONTRACT_COLLECTIONS, {
+    if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {
+        db.createObjectStore(LEGACY_STORE_CONTRACT_COLLECTIONS, {
             keyPath: "key",
         });
     }

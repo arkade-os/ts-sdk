@@ -14,26 +14,7 @@ export interface ContractFilter {
     type?: string | string[];
 }
 
-/** Storage key for the contracts collection */
-export const CONTRACTS_COLLECTION = "ark_contracts";
-
 export interface ContractRepository extends AsyncDisposable {
-    /**
-     * @deprecated Use getContracts instead, this was done for boltz-swap compatibility.
-     */
-    getContractData<T>(contractId: string, key: string): Promise<T | null>;
-    /**
-     * @deprecated Use saveContract instead, this was done for boltz-swap compatibility.
-     */
-    setContractData<T>(contractId: string, key: string, data: T): Promise<void>;
-
-    /**
-     * @deprecated Use deleteContract instead, this was done for boltz-swap compatibility.
-     */
-    deleteContractData(contractId: string, key: string): Promise<void>;
-
-    clearContractData(): Promise<void>;
-
     /**
      * @deprecated Use getContracts instead, this was done for boltz-swap compatibility.
      */
@@ -49,13 +30,9 @@ export interface ContractRepository extends AsyncDisposable {
     ): Promise<void>;
 
     /**
-     * @deprecated Use deleteContract instead, this was done for boltz-swap compatibility.
+     * Clear all data from storage.
      */
-    removeFromContractCollection<T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ): Promise<void>;
+    clear(): Promise<void>;
 
     /**
      * Get contracts with optional filter.

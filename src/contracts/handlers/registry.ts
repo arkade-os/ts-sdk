@@ -26,8 +26,7 @@ class ContractHandlerRegistry {
      * @param handler - The handler to register
      * @throws If a handler for this type is already registered
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    register(handler: ContractHandler<any>): void {
+    register(handler: ContractHandler<unknown>): void {
         if (this.handlers.has(handler.type)) {
             throw new Error(
                 `Contract handler for type '${handler.type}' is already registered`
@@ -42,8 +41,7 @@ class ContractHandlerRegistry {
      * @param type - The contract type
      * @returns The handler, or undefined if not found
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    get(type: string): ContractHandler<any> | undefined {
+    get(type: string): ContractHandler<unknown> | undefined {
         return this.handlers.get(type);
     }
 
@@ -54,8 +52,7 @@ class ContractHandlerRegistry {
      * @returns The handler
      * @throws If no handler is registered for this type
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    getOrThrow(type: string): ContractHandler<any> {
+    getOrThrow(type: string): ContractHandler<unknown> {
         const handler = this.get(type);
         if (!handler) {
             throw new Error(
