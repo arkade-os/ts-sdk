@@ -21,6 +21,7 @@ export enum SettlementEventType {
     TreeNonces = "tree_nonces",
     TreeTx = "tree_tx",
     TreeSignature = "tree_signature",
+    StreamStarted = "stream_started",
 }
 
 export type BatchFinalizationEvent = {
@@ -80,6 +81,11 @@ export type TreeSignatureEvent = {
     signature: string;
 };
 
+export type StreamStartedEvent = {
+    type: SettlementEventType.StreamStarted;
+    id: string;
+};
+
 export type SettlementEvent =
     | BatchFinalizationEvent
     | BatchFinalizedEvent
@@ -88,7 +94,8 @@ export type SettlementEvent =
     | TreeNoncesEvent
     | BatchStartedEvent
     | TreeTxEvent
-    | TreeSignatureEvent;
+    | TreeSignatureEvent
+    | StreamStartedEvent;
 
 export interface ScheduledSession {
     duration: bigint;
@@ -722,6 +729,13 @@ export class RestArkProvider implements ArkProvider {
             };
         }
 
+        if (data.streamStarted) {
+            return {
+                type: SettlementEventType.StreamStarted,
+                id: data.streamStarted.id,
+            };
+        }
+
         // Skip heartbeat events
         if (data.heartbeat) {
             return null;
@@ -856,6 +870,10 @@ namespace ProtoTypes {
         signature: string;
     }
 
+    interface StreamStartedEvent {
+        id: string;
+    }
+
     interface Heartbeat {
         // Empty interface for heartbeat events
     }
@@ -889,6 +907,7 @@ namespace ProtoTypes {
         treeNonces?: TreeNoncesEvent;
         treeTx?: TreeTxEvent;
         treeSignature?: TreeSignatureEvent;
+        streamStarted?: StreamStartedEvent;
         heartbeat?: Heartbeat;
     }
 

@@ -9,6 +9,7 @@ import {
     EncodedVtxoScript,
     TapLeafScript,
     TapTreeCoder,
+    getSequence,
 } from "./script/base";
 import {
     TxType,
@@ -44,7 +45,6 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
-    getSequence,
 } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
@@ -89,6 +89,11 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
+import {
+    DelegatorProvider,
+    DelegateInfo,
+    RestDelegatorProvider,
+} from "./providers/delegator";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -152,6 +157,7 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
 
@@ -164,6 +170,8 @@ export {
     OnchainWallet,
     Ramps,
     VtxoManager,
+    DelegatorManagerImpl,
+    RestDelegatorProvider,
 
     // Providers
     ESPLORA_URL,
@@ -349,4 +357,9 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Delegator types
+    DelegatorManager,
+    DelegatorProvider,
+    DelegateInfo,
 };
