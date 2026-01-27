@@ -4,20 +4,14 @@ import { Contract, ContractState } from "../contracts/types";
  * Filter options for querying contracts.
  */
 export interface ContractFilter {
-    /** Filter by contract ID */
-    id?: string;
-    /** Filter by multiple contract IDs */
-    ids?: string[];
-    /** Filter by script */
-    script?: string;
-    /** Filter by state */
-    state?: ContractState;
-    /** Filter by multiples states */
-    states?: ContractState[];
-    /** Filter by contract type */
-    type?: string;
-    /** Filter by multiple contract types */
-    types?: string[];
+    /** Filter by contract ID(s) */
+    id?: string | string[];
+    /** Filter by script(s) */
+    script?: string | string[];
+    /** Filter by state(s) */
+    state?: ContractState | ContractState[];
+    /** Filter by contract type(s) */
+    type?: string | string[];
 }
 
 /** Storage key for the contracts collection */

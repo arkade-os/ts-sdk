@@ -345,44 +345,22 @@ export class IndexedDBContractRepository implements ContractRepository {
             return [...contracts];
         }
 
+        const matches = <T>(value: T, criterion?: T | T[]) => {
+            if (criterion === undefined) {
+                return true;
+            }
+            return Array.isArray(criterion)
+                ? criterion.includes(value)
+                : value === criterion;
+        };
+
         return contracts.filter((c) => {
-            // Filter by ID
-            if (filter.id !== undefined && c.id !== filter.id) {
-                return false;
-            }
-
-            // Filter by multiple IDs
-            if (filter.ids !== undefined && !filter.ids.includes(c.id)) {
-                return false;
-            }
-
-            // Filter by script
-            if (filter.script !== undefined && c.script !== filter.script) {
-                return false;
-            }
-
-            // Filter by states
-            if (
-                filter.states !== undefined &&
-                !filter.states.includes(c.state)
-            ) {
-                return false;
-            }
-
-            // Filter by state
-            if (filter.state !== undefined && filter.state !== c.state) {
-                return false;
-            }
-
-            if (filter.type !== undefined && filter.type !== c.type) {
-                return false;
-            }
-
-            if (filter.types !== undefined && !filter.types.includes(c.type)) {
-                return false;
-            }
-
-            return true;
+            return (
+                matches(c.id, filter.id) &&
+                matches(c.script, filter.script) &&
+                matches(c.state, filter.state) &&
+                matches(c.type, filter.type)
+            );
         });
     }
 

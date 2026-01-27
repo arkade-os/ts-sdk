@@ -68,6 +68,60 @@ describe("ContractRepository", () => {
         expect(inactiveContracts[0].id).toBe("inactive-1");
     });
 
+    it("should support array filters for id, state, and type", async () => {
+        const contracts: Contract[] = [
+            {
+                id: "multi-1",
+                type: "default",
+                params: {},
+                script: "script-1",
+                address: "address-1",
+                state: "active",
+                createdAt: Date.now(),
+            },
+            {
+                id: "multi-2",
+                type: "vhtlc",
+                params: {},
+                script: "script-2",
+                address: "address-2",
+                state: "inactive",
+                createdAt: Date.now(),
+            },
+            {
+                id: "multi-3",
+                type: "default",
+                params: {},
+                script: "script-3",
+                address: "address-3",
+                state: "inactive",
+                createdAt: Date.now(),
+            },
+        ];
+
+        for (const contract of contracts) {
+            await repository.saveContract(contract);
+        }
+
+        const byIds = await repository.getContracts({
+            id: ["multi-1", "multi-3"],
+        });
+        const byStates = await repository.getContracts({
+            state: ["inactive"],
+        });
+        const byTypes = await repository.getContracts({
+            type: ["vhtlc"],
+        });
+
+        expect(byIds.map((contract) => contract.id)).toEqual([
+            "multi-1",
+            "multi-3",
+        ]);
+        expect(byStates).toHaveLength(2);
+        expect(byTypes).toHaveLength(1);
+        expect(byTypes[0].id).toBe("multi-2");
+    });
+
     it("should update contract state via save", async () => {
         const contract: Contract = {
             id: "test-1",

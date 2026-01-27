@@ -3,7 +3,6 @@ import { IndexerProvider } from "../providers/indexer";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
-    ContractBalance,
     ContractEvent,
     ContractEventCallback,
     ContractState,
@@ -400,12 +399,9 @@ export class ContractManager implements IContractManager {
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
         return {
             id: filter.id,
-            ids: filter.ids,
             script: filter.script,
             state: filter.state,
-            states: filter.states,
             type: filter.type,
-            types: filter.types,
         };
     }
 
