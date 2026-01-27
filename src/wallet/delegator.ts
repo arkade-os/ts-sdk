@@ -209,9 +209,9 @@ async function delegate(
         await delegatorProvider.getDelegateInfo();
 
     const outputs = [];
-    const delegatorFee = BigInt(Number(fee)) * BigInt(vtxos.length);
+    const delegatorFee = BigInt(Number(fee));
 
-    if (fee !== "0") {
+    if (delegatorFee > 0n) {
         outputs.push({
             script: ArkAddress.decode(delegatorAddress).pkScript,
             amount: delegatorFee,
