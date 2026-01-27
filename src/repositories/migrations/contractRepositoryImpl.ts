@@ -1,10 +1,6 @@
 import { StorageAdapter } from "../../storage";
-import {
-    ContractFilter,
-    ContractRepository,
-    CONTRACTS_COLLECTION,
-} from "../contractRepository";
-import { Contract } from "../../contracts";
+import { ContractFilter, ContractRepository } from "../contractRepository";
+import { Contract } from "../../contracts/types";
 
 export const getContractStorageKey = (id: string, key: string) =>
     `contract:${id}:${key}`;

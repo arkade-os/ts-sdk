@@ -9,6 +9,7 @@ import {
     closeDatabase,
     STORE_CONTRACTS,
     STORE_CONTRACT_COLLECTIONS,
+    STORE_CONTRACTS_V2,
 } from "./db";
 import { Contract } from "../../contracts";
 
@@ -133,7 +134,11 @@ export class IndexedDBContractRepository implements ContractRepository {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_CONTRACTS, STORE_CONTRACT_COLLECTIONS],
+                    [
+                        STORE_CONTRACTS,
+                        STORE_CONTRACT_COLLECTIONS,
+                        STORE_CONTRACTS_V2,
+                    ],
                     "readwrite"
                 );
                 const contractDataStore =
@@ -141,25 +146,30 @@ export class IndexedDBContractRepository implements ContractRepository {
                 const collectionsStore = transaction.objectStore(
                     STORE_CONTRACT_COLLECTIONS
                 );
+                const contractsStore =
+                    transaction.objectStore(STORE_CONTRACTS_V2);
 
                 const contractDataRequest = contractDataStore.clear();
                 const collectionsRequest = collectionsStore.clear();
+                const contractsRequest = contractsStore.clear();
 
                 let completed = 0;
                 const checkComplete = () => {
                     completed++;
-                    if (completed === 2) {
+                    if (completed === 3) {
                         resolve();
                     }
                 };
 
                 contractDataRequest.onsuccess = checkComplete;
                 collectionsRequest.onsuccess = checkComplete;
+                contractsRequest.onsuccess = checkComplete;
 
                 contractDataRequest.onerror = () =>
                     reject(contractDataRequest.error);
                 collectionsRequest.onerror = () =>
                     reject(collectionsRequest.error);
+                contractsRequest.onerror = () => reject(contractsRequest.error);
             });
         } catch (error) {
             console.error("Failed to clear contract data:", error);
@@ -335,48 +345,192 @@ export class IndexedDBContractRepository implements ContractRepository {
         }
     }
 
-    // Contract entity management methods
-
     async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        const contracts =
-            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
+        try {
+            const db = await this.getDB();
+            const store = db
+                .transaction([STORE_CONTRACTS_V2], "readonly")
+                .objectStore(STORE_CONTRACTS_V2);
 
-        if (!filter) {
-            return [...contracts];
-        }
-
-        const matches = <T>(value: T, criterion?: T | T[]) => {
-            if (criterion === undefined) {
-                return true;
+            if (!filter || Object.keys(filter).length === 0) {
+                return new Promise((resolve, reject) => {
+                    const request = store.getAll();
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () =>
+                        resolve((request.result ?? []) as Contract[]);
+                });
             }
-            return Array.isArray(criterion)
-                ? criterion.includes(value)
-                : value === criterion;
-        };
 
-        return contracts.filter((c) => {
-            return (
-                matches(c.id, filter.id) &&
-                matches(c.script, filter.script) &&
-                matches(c.state, filter.state) &&
-                matches(c.type, filter.type)
+            if (filter.id) {
+                const contract = await this.getContractById(store, filter.id);
+                return contract ? [contract] : [];
+            }
+
+            if (filter.ids?.length) {
+                const contracts = await Promise.all(
+                    filter.ids.map((id) => this.getContractById(store, id))
+                );
+                return this.applyContractFilter(
+                    contracts.filter(Boolean) as Contract[],
+                    filter
+                );
+            }
+
+            if (filter.script) {
+                const contract = await this.getContractByIndex(
+                    store,
+                    "script",
+                    filter.script
+                );
+                return contract
+                    ? this.applyContractFilter([contract], filter)
+                    : [];
+            }
+
+            if (filter.state || (filter.states && filter.states.length > 0)) {
+                const states = filter.state
+                    ? [filter.state]
+                    : (filter.states ?? []);
+                const contracts = await this.getContractsByIndexValues(
+                    store,
+                    "state",
+                    states
+                );
+                return this.applyContractFilter(contracts, filter);
+            }
+
+            if (filter.type || (filter.types && filter.types.length > 0)) {
+                const types = filter.type
+                    ? [filter.type]
+                    : (filter.types ?? []);
+                const contracts = await this.getContractsByIndexValues(
+                    store,
+                    "type",
+                    types
+                );
+                return this.applyContractFilter(contracts, filter);
+            }
+
+            const allContracts = await new Promise<Contract[]>(
+                (resolve, reject) => {
+                    const request = store.getAll();
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () =>
+                        resolve((request.result ?? []) as Contract[]);
+                }
             );
-        });
+            return this.applyContractFilter(allContracts, filter);
+        } catch (error) {
+            console.error("Failed to get contracts:", error);
+            return [];
+        }
     }
 
     async saveContract(contract: Contract): Promise<void> {
-        await this.saveToContractCollection(
-            CONTRACTS_COLLECTION,
-            contract,
-            "id"
-        );
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [STORE_CONTRACTS_V2],
+                    "readwrite"
+                );
+                const store = transaction.objectStore(STORE_CONTRACTS_V2);
+                const request = store.put(contract);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve();
+            });
+        } catch (error) {
+            console.error("Failed to save contract:", error);
+            throw error;
+        }
     }
 
     async deleteContract(id: string): Promise<void> {
-        await this.removeFromContractCollection<Contract, "id">(
-            CONTRACTS_COLLECTION,
-            id,
-            "id"
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [STORE_CONTRACTS_V2],
+                    "readwrite"
+                );
+                const store = transaction.objectStore(STORE_CONTRACTS_V2);
+                const request = store.delete(id);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve();
+            });
+        } catch (error) {
+            console.error(`Failed to delete contract ${id}:`, error);
+            throw error;
+        }
+    }
+
+    private getContractById(
+        store: IDBObjectStore,
+        id: string
+    ): Promise<Contract | undefined> {
+        return new Promise((resolve, reject) => {
+            const request = store.get(id);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () =>
+                resolve(request.result as Contract | undefined);
+        });
+    }
+
+    private getContractByIndex(
+        store: IDBObjectStore,
+        indexName: string,
+        value: string
+    ): Promise<Contract | undefined> {
+        return new Promise((resolve, reject) => {
+            const index = store.index(indexName);
+            const request = index.get(value);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () =>
+                resolve(request.result as Contract | undefined);
+        });
+    }
+
+    private getContractsByIndexValues(
+        store: IDBObjectStore,
+        indexName: string,
+        values: string[]
+    ): Promise<Contract[]> {
+        if (values.length === 0) return Promise.resolve([]);
+        const index = store.index(indexName);
+        const requests = values.map(
+            (value) =>
+                new Promise<Contract[]>((resolve, reject) => {
+                    const request = index.getAll(value);
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () =>
+                        resolve((request.result ?? []) as Contract[]);
+                })
         );
+        return Promise.all(requests).then((results) =>
+            results.flatMap((result) => result)
+        );
+    }
+
+    private applyContractFilter(
+        contracts: Contract[],
+        filter: ContractFilter
+    ): Contract[] {
+        return contracts.filter((contract) => {
+            if (filter.id && contract.id !== filter.id) return false;
+            if (filter.ids && !filter.ids.includes(contract.id)) return false;
+            if (filter.script && contract.script !== filter.script)
+                return false;
+            if (filter.state && contract.state !== filter.state) return false;
+            if (filter.states && !filter.states.includes(contract.state)) {
+                return false;
+            }
+            if (filter.type && contract.type !== filter.type) return false;
+            if (filter.types && !filter.types.includes(contract.type)) {
+                return false;
+            }
+            return true;
+        });
     }
 }

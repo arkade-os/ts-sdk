@@ -15,6 +15,7 @@ const contractKey = (contractId: string, key: string) =>
 export class InMemoryContractRepository implements ContractRepository {
     private readonly contractData = new Map<string, unknown>();
     private readonly collections = new Map<string, unknown[]>();
+    private readonly contractsById = new Map<string, Contract>();
 
     async getContractData<T>(
         contractId: string,
@@ -39,6 +40,7 @@ export class InMemoryContractRepository implements ContractRepository {
     async clearContractData(): Promise<void> {
         this.contractData.clear();
         this.collections.clear();
+        this.contractsById.clear();
     }
 
     async getContractCollection<T>(
@@ -84,7 +86,7 @@ export class InMemoryContractRepository implements ContractRepository {
         this.collections.set(contractType, next);
     }
 
-    // Contract entity management methods
+// Contract entity management methods
 
     async getContracts(filter?: ContractFilter): Promise<Contract[]> {
         const contracts =
@@ -114,20 +116,13 @@ export class InMemoryContractRepository implements ContractRepository {
     }
 
     async saveContract(contract: Contract): Promise<void> {
-        await this.saveToContractCollection(
-            CONTRACTS_COLLECTION,
-            contract,
-            "id"
-        );
+        this.contractsById.set(contract.id, contract);
     }
 
     async deleteContract(id: string): Promise<void> {
-        await this.removeFromContractCollection<Contract, "id">(
-            CONTRACTS_COLLECTION,
-            id,
-            "id"
-        );
+        this.contractsById.delete(id);
     }
+
 
     async [Symbol.asyncDispose](): Promise<void> {
         // nothing to dispose, data is ephemeral and scoped to the instance

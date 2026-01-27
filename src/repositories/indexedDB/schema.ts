@@ -5,8 +5,9 @@ export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
 export const STORE_COMMITMENT_TXS = "commitmentTxs";
 export const STORE_CONTRACTS = "contracts";
+export const STORE_CONTRACTS_V2 = "contractsV2";
 export const STORE_CONTRACT_COLLECTIONS = "contractsCollections";
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 
 export function initDatabase(db: IDBDatabase): IDBDatabase {
     // Create wallet stores
@@ -156,6 +157,28 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
         db.createObjectStore(STORE_CONTRACTS, {
             keyPath: "key",
         });
+    }
+
+    if (!db.objectStoreNames.contains(STORE_CONTRACTS_V2)) {
+        const contractsStore = db.createObjectStore(STORE_CONTRACTS_V2, {
+            keyPath: "id",
+        });
+
+        if (!contractsStore.indexNames.contains("type")) {
+            contractsStore.createIndex("type", "type", {
+                unique: false,
+            });
+        }
+        if (!contractsStore.indexNames.contains("state")) {
+            contractsStore.createIndex("state", "state", {
+                unique: false,
+            });
+        }
+        if (!contractsStore.indexNames.contains("script")) {
+            contractsStore.createIndex("script", "script", {
+                unique: true,
+            });
+        }
     }
 
     if (!db.objectStoreNames.contains(STORE_CONTRACT_COLLECTIONS)) {
