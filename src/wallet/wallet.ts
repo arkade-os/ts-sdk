@@ -1,7 +1,7 @@
 import { base64, hex } from "@scure/base";
 import * as bip68 from "bip68";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
+import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
@@ -13,15 +13,14 @@ import {
     OnchainProvider,
 } from "../providers/onchain";
 import {
-    BatchFinalizationEvent,
-    SettlementEvent,
-    TreeSigningStartedEvent,
     ArkProvider,
-    RestArkProvider,
+    BatchFinalizationEvent,
     BatchStartedEvent,
+    RestArkProvider,
+    SettlementEvent,
     SignedIntent,
     TreeNoncesEvent,
-    PendingTx,
+    TreeSigningStartedEvent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -74,6 +73,16 @@ import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
 } from "../repositories";
+import {
+    ContractManager,
+    CreateContractParams,
+} from "../contracts/contractManager";
+import {
+    Contract,
+    ContractEventCallback,
+    ContractVtxo,
+} from "../contracts/types";
+import { timelockToSequence } from "../contracts/handlers/helpers";
 
 export type IncomingFunds =
     | {
@@ -106,6 +115,10 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 }
 
 export class ReadonlyWallet implements IReadonlyWallet {
+    private _contractManager?: ContractManager;
+    private _contractManagerInitializing?: Promise<ContractManager>;
+    protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
@@ -116,8 +129,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
-        public readonly contractRepository: ContractRepository
-    ) {}
+        public readonly contractRepository: ContractRepository,
+        watcherConfig?: ReadonlyWalletConfig["watcherConfig"]
+    ) {
+        this.watcherConfig = watcherConfig;
+    }
 
     /**
      * Protected helper to set up shared wallet configuration.
@@ -256,7 +272,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.boardingTapscript,
             setup.dustAmount,
             setup.walletRepository,
-            setup.contractRepository
+            setup.contractRepository,
+            config.watcherConfig
         );
     }
 
@@ -265,6 +282,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.network.hrp,
             this.arkServerPublicKey
         );
+    }
+
+    /**
+     * Get the contract ID for the wallet's default address.
+     * This is the pkScript hex, used to identify the wallet in ContractManager.
+     */
+    get defaultContractId(): string {
+        return hex.encode(this.offchainTapscript.pkScript);
     }
 
     async getAddress(): Promise<string> {
@@ -326,12 +351,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
     }
 
+    // TODO: use contract manager (and repo) will be offline-first
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const address = await this.getAddress();
-
-        // Try to get from cache first first (optional fast path)
-        // const cachedVtxos = await this.walletRepository.getVtxos(address);
-        // if (cachedVtxos.length) return cachedVtxos;
 
         // For now, always fetch fresh data from provider and update cache
         // In future, we can add cache invalidation logic based on timestamps
@@ -589,6 +611,98 @@ export class ReadonlyWallet implements IReadonlyWallet {
             )
             .map((_) => _.arkTxId!);
     }
+
+    // ========================================================================
+    // Contract Management
+    // ========================================================================
+
+    /**
+     * Get the ContractManager for managing contracts including the wallet's default address.
+     *
+     * The ContractManager handles:
+     * - The wallet's default receiving address (as a "default" contract)
+     * - External contracts (Boltz swaps, HTLCs, etc.)
+     * - Multi-contract watching with resilient connections
+     *
+     * @example
+     * ```typescript
+     * const manager = await wallet.getContractManager();
+     *
+     * // Create a contract for a Boltz swap
+     * const contract = await manager.createContract({
+     *   label: "Boltz Swap",
+     *   type: "vhtlc",
+     *   params: { ... },
+     *   script: swapScript,
+     *   address: swapAddress,
+     * });
+     *
+     * // Start watching for events (includes wallet's default address)
+     * const stop = await manager.onContractEvent((event) => {
+     *   console.log(`${event.type} on ${event.contractId}`);
+     * });
+     * ```
+     */
+    async getContractManager(): Promise<ContractManager> {
+        // Return existing manager if already initialized
+        if (this._contractManager) {
+            return this._contractManager;
+        }
+
+        // If initialization is in progress, wait for it
+        if (this._contractManagerInitializing) {
+            return this._contractManagerInitializing;
+        }
+
+        // Start initialization and store the promise
+        this._contractManagerInitializing = this.initializeContractManager();
+
+        try {
+            const manager = await this._contractManagerInitializing;
+            this._contractManager = manager;
+            return manager;
+        } catch (error) {
+            // Clear the initializing promise so subsequent calls can retry
+            this._contractManagerInitializing = undefined;
+            throw error;
+        } finally {
+            // Clear the initializing promise after completion
+            this._contractManagerInitializing = undefined;
+        }
+    }
+
+    private async initializeContractManager(): Promise<ContractManager> {
+        const manager = await ContractManager.create({
+            indexerProvider: this.indexerProvider,
+            contractRepository: this.contractRepository,
+            walletRepository: this.walletRepository,
+            extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
+            getDefaultAddress: () => this.getAddress(),
+            watcherConfig: this.watcherConfig,
+        });
+
+        // Register the wallet's default address as a contract
+        // This ensures it's watched alongside any external contracts
+        // Contract ID defaults to script, so no need to specify id explicitly
+        const csvTimelock =
+            this.offchainTapscript.options.csvTimelock ??
+            DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        await manager.createContract({
+            type: "default",
+            params: {
+                pubKey: hex.encode(this.offchainTapscript.options.pubKey),
+                serverPubKey: hex.encode(
+                    this.offchainTapscript.options.serverPubKey
+                ),
+                csvTimelock: timelockToSequence(csvTimelock).toString(),
+            },
+            script: this.defaultContractId,
+            address: await this.getAddress(),
+            state: "active",
+        });
+
+        return manager;
+    }
 }
 
 /**
@@ -649,7 +763,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
-        renewalConfig?: WalletConfig["renewalConfig"]
+        renewalConfig?: WalletConfig["renewalConfig"],
+        watcherConfig?: WalletConfig["watcherConfig"]
     ) {
         super(
             identity,
@@ -661,7 +776,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boardingTapscript,
             dustAmount,
             walletRepository,
-            contractRepository
+            contractRepository,
+            watcherConfig
         );
         this.identity = identity;
         this.renewalConfig = {
@@ -713,7 +829,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            config.renewalConfig
+            config.renewalConfig,
+            config.watcherConfig
         );
     }
 
@@ -750,7 +867,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.boardingTapscript,
             this.dustAmount,
             this.walletRepository,
-            this.contractRepository
+            this.contractRepository,
+            this.watcherConfig
         );
     }
 

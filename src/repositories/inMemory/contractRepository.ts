@@ -1,4 +1,9 @@
-import { ContractRepository } from "../contractRepository";
+import {
+    ContractFilter,
+    ContractRepository,
+    CONTRACTS_COLLECTION,
+} from "../contractRepository";
+import { Contract } from "../../contracts";
 
 const contractKey = (contractId: string, key: string) =>
     `contract:${contractId}:${key}`;
@@ -77,6 +82,51 @@ export class InMemoryContractRepository implements ContractRepository {
         const existing = (this.collections.get(contractType) as T[]) ?? [];
         const next = existing.filter((item) => item[idField] !== id);
         this.collections.set(contractType, next);
+    }
+
+    // Contract entity management methods
+
+    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
+        const contracts =
+            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
+
+        if (!filter) {
+            return [...contracts];
+        }
+
+        const matches = <T>(value: T, criterion?: T | T[]) => {
+            if (criterion === undefined) {
+                return true;
+            }
+            return Array.isArray(criterion)
+                ? criterion.includes(value)
+                : value === criterion;
+        };
+
+        return contracts.filter((c) => {
+            return (
+                matches(c.id, filter.id) &&
+                matches(c.script, filter.script) &&
+                matches(c.state, filter.state) &&
+                matches(c.type, filter.type)
+            );
+        });
+    }
+
+    async saveContract(contract: Contract): Promise<void> {
+        await this.saveToContractCollection(
+            CONTRACTS_COLLECTION,
+            contract,
+            "id"
+        );
+    }
+
+    async deleteContract(id: string): Promise<void> {
+        await this.removeFromContractCollection<Contract, "id">(
+            CONTRACTS_COLLECTION,
+            id,
+            "id"
+        );
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

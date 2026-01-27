@@ -1,4 +1,8 @@
-import { ContractRepository } from "../contractRepository";
+import {
+    ContractFilter,
+    ContractRepository,
+    CONTRACTS_COLLECTION,
+} from "../contractRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 import {
     openDatabase,
@@ -6,10 +10,12 @@ import {
     STORE_CONTRACTS,
     STORE_CONTRACT_COLLECTIONS,
 } from "./db";
+import { Contract } from "../../contracts";
 
-const contractKey = (contractId: string, key: string) =>
+export const contractKey = (contractId: string, key: string) =>
     `contract:${contractId}:${key}`;
-const collectionKey = (contractType: string) => `collection:${contractType}`;
+export const collectionKey = (contractType: string) =>
+    `collection:${contractType}`;
 
 /**
  * IndexedDB-based implementation of ContractRepository.
@@ -20,6 +26,12 @@ export class IndexedDBContractRepository implements ContractRepository {
     private db: IDBDatabase | null = null;
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+
+    private async getDB(): Promise<IDBDatabase> {
+        if (this.db) return this.db;
+        this.db = await openDatabase(this.dbName);
+        return this.db;
+    }
 
     async [Symbol.asyncDispose](): Promise<void> {
         if (!this.db) return;
@@ -323,9 +335,48 @@ export class IndexedDBContractRepository implements ContractRepository {
         }
     }
 
-    private async getDB(): Promise<IDBDatabase> {
-        if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName);
-        return this.db;
+    // Contract entity management methods
+
+    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
+        const contracts =
+            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
+
+        if (!filter) {
+            return [...contracts];
+        }
+
+        const matches = <T>(value: T, criterion?: T | T[]) => {
+            if (criterion === undefined) {
+                return true;
+            }
+            return Array.isArray(criterion)
+                ? criterion.includes(value)
+                : value === criterion;
+        };
+
+        return contracts.filter((c) => {
+            return (
+                matches(c.id, filter.id) &&
+                matches(c.script, filter.script) &&
+                matches(c.state, filter.state) &&
+                matches(c.type, filter.type)
+            );
+        });
+    }
+
+    async saveContract(contract: Contract): Promise<void> {
+        await this.saveToContractCollection(
+            CONTRACTS_COLLECTION,
+            contract,
+            "id"
+        );
+    }
+
+    async deleteContract(id: string): Promise<void> {
+        await this.removeFromContractCollection<Contract, "id">(
+            CONTRACTS_COLLECTION,
+            id,
+            "id"
+        );
     }
 }

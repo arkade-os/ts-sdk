@@ -1,0 +1,214 @@
+import { hex } from "@scure/base";
+import { Contract } from "./types";
+import { contractHandlers } from "./handlers";
+
+/**
+ * Prefix for arkcontract strings.
+ */
+const ARKCONTRACT_PREFIX = "arkcontract";
+
+/**
+ * Encode a contract to the arkcontract string format.
+ *
+ * Format: arkcontract={type}&{key1}={value1}&{key2}={value2}...
+ *
+ * This format is compatible with NArk and allows contracts to be
+ * shared/imported across different Ark implementations.
+ *
+ * @example
+ * ```typescript
+ * const contract: Contract = {
+ *   id: "abc123",
+ *   type: "vhtlc",
+ *   params: { sender: "ab12...", receiver: "cd34...", ... },
+ *   // ...
+ * };
+ *
+ * const encoded = encodeArkContract(contract);
+ * // "arkcontract=vhtlc&sender=ab12...&receiver=cd34...&..."
+ * ```
+ */
+export function encodeArkContract(contract: Contract): string {
+    const params = new URLSearchParams();
+
+    // Add contract type first
+    params.set(ARKCONTRACT_PREFIX, contract.type);
+
+    // Add all params
+    for (const [key, value] of Object.entries(contract.params)) {
+        params.set(key, value);
+    }
+
+    return params.toString();
+}
+
+/**
+ * Parsed result from decoding an arkcontract string.
+ *
+ * This is a low-level representation. For type-safe contract creation,
+ * use `contractFromArkContract` or `contractFromArkContractWithAddress`
+ * which validate params through the handler system.
+ */
+export interface ParsedArkContract {
+    /** Contract type (e.g., "vhtlc", "default") */
+    type: string;
+
+    /** All key-value pairs from the string */
+    data: Record<string, string>;
+}
+
+/**
+ * Decode an arkcontract string into raw type and data.
+ *
+ * This is a low-level function that parses the URL-encoded format.
+ * For creating typed Contract objects, use `contractFromArkContract`
+ * or `contractFromArkContractWithAddress` instead.
+ *
+ * @param encoded - The arkcontract string
+ * @returns Parsed type and key-value data
+ * @throws If the string is not a valid arkcontract
+ *
+ * @example
+ * ```typescript
+ * const parsed = decodeArkContract("arkcontract=vhtlc&sender=ab12...");
+ * // { type: "vhtlc", data: { sender: "ab12...", ... } }
+ * ```
+ */
+export function decodeArkContract(encoded: string): ParsedArkContract {
+    const params = new URLSearchParams(encoded);
+
+    // Extract type from the arkcontract key
+    const type = params.get(ARKCONTRACT_PREFIX);
+    if (!type) {
+        throw new Error(
+            `Invalid arkcontract string: missing '${ARKCONTRACT_PREFIX}' key`
+        );
+    }
+
+    // Build data object from all other params
+    const data: Record<string, string> = {};
+    for (const [key, value] of params.entries()) {
+        if (key !== ARKCONTRACT_PREFIX) {
+            data[key] = value;
+        }
+    }
+
+    return { type, data };
+}
+
+/**
+ * Create a Contract from an arkcontract string.
+ *
+ * This requires a handler to be registered for the contract type.
+ *
+ * @param encoded - The arkcontract string
+ * @param options - Additional options for the contract
+ * @returns A Contract object
+ * @throws If the string is invalid or no handler exists for the type
+ *
+ * @example
+ * ```typescript
+ * const contract = contractFromArkContract(
+ *   "arkcontract=vhtlc&sender=ab12...",
+ *   {
+ *     id: "my-swap",
+ *     label: "Lightning Receive",
+ *   }
+ * );
+ * ```
+ */
+export function contractFromArkContract(
+    encoded: string,
+    options: {
+        id?: string;
+        label?: string;
+        state?: "active" | "inactive";
+        expiresAt?: number;
+        metadata?: Record<string, unknown>;
+    } = {}
+): Omit<Contract, "script" | "address"> & {
+    script?: string;
+    address?: string;
+} {
+    const parsed = decodeArkContract(encoded);
+    const handler = contractHandlers.get(parsed.type);
+
+    if (!handler) {
+        throw new Error(
+            `No handler registered for contract type '${parsed.type}'`
+        );
+    }
+
+    // Separate params from runtime data
+    // This is type-specific - the handler knows which keys are params
+    // For now, we treat all data as params
+    const params = parsed.data;
+
+    return {
+        id: options.id || generateContractId(),
+        label: options.label,
+        type: parsed.type,
+        params,
+        state: options.state || "active",
+        createdAt: Date.now(),
+        expiresAt: options.expiresAt,
+        metadata: options.metadata,
+    };
+}
+
+/**
+ * Create a full Contract with derived script and address.
+ *
+ * @param encoded - The arkcontract string
+ * @param serverPubKey - Server public key (for address derivation)
+ * @param addressPrefix - Address prefix (e.g., "tark" for testnet)
+ * @param options - Additional options
+ * @returns A complete Contract object
+ */
+export function contractFromArkContractWithAddress(
+    encoded: string,
+    serverPubKey: Uint8Array,
+    addressPrefix: string,
+    options: {
+        id?: string;
+        label?: string;
+        state?: "active" | "inactive";
+        expiresAt?: number;
+        metadata?: Record<string, unknown>;
+    } = {}
+): Contract {
+    const parsed = decodeArkContract(encoded);
+    const handler = contractHandlers.getOrThrow(parsed.type);
+
+    const params = parsed.data;
+    const vtxoScript = handler.createScript(params);
+
+    return {
+        id: options.id || generateContractId(),
+        label: options.label,
+        type: parsed.type,
+        params,
+        script: hex.encode(vtxoScript.pkScript),
+        address: vtxoScript.address(addressPrefix, serverPubKey).encode(),
+        state: options.state || "active",
+        createdAt: Date.now(),
+        expiresAt: options.expiresAt,
+        metadata: options.metadata,
+    };
+}
+
+/**
+ * Generate a unique contract ID.
+ */
+function generateContractId(): string {
+    const timestamp = Date.now().toString(36);
+    const random = Math.random().toString(36).substring(2, 10);
+    return `contract_${timestamp}_${random}`;
+}
+
+/**
+ * Check if a string is an arkcontract.
+ */
+export function isArkContract(str: string): boolean {
+    return str.startsWith(ARKCONTRACT_PREFIX + "=");
+}

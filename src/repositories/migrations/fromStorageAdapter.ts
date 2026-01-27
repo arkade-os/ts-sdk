@@ -7,13 +7,33 @@ import { ContractRepositoryImpl } from "./contractRepositoryImpl";
 const MIGRATION_KEY = (repoType: "wallet" | "contract") =>
     `migration-from-storage-adapter-${repoType}`;
 
+const requiresMigration = async (
+    repoType: "wallet" | "contract",
+    storageAdapter: StorageAdapter
+): Promise<boolean> => {
+    try {
+        const migration = await storageAdapter.getItem(MIGRATION_KEY(repoType));
+        return migration !== "done";
+    } catch (e) {
+        // failed because there is no legacy DB - no migation needed
+        if (
+            e instanceof Error &&
+            e.message.includes(
+                "One of the specified object stores was not found"
+            )
+        )
+            return false;
+        throw e;
+    }
+};
+
 export async function migrateWalletRepository(
     storageAdapter: StorageAdapter,
     fresh: WalletRepository,
     addresses: string[]
 ): Promise<void> {
-    const migration = await storageAdapter.getItem(MIGRATION_KEY("wallet"));
-    if (migration == "done") return;
+    const migrate = await requiresMigration("wallet", storageAdapter);
+    if (!migrate) return;
 
     const old = new WalletRepositoryImpl(storageAdapter);
 
@@ -66,8 +86,8 @@ export async function migrateContractRepository(
     storageAdapter: StorageAdapter,
     fresh: ContractRepository
 ): Promise<void> {
-    const migration = await storageAdapter.getItem(MIGRATION_KEY("contract"));
-    if (migration == "done") return;
+    const migrate = await requiresMigration("contract", storageAdapter);
+    if (!migrate) return;
 
     const legacy = new ContractRepositoryImpl(storageAdapter);
 

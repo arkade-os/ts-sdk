@@ -517,6 +517,74 @@ import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/ex
 
 This is required for MuSig2 settlements and cryptographic operations.
 
+### Contract Management
+
+Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for VTXOs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+
+When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and failsafe polling for free - no code changes needed.
+
+For advanced use cases, you can access the ContractManager directly to register external contracts:
+
+```typescript
+// Get the contract manager (wallet's default address is already registered)
+const manager = await wallet.getContractManager()
+
+// Register a VHTLC contract (e.g., for a Lightning swap)
+const contract = await manager.createContract({
+  type: 'vhtlc',
+  params: {
+    sender: alicePubKey,
+    receiver: bobPubKey,
+    server: serverPubKey,
+    hash: paymentHash,
+    refundLocktime: '800000',
+    claimDelay: '100',
+    refundDelay: '102',
+    refundNoReceiverDelay: '103',
+  },
+  script: swapScript,
+  address: swapAddress,
+})
+
+// Listen for all contracts events (wallet address + external contracts)
+const unsubscribe = await manager.onContractEvent((event) => {
+  switch (event.type) {
+    case 'vtxo_received':
+      console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractId}`)
+      break
+    case 'vtxo_spent':
+      console.log(`Spent VTXOs on ${event.contractId}`)
+      break
+    case 'contract_expired':
+      console.log(`Contract ${event.contractId} expired`)
+      break
+  }
+})
+
+// Update contract data (e.g., set preimage when revealed)
+await manager.updateContractData(contract.id, { preimage: revealedPreimage })
+
+// Check spendable paths
+const paths = manager.getSpendablePaths(contract.id, true, myPubKey)
+if (paths.length > 0) {
+  console.log('Contract is spendable via:', paths[0].leaf)
+}
+
+// Get balances across all contracts
+const balances = await manager.getAllBalances()
+
+// Manually sweep all eligible contracts
+const sweepResults = await manager.sweepAll()
+
+// Stop watching
+unsubscribe()
+```
+
+The watcher features:
+- **Automatic reconnection** with exponential backoff (1s → 30s max)
+- **Failsafe polling** every 60 seconds to catch missed events
+- **Immediate sync** on connection and after failures
+
 ### Repository Pattern
 
 Access low-level data management through repositories:

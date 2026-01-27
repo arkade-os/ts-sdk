@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import {
@@ -742,6 +742,41 @@ describe("IndexedDB migrations", () => {
 
         const vtxos = await walletRepoV2.getVtxos(testAddress);
         expect(vtxos).toHaveLength(0);
+    });
+
+    it("should not migrate if the legacy DB doesn't exist", async () => {
+        const oldDbName = getUniqueDbName("wallet-migration-skip-old");
+        const newDbName = getUniqueDbName("wallet-migration-skip-new");
+
+        // In test environment the DB is created new and will emit `onupgradeneeded` which
+        // will create the object store.
+        // In production this doesn't happen and we end up accessing a non-existing object store.
+        // This is why we simulate exactly this case here.
+        const oldStorage = {
+            getItem: () => {
+                throw new Error(
+                    "Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found"
+                );
+            },
+        } as any;
+        const testAddress = "test-address";
+
+        const walletRepoV2 = {
+            getVtxos: vi.fn(),
+            saveVtxos: vi.fn(),
+        } as any;
+
+        await migrateWalletRepository(oldStorage, walletRepoV2, [testAddress]);
+        expect(walletRepoV2.getVtxos).not.toHaveBeenCalled();
+        expect(walletRepoV2.saveVtxos).not.toHaveBeenCalled();
+
+        const contractRepoV2 = {
+            getContractCollection: vi.fn(),
+            saveToContractCollection: vi.fn(),
+        };
+        await migrateContractRepository(oldStorage, contractRepoV2 as any);
+        expect(contractRepoV2.getContractCollection).not.toHaveBeenCalled();
+        expect(contractRepoV2.saveToContractCollection).not.toHaveBeenCalled();
     });
 });
 

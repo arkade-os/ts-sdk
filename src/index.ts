@@ -162,6 +162,38 @@ import {
 
 export * from "./arkfee";
 
+// Contracts
+import {
+    ContractManager,
+    ContractWatcher,
+    contractHandlers,
+    DefaultContractHandler,
+    VHTLCContractHandler,
+    encodeArkContract,
+    decodeArkContract,
+    contractFromArkContract,
+    contractFromArkContractWithAddress,
+    isArkContract,
+} from "./contracts";
+import type {
+    Contract,
+    ContractVtxo,
+    ContractState,
+    ContractEvent,
+    ContractEventCallback,
+    ContractBalance,
+    ContractWithVtxos,
+    ContractHandler,
+    PathSelection,
+    PathContext,
+    ContractManagerConfig,
+    CreateContractParams,
+    ContractWatcherConfig,
+    ParsedArkContract,
+    DefaultContractParams,
+    VHTLCContractParams,
+} from "./contracts";
+
 export {
     // Wallets
     Wallet,
@@ -264,6 +296,18 @@ export {
     isSubdust,
     isExpired,
     getSequence,
+
+    // Contracts
+    ContractManager,
+    ContractWatcher,
+    contractHandlers,
+    DefaultContractHandler,
+    VHTLCContractHandler,
+    encodeArkContract,
+    decodeArkContract,
+    contractFromArkContract,
+    contractFromArkContractWithAddress,
+    isArkContract,
 };
 
 export type {
@@ -363,4 +407,22 @@ export type {
 
     // Storage
     StorageConfig,
+
+    // Contract types
+    Contract,
+    ContractVtxo,
+    ContractState,
+    ContractEvent,
+    ContractEventCallback,
+    ContractBalance,
+    ContractWithVtxos,
+    ContractHandler,
+    PathSelection,
+    PathContext,
+    ContractManagerConfig,
+    CreateContractParams,
+    ContractWatcherConfig,
+    ParsedArkContract,
+    DefaultContractParams,
+    VHTLCContractParams,
 };

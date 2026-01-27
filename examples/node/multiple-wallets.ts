@@ -12,8 +12,6 @@
  */
 
 import {
-    IndexedDBContractRepository,
-    IndexedDBWalletRepository,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     SingleKey,

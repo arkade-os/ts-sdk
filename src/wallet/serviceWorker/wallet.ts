@@ -22,6 +22,19 @@ import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
 } from "../../repositories";
+import type {
+    Contract,
+    ContractEventCallback,
+    ContractWithVtxos,
+    GetContractsFilter,
+    PathSelection,
+} from "../../contracts";
+import type {
+    CreateContractParams,
+    GetSpendablePathsOptions,
+    IContractManager,
+} from "../../contracts/contractManager";
+import type { ContractState } from "../../contracts/types";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -349,6 +362,183 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             return response.success;
         }
         throw new UnexpectedResponseError(response);
+    }
+
+    async getContractManager(): Promise<IContractManager> {
+        const wallet = this;
+
+        const sendContractMessage = async <T extends Request.Base>(
+            message: T
+        ): Promise<Response.Base> => {
+            return wallet.sendMessage(message);
+        };
+
+        const manager: IContractManager = {
+            async createContract(
+                params: CreateContractParams
+            ): Promise<Contract> {
+                const message: Request.CreateContract = {
+                    type: "CREATE_CONTRACT",
+                    id: getRandomId(),
+                    params,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isContractCreated(response)) {
+                    return response.contract;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async getContracts(
+                filter?: GetContractsFilter
+            ): Promise<Contract[]> {
+                const message: Request.GetContracts = {
+                    type: "GET_CONTRACTS",
+                    id: getRandomId(),
+                    filter,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isContracts(response)) {
+                    return response.contracts;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async getContractsWithVtxos(
+                filter: GetContractsFilter
+            ): Promise<ContractWithVtxos[]> {
+                const message: Request.GetContractsWithVtxos = {
+                    type: "GET_CONTRACTS_WITH_VTXOS",
+                    id: getRandomId(),
+                    filter,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isContractsWithVtxos(response)) {
+                    return response.contracts;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async updateContract(
+                id: string,
+                updates: Partial<Omit<Contract, "id" | "createdAt">>
+            ): Promise<Contract> {
+                const message: Request.UpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    contractId: id,
+                    updates,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isContractUpdated(response)) {
+                    return response.contract;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async setContractState(
+                id: string,
+                state: ContractState
+            ): Promise<void> {
+                const message: Request.UpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    contractId: id,
+                    updates: { state },
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isContractUpdated(response)) {
+                    return;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async deleteContract(id: string): Promise<void> {
+                const message: Request.DeleteContract = {
+                    type: "DELETE_CONTRACT",
+                    id: getRandomId(),
+                    contractId: id,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isContractDeleted(response)) {
+                    return;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async getSpendablePaths(
+                options: GetSpendablePathsOptions
+            ): Promise<PathSelection[]> {
+                const message: Request.GetSpendablePaths = {
+                    type: "GET_SPENDABLE_PATHS",
+                    id: getRandomId(),
+                    options,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isSpendablePaths(response)) {
+                    return response.paths;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            onContractEvent(callback: ContractEventCallback): () => void {
+                // TODO: the subscription model requires scheduler to be present
+                // (the `tick` method) in service worker
+                const message: Request.SubscribeContractEvents = {
+                    type: "SUBSCRIBE_CONTRACT_EVENTS",
+                    id: getRandomId(),
+                };
+
+                const messageHandler = (event: MessageEvent) => {
+                    const response = event.data as Response.Base;
+                    if (Response.isContractEvent(response)) {
+                        callback(response.event);
+                    }
+                };
+
+                navigator.serviceWorker.addEventListener(
+                    "message",
+                    messageHandler
+                );
+                wallet.serviceWorker.postMessage(message);
+
+                return () => {
+                    const unsubscribeMessage: Request.UnsubscribeContractEvents =
+                        {
+                            type: "UNSUBSCRIBE_CONTRACT_EVENTS",
+                            id: getRandomId(),
+                        };
+                    navigator.serviceWorker.removeEventListener(
+                        "message",
+                        messageHandler
+                    );
+                    wallet.serviceWorker.postMessage(unsubscribeMessage);
+                };
+            },
+
+            async isWatching(): Promise<boolean> {
+                const message: Request.isContractManagerWatching = {
+                    type: "IS_CONTRACT_MANAGER_WATCHING",
+                    id: getRandomId(),
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isContractWatching(response)) {
+                    return response.isWatching;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            dispose(): void {
+                return;
+            },
+
+            [Symbol.dispose](): void {
+                // no-op
+                return;
+            },
+        };
+
+        return manager;
     }
 }
 

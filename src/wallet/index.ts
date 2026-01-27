@@ -6,7 +6,15 @@ import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
+import {
+    Contract,
+    ContractEventCallback,
+    ContractManager,
+    CreateContractParams,
+} from "../contracts";
+import { IContractManager } from "../contracts/contractManager";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -64,6 +72,11 @@ export interface BaseWalletConfig {
  */
 export interface ReadonlyWalletConfig extends BaseWalletConfig {
     identity: ReadonlyIdentity;
+    /**
+     * Configuration for the ContractManager's watcher.
+     * Controls reconnection behavior and failsafe polling.
+     */
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
 }
 
 /**
@@ -281,4 +294,10 @@ export interface IReadonlyWallet {
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
+
+    /**
+     * Returns the contract manager associated with this wallet.
+     * This is useful for querying contract state and watching for contract events.
+     */
+    getContractManager(): Promise<IContractManager>;
 }
