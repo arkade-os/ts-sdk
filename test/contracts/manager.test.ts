@@ -99,23 +99,41 @@ describe("ContractManager", () => {
         expect(await manager.getContracts({ state: "active" })).toHaveLength(1);
     });
 
-    it("should update contract data", async () => {
+    it("should update contract metadata", async () => {
         const contract = await manager.createContract({
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
-            data: { customField: "initial" },
+            metadata: { customField: "initial" },
         });
 
         await manager.updateContract(contract.id, {
-            data: { newField: "added" },
+            metadata: { newField: "added" },
         });
 
         const [updated] = await manager.getContracts({ id: contract.id });
-        expect(updated?.data).toEqual({
-            customField: "initial",
+        expect(updated?.metadata).toEqual({
             newField: "added",
+        });
+    });
+
+    it("should update contract params preserving the existing values", async () => {
+        const contract = await manager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+        });
+
+        await manager.updateContractParams(contract.id, {
+            preimage: "newSecret",
+        });
+
+        const [updated] = await manager.getContracts({ id: contract.id });
+        expect(updated?.params).toEqual({
+            ...contract.params,
+            preimage: "newSecret",
         });
     });
 

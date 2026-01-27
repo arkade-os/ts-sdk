@@ -97,7 +97,7 @@ export const VHTLCContractHandler: ContractHandler<
         context: PathContext
     ): PathSelection | null {
         const role = resolveRole(contract, context);
-        const preimage = contract.data?.preimage;
+        const preimage = contract.params?.preimage;
         const refundLocktime = BigInt(contract.params.refundLocktime);
         const currentTimeSec = Math.floor(context.currentTime / 1000);
 
@@ -157,7 +157,7 @@ export const VHTLCContractHandler: ContractHandler<
             return paths;
         }
 
-        const preimage = contract.data?.preimage;
+        const preimage = contract.params?.preimage;
         const refundLocktime = BigInt(contract.params.refundLocktime);
         const currentTimeSec = Math.floor(context.currentTime / 1000);
 

@@ -39,13 +39,6 @@ export function encodeArkContract(contract: Contract): string {
         params.set(key, value);
     }
 
-    // Add runtime data if present
-    if (contract.data) {
-        for (const [key, value] of Object.entries(contract.data)) {
-            params.set(key, value);
-        }
-    }
-
     return params.toString();
 }
 

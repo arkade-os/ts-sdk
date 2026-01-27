@@ -195,10 +195,8 @@ async function main() {
     console.log("Bob reveals preimage:", hex.encode(secret));
 
     // Update contract with the revealed preimage
-    await manager.updateContract(contract.id, {
-        data: {
-            preimage: hex.encode(secret),
-        },
+    await manager.updateContractParams(contract.id, {
+        preimage: hex.encode(secret),
     });
 
     // Now check Bob's spendable paths

@@ -42,22 +42,6 @@ describe("Contracts", () => {
             expect(encoded).toContain("serverPubKey=def456");
         });
 
-        it("should encode contract with runtime data", () => {
-            const contract: Contract = {
-                id: "test-id",
-                type: "vhtlc",
-                params: { hash: "abc" },
-                data: { preimage: "secret123" },
-                script: "5120...",
-                address: "tark1...",
-                state: "active",
-                createdAt: Date.now(),
-            };
-
-            const encoded = encodeArkContract(contract);
-            expect(encoded).toContain("preimage=secret123");
-        });
-
         it("should decode an arkcontract string", () => {
             const encoded =
                 "arkcontract=default&pubKey=abc123&serverPubKey=def456";

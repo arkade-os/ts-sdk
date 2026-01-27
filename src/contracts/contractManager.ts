@@ -426,6 +426,8 @@ export class ContractManager implements IContractManager {
 
     /**
      * Update a contract.
+     * Nested fields like `params` and `metadata` are replaced with the provided values.
+     * If you need to preserve existing fields, merge them manually.
      *
      * @param id - Contract ID
      * @param updates - Fields to update
@@ -442,15 +444,39 @@ export class ContractManager implements IContractManager {
             throw new Error(`Contract ${id} not found`);
         }
 
-        let data = existing.data;
-        if (updates.data !== undefined) {
-            data = { ...existing.data, ...updates.data };
+        const updated: Contract = {
+            ...existing,
+            ...updates,
+        };
+
+        await this.config.contractRepository.saveContract(updated);
+        await this.watcher.updateContract(updated);
+
+        return updated;
+    }
+
+    /**
+     * Update a contract's params.
+     * This method preserves existing params by merging the provided values.
+     *
+     * @param id - Contract ID
+     * @param updates - The new values to merge with existing params
+     */
+    async updateContractParams(
+        id: string,
+        updates: Contract["params"]
+    ): Promise<Contract> {
+        const contracts = await this.config.contractRepository.getContracts({
+            id,
+        });
+        const existing = contracts[0];
+        if (!existing) {
+            throw new Error(`Contract ${id} not found`);
         }
 
         const updated: Contract = {
             ...existing,
-            ...updates,
-            data,
+            params: { ...existing.params, ...updates },
         };
 
         await this.config.contractRepository.saveContract(updated);

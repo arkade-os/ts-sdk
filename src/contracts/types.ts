@@ -75,13 +75,6 @@ export interface Contract {
     expiresAt?: number;
 
     /**
-     * Runtime data that may change after contract creation.
-     * e.g., { preimage: "abc123" } when a VHTLC preimage is revealed.
-     * Values are strings (hex encoded if binary).
-     */
-    data?: Record<string, string>;
-
-    /**
      * Optional metadata for external integrations.
      */
     metadata?: Record<string, unknown>;
