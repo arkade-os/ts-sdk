@@ -3,7 +3,11 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
 } from "../../wallet";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    CommitmentTxRecord,
+    WalletRepository,
+    WalletState,
+} from "../walletRepository";
 
 /**
  * In-memory implementation of WalletRepository.
@@ -13,6 +17,10 @@ export class InMemoryWalletRepository implements WalletRepository {
     private readonly vtxosByAddress = new Map<string, ExtendedVirtualCoin[]>();
     private readonly utxosByAddress = new Map<string, ExtendedCoin[]>();
     private readonly txsByAddress = new Map<string, ArkTransaction[]>();
+    private readonly commitmentTxsByTxid = new Map<
+        string,
+        CommitmentTxRecord
+    >();
     private walletState: WalletState | null = null;
 
     async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
@@ -77,6 +85,15 @@ export class InMemoryWalletRepository implements WalletRepository {
 
     async saveWalletState(state: WalletState): Promise<void> {
         this.walletState = state;
+    }
+
+    async getCommitmentTxs(txid: string): Promise<CommitmentTxRecord[]> {
+        const record = this.commitmentTxsByTxid.get(txid);
+        return record ? [record] : [];
+    }
+
+    async saveCommitmentTxs(commitmentTx: CommitmentTxRecord): Promise<void> {
+        this.commitmentTxsByTxid.set(commitmentTx.txid, commitmentTx);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

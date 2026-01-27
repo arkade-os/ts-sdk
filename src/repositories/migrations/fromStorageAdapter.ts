@@ -1,5 +1,5 @@
 import { StorageAdapter } from "../../storage";
-import { WalletRepository } from "../walletRepository";
+import { CommitmentTxRecord, WalletRepository } from "../walletRepository";
 import { ContractRepository } from "../contractRepository";
 import { WalletRepositoryImpl } from "./walletRepositoryImpl";
 import { ContractRepositoryImpl } from "./contractRepositoryImpl";
@@ -36,6 +36,7 @@ export async function migrateWalletRepository(
     if (!migrate) return;
 
     const old = new WalletRepositoryImpl(storageAdapter);
+    const legacyContracts = new ContractRepositoryImpl(storageAdapter);
 
     const walletData = await old.getWalletState();
 
@@ -59,6 +60,14 @@ export async function migrateWalletRepository(
         }),
     ]);
 
+    const commitmentTxs =
+        await legacyContracts.getContractCollection<CommitmentTxRecord>(
+            "commitmentTxs"
+        );
+    for (const commitmentTx of commitmentTxs) {
+        await fresh.saveCommitmentTxs(commitmentTx);
+    }
+
     await storageAdapter.setItem(MIGRATION_KEY("wallet"), "done");
 }
 
@@ -68,14 +77,12 @@ const COLLECTION_KEYS = [
         idField: "id",
     },
     { collectionName: "submarineSwaps", idField: "id" },
-    { collectionName: "commitmentTxs", idField: "txid" },
 ];
 
 /**
  * It migrates only the default keys created by the legacy implementation:
  *  - "collection:reverseSwaps"
  *  - "collection:submarineSwaps"
- *  - "collection:commitmentTxs"
  *
  *  Any other key requires manual intervention.
  *

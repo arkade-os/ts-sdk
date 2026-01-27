@@ -3,9 +3,10 @@ export const STORE_VTXOS = "vtxos";
 export const STORE_UTXOS = "utxos";
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
+export const STORE_COMMITMENT_TXS = "commitmentTxs";
 export const STORE_CONTRACTS = "contracts";
 export const STORE_CONTRACT_COLLECTIONS = "contractsCollections";
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export function initDatabase(db: IDBDatabase): IDBDatabase {
     // Create wallet stores
@@ -136,6 +137,18 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
         db.createObjectStore(STORE_WALLET_STATE, {
             keyPath: "key",
         });
+    }
+
+    if (!db.objectStoreNames.contains(STORE_COMMITMENT_TXS)) {
+        const commitmentTxsStore = db.createObjectStore(STORE_COMMITMENT_TXS, {
+            keyPath: "txid",
+        });
+
+        if (!commitmentTxsStore.indexNames.contains("txid")) {
+            commitmentTxsStore.createIndex("txid", "txid", {
+                unique: true,
+            });
+        }
     }
 
     // Create contract stores

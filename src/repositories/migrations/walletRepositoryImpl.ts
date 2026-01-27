@@ -1,6 +1,10 @@
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    CommitmentTxRecord,
+    WalletRepository,
+    WalletState,
+} from "../walletRepository";
 import { StorageAdapter } from "../../storage";
 import {
     ArkTransaction,
@@ -211,6 +215,14 @@ export class WalletRepositoryImpl implements WalletRepository {
             walletStateStorageKey,
             JSON.stringify(state)
         );
+    }
+
+    async getCommitmentTxs(_txid: string): Promise<CommitmentTxRecord[]> {
+        return [];
+    }
+
+    async saveCommitmentTxs(_commitmentTx: CommitmentTxRecord): Promise<void> {
+        return;
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

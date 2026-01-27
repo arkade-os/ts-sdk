@@ -617,6 +617,10 @@ describe("IndexedDB migrations", () => {
             lastSyncTime: Date.now(),
             settings: { theme: "dark" },
         };
+        const commitmentTxsFixture = [
+            { txid: "commitment-tx-1", when: 1768251194 },
+            { txid: "commitment-tx-2", when: 1768489720 },
+        ];
 
         await walletRepoV1.saveVtxos(testAddress1, [vtxo1, vtxo2]);
         await walletRepoV1.saveVtxos(testAddress2, [vtxo3]);
@@ -625,6 +629,10 @@ describe("IndexedDB migrations", () => {
         await walletRepoV1.saveTransactions(testAddress1, [tx1, tx2]);
         await walletRepoV1.saveTransactions(testAddress2, [tx3]);
         await walletRepoV1.saveWalletState(walletState);
+        await oldStorage.setItem(
+            "collection:commitmentTxs",
+            JSON.stringify(commitmentTxsFixture)
+        );
 
         const walletRepoV2 = new IndexedDBWalletRepository(newDbName);
 
@@ -674,6 +682,13 @@ describe("IndexedDB migrations", () => {
         expect(walletState2).not.toBeNull();
         expect(walletState2?.settings?.theme).toBe("dark");
         expect(walletState2?.lastSyncTime).toBe(walletState.lastSyncTime);
+
+        const commitmentTxs1 =
+            await walletRepoV2.getCommitmentTxs("commitment-tx-1");
+        expect(commitmentTxs1).toEqual([commitmentTxsFixture[0]]);
+        const commitmentTxs2 =
+            await walletRepoV2.getCommitmentTxs("commitment-tx-2");
+        expect(commitmentTxs2).toEqual([commitmentTxsFixture[1]]);
     });
 
     it("should migrate contract data from StorageAdapter to IndexedDB format", async () => {
@@ -700,12 +715,6 @@ describe("IndexedDB migrations", () => {
         );
         const reverseSwaps = await repo.getContractCollection("reverseSwaps");
         expect(reverseSwaps).toEqual(reverseSwapsFixture);
-
-        const commitmentTxsFixture = JSON.parse(
-            fixture["collection:commitmentTxs"]
-        );
-        const commitmentTxs = await repo.getContractCollection("commitmentTxs");
-        expect(commitmentTxs).toEqual(commitmentTxsFixture);
 
         const submarineSwapsFixture = JSON.parse(
             fixture["collection:submarineSwaps"]

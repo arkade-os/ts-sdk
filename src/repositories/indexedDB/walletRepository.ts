@@ -3,7 +3,11 @@ import {
     ExtendedVirtualCoin,
     ArkTransaction,
 } from "../../wallet";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    CommitmentTxRecord,
+    WalletRepository,
+    WalletState,
+} from "../walletRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 import {
     openDatabase,
@@ -12,12 +16,12 @@ import {
     STORE_UTXOS,
     STORE_TRANSACTIONS,
     STORE_WALLET_STATE,
+    STORE_COMMITMENT_TXS,
     serializeVtxo,
     serializeUtxo,
     deserializeVtxo,
     deserializeUtxo,
     SerializedVtxo,
-    SerializedUtxo,
 } from "./db";
 
 /**
@@ -358,6 +362,52 @@ export class IndexedDBWalletRepository implements WalletRepository {
             });
         } catch (error) {
             console.error("Failed to save wallet state:", error);
+            throw error;
+        }
+    }
+
+    async getCommitmentTxs(txid: string): Promise<CommitmentTxRecord[]> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [STORE_COMMITMENT_TXS],
+                    "readonly"
+                );
+                const store = transaction.objectStore(STORE_COMMITMENT_TXS);
+                const index = store.index("txid");
+                const request = index.getAll(txid);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    resolve(request.result || []);
+                };
+            });
+        } catch (error) {
+            console.error(
+                `Failed to get commitment txs for txid ${txid}:`,
+                error
+            );
+            return [];
+        }
+    }
+
+    async saveCommitmentTxs(commitmentTx: CommitmentTxRecord): Promise<void> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [STORE_COMMITMENT_TXS],
+                    "readwrite"
+                );
+                const store = transaction.objectStore(STORE_COMMITMENT_TXS);
+                const request = store.put(commitmentTx);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve();
+            });
+        } catch (error) {
+            console.error("Failed to save commitment txs:", error);
             throw error;
         }
     }
