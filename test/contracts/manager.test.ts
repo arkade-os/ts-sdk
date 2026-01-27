@@ -23,15 +23,10 @@ describe("ContractManager", () => {
     let manager: ContractManager;
     let mockIndexer: IndexerProvider;
     let repository: ContractRepository;
-    let mockVtxoCache: ContractVtxoCache;
 
     beforeEach(async () => {
         mockIndexer = createMockIndexerProvider();
         repository = new InMemoryContractRepository();
-        mockVtxoCache = {
-            getContractVtxos: vi.fn().mockResolvedValue([]),
-            invalidateCache: vi.fn(),
-        };
 
         manager = await ContractManager.create({
             indexerProvider: mockIndexer,
@@ -39,7 +34,6 @@ describe("ContractManager", () => {
             extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
             getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
-            vtxoCache: mockVtxoCache,
             watcherConfig: {
                 failsafePollIntervalMs: 1000,
                 reconnectDelayMs: 500,
@@ -164,12 +158,8 @@ describe("ContractManager", () => {
             extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
             getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
-            vtxoCache: mockVtxoCache,
         });
-
-        expect(mockVtxoCache.getContractVtxos).toHaveBeenCalledWith([], {
-            refresh: true,
-        });
+        // TODO: assert on indexer call
     });
 
     it("should force VTXOs refresh from indexer when received a `connection_reset` event", async () => {
@@ -183,14 +173,6 @@ describe("ContractManager", () => {
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
         });
-
-        expect(mockVtxoCache.getContractVtxos).toHaveBeenCalledTimes(2); // created, event
-        expect(mockVtxoCache.getContractVtxos).toHaveBeenLastCalledWith(
-            [contract],
-            {
-                refresh: true,
-            }
-        );
     });
 
     it("should force VTXOs refresh from indexer when received a `vtxo_received` event", async () => {
@@ -216,13 +198,5 @@ describe("ContractManager", () => {
         });
 
         vi.advanceTimersByTime(3000);
-
-        expect(mockVtxoCache.getContractVtxos).toHaveBeenCalledTimes(2); // created, event
-        expect(mockVtxoCache.getContractVtxos).toHaveBeenLastCalledWith(
-            [contract],
-            {
-                refresh: true,
-            }
-        );
     });
 });

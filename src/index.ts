@@ -166,7 +166,6 @@ export * from "./arkfee";
 import {
     ContractManager,
     ContractWatcher,
-    IndexerContractVtxoCache,
     contractHandlers,
     DefaultContractHandler,
     VHTLCContractHandler,
@@ -190,7 +189,6 @@ import type {
     ContractManagerConfig,
     CreateContractParams,
     ContractWatcherConfig,
-    ContractVtxoCache,
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,
@@ -302,7 +300,6 @@ export {
     // Contracts
     ContractManager,
     ContractWatcher,
-    IndexerContractVtxoCache,
     contractHandlers,
     DefaultContractHandler,
     VHTLCContractHandler,
@@ -425,7 +422,6 @@ export type {
     ContractManagerConfig,
     CreateContractParams,
     ContractWatcherConfig,
-    ContractVtxoCache,
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,

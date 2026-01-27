@@ -14,7 +14,6 @@ import {
     PathSelection,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
-import { ContractVtxoCache, IndexerContractVtxoCache } from "./contractCache";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
 import { ContractFilter, ContractRepository } from "../repositories";
@@ -163,9 +162,6 @@ export interface ContractManagerConfig {
     /** The wallet repository for VTXO storage (single source of truth) */
     walletRepository: WalletRepository;
 
-    /** Optional VTXO cache to centralize data retrieval */
-    vtxoCache?: ContractVtxoCache;
-
     /** Function to extend VirtualCoin to ExtendedVirtualCoin */
     extendVtxo: (vtxo: VirtualCoin) => ExtendedVirtualCoin;
 
@@ -230,19 +226,12 @@ export type CreateContractParams = Omit<
 export class ContractManager implements IContractManager {
     private config: ContractManagerConfig;
     private watcher: ContractWatcher;
-    private vtxoCache: ContractVtxoCache;
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
-        this.vtxoCache =
-            config.vtxoCache ||
-            new IndexerContractVtxoCache(
-                config.indexerProvider,
-                config.walletRepository
-            );
 
         // Create watcher with wallet repository for VTXO caching
         this.watcher = new ContractWatcher({
@@ -279,9 +268,7 @@ export class ContractManager implements IContractManager {
 
         // fetch latest VTXOs for all contracts, ensure cache is up to date
         // TODO: what if the user has 1k contracts?
-        await this.vtxoCache.getContractVtxos(contracts, {
-            refresh: true,
-        });
+        await this.getVtxosForContracts(contracts);
 
         // add all contracts to the watcher
         const now = Date.now();
@@ -370,10 +357,8 @@ export class ContractManager implements IContractManager {
         // Persist
         await this.config.contractRepository.saveContract(contract);
 
-        // ensure cache is up to date for the contract
-        await this.vtxoCache.getContractVtxos([contract], {
-            refresh: true,
-        });
+        // ensure we have the latest VTXOs for this contract
+        await this.getVtxosForContracts([contract]);
 
         // Add to watcher
         await this.watcher.addContract(contract);
@@ -583,19 +568,16 @@ export class ContractManager implements IContractManager {
             // Every time there is a VTXO event for a contract, refresh all its VTXOs
             case "vtxo_received":
             case "vtxo_spent":
-                await this.vtxoCache.getContractVtxos([event.contract], {
-                    includeSpent: true,
-                    refresh: true,
-                });
+                await this.fetchContractVxosFromIndexer([event.contract], true);
                 break;
             case "connection_reset":
                 // Refetch all VTXOs for all active contracts
                 const activeWatchedContracts =
                     this.watcher.getActiveContracts();
-                await this.vtxoCache.getContractVtxos(activeWatchedContracts, {
-                    includeSpent: true,
-                    refresh: true,
-                });
+                await this.fetchContractVxosFromIndexer(
+                    activeWatchedContracts,
+                    false
+                );
                 break;
             case "contract_expired":
                 // just update DB
@@ -611,11 +593,98 @@ export class ContractManager implements IContractManager {
     private async getVtxosForContracts(
         contracts: Contract[]
     ): Promise<Map<string, ContractVtxo[]>> {
-        return this.vtxoCache.getContractVtxos(
+        if (contracts.length === 0) {
+            return new Map();
+        }
+
+        return await this.fetchContractVxosFromIndexer(
             contracts,
-            {},
+            false,
             this.config.extendVtxo
         );
+    }
+
+    private async fetchContractVxosFromIndexer(
+        contracts: Contract[],
+        includeSpent: boolean,
+        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+    ): Promise<Map<string, ContractVtxo[]>> {
+        const fetched = await this.fetchContractVtxosBulk(
+            contracts,
+            includeSpent,
+            extendVtxo
+        );
+        const result = new Map<string, ContractVtxo[]>();
+        for (const [contractId, vtxos] of fetched) {
+            result.set(contractId, vtxos);
+            const contract = contracts.find((c) => c.id === contractId);
+            if (contract) {
+                await this.config.walletRepository.saveVtxos(
+                    contract.address,
+                    vtxos
+                );
+            }
+        }
+        return result;
+    }
+
+    private async fetchContractVtxosBulk(
+        contracts: Contract[],
+        includeSpent: boolean,
+        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+    ): Promise<Map<string, ContractVtxo[]>> {
+        const result = new Map<string, ContractVtxo[]>();
+
+        await Promise.all(
+            contracts.map(async (contract) => {
+                const vtxos = await this.fetchContractVtxosPaginated(
+                    contract,
+                    includeSpent,
+                    extendVtxo
+                );
+                result.set(contract.id, vtxos);
+            })
+        );
+
+        return result;
+    }
+
+    private async fetchContractVtxosPaginated(
+        contract: Contract,
+        includeSpent: boolean,
+        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+    ): Promise<ContractVtxo[]> {
+        const pageSize = 100;
+        const allVtxos: ContractVtxo[] = [];
+        let pageIndex = 0;
+        let hasMore = true;
+
+        const opts = includeSpent ? {} : { spendableOnly: true };
+
+        while (hasMore) {
+            const { vtxos, page } = await this.config.indexerProvider.getVtxos({
+                scripts: [contract.script],
+                ...opts,
+                pageIndex,
+                pageSize,
+            });
+
+            for (const vtxo of vtxos) {
+                const ext = extendVtxo
+                    ? extendVtxo(vtxo)
+                    : (vtxo as ExtendedVirtualCoin);
+
+                allVtxos.push({
+                    ...ext,
+                    contractId: contract.id,
+                });
+            }
+
+            hasMore = page ? vtxos.length === pageSize : false;
+            pageIndex++;
+        }
+
+        return allVtxos;
     }
 
     /**

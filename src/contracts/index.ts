@@ -22,10 +22,6 @@ export type { ParsedArkContract } from "./arkcontract";
 export { ContractWatcher } from "./contractWatcher";
 export type { ContractWatcherConfig } from "./contractWatcher";
 
-// Contract cache
-export { IndexerContractVtxoCache } from "./contractCache";
-export type { ContractVtxoCache } from "./contractCache";
-
 // Contract manager
 export { ContractManager } from "./contractManager";
 export type {
