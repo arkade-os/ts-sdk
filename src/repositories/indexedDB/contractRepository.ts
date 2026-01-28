@@ -191,10 +191,17 @@ export class IndexedDBContractRepository implements ContractRepository {
 
             // first by ID
             if (normalizedFilter.has("id")) {
-                const contracts = await this.getContractsByIndexValues(
-                    store,
-                    "id",
-                    normalizedFilter.get("id")!
+                const ids = normalizedFilter.get("id")!;
+                const contracts = await Promise.all(
+                    ids.map(
+                        (id) =>
+                            new Promise<Contract>((resolve, reject) => {
+                                const req = store.get(id);
+                                req.onerror = () => reject(req.error);
+                                req.onsuccess = () =>
+                                    resolve(req.result as Contract);
+                            })
+                    )
                 );
                 return this.applyContractFilter(contracts, normalizedFilter);
             }
