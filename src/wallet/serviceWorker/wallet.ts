@@ -129,15 +129,6 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
 };
 
-class UnexpectedResponseError extends Error {
-    constructor(response: WalletUpdaterResponse) {
-        super(
-            `Unexpected response from WalletUpdater: ${response.type ?? "unknown"}`
-        );
-        this.name = "UnexpectedResponseError";
-    }
-}
-
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
@@ -416,11 +407,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: WalletUpdater.messageTag,
                     payload: params,
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "CONTRACT_CREATED") {
-                    return (response as ResponseCreateContract).payload.contract;
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseCreateContract).payload
+                        .contract;
+                } catch (e) {
+                    throw new Error("Failed to create contract");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             async getContracts(
@@ -432,11 +425,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: WalletUpdater.messageTag,
                     payload: { filter },
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "CONTRACTS") {
+                try {
+                    const response = await sendContractMessage(message);
                     return (response as ResponseGetContracts).payload.contracts;
+                } catch (e) {
+                    throw new Error("Failed to get contracts");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             async getContractsWithVtxos(
@@ -448,12 +442,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: WalletUpdater.messageTag,
                     payload: { filter },
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "CONTRACTS_WITH_VTXOS") {
+                try {
+                    const response = await sendContractMessage(message);
                     return (response as ResponseGetContractsWithVtxos).payload
                         .contracts;
+                } catch (e) {
+                    throw new Error("Failed to get contracts with vtxos");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             async updateContract(
@@ -466,11 +461,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: WalletUpdater.messageTag,
                     payload: { contractId: id, updates },
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "CONTRACT_UPDATED") {
-                    return (response as ResponseUpdateContract).payload.contract;
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseUpdateContract).payload
+                        .contract;
+                } catch (e) {
+                    throw new Error("Failed to update contract");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             async setContractState(
@@ -483,11 +480,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: WalletUpdater.messageTag,
                     payload: { contractId: id, updates: { state } },
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "CONTRACT_UPDATED") {
+                try {
+                    await sendContractMessage(message);
                     return;
+                } catch (e) {
+                    throw new Error("Failed to update contract state");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             async deleteContract(id: string): Promise<void> {
@@ -497,11 +495,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: WalletUpdater.messageTag,
                     payload: { contractId: id },
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "CONTRACT_DELETED") {
+                try {
+                    const response = await sendContractMessage(message);
                     return;
+                } catch (e) {
+                    throw new Error("Failed to delete contract");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             async getSpendablePaths(
@@ -513,11 +512,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     tag: WalletUpdater.messageTag,
                     payload: { options },
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "SPENDABLE_PATHS") {
-                    return (response as ResponseGetSpendablePaths).payload.paths;
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetSpendablePaths).payload
+                        .paths;
+                } catch (e) {
+                    throw new Error("Failed to get spendable paths");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             onContractEvent(callback: ContractEventCallback): () => void {
@@ -549,12 +550,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     id: getRandomId(),
                     tag: WalletUpdater.messageTag,
                 };
-                const response = await sendContractMessage(message);
-                if (response.type === "CONTRACT_WATCHING") {
+                try {
+                    const response = await sendContractMessage(message);
                     return (response as ResponseIsContractManagerWatching)
                         .payload.isWatching;
+                } catch (e) {
+                    throw new Error(
+                        "Failed to check if contract manager is watching"
+                    );
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             dispose(): void {
