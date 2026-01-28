@@ -2,18 +2,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import {
     ContractManager,
+    DefaultContractHandler,
+    DefaultVtxo,
     IndexerProvider,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     SubscriptionResponse,
 } from "../../src";
 import { ContractRepository } from "../../src/repositories";
+import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
     createMockExtendedVtxo,
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
+    TEST_PUB_KEY,
+    TEST_SERVER_PUB_KEY,
 } from "./helpers";
 
 vi.useFakeTimers();
@@ -48,30 +53,41 @@ describe("ContractManager", () => {
             address: "address",
         });
 
-        expect(contract.id).toBeDefined();
+        expect(contract.script).toBeDefined();
         expect(contract.createdAt).toBeDefined();
         expect(contract.state).toBe("active");
 
-        const [retrieved] = await manager.getContracts({ id: contract.id });
+        const [retrieved] = await manager.getContracts({
+            script: contract.script,
+        });
         expect(retrieved).toEqual(contract);
     });
 
     it("should list all contracts", async () => {
-        // Create two contracts with explicit different IDs
-        // (since script defaults to ID, we need different IDs for same script)
+        // Create two contracts with explicit different scripts
         await manager.createContract({
-            id: "contract-1",
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
             address: "address-1",
         });
 
+        const altParams = DefaultContractHandler.serializeParams({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: {
+                type: "blocks",
+                value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n,
+            },
+        });
+        const altScript = hex.encode(
+            DefaultContractHandler.createScript(altParams).pkScript
+        );
+
         await manager.createContract({
-            id: "contract-2",
             type: "default",
-            params: createDefaultContractParams(),
-            script: TEST_DEFAULT_SCRIPT,
+            params: altParams,
+            script: altScript,
             address: "address-2",
         });
 
@@ -86,9 +102,9 @@ describe("ContractManager", () => {
             address: "address",
         });
         expect(await manager.getContracts({ state: "active" })).toHaveLength(1);
-        await manager.setContractState(contract.id, "inactive");
+        await manager.setContractState(contract.script, "inactive");
         expect(await manager.getContracts({ state: "active" })).toHaveLength(0);
-        await manager.setContractState(contract.id, "active");
+        await manager.setContractState(contract.script, "active");
         expect(await manager.getContracts({ state: "active" })).toHaveLength(1);
     });
 
@@ -101,11 +117,13 @@ describe("ContractManager", () => {
             metadata: { customField: "initial" },
         });
 
-        await manager.updateContract(contract.id, {
+        await manager.updateContract(contract.script, {
             metadata: { newField: "added" },
         });
 
-        const [updated] = await manager.getContracts({ id: contract.id });
+        const [updated] = await manager.getContracts({
+            script: contract.script,
+        });
         expect(updated?.metadata).toEqual({
             newField: "added",
         });
@@ -119,11 +137,13 @@ describe("ContractManager", () => {
             address: "address",
         });
 
-        await manager.updateContractParams(contract.id, {
+        await manager.updateContractParams(contract.script, {
             preimage: "newSecret",
         });
 
-        const [updated] = await manager.getContracts({ id: contract.id });
+        const [updated] = await manager.getContracts({
+            script: contract.script,
+        });
         expect(updated?.params).toEqual({
             ...contract.params,
             preimage: "newSecret",

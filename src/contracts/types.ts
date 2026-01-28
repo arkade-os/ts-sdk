@@ -21,7 +21,6 @@ export type ContractState = "active" | "inactive";
  * @example
  * ```typescript
  * const vhtlcContract: Contract = {
- *   id: "swap-abc123",
  *   type: "vhtlc",
  *   params: {
  *     sender: "ab12...",
@@ -39,9 +38,6 @@ export type ContractState = "active" | "inactive";
  * ```
  */
 export interface Contract {
-    /** Unique identifier for this contract */
-    id: string;
-
     /** Human-readable label for display purposes */
     label?: string;
 
@@ -59,7 +55,7 @@ export interface Contract {
      */
     params: Record<string, string>;
 
-    /** The pkScript hex - derived from VtxoScript, used to match VTXOs */
+    /** The pkScript hex - unique identifier and primary key for contracts */
     script: string;
 
     /** The address derived from the script */
@@ -84,8 +80,8 @@ export interface Contract {
  * A VTXO that has been associated with a specific contract.
  */
 export interface ContractVtxo extends ExtendedVirtualCoin {
-    /** The contract ID this VTXO belongs to */
-    contractId: string;
+    /** The contract script this VTXO belongs to */
+    contractScript: string;
 }
 
 /**
@@ -208,21 +204,21 @@ export interface ContractHandler<
 export type ContractEvent =
     | {
           type: "vtxo_received";
-          contractId: string;
+          contractScript: string;
           vtxos: ContractVtxo[];
           contract: Contract;
           timestamp: number;
       }
     | {
           type: "vtxo_spent";
-          contractId: string;
+          contractScript: string;
           vtxos: ContractVtxo[];
           contract: Contract;
           timestamp: number;
       }
     | {
           type: "contract_expired";
-          contractId: string;
+          contractScript: string;
           contract: Contract;
           timestamp: number;
       }

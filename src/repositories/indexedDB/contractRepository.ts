@@ -8,9 +8,6 @@ import {
 } from "./db";
 import { Contract } from "../../contracts";
 
-export const collectionKey = (contractType: string) =>
-    `collection:${contractType}`;
-
 /**
  * IndexedDB-based implementation of ContractRepository.
  *
@@ -20,113 +17,6 @@ export class IndexedDBContractRepository implements ContractRepository {
     private db: IDBDatabase | null = null;
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
-
-    async getContractCollection<T>(
-        contractType: string
-    ): Promise<ReadonlyArray<T>> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [LEGACY_STORE_CONTRACT_COLLECTIONS],
-                    "readonly"
-                );
-                const store = transaction.objectStore(
-                    LEGACY_STORE_CONTRACT_COLLECTIONS
-                );
-                const request = store.get(collectionKey(contractType));
-
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => {
-                    const result = request.result as
-                        | { value?: string }
-                        | undefined;
-                    if (!result?.value) return resolve([]);
-                    try {
-                        resolve(JSON.parse(result.value) as ReadonlyArray<T>);
-                    } catch (error) {
-                        reject(error);
-                    }
-                };
-            });
-        } catch (error) {
-            console.error(
-                `Failed to get contract collection ${contractType}:`,
-                error
-            );
-            return [];
-        }
-    }
-
-    async saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void> {
-        // Validate that the item has the required id field
-        const itemId = item[idField];
-        if (itemId === undefined || itemId === null) {
-            throw new Error(
-                `Item is missing required field '${String(idField)}'`
-            );
-        }
-
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [LEGACY_STORE_CONTRACT_COLLECTIONS],
-                    "readwrite"
-                );
-                const store = transaction.objectStore(
-                    LEGACY_STORE_CONTRACT_COLLECTIONS
-                );
-                const key = collectionKey(contractType);
-
-                // Read within the same transaction
-                const getRequest = store.get(key);
-
-                getRequest.onerror = () => reject(getRequest.error);
-                getRequest.onsuccess = () => {
-                    try {
-                        const result = getRequest.result as
-                            | { value?: string }
-                            | undefined;
-                        const collection: T[] = result?.value
-                            ? JSON.parse(result.value)
-                            : [];
-
-                        const existingIndex = collection.findIndex(
-                            (i) => i[idField] === itemId
-                        );
-                        const updated =
-                            existingIndex !== -1
-                                ? collection.map((entry, index) =>
-                                      index === existingIndex ? item : entry
-                                  )
-                                : [...collection, item];
-
-                        // Write within the same transaction
-                        const putRequest = store.put({
-                            key,
-                            value: JSON.stringify(updated),
-                        });
-
-                        putRequest.onerror = () => reject(putRequest.error);
-                        putRequest.onsuccess = () => resolve();
-                    } catch (error) {
-                        reject(error);
-                    }
-                };
-            });
-        } catch (error) {
-            console.error(
-                `Failed to save to contract collection ${contractType}:`,
-                error
-            );
-            throw error;
-        }
-    }
 
     async clear(): Promise<void> {
         try {
@@ -182,36 +72,25 @@ export class IndexedDBContractRepository implements ContractRepository {
                 return new Promise((resolve, reject) => {
                     const request = store.getAll();
                     request.onerror = () => reject(request.error);
-                    request.onsuccess = () =>
-                        resolve((request.result ?? []) as Contract[]);
+                    request.onsuccess = () => resolve(request.result ?? []);
                 });
             }
 
             const normalizedFilter = normalizeFilter(filter);
 
-            // first by ID
-            if (normalizedFilter.has("id")) {
-                const ids = normalizedFilter.get("id")!;
+            // first by script, primary key
+            if (normalizedFilter.has("script")) {
+                const scripts = normalizedFilter.get("script")!;
                 const contracts = await Promise.all(
-                    ids.map(
-                        (id) =>
+                    scripts.map(
+                        (script) =>
                             new Promise<Contract>((resolve, reject) => {
-                                const req = store.get(id);
+                                const req = store.get(script);
                                 req.onerror = () => reject(req.error);
                                 req.onsuccess = () =>
                                     resolve(req.result as Contract);
                             })
                     )
-                );
-                return this.applyContractFilter(contracts, normalizedFilter);
-            }
-
-            // second by script, still an index
-            if (normalizedFilter.has("script")) {
-                const contracts = await this.getContractsByIndexValues(
-                    store,
-                    "script",
-                    normalizedFilter.get("script")!
                 );
                 return this.applyContractFilter(contracts, normalizedFilter);
             }
@@ -241,8 +120,7 @@ export class IndexedDBContractRepository implements ContractRepository {
                 (resolve, reject) => {
                     const request = store.getAll();
                     request.onerror = () => reject(request.error);
-                    request.onsuccess = () =>
-                        resolve((request.result ?? []) as Contract[]);
+                    request.onsuccess = () => resolve(request.result ?? []);
                 }
             );
             return this.applyContractFilter(allContracts, normalizedFilter);
@@ -262,7 +140,6 @@ export class IndexedDBContractRepository implements ContractRepository {
                 );
                 const store = transaction.objectStore(STORE_CONTRACTS);
                 const request = store.put(contract);
-
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => resolve();
             });
@@ -272,7 +149,7 @@ export class IndexedDBContractRepository implements ContractRepository {
         }
     }
 
-    async deleteContract(id: string): Promise<void> {
+    async deleteContract(script: string): Promise<void> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
@@ -281,13 +158,18 @@ export class IndexedDBContractRepository implements ContractRepository {
                     "readwrite"
                 );
                 const store = transaction.objectStore(STORE_CONTRACTS);
-                const request = store.delete(id);
+                const getRequest = store.get(script);
 
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve();
+                getRequest.onerror = () => reject(getRequest.error);
+                getRequest.onsuccess = () => {
+                    const request = store.delete(script);
+
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => resolve();
+                };
             });
         } catch (error) {
-            console.error(`Failed to delete contract ${id}:`, error);
+            console.error(`Failed to delete contract ${script}:`, error);
             throw error;
         }
     }
@@ -304,8 +186,7 @@ export class IndexedDBContractRepository implements ContractRepository {
                 new Promise<Contract[]>((resolve, reject) => {
                     const request = index.getAll(value);
                     request.onerror = () => reject(request.error);
-                    request.onsuccess = () =>
-                        resolve((request.result ?? []) as Contract[]);
+                    request.onsuccess = () => resolve(request.result ?? []);
                 })
         );
         return Promise.all(requests).then((results) =>
@@ -318,8 +199,6 @@ export class IndexedDBContractRepository implements ContractRepository {
         filter: ReturnType<typeof normalizeFilter>
     ): Contract[] {
         return contracts.filter((contract) => {
-            if (filter.has("id") && !filter.get("id")?.includes(contract.id))
-                return false;
             if (
                 filter.has("script") &&
                 !filter.get("script")?.includes(contract.script)
@@ -352,12 +231,7 @@ export class IndexedDBContractRepository implements ContractRepository {
     }
 }
 
-const FILTER_FIELDS = [
-    "id",
-    "script",
-    "state",
-    "type",
-] as (keyof ContractFilter)[];
+const FILTER_FIELDS = ["script", "state", "type"] as (keyof ContractFilter)[];
 
 // Transform all filter fields into an array of values
 function normalizeFilter(filter: ContractFilter) {

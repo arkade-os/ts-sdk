@@ -548,22 +548,26 @@ const contract = await manager.createContract({
 const unsubscribe = await manager.onContractEvent((event) => {
   switch (event.type) {
     case 'vtxo_received':
-      console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractId}`)
+      console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractScript}`)
       break
     case 'vtxo_spent':
-      console.log(`Spent VTXOs on ${event.contractId}`)
+      console.log(`Spent VTXOs on ${event.contractScript}`)
       break
     case 'contract_expired':
-      console.log(`Contract ${event.contractId} expired`)
+      console.log(`Contract ${event.contractScript} expired`)
       break
   }
 })
 
 // Update contract data (e.g., set preimage when revealed)
-await manager.updateContractData(contract.id, { preimage: revealedPreimage })
+await manager.updateContractParams(contract.script, { preimage: revealedPreimage })
 
 // Check spendable paths
-const paths = manager.getSpendablePaths(contract.id, true, myPubKey)
+const paths = manager.getSpendablePaths({
+  contractScript: contract.script,
+  collaborative: true,
+  walletPubKey: myPubKey,
+})
 if (paths.length > 0) {
   console.log('Contract is spendable via:', paths[0].leaf)
 }

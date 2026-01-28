@@ -149,7 +149,7 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
     // Create contract stores
     if (!db.objectStoreNames.contains(STORE_CONTRACTS)) {
         const contractsStore = db.createObjectStore(STORE_CONTRACTS, {
-            keyPath: "id",
+            keyPath: "script",
         });
 
         if (!contractsStore.indexNames.contains("type")) {
@@ -160,11 +160,6 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
         if (!contractsStore.indexNames.contains("state")) {
             contractsStore.createIndex("state", "state", {
                 unique: false,
-            });
-        }
-        if (!contractsStore.indexNames.contains("script")) {
-            contractsStore.createIndex("script", "script", {
-                unique: true,
             });
         }
     }

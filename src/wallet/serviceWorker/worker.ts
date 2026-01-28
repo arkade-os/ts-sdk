@@ -1090,7 +1090,7 @@ export class Worker {
         try {
             const manager = await this.handler.getContractManager();
             const contract = await manager.updateContract(
-                message.contractId,
+                message.contractScript,
                 message.updates
             );
             event.source?.postMessage(
@@ -1129,7 +1129,7 @@ export class Worker {
 
         try {
             const manager = await this.handler.getContractManager();
-            await manager.deleteContract(message.contractId);
+            await manager.deleteContract(message.contractScript);
             event.source?.postMessage(Response.contractDeleted(message.id));
         } catch (error: unknown) {
             console.error("Error deleting contract:", error);

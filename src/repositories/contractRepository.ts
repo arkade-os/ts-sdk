@@ -4,8 +4,6 @@ import { Contract, ContractState } from "../contracts/types";
  * Filter options for querying contracts.
  */
 export interface ContractFilter {
-    /** Filter by contract ID(s) */
-    id?: string | string[];
     /** Filter by script(s) */
     script?: string | string[];
     /** Filter by state(s) */
@@ -32,7 +30,7 @@ export interface ContractRepository extends AsyncDisposable {
     saveContract(contract: Contract): Promise<void>;
 
     /**
-     * Delete a contract by ID.
+     * Delete a contract by script.
      */
-    deleteContract(id: string): Promise<void>;
+    deleteContract(script: string): Promise<void>;
 }

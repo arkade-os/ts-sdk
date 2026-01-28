@@ -1,8 +1,8 @@
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { Contract } from "../../contracts";
 
-const contractKey = (contractId: string, key: string) =>
-    `contract:${contractId}:${key}`;
+const contractKey = (contractScript: string, key: string) =>
+    `contract:${contractScript}:${key}`;
 
 /**
  * In-memory implementation of ContractRepository.
@@ -11,7 +11,7 @@ const contractKey = (contractId: string, key: string) =>
 export class InMemoryContractRepository implements ContractRepository {
     private readonly contractData = new Map<string, unknown>();
     private readonly collections = new Map<string, unknown[]>();
-    private readonly contractsById = new Map<string, Contract>();
+    private readonly contractsByScript = new Map<string, Contract>();
 
     async getContractCollection<T>(
         contractType: string
@@ -45,13 +45,13 @@ export class InMemoryContractRepository implements ContractRepository {
     async clear(): Promise<void> {
         this.contractData.clear();
         this.collections.clear();
-        this.contractsById.clear();
+        this.contractsByScript.clear();
     }
 
     // Contract entity management methods
 
     async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        const contracts = this.contractsById.values();
+        const contracts = this.contractsByScript.values();
 
         if (!filter) {
             return [...contracts];
@@ -69,7 +69,6 @@ export class InMemoryContractRepository implements ContractRepository {
         const results: Contract[] = [];
         for (const contract of contracts) {
             if (
-                matches(contract.id, filter.id) &&
                 matches(contract.script, filter.script) &&
                 matches(contract.state, filter.state) &&
                 matches(contract.type, filter.type)
@@ -81,11 +80,11 @@ export class InMemoryContractRepository implements ContractRepository {
     }
 
     async saveContract(contract: Contract): Promise<void> {
-        this.contractsById.set(contract.id, contract);
+        this.contractsByScript.set(contract.script, contract);
     }
 
-    async deleteContract(id: string): Promise<void> {
-        this.contractsById.delete(id);
+    async deleteContract(script: string): Promise<void> {
+        this.contractsByScript.delete(script);
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

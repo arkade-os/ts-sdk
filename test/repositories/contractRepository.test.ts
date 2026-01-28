@@ -40,7 +40,6 @@ describe.each(contractRepositoryImplementations)(
 
         it("should save and retrieve contract", async () => {
             const contract: Contract = {
-                id: "test-1",
                 type: "default",
                 params: {},
                 script: "script-hex",
@@ -50,7 +49,9 @@ describe.each(contractRepositoryImplementations)(
             };
 
             await repository.saveContract(contract);
-            const contracts = await repository.getContracts({ id: "test-1" });
+            const contracts = await repository.getContracts({
+                script: "script-hex",
+            });
 
             expect(contracts).toHaveLength(1);
             expect(contracts[0]).toEqual(contract);
@@ -58,7 +59,6 @@ describe.each(contractRepositoryImplementations)(
 
         it("should get contracts by state", async () => {
             const activeContract: Contract = {
-                id: "active-1",
                 type: "default",
                 params: {},
                 script: "script-1",
@@ -68,7 +68,6 @@ describe.each(contractRepositoryImplementations)(
             };
 
             const inactiveContract: Contract = {
-                id: "inactive-1",
                 type: "default",
                 params: {},
                 script: "script-2",
@@ -88,15 +87,14 @@ describe.each(contractRepositoryImplementations)(
             });
 
             expect(activeContracts).toHaveLength(1);
-            expect(activeContracts[0].id).toBe("active-1");
+            expect(activeContracts[0].script).toBe("script-1");
             expect(inactiveContracts).toHaveLength(1);
-            expect(inactiveContracts[0].id).toBe("inactive-1");
+            expect(inactiveContracts[0].script).toBe("script-2");
         });
 
-        it("should support array filters for id, state, and type", async () => {
+        it("should support array filters for script, state, and type", async () => {
             const contracts: Contract[] = [
                 {
-                    id: "multi-1",
                     type: "default",
                     params: {},
                     script: "script-1",
@@ -105,7 +103,6 @@ describe.each(contractRepositoryImplementations)(
                     createdAt: Date.now(),
                 },
                 {
-                    id: "multi-2",
                     type: "vhtlc",
                     params: {},
                     script: "script-2",
@@ -114,7 +111,6 @@ describe.each(contractRepositoryImplementations)(
                     createdAt: Date.now(),
                 },
                 {
-                    id: "multi-3",
                     type: "default",
                     params: {},
                     script: "script-3",
@@ -128,8 +124,8 @@ describe.each(contractRepositoryImplementations)(
                 await repository.saveContract(contract);
             }
 
-            const byIds = await repository.getContracts({
-                id: ["multi-1", "multi-3"],
+            const byScripts = await repository.getContracts({
+                script: ["script-1", "script-3"],
             });
             const byStates = await repository.getContracts({
                 state: ["inactive"],
@@ -138,18 +134,17 @@ describe.each(contractRepositoryImplementations)(
                 type: ["vhtlc"],
             });
 
-            expect(byIds.map((contract) => contract.id)).toEqual([
-                "multi-1",
-                "multi-3",
+            expect(byScripts.map((contract) => contract.script)).toEqual([
+                "script-1",
+                "script-3",
             ]);
             expect(byStates).toHaveLength(2);
             expect(byTypes).toHaveLength(1);
-            expect(byTypes[0].id).toBe("multi-2");
+            expect(byTypes[0].script).toBe("script-2");
         });
 
         it("should update contract state via save", async () => {
             const contract: Contract = {
-                id: "test-1",
                 type: "default",
                 params: {},
                 script: "script-hex",
@@ -163,13 +158,14 @@ describe.each(contractRepositoryImplementations)(
             // Update state by saving modified contract
             await repository.saveContract({ ...contract, state: "inactive" });
 
-            const contracts = await repository.getContracts({ id: "test-1" });
+            const contracts = await repository.getContracts({
+                script: "script-hex",
+            });
             expect(contracts[0]?.state).toBe("inactive");
         });
 
         it("should update contract data via save", async () => {
             const contract: Contract = {
-                id: "test-1",
                 type: "vhtlc",
                 params: { hash: "abc", hashlock: "abc" },
                 script: "script-hex",
@@ -187,7 +183,9 @@ describe.each(contractRepositoryImplementations)(
                 params: { ...contract.params, preimage: "secret" },
             });
 
-            const contracts = await repository.getContracts({ id: "test-1" });
+            const contracts = await repository.getContracts({
+                script: "script-hex",
+            });
             expect(contracts[0]?.params).toEqual({
                 ...contract.params,
                 preimage: "secret",
@@ -196,7 +194,6 @@ describe.each(contractRepositoryImplementations)(
 
         it("should delete contract", async () => {
             const contract: Contract = {
-                id: "test-1",
                 type: "default",
                 params: {},
                 script: "script-hex",
@@ -206,15 +203,16 @@ describe.each(contractRepositoryImplementations)(
             };
 
             await repository.saveContract(contract);
-            await repository.deleteContract("test-1");
+            await repository.deleteContract("script-hex");
 
-            const contracts = await repository.getContracts({ id: "test-1" });
+            const contracts = await repository.getContracts({
+                script: "script-hex",
+            });
             expect(contracts).toHaveLength(0);
         });
 
         it("should get contract by script", async () => {
             const contract: Contract = {
-                id: "test-1",
                 type: "default",
                 params: {},
                 script: "unique-script-hex",
@@ -229,7 +227,7 @@ describe.each(contractRepositoryImplementations)(
             });
 
             expect(contracts).toHaveLength(1);
-            expect(contracts[0].id).toBe("test-1");
+            expect(contracts[0].script).toBe("unique-script-hex");
         });
     }
 );
