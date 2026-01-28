@@ -1,11 +1,12 @@
-// Store names
+// Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
 export const STORE_UTXOS = "utxos";
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
 export const STORE_COMMITMENT_TXS = "commitmentTxs";
 export const STORE_CONTRACTS = "contracts";
-// @deprecated use only for migrations
+
+// @deprecated use only for migrations, this is created in V1
 export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 
 export const DB_VERSION = 2;

@@ -3,7 +3,6 @@ import { CommitmentTxRecord, WalletRepository } from "../walletRepository";
 import { ContractRepository } from "../contractRepository";
 import { WalletRepositoryImpl } from "./walletRepositoryImpl";
 import { ContractRepositoryImpl } from "./contractRepositoryImpl";
-import { Contract, VHTLCContractHandler } from "../../contracts";
 
 const MIGRATION_KEY = (repoType: "wallet" | "contract") =>
     `migration-from-storage-adapter-${repoType}`;
