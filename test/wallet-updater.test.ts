@@ -228,11 +228,10 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     it("handles GET_TRANSACTION_HISTORY messages", async () => {
-        (updater as any).wallet = {};
         const transactions = [{ txid: "tx" }];
-        (updater as any).getTransactionHistory = vi
-            .fn()
-            .mockResolvedValue(transactions);
+        (updater as any).wallet = {
+            getTransactionHistory: vi.fn().mockResolvedValue(transactions),
+        };
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -303,6 +302,133 @@ describe("WalletUpdater handleMessage", () => {
             type: "RELOAD_SUCCESS",
             payload: { reloaded: true },
         });
+    });
+
+    it("handles contract manager messages", async () => {
+        const contract = { id: "c1" };
+        const contracts = [contract];
+        const contractsWithVtxos = [{ id: "c2", vtxos: [] }];
+        const paths = [{ id: "p1" }];
+        const manager = {
+            createContract: vi.fn().mockResolvedValue(contract),
+            getContracts: vi.fn().mockResolvedValue(contracts),
+            getContractsWithVtxos: vi
+                .fn()
+                .mockResolvedValue(contractsWithVtxos),
+            updateContract: vi.fn().mockResolvedValue(contract),
+            deleteContract: vi.fn().mockResolvedValue(undefined),
+            getSpendablePaths: vi.fn().mockResolvedValue(paths),
+            isWatching: vi.fn().mockResolvedValue(true),
+        };
+        (updater as any).wallet = {
+            getContractManager: vi.fn().mockResolvedValue(manager),
+        };
+
+        const createResponse = await updater.handleMessage({
+            ...baseMessage("c"),
+            type: "CREATE_CONTRACT",
+            payload: { type: "test", params: {}, script: "00", address: "a" },
+        } as any);
+        expect(createResponse).toMatchObject({
+            tag: WalletUpdater.messageTag,
+            type: "CONTRACT_CREATED",
+            payload: { contract },
+        });
+
+        const getResponse = await updater.handleMessage({
+            ...baseMessage("g"),
+            type: "GET_CONTRACTS",
+            payload: {},
+        } as any);
+        expect(getResponse).toMatchObject({
+            tag: WalletUpdater.messageTag,
+            type: "CONTRACTS",
+            payload: { contracts },
+        });
+
+        const getWithVtxosResponse = await updater.handleMessage({
+            ...baseMessage("gw"),
+            type: "GET_CONTRACTS_WITH_VTXOS",
+            payload: {},
+        } as any);
+        expect(getWithVtxosResponse).toMatchObject({
+            tag: WalletUpdater.messageTag,
+            type: "CONTRACTS_WITH_VTXOS",
+            payload: { contracts: contractsWithVtxos },
+        });
+
+        const updateResponse = await updater.handleMessage({
+            ...baseMessage("u"),
+            type: "UPDATE_CONTRACT",
+            payload: { contractId: "c1", updates: { label: "new" } },
+        } as any);
+        expect(updateResponse).toMatchObject({
+            tag: WalletUpdater.messageTag,
+            type: "CONTRACT_UPDATED",
+            payload: { contract },
+        });
+
+        const deleteResponse = await updater.handleMessage({
+            ...baseMessage("d"),
+            type: "DELETE_CONTRACT",
+            payload: { contractId: "c1" },
+        } as any);
+        expect(deleteResponse).toMatchObject({
+            tag: WalletUpdater.messageTag,
+            type: "CONTRACT_DELETED",
+            payload: { deleted: true },
+        });
+
+        const spendablePathsResponse = await updater.handleMessage({
+            ...baseMessage("p"),
+            type: "GET_SPENDABLE_PATHS",
+            payload: { options: { contractId: "c1" } },
+        } as any);
+        expect(spendablePathsResponse).toMatchObject({
+            tag: WalletUpdater.messageTag,
+            type: "SPENDABLE_PATHS",
+            payload: { paths },
+        });
+
+        const watchingResponse = await updater.handleMessage({
+            ...baseMessage("w"),
+            type: "IS_CONTRACT_MANAGER_WATCHING",
+        } as any);
+        expect(watchingResponse).toMatchObject({
+            tag: WalletUpdater.messageTag,
+            type: "CONTRACT_WATCHING",
+            payload: { isWatching: true },
+        });
+    });
+
+    it("broadcasts contract events without subscriptions", async () => {
+        const unsubscribe = vi.fn();
+        let eventCallback: ((event: any) => void) | undefined;
+        const manager = {
+            onContractEvent: vi.fn((cb: any) => {
+                eventCallback = cb;
+                return unsubscribe;
+            }),
+        };
+        (updater as any).wallet = {
+            getContractManager: vi.fn().mockResolvedValue(manager),
+        };
+
+        await (updater as any).ensureContractEventBroadcasting();
+        expect(manager.onContractEvent).toHaveBeenCalled();
+
+        const event = { type: "test", contractId: "c1" };
+        eventCallback?.(event);
+
+        const tickResponses = await updater.tick(Date.now());
+        expect(tickResponses).toEqual([
+            {
+                tag: WalletUpdater.messageTag,
+                type: "CONTRACT_EVENT",
+                broadcast: true,
+                payload: { event },
+            },
+        ]);
     });
 
     it("returns a tagged error for unknown message types", async () => {
