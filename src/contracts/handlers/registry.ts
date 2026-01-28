@@ -17,8 +17,7 @@ import { ContractHandler } from "../types";
  * ```
  */
 class ContractHandlerRegistry {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    private handlers = new Map<string, ContractHandler<any>>();
+    private handlers = new Map<string, ContractHandler<unknown>>();
 
     /**
      * Register a contract handler.
