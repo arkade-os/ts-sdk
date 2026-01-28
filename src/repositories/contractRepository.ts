@@ -16,20 +16,6 @@ export interface ContractFilter {
 
 export interface ContractRepository extends AsyncDisposable {
     /**
-     * @deprecated Use getContracts instead, this was done for boltz-swap compatibility.
-     */
-    getContractCollection<T>(contractType: string): Promise<ReadonlyArray<T>>;
-
-    /**
-     * @deprecated Use saveContract instead, this was done for boltz-swap compatibility.
-     */
-    saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void>;
-
-    /**
      * Clear all data from storage.
      */
     clear(): Promise<void>;

@@ -382,8 +382,7 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > import {
 >   IndexedDBWalletRepository,
 >   IndexedDBContractRepository,
->   migrateWalletRepository,
->   migrateContractRepository
+>   migrateWalletRepository
 > } from '@arkade-os/sdk'
 > import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
 >
@@ -395,10 +394,9 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 >   'address-1',
 >   'address-2'
 > ])
->
-> const contractRepository = new IndexedDBContractRepository(newDbName)
-> await migrateContractRepository(oldStorage, contractRepository)
 > ```
+>
+> Anything related to contract repository migration must be handled by the package which created them. The SDK doesn't manage contracts in V1. Data remains untouched and persisted in the same old location.
 >  
 > If you persisted custom data in the ContractRepository via its `setContractData` method, 
 > or a custom collection via `saveToContractCollection`, you'll need to migrate it manually:
