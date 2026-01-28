@@ -3,7 +3,6 @@ import {
     ContractRepository,
     CONTRACTS_COLLECTION,
 } from "../contractRepository";
-import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 import {
     openDatabase,
     closeDatabase,
@@ -11,6 +10,7 @@ import {
     STORE_CONTRACT_COLLECTIONS,
 } from "./db";
 import { Contract } from "../../contracts";
+import { DEFAULT_DB_NAME } from "../../serviceWorker/utils";
 
 export const contractKey = (contractId: string, key: string) =>
     `contract:${contractId}:${key}`;

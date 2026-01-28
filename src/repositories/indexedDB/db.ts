@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { TapLeafScript } from "../../script/base";
 import { ExtendedCoin, ExtendedVirtualCoin } from "../../wallet";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
+import { DEFAULT_DB_NAME } from "../../serviceWorker/utils";
 import {
     DB_VERSION,
     STORE_CONTRACTS,

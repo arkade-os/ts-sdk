@@ -4,7 +4,7 @@ import {
     ArkTransaction,
 } from "../../wallet";
 import { WalletRepository, WalletState } from "../walletRepository";
-import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
+import { DEFAULT_DB_NAME } from "../../serviceWorker/utils";
 import {
     openDatabase,
     closeDatabase,
