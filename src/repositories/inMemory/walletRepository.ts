@@ -87,12 +87,12 @@ export class InMemoryWalletRepository implements WalletRepository {
         this.walletState = state;
     }
 
-    async getCommitmentTxs(txid: string): Promise<CommitmentTxRecord[]> {
+    async getCommitmentTx(txid: string): Promise<CommitmentTxRecord | null> {
         const record = this.commitmentTxsByTxid.get(txid);
-        return record ? [record] : [];
+        return record ?? null;
     }
 
-    async saveCommitmentTxs(commitmentTx: CommitmentTxRecord): Promise<void> {
+    async saveCommitmentTx(commitmentTx: CommitmentTxRecord): Promise<void> {
         this.commitmentTxsByTxid.set(commitmentTx.txid, commitmentTx);
     }
 

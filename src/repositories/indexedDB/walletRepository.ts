@@ -366,7 +366,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async getCommitmentTxs(txid: string): Promise<CommitmentTxRecord[]> {
+    async getCommitmentTx(txid: string): Promise<CommitmentTxRecord | null> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
@@ -375,12 +375,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
                     "readonly"
                 );
                 const store = transaction.objectStore(STORE_COMMITMENT_TXS);
-                const index = store.index("txid");
-                const request = index.getAll(txid);
+                const request = store.get(txid);
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
-                    resolve(request.result || []);
+                    resolve((request.result as CommitmentTxRecord) ?? null);
                 };
             });
         } catch (error) {
@@ -388,11 +387,11 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 `Failed to get commitment txs for txid ${txid}:`,
                 error
             );
-            return [];
+            throw error;
         }
     }
 
-    async saveCommitmentTxs(commitmentTx: CommitmentTxRecord): Promise<void> {
+    async saveCommitmentTx(commitmentTx: CommitmentTxRecord): Promise<void> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {

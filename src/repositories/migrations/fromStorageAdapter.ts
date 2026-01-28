@@ -64,7 +64,7 @@ export async function migrateWalletRepository(
             "commitmentTxs"
         );
     for (const commitmentTx of commitmentTxs) {
-        await fresh.saveCommitmentTxs(commitmentTx);
+        await fresh.saveCommitmentTx(commitmentTx);
     }
 
     await storageAdapter.setItem(MIGRATION_KEY("wallet"), "done");

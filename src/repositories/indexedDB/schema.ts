@@ -143,15 +143,7 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
     }
 
     if (!db.objectStoreNames.contains(STORE_COMMITMENT_TXS)) {
-        const commitmentTxsStore = db.createObjectStore(STORE_COMMITMENT_TXS, {
-            keyPath: "txid",
-        });
-
-        if (!commitmentTxsStore.indexNames.contains("txid")) {
-            commitmentTxsStore.createIndex("txid", "txid", {
-                unique: true,
-            });
-        }
+        db.createObjectStore(STORE_COMMITMENT_TXS, { keyPath: "txid" });
     }
 
     // Create contract stores

@@ -409,11 +409,11 @@ describe("IndexedDB migrations", () => {
         expect(walletState2?.lastSyncTime).toBe(walletState.lastSyncTime);
 
         const commitmentTxs1 =
-            await walletRepoV2.getCommitmentTxs("commitment-tx-1");
-        expect(commitmentTxs1).toEqual([commitmentTxsFixture[0]]);
+            await walletRepoV2.getCommitmentTx("commitment-tx-1");
+        expect(commitmentTxs1).toEqual(commitmentTxsFixture[0]);
         const commitmentTxs2 =
-            await walletRepoV2.getCommitmentTxs("commitment-tx-2");
-        expect(commitmentTxs2).toEqual([commitmentTxsFixture[1]]);
+            await walletRepoV2.getCommitmentTx("commitment-tx-2");
+        expect(commitmentTxs2).toEqual(commitmentTxsFixture[1]);
     });
 
     it("should not migrate if migration already completed", async () => {

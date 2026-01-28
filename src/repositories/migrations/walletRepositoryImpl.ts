@@ -217,11 +217,11 @@ export class WalletRepositoryImpl implements WalletRepository {
         );
     }
 
-    async getCommitmentTxs(_txid: string): Promise<CommitmentTxRecord[]> {
-        return [];
+    async getCommitmentTx(_txid: string): Promise<CommitmentTxRecord | null> {
+        return null;
     }
 
-    async saveCommitmentTxs(_commitmentTx: CommitmentTxRecord): Promise<void> {
+    async saveCommitmentTx(_commitmentTx: CommitmentTxRecord): Promise<void> {
         return;
     }
 
