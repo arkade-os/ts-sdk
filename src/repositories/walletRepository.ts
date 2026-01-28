@@ -5,6 +5,11 @@ export interface WalletState {
     settings?: Record<string, any>;
 }
 
+export type CommitmentTxRecord = {
+    txid: string;
+    createdAt: number;
+};
+
 export interface WalletRepository extends AsyncDisposable {
     // VTXO management
     getVtxos(address: string): Promise<ExtendedVirtualCoin[]>;
@@ -24,4 +29,8 @@ export interface WalletRepository extends AsyncDisposable {
     // Wallet state
     getWalletState(): Promise<WalletState | null>;
     saveWalletState(state: WalletState): Promise<void>;
+
+    // CommitmentTxs
+    getCommitmentTx(txid: string): Promise<CommitmentTxRecord | null>;
+    saveCommitmentTx(commitmentTx: CommitmentTxRecord): Promise<void>;
 }

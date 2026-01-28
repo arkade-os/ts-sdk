@@ -1,10 +1,14 @@
-// Store names
+// Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
 export const STORE_UTXOS = "utxos";
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
+export const STORE_COMMITMENT_TXS = "commitmentTxs";
 export const STORE_CONTRACTS = "contracts";
-export const STORE_CONTRACT_COLLECTIONS = "contractsCollections";
+
+// @deprecated use only for migrations, this is created in V1
+export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
+
 export const DB_VERSION = 2;
 
 export function initDatabase(db: IDBDatabase): IDBDatabase {
@@ -138,15 +142,30 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
         });
     }
 
-    // Create contract stores
-    if (!db.objectStoreNames.contains(STORE_CONTRACTS)) {
-        db.createObjectStore(STORE_CONTRACTS, {
-            keyPath: "key",
-        });
+    if (!db.objectStoreNames.contains(STORE_COMMITMENT_TXS)) {
+        db.createObjectStore(STORE_COMMITMENT_TXS, { keyPath: "txid" });
     }
 
-    if (!db.objectStoreNames.contains(STORE_CONTRACT_COLLECTIONS)) {
-        db.createObjectStore(STORE_CONTRACT_COLLECTIONS, {
+    // Create contract stores
+    if (!db.objectStoreNames.contains(STORE_CONTRACTS)) {
+        const contractsStore = db.createObjectStore(STORE_CONTRACTS, {
+            keyPath: "script",
+        });
+
+        if (!contractsStore.indexNames.contains("type")) {
+            contractsStore.createIndex("type", "type", {
+                unique: false,
+            });
+        }
+        if (!contractsStore.indexNames.contains("state")) {
+            contractsStore.createIndex("state", "state", {
+                unique: false,
+            });
+        }
+    }
+
+    if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {
+        db.createObjectStore(LEGACY_STORE_CONTRACT_COLLECTIONS, {
             keyPath: "key",
         });
     }

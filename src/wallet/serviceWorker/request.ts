@@ -211,7 +211,6 @@ export namespace Request {
             params: Record<string, string>;
             script: string;
             address: string;
-            id?: string;
             label?: string;
             state?: ContractState;
             expiresAt?: number;
@@ -235,15 +234,15 @@ export namespace Request {
 
     export interface UpdateContract extends Base {
         type: "UPDATE_CONTRACT";
-        contractId: string;
-        updates: Partial<Omit<Contract, "id" | "createdAt">>;
+        contractScript: string;
+        updates: Partial<Omit<Contract, "script" | "createdAt">>;
     }
 
     export function isUpdateContract(message: Base): message is UpdateContract {
         return (
             message.type === "UPDATE_CONTRACT" &&
-            "contractId" in message &&
-            typeof message.contractId === "string" &&
+            "contractScript" in message &&
+            typeof message.contractScript === "string" &&
             "updates" in message &&
             typeof message.updates === "object"
         );
@@ -251,7 +250,7 @@ export namespace Request {
 
     export interface UpdateContractState extends Base {
         type: "UPDATE_CONTRACT_STATE";
-        contractId: string;
+        contractScript: string;
         state: ContractState;
     }
 
@@ -260,8 +259,8 @@ export namespace Request {
     ): message is UpdateContractState {
         return (
             message.type === "UPDATE_CONTRACT_STATE" &&
-            "contractId" in message &&
-            typeof message.contractId === "string" &&
+            "contractScript" in message &&
+            typeof message.contractScript === "string" &&
             "state" in message &&
             (message.state === "active" || message.state === "inactive")
         );
@@ -269,14 +268,14 @@ export namespace Request {
 
     export interface DeleteContract extends Base {
         type: "DELETE_CONTRACT";
-        contractId: string;
+        contractScript: string;
     }
 
     export function isDeleteContract(message: Base): message is DeleteContract {
         return (
             message.type === "DELETE_CONTRACT" &&
-            "contractId" in message &&
-            typeof message.contractId === "string"
+            "contractScript" in message &&
+            typeof message.contractScript === "string"
         );
     }
 

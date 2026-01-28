@@ -93,7 +93,6 @@ describe("DefaultContractHandler", () => {
         const params = createDefaultContractParams();
         const script = DefaultContractHandler.createScript(params);
         const contract: Contract = {
-            id: "test",
             type: "default",
             params,
             script: hex.encode(script.pkScript),
@@ -115,7 +114,6 @@ describe("DefaultContractHandler", () => {
         const params = createDefaultContractParams();
         const script = DefaultContractHandler.createScript(params);
         const contract: Contract = {
-            id: "test",
             type: "default",
             params,
             script: hex.encode(script.pkScript),
@@ -137,7 +135,6 @@ describe("DefaultContractHandler", () => {
         const params = createDefaultContractParams();
         const script = DefaultContractHandler.createScript(params);
         const contract: Contract = {
-            id: "test",
             type: "default",
             params,
             script: hex.encode(script.pkScript),
@@ -163,7 +160,6 @@ describe("DefaultContractHandler", () => {
         const params = createDefaultContractParams();
         const script = DefaultContractHandler.createScript(params);
         const contract: Contract = {
-            id: "test",
             type: "default",
             params,
             script: hex.encode(script.pkScript),
@@ -192,7 +188,6 @@ describe("DefaultContractHandler", () => {
         };
         const script = DefaultContractHandler.createScript(params);
         const contract: Contract = {
-            id: "test",
             type: "default",
             params,
             script: hex.encode(script.pkScript),

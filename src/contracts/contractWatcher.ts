@@ -87,7 +87,7 @@ type ConnectionState =
  *
  * // Start watching for events
  * const stop = await watcher.startWatching((event) => {
- *   console.log(`${event.type} on contract ${event.contractId}`);
+ *   console.log(`${event.type} on contract ${event.contractScript}`);
  * });
  *
  * // Later: stop watching
@@ -98,7 +98,6 @@ export class ContractWatcher {
     private config: Required<Omit<ContractWatcherConfig, "walletRepository">> &
         Pick<ContractWatcherConfig, "walletRepository">;
     private contracts: Map<string, ContractState> = new Map();
-    private scriptToContract: Map<string, string> = new Map(); // script -> contractId
     private subscriptionId?: string;
     private abortController?: AbortController;
     private isWatching = false;
@@ -131,13 +130,12 @@ export class ContractWatcher {
             lastKnownVtxos: new Map(),
         };
 
-        this.contracts.set(contract.id, state);
-        this.scriptToContract.set(contract.script, contract.id);
+        this.contracts.set(contract.script, state);
 
         // If we're already watching, poll to discover VTXOs and update subscription
         if (this.isWatching) {
             // Poll first to discover VTXOs (may affect whether we watch this contract)
-            await this.pollContracts([contract.id]);
+            await this.pollContracts([contract.script]);
             // Update subscription based on active state and VTXOs
             await this.tryUpdateSubscription();
         }
@@ -147,15 +145,9 @@ export class ContractWatcher {
      * Update an existing contract.
      */
     async updateContract(contract: Contract): Promise<void> {
-        const existing = this.contracts.get(contract.id);
+        const existing = this.contracts.get(contract.script);
         if (!existing) {
-            throw new Error(`Contract ${contract.id} not found`);
-        }
-
-        // If script changed, update the mapping
-        if (existing.contract.script !== contract.script) {
-            this.scriptToContract.delete(existing.contract.script);
-            this.scriptToContract.set(contract.script, contract.id);
+            throw new Error(`Contract ${contract.script} not found`);
         }
 
         existing.contract = contract;
@@ -168,11 +160,10 @@ export class ContractWatcher {
     /**
      * Remove a contract from watching.
      */
-    async removeContract(contractId: string): Promise<void> {
-        const state = this.contracts.get(contractId);
+    async removeContract(contractScript: string): Promise<void> {
+        const state = this.contracts.get(contractScript);
         if (state) {
-            this.scriptToContract.delete(state.contract.script);
-            this.contracts.delete(contractId);
+            this.contracts.delete(contractScript);
 
             if (this.isWatching) {
                 await this.tryUpdateSubscription();
@@ -224,21 +215,24 @@ export class ContractWatcher {
     }
 
     /**
-     * Get VTXOs for contracts, grouped by contract ID.
+     * Get VTXOs for contracts, grouped by contract script.
      * Uses Repository.
      */
     private async getContractVtxos(options: {
         includeSpent?: boolean;
-        contractIds?: string[];
+        contractScripts?: string[];
     }): Promise<Map<string, ContractVtxo[]>> {
-        const { contractIds, includeSpent } = options;
+        const { contractScripts, includeSpent } = options;
         const repo = this.config.walletRepository;
 
         const contractsToQuery = Array.from(this.contracts.values());
 
         const asyncResults = contractsToQuery
             .filter((_) => {
-                if (contractIds && !contractIds.includes(_.contract.id))
+                if (
+                    contractScripts &&
+                    !contractScripts.includes(_.contract.script)
+                )
                     return false;
                 return true;
             })
@@ -246,15 +240,15 @@ export class ContractWatcher {
                 // Use contract address as cache key
                 const cached = await repo.getVtxos(state.contract.address);
                 if (cached.length > 0) {
-                    // Convert to ContractVtxo with contractId
+                    // Convert to ContractVtxo with contractScript
                     const contractVtxos: ContractVtxo[] = cached.map((v) => ({
                         ...v,
-                        contractId: state.contract.id,
+                        contractScript: state.contract.script,
                     }));
                     const filtered = includeSpent
                         ? contractVtxos
                         : contractVtxos.filter((v) => !v.isSpent);
-                    return [[state.contract.id, filtered]];
+                    return [[state.contract.script, filtered]];
                 }
                 return [];
             });
@@ -360,7 +354,7 @@ export class ContractWatcher {
 
                 this.eventCallback?.({
                     type: "contract_expired",
-                    contractId: contract.id,
+                    contractScript: contract.script,
                     contract,
                     timestamp: now,
                 });
@@ -455,15 +449,15 @@ export class ContractWatcher {
      * Poll all active contracts for current state.
      */
     private async pollAllContracts(): Promise<void> {
-        const activeIds = this.getActiveContracts().map((c) => c.id);
-        if (activeIds.length === 0) return;
-        await this.pollContracts(activeIds);
+        const activeScripts = this.getActiveContracts().map((c) => c.script);
+        if (activeScripts.length === 0) return;
+        await this.pollContracts(activeScripts);
     }
 
     /**
      * Poll specific contracts and emit events for changes.
      */
-    private async pollContracts(contractIds: string[]): Promise<void> {
+    private async pollContracts(contractScripts: string[]): Promise<void> {
         if (!this.eventCallback) return;
 
         const now = Date.now();
@@ -471,15 +465,15 @@ export class ContractWatcher {
         try {
             // Load all the VTXOs for these contracts, from DB
             const vtxosMap = await this.getContractVtxos({
-                contractIds,
+                contractScripts,
                 includeSpent: false, // only spendable ones!
             });
 
-            for (const contractId of contractIds) {
-                const state = this.contracts.get(contractId);
+            for (const contractScript of contractScripts) {
+                const state = this.contracts.get(contractScript);
                 if (!state) continue;
 
-                const currentVtxos = vtxosMap.get(contractId) || [];
+                const currentVtxos = vtxosMap.get(contractScript) || [];
                 const currentKeys = new Set(
                     currentVtxos.map((v) => `${v.txid}:${v.vout}`)
                 );
@@ -506,7 +500,7 @@ export class ContractWatcher {
                 // Emit events
                 if (newVtxos.length > 0) {
                     this.emitVtxoEvent(
-                        contractId,
+                        contractScript,
                         newVtxos,
                         "vtxo_received",
                         now
@@ -517,7 +511,7 @@ export class ContractWatcher {
                     // Note: We can't distinguish spent vs swept from polling alone
                     // The subscription provides more accurate event types
                     this.emitVtxoEvent(
-                        contractId,
+                        contractScript,
                         spentVtxos,
                         "vtxo_spent",
                         now
@@ -637,10 +631,10 @@ export class ContractWatcher {
         // If we have exactly one script, all VTXOs belong to that contract
         // Otherwise, we can't reliably determine ownership without script in VirtualCoin
         if (scripts.length === 1) {
-            const contractId = this.scriptToContract.get(scripts[0]);
-            if (contractId) {
+            const contractScript = scripts[0];
+            if (contractScript) {
                 // Update tracking
-                const state = this.contracts.get(contractId);
+                const state = this.contracts.get(contractScript);
                 if (state) {
                     for (const vtxo of vtxos) {
                         const key = `${vtxo.txid}:${vtxo.vout}`;
@@ -651,7 +645,7 @@ export class ContractWatcher {
                         }
                     }
                 }
-                this.emitVtxoEvent(contractId, vtxos, eventType, timestamp);
+                this.emitVtxoEvent(contractScript, vtxos, eventType, timestamp);
             }
             return;
         }
@@ -660,9 +654,9 @@ export class ContractWatcher {
         // This is a limitation: we can't know which VTXO belongs to which script
         // In practice, subscription events usually come with a single script context
         for (const script of scripts) {
-            const contractId = this.scriptToContract.get(script);
-            if (contractId) {
-                const state = this.contracts.get(contractId);
+            const contractScript = script;
+            if (contractScript) {
+                const state = this.contracts.get(contractScript);
                 if (state) {
                     for (const vtxo of vtxos) {
                         const key = `${vtxo.txid}:${vtxo.vout}`;
@@ -673,7 +667,7 @@ export class ContractWatcher {
                         }
                     }
                 }
-                this.emitVtxoEvent(contractId, vtxos, eventType, timestamp);
+                this.emitVtxoEvent(contractScript, vtxos, eventType, timestamp);
             }
         }
     }
@@ -682,13 +676,13 @@ export class ContractWatcher {
      * Emit a VTXO event for a contract.
      */
     private emitVtxoEvent(
-        contractId: string,
+        contractScript: string,
         vtxos: VirtualCoin[],
         eventType: ContractEvent["type"],
         timestamp: number
     ): void {
         if (!this.eventCallback) return;
-        const state = this.contracts.get(contractId);
+        const state = this.contracts.get(contractScript);
         // ensure we check somehow regularly
         this.checkExpiredContracts();
         switch (eventType) {
@@ -698,13 +692,13 @@ export class ContractWatcher {
                     type: "vtxo_received",
                     vtxos: vtxos.map((v) => ({
                         ...v,
-                        contractId,
+                        contractScript,
                         // These fields may not be available from basic VirtualCoin
                         forfeitTapLeafScript: undefined as any,
                         intentTapLeafScript: undefined as any,
                         tapTree: undefined as any,
                     })),
-                    contractId,
+                    contractScript,
                     contract: state.contract,
                     timestamp,
                 });
@@ -715,13 +709,13 @@ export class ContractWatcher {
                     type: "vtxo_spent",
                     vtxos: vtxos.map((v) => ({
                         ...v,
-                        contractId,
+                        contractScript,
                         // These fields may not be available from basic VirtualCoin
                         forfeitTapLeafScript: undefined as any,
                         intentTapLeafScript: undefined as any,
                         tapTree: undefined as any,
                     })),
-                    contractId,
+                    contractScript,
                     contract: state.contract,
                     timestamp,
                 });
@@ -730,7 +724,7 @@ export class ContractWatcher {
                 if (!state) return;
                 this.eventCallback({
                     type: "contract_expired",
-                    contractId,
+                    contractScript,
                     contract: state.contract,
                     timestamp,
                 });

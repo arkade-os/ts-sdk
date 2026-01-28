@@ -24,7 +24,6 @@ describe("Contracts", () => {
     describe("ArkContract encoding/decoding", () => {
         it("should encode a contract to arkcontract string", () => {
             const contract: Contract = {
-                id: "test-id",
                 type: "default",
                 params: {
                     pubKey: "abc123",
@@ -67,11 +66,9 @@ describe("Contracts", () => {
         it("should create contract from arkcontract string", () => {
             const encoded = "arkcontract=default&pubKey=abc&serverPubKey=def";
             const contract = contractFromArkContract(encoded, {
-                id: "my-contract",
                 label: "Test Contract",
             });
 
-            expect(contract.id).toBe("my-contract");
             expect(contract.label).toBe("Test Contract");
             expect(contract.type).toBe("default");
             expect(contract.params.pubKey).toBe("abc");

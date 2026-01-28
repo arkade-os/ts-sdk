@@ -10,10 +10,7 @@ import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletR
 import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
-import {
-    migrateWalletRepository,
-    migrateContractRepository,
-} from "../src/repositories/migrations/fromStorageAdapter";
+import { migrateWalletRepository } from "../src/repositories/migrations/fromStorageAdapter";
 import type {
     ExtendedVirtualCoin,
     ExtendedCoin,
@@ -27,7 +24,7 @@ import { ContractRepositoryImpl } from "../src/repositories/migrations/contractR
 import { InMemoryStorageAdapter } from "../src/storage/inMemory";
 import { readFile } from "node:fs/promises";
 
-type RepositoryTestItem<T> = {
+export type RepositoryTestItem<T> = {
     name: string;
     factory: () => Promise<T>;
 };
@@ -310,278 +307,6 @@ describe.each(walletRepositoryImplementations)(
     }
 );
 
-// ContractRepository tests
-describe.each(contractRepositoryImplementations)(
-    "ContractRepository: $name",
-    ({ factory }) => {
-        let repository: ContractRepository;
-        const testContractId = "test-contract-123";
-        const testKey = "test-key";
-
-        beforeEach(async () => {
-            repository = await factory();
-        });
-
-        describe("Contract data management", () => {
-            it("should return null when contract data does not exist", async () => {
-                const data = await repository.getContractData<string>(
-                    testContractId,
-                    testKey
-                );
-                expect(data).toBeNull();
-            });
-
-            it("should save and retrieve contract data", async () => {
-                const testData = { status: "active", amount: 1000 };
-
-                await repository.setContractData(
-                    testContractId,
-                    testKey,
-                    testData
-                );
-                const retrieved = await repository.getContractData<{
-                    status: string;
-                    amount: number;
-                }>(testContractId, testKey);
-
-                expect(retrieved).toEqual(testData);
-            });
-
-            it("should handle different data types", async () => {
-                // String
-                await repository.setContractData(
-                    testContractId,
-                    "string-key",
-                    "test"
-                );
-                const str = await repository.getContractData<string>(
-                    testContractId,
-                    "string-key"
-                );
-                expect(str).toBe("test");
-
-                // Number
-                await repository.setContractData(
-                    testContractId,
-                    "number-key",
-                    42
-                );
-                const num = await repository.getContractData<number>(
-                    testContractId,
-                    "number-key"
-                );
-                expect(num).toBe(42);
-
-                // Object
-                const obj = { nested: { value: "test" } };
-                await repository.setContractData(
-                    testContractId,
-                    "object-key",
-                    obj
-                );
-                const retrieved = await repository.getContractData<typeof obj>(
-                    testContractId,
-                    "object-key"
-                );
-                expect(retrieved).toEqual(obj);
-            });
-
-            it("should handle multiple contracts independently", async () => {
-                const contract1 = "contract-1";
-                const contract2 = "contract-2";
-
-                await repository.setContractData(contract1, testKey, "data1");
-                await repository.setContractData(contract2, testKey, "data2");
-
-                const data1 = await repository.getContractData<string>(
-                    contract1,
-                    testKey
-                );
-                const data2 = await repository.getContractData<string>(
-                    contract2,
-                    testKey
-                );
-
-                expect(data1).toBe("data1");
-                expect(data2).toBe("data2");
-            });
-
-            it("should delete contract data", async () => {
-                await repository.setContractData(
-                    testContractId,
-                    testKey,
-                    "test"
-                );
-                await repository.deleteContractData(testContractId, testKey);
-
-                const retrieved = await repository.getContractData<string>(
-                    testContractId,
-                    testKey
-                );
-                expect(retrieved).toBeNull();
-            });
-
-            it("should clear all contract data", async () => {
-                await repository.setContractData(
-                    testContractId,
-                    "key1",
-                    "data1"
-                );
-                await repository.setContractData(
-                    testContractId,
-                    "key2",
-                    "data2"
-                );
-                await repository.saveToContractCollection(
-                    "swaps",
-                    { id: "1" },
-                    "id"
-                );
-
-                await repository.clearContractData();
-
-                const data1 = await repository.getContractData<string>(
-                    testContractId,
-                    "key1"
-                );
-                const data2 = await repository.getContractData<string>(
-                    testContractId,
-                    "key2"
-                );
-                const collection =
-                    await repository.getContractCollection("swaps");
-
-                expect(data1).toBeNull();
-                expect(data2).toBeNull();
-                expect(collection).toEqual([]);
-            });
-        });
-
-        describe("Contract collections", () => {
-            it("should return empty array when collection does not exist", async () => {
-                const collection = await repository.getContractCollection<{
-                    id: string;
-                }>("swaps");
-                expect(collection).toEqual([]);
-            });
-
-            it("should save and retrieve collection items", async () => {
-                const item1 = { id: "swap-1", amount: 1000, type: "reverse" };
-                const item2 = { id: "swap-2", amount: 2000, type: "normal" };
-
-                await repository.saveToContractCollection("swaps", item1, "id");
-                await repository.saveToContractCollection("swaps", item2, "id");
-
-                const collection =
-                    await repository.getContractCollection<typeof item1>(
-                        "swaps"
-                    );
-
-                expect(collection).toHaveLength(2);
-                expect(collection[0].id).toBe("swap-1");
-                expect(collection[1].id).toBe("swap-2");
-            });
-
-            it("should update existing item in collection", async () => {
-                const item1 = { id: "swap-1", amount: 1000 };
-                await repository.saveToContractCollection("swaps", item1, "id");
-
-                const item1Updated = { id: "swap-1", amount: 1500 };
-                await repository.saveToContractCollection(
-                    "swaps",
-                    item1Updated,
-                    "id"
-                );
-
-                const collection =
-                    await repository.getContractCollection<typeof item1>(
-                        "swaps"
-                    );
-                expect(collection).toHaveLength(1);
-                expect(collection[0].amount).toBe(1500);
-            });
-
-            it("should remove item from collection", async () => {
-                type SwapItem = { id: string; amount: number };
-                const item1: SwapItem = { id: "swap-1", amount: 1000 };
-                const item2: SwapItem = { id: "swap-2", amount: 2000 };
-
-                await repository.saveToContractCollection<SwapItem, "id">(
-                    "swaps",
-                    item1,
-                    "id"
-                );
-                await repository.saveToContractCollection<SwapItem, "id">(
-                    "swaps",
-                    item2,
-                    "id"
-                );
-
-                await repository.removeFromContractCollection<SwapItem, "id">(
-                    "swaps",
-                    "swap-1",
-                    "id"
-                );
-
-                const collection =
-                    await repository.getContractCollection<SwapItem>("swaps");
-                expect(collection).toHaveLength(1);
-                expect(collection[0].id).toBe("swap-2");
-            });
-
-            it("should handle multiple collections independently", async () => {
-                const swap1 = { id: "swap-1", amount: 1000 };
-                const order1 = { id: "order-1", price: 500 };
-
-                await repository.saveToContractCollection("swaps", swap1, "id");
-                await repository.saveToContractCollection(
-                    "orders",
-                    order1,
-                    "id"
-                );
-
-                const swaps =
-                    await repository.getContractCollection<typeof swap1>(
-                        "swaps"
-                    );
-                const orders =
-                    await repository.getContractCollection<typeof order1>(
-                        "orders"
-                    );
-
-                expect(swaps).toHaveLength(1);
-                expect(swaps[0].id).toBe("swap-1");
-                expect(orders).toHaveLength(1);
-                expect(orders[0].id).toBe("order-1");
-            });
-
-            it("should throw error when item missing id field", async () => {
-                type SwapItem = { id: string; amount: number };
-                const item = { amount: 1000 } as SwapItem; // missing id field
-
-                await expect(
-                    repository.saveToContractCollection<SwapItem, "id">(
-                        "swaps",
-                        item,
-                        "id"
-                    )
-                ).rejects.toThrow();
-            });
-
-            it("should throw error when removing with invalid id", async () => {
-                type SwapItem = { id: string; amount: number };
-                await expect(
-                    repository.removeFromContractCollection<SwapItem, "id">(
-                        "swaps",
-                        null as unknown as string,
-                        "id"
-                    )
-                ).rejects.toThrow();
-            });
-        });
-    }
-);
-
 describe("IndexedDB migrations", () => {
     it("should migrate wallet data from StorageAdapter to IndexedDB format", async () => {
         const oldDbName = getUniqueDbName("wallet-migration-old");
@@ -617,6 +342,10 @@ describe("IndexedDB migrations", () => {
             lastSyncTime: Date.now(),
             settings: { theme: "dark" },
         };
+        const commitmentTxsFixture = [
+            { txid: "commitment-tx-1", when: 1768251194 },
+            { txid: "commitment-tx-2", when: 1768489720 },
+        ];
 
         await walletRepoV1.saveVtxos(testAddress1, [vtxo1, vtxo2]);
         await walletRepoV1.saveVtxos(testAddress2, [vtxo3]);
@@ -625,6 +354,10 @@ describe("IndexedDB migrations", () => {
         await walletRepoV1.saveTransactions(testAddress1, [tx1, tx2]);
         await walletRepoV1.saveTransactions(testAddress2, [tx3]);
         await walletRepoV1.saveWalletState(walletState);
+        await oldStorage.setItem(
+            "collection:commitmentTxs",
+            JSON.stringify(commitmentTxsFixture)
+        );
 
         const walletRepoV2 = new IndexedDBWalletRepository(newDbName);
 
@@ -674,50 +407,13 @@ describe("IndexedDB migrations", () => {
         expect(walletState2).not.toBeNull();
         expect(walletState2?.settings?.theme).toBe("dark");
         expect(walletState2?.lastSyncTime).toBe(walletState.lastSyncTime);
-    });
 
-    it("should migrate contract data from StorageAdapter to IndexedDB format", async () => {
-        const fixturePath = new URL(
-            "./fixtures/v1-db-dump.json",
-            import.meta.url
-        );
-        const fixtureRaw = await readFile(fixturePath, "utf8");
-        const fixture = JSON.parse(fixtureRaw) as Record<string, string>;
-
-        const storage = new InMemoryStorageAdapter();
-        await Promise.all(
-            Object.entries(fixture).map(([key, value]) =>
-                storage.setItem(key, value)
-            )
-        );
-
-        const dbName = getUniqueDbName("contract-migration");
-        const repo = new IndexedDBContractRepository(dbName);
-        await migrateContractRepository(storage, repo);
-
-        const reverseSwapsFixture = JSON.parse(
-            fixture["collection:reverseSwaps"]
-        );
-        const reverseSwaps = await repo.getContractCollection("reverseSwaps");
-        expect(reverseSwaps).toEqual(reverseSwapsFixture);
-
-        const commitmentTxsFixture = JSON.parse(
-            fixture["collection:commitmentTxs"]
-        );
-        const commitmentTxs = await repo.getContractCollection("commitmentTxs");
-        expect(commitmentTxs).toEqual(commitmentTxsFixture);
-
-        const submarineSwapsFixture = JSON.parse(
-            fixture["collection:submarineSwaps"]
-        );
-        const submarineSwaps =
-            await repo.getContractCollection("submarineSwaps");
-        expect(submarineSwaps).toEqual(submarineSwapsFixture);
-
-        const migration = await storage.getItem(
-            "migration-from-storage-adapter-contract"
-        );
-        expect(migration).toBe("done");
+        const commitmentTxs1 =
+            await walletRepoV2.getCommitmentTx("commitment-tx-1");
+        expect(commitmentTxs1).toEqual(commitmentTxsFixture[0]);
+        const commitmentTxs2 =
+            await walletRepoV2.getCommitmentTx("commitment-tx-2");
+        expect(commitmentTxs2).toEqual(commitmentTxsFixture[1]);
     });
 
     it("should not migrate if migration already completed", async () => {
@@ -769,14 +465,6 @@ describe("IndexedDB migrations", () => {
         await migrateWalletRepository(oldStorage, walletRepoV2, [testAddress]);
         expect(walletRepoV2.getVtxos).not.toHaveBeenCalled();
         expect(walletRepoV2.saveVtxos).not.toHaveBeenCalled();
-
-        const contractRepoV2 = {
-            getContractCollection: vi.fn(),
-            saveToContractCollection: vi.fn(),
-        };
-        await migrateContractRepository(oldStorage, contractRepoV2 as any);
-        expect(contractRepoV2.getContractCollection).not.toHaveBeenCalled();
-        expect(contractRepoV2.saveToContractCollection).not.toHaveBeenCalled();
     });
 });
 
