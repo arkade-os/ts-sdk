@@ -87,15 +87,6 @@ export class InMemoryWalletRepository implements WalletRepository {
         this.walletState = state;
     }
 
-    async getCommitmentTx(txid: string): Promise<CommitmentTxRecord | null> {
-        const record = this.commitmentTxsByTxid.get(txid);
-        return record ?? null;
-    }
-
-    async saveCommitmentTx(commitmentTx: CommitmentTxRecord): Promise<void> {
-        this.commitmentTxsByTxid.set(commitmentTx.txid, commitmentTx);
-    }
-
     async [Symbol.asyncDispose](): Promise<void> {
         // nothing to dispose, data is ephemeral and scoped to the instance
         return;

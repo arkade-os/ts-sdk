@@ -59,13 +59,5 @@ export async function migrateWalletRepository(
         }),
     ]);
 
-    const commitmentTxs =
-        await legacyContracts.getContractCollection<CommitmentTxRecord>(
-            "commitmentTxs"
-        );
-    for (const commitmentTx of commitmentTxs) {
-        await fresh.saveCommitmentTx(commitmentTx);
-    }
-
     await storageAdapter.setItem(MIGRATION_KEY("wallet"), "done");
 }

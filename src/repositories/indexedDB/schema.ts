@@ -3,7 +3,6 @@ export const STORE_VTXOS = "vtxos";
 export const STORE_UTXOS = "utxos";
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
-export const STORE_COMMITMENT_TXS = "commitmentTxs";
 export const STORE_CONTRACTS = "contracts";
 
 // @deprecated use only for migrations, this is created in V1
@@ -140,10 +139,6 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
         db.createObjectStore(STORE_WALLET_STATE, {
             keyPath: "key",
         });
-    }
-
-    if (!db.objectStoreNames.contains(STORE_COMMITMENT_TXS)) {
-        db.createObjectStore(STORE_COMMITMENT_TXS, { keyPath: "txid" });
     }
 
     // Create contract stores

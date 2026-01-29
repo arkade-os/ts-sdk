@@ -29,8 +29,4 @@ export interface WalletRepository extends AsyncDisposable {
     // Wallet state
     getWalletState(): Promise<WalletState | null>;
     saveWalletState(state: WalletState): Promise<void>;
-
-    // CommitmentTxs
-    getCommitmentTx(txid: string): Promise<CommitmentTxRecord | null>;
-    saveCommitmentTx(commitmentTx: CommitmentTxRecord): Promise<void>;
 }
