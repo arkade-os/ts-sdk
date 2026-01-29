@@ -304,7 +304,7 @@ export class Worker {
                         await this.handler?.getBoardingAddress()!;
 
                     // save utxos using unified repository
-                    await this.walletRepository.clearUtxos(boardingAddress);
+                    await this.walletRepository.deleteUtxos(boardingAddress);
                     await this.walletRepository.saveUtxos(
                         boardingAddress,
                         utxos
@@ -882,6 +882,10 @@ export class Worker {
                 await this.handleGetSpendablePaths(event);
                 break;
             }
+            case "GET_ALL_SPENDING_PATHS": {
+                await this.handleGetAllSpendingPaths(event);
+                break;
+            }
             case "IS_CONTRACT_MANAGER_WATCHING": {
                 await this.handleIsContractManagerWatching(event);
                 break;
@@ -1090,7 +1094,7 @@ export class Worker {
         try {
             const manager = await this.handler.getContractManager();
             const contract = await manager.updateContract(
-                message.contractId,
+                message.contractScript,
                 message.updates
             );
             event.source?.postMessage(
@@ -1129,7 +1133,7 @@ export class Worker {
 
         try {
             const manager = await this.handler.getContractManager();
-            await manager.deleteContract(message.contractId);
+            await manager.deleteContract(message.contractScript);
             event.source?.postMessage(Response.contractDeleted(message.id));
         } catch (error: unknown) {
             console.error("Error deleting contract:", error);
@@ -1173,6 +1177,46 @@ export class Worker {
             );
         } catch (error: unknown) {
             console.error("Error getting spendable paths:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleGetAllSpendingPaths(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isGetAllSpendingPaths(message)) {
+            console.error(
+                "Invalid GET_ALL_SPENDING_PATHS message format",
+                message
+            );
+            event.source?.postMessage(
+                Response.error(
+                    message.id,
+                    "Invalid GET_ALL_SPENDING_PATHS message format"
+                )
+            );
+            return;
+        }
+
+        if (!this.handler) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const manager = await this.handler.getContractManager();
+            const paths = await manager.getAllSpendingPaths(message.options);
+            event.source?.postMessage(
+                Response.allSpendingPaths(message.id, paths)
+            );
+        } catch (error: unknown) {
+            console.error("Error getting all spending paths:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message

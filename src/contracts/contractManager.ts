@@ -65,7 +65,7 @@ export interface IContractManager extends Disposable {
      * - A handler exists for `params.type`
      * - `params.script` matches the script derived from `params.params`
      *
-     * The contract `id` may default to `params.script` to ensure uniqueness.
+     * The contract script is used as the unique identifier.
      */
     createContract(params: CreateContractParams): Promise<Contract>;
 
@@ -92,30 +92,39 @@ export interface IContractManager extends Disposable {
     /**
      * Update mutable contract fields.
      *
-     * `id` and `createdAt` are immutable.
+     * `script` and `createdAt` are immutable.
      */
     updateContract(
-        id: string,
-        updates: Partial<Omit<Contract, "id" | "createdAt">>
+        script: string,
+        updates: Partial<Omit<Contract, "script" | "createdAt">>
     ): Promise<Contract>;
 
     /**
      * Convenience helper to update only the contract state.
      */
-    setContractState(id: string, state: ContractState): Promise<void>;
+    setContractState(script: string, state: ContractState): Promise<void>;
 
     /**
-     * Delete a contract by ID and stop watching it (if applicable).
+     * Delete a contract by script and stop watching it (if applicable).
      */
-    deleteContract(id: string): Promise<void>;
+    deleteContract(script: string): Promise<void>;
 
     /**
-     * Get currently spendable paths for a contract.
+     * Get all currently spendable paths for a contract.
      *
      * Returns an empty array if the contract or its handler cannot be found.
      */
     getSpendablePaths(
         options: GetSpendablePathsOptions
+    ): Promise<PathSelection[]>;
+
+    /**
+     * Get all possible spending paths for a contract.
+     *
+     * Returns an empty array if the contract or its handler cannot be found.
+     */
+    getAllSpendingPaths(
+        options: GetAllSpendingPathsOptions
     ): Promise<PathSelection[]>;
 
     /**
@@ -140,8 +149,22 @@ export interface IContractManager extends Disposable {
  * Options for getting spendable paths.
  */
 export type GetSpendablePathsOptions = {
-    /** The contract ID */
-    contractId: string;
+    /** The contract script */
+    contractScript: string;
+    /** The specific VTXO being evaluated */
+    vtxo: VirtualCoin;
+    /** Whether collaborative spending is available (default: true) */
+    collaborative?: boolean;
+    /** Wallet's public key (hex) to determine role */
+    walletPubKey?: string;
+};
+
+/**
+ * Options for getting all possible spending paths.
+ */
+export type GetAllSpendingPathsOptions = {
+    /** The contract script */
+    contractScript: string;
     /** Whether collaborative spending is available (default: true) */
     collaborative?: boolean;
     /** Wallet's public key (hex) to determine role */
@@ -174,12 +197,7 @@ export interface ContractManagerConfig {
 /**
  * Parameters for creating a new contract.
  */
-export type CreateContractParams = Omit<
-    Contract,
-    "id" | "createdAt" | "state"
-> & {
-    /** Optional ID override (auto-generated if not provided) */
-    id?: string;
+export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
     /** Initial state (defaults to "active") */
     state?: ContractState;
 };
@@ -215,7 +233,7 @@ export type CreateContractParams = Omit<
  *
  * // Start watching for events
  * const stop = await manager.startWatching((event) => {
- *   console.log(`${event.type} on ${event.contractId}`);
+ *   console.log(`${event.type} on ${event.contractScript}`);
  * });
  *
  * // Get balance across all contracts
@@ -297,9 +315,6 @@ export class ContractManager implements IContractManager {
     /**
      * Create and register a new contract.
      *
-     * The contract ID defaults to the script (pkScript hex), ensuring
-     * uniqueness since each script represents a unique spending condition.
-     *
      * @param params - Contract parameters
      * @returns The created contract
      */
@@ -334,21 +349,17 @@ export class ContractManager implements IContractManager {
             );
         }
 
-        // Use provided ID or default to script (scripts are unique identifiers)
-        const id = params.id || params.script;
-
         // Check if contract already exists and verify it's the same type to avoid silent mismatches
-        const [existing] = await this.getContracts({ id });
+        const [existing] = await this.getContracts({ script: params.script });
         if (existing) {
             if (existing.type === params.type) return existing;
             throw new Error(
-                `Contract with ID ${id} already exists with with type ${existing.type}.`
+                `Contract with script ${params.script} already exists with with type ${existing.type}.`
             );
         }
 
         const contract: Contract = {
             ...params,
-            id,
             createdAt: Date.now(),
             state: params.state || "active",
         };
@@ -386,19 +397,18 @@ export class ContractManager implements IContractManager {
     }
 
     async getContractsWithVtxos(
-        filter?: ContractFilter
+        filter?: GetContractsFilter
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
         const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.get(contract.id) ?? [],
+            vtxos: vtxos.get(contract.script) ?? [],
         }));
     }
 
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
         return {
-            id: filter.id,
             script: filter.script,
             state: filter.state,
             type: filter.type,
@@ -410,19 +420,19 @@ export class ContractManager implements IContractManager {
      * Nested fields like `params` and `metadata` are replaced with the provided values.
      * If you need to preserve existing fields, merge them manually.
      *
-     * @param id - Contract ID
+     * @param script - Contract script
      * @param updates - Fields to update
      */
     async updateContract(
-        id: string,
-        updates: Partial<Omit<Contract, "id" | "createdAt">>
+        script: string,
+        updates: Partial<Omit<Contract, "script" | "createdAt">>
     ): Promise<Contract> {
         const contracts = await this.config.contractRepository.getContracts({
-            id,
+            script,
         });
         const existing = contracts[0];
         if (!existing) {
-            throw new Error(`Contract ${id} not found`);
+            throw new Error(`Contract ${script} not found`);
         }
 
         const updated: Contract = {
@@ -440,19 +450,19 @@ export class ContractManager implements IContractManager {
      * Update a contract's params.
      * This method preserves existing params by merging the provided values.
      *
-     * @param id - Contract ID
+     * @param script - Contract script
      * @param updates - The new values to merge with existing params
      */
     async updateContractParams(
-        id: string,
+        script: string,
         updates: Contract["params"]
     ): Promise<Contract> {
         const contracts = await this.config.contractRepository.getContracts({
-            id,
+            script,
         });
         const existing = contracts[0];
         if (!existing) {
-            throw new Error(`Contract ${id} not found`);
+            throw new Error(`Contract ${script} not found`);
         }
 
         const updated: Contract = {
@@ -469,32 +479,62 @@ export class ContractManager implements IContractManager {
     /**
      * Set a contract's state.
      */
-    async setContractState(id: string, state: ContractState): Promise<void> {
-        await this.updateContract(id, { state });
+    async setContractState(
+        script: string,
+        state: ContractState
+    ): Promise<void> {
+        await this.updateContract(script, { state });
     }
 
     /**
      * Delete a contract.
      *
-     * @param id - Contract ID
+     * @param script - Contract script
      */
-    async deleteContract(id: string): Promise<void> {
-        await this.config.contractRepository.deleteContract(id);
-        await this.watcher.removeContract(id);
+    async deleteContract(script: string): Promise<void> {
+        await this.config.contractRepository.deleteContract(script);
+        await this.watcher.removeContract(script);
     }
 
     /**
-     * Get spendable paths for a contract.
+     * Get currently spendable paths for a contract.
      *
-     * @param contractId - The contract ID
+     * @param contractScript - The contract script
      * @param options - Options for getting spendable paths
      */
     async getSpendablePaths(
         options: GetSpendablePathsOptions
     ): Promise<PathSelection[]> {
-        const { contractId, collaborative = true, walletPubKey } = options;
+        const {
+            contractScript,
+            collaborative = true,
+            walletPubKey,
+            vtxo,
+        } = options;
 
-        const [contract] = await this.getContracts({ id: contractId });
+        const [contract] = await this.getContracts({ script: contractScript });
+        if (!contract) return [];
+
+        const handler = contractHandlers.get(contract.type);
+        if (!handler) return [];
+
+        const script = handler.createScript(contract.params);
+        const context: PathContext = {
+            collaborative,
+            currentTime: Date.now(),
+            walletPubKey,
+            vtxo,
+        };
+
+        return handler.getSpendablePaths(script, contract, context);
+    }
+
+    async getAllSpendingPaths(
+        options: GetAllSpendingPathsOptions
+    ): Promise<PathSelection[]> {
+        const { contractScript, collaborative = true, walletPubKey } = options;
+
+        const [contract] = await this.getContracts({ script: contractScript });
         if (!contract) return [];
 
         const handler = contractHandlers.get(contract.type);
@@ -507,7 +547,7 @@ export class ContractManager implements IContractManager {
             walletPubKey,
         };
 
-        return handler.getSpendablePaths(script, contract, context);
+        return handler.getAllSpendingPaths(script, contract, context);
     }
 
     /**
@@ -522,7 +562,7 @@ export class ContractManager implements IContractManager {
      * @example
      * ```typescript
      * const unsubscribe = manager.onContractEvent((event) => {
-     *   console.log(`${event.type} on ${event.contractId}`);
+     *   console.log(`${event.type} on ${event.contractScript}`);
      * });
      *
      * // Later: stop receiving events
@@ -611,9 +651,9 @@ export class ContractManager implements IContractManager {
             extendVtxo
         );
         const result = new Map<string, ContractVtxo[]>();
-        for (const [contractId, vtxos] of fetched) {
-            result.set(contractId, vtxos);
-            const contract = contracts.find((c) => c.id === contractId);
+        for (const [contractScript, vtxos] of fetched) {
+            result.set(contractScript, vtxos);
+            const contract = contracts.find((c) => c.script === contractScript);
             if (contract) {
                 await this.config.walletRepository.saveVtxos(
                     contract.address,
@@ -638,7 +678,7 @@ export class ContractManager implements IContractManager {
                     includeSpent,
                     extendVtxo
                 );
-                result.set(contract.id, vtxos);
+                result.set(contract.script, vtxos);
             })
         );
 
@@ -672,7 +712,7 @@ export class ContractManager implements IContractManager {
 
                 allVtxos.push({
                     ...ext,
-                    contractId: contract.id,
+                    contractScript: contract.script,
                 });
             }
 

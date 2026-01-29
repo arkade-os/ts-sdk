@@ -32,7 +32,6 @@ describe("ContractWatcher", () => {
         await watcher.startWatching(() => {});
 
         const contract: Contract = {
-            id: "active-contract",
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
@@ -52,7 +51,6 @@ describe("ContractWatcher", () => {
         await watcher.startWatching(() => {});
 
         const contract: Contract = {
-            id: "inactive-contract",
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
@@ -69,7 +67,6 @@ describe("ContractWatcher", () => {
         await watcher.startWatching(() => {});
 
         const contract: Contract = {
-            id: "active-contract",
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
@@ -87,7 +84,6 @@ describe("ContractWatcher", () => {
 
     it("should emit 'connection_reset` event when the subscription cannot be created", async () => {
         const contract: Contract = {
-            id: "active-contract",
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
@@ -111,7 +107,6 @@ describe("ContractWatcher", () => {
 
     it("should emit 'connection_reset` event when the subscription cannot be retrieved", async () => {
         const contract: Contract = {
-            id: "active-contract",
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,

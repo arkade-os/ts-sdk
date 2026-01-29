@@ -4,7 +4,10 @@ import type {
     ContractState,
     GetContractsFilter,
 } from "../../contracts";
-import { GetSpendablePathsOptions } from "../../contracts/contractManager";
+import {
+    GetAllSpendingPathsOptions,
+    GetSpendablePathsOptions,
+} from "../../contracts/contractManager";
 
 /**
  * Request is the namespace that contains the request types for the service worker.
@@ -32,6 +35,7 @@ export namespace Request {
         | "UPDATE_CONTRACT_STATE"
         | "DELETE_CONTRACT"
         | "GET_SPENDABLE_PATHS"
+        | "GET_ALL_SPENDING_PATHS"
         | "IS_CONTRACT_MANAGER_WATCHING"
         | "SUBSCRIBE_CONTRACT_EVENTS"
         | "UNSUBSCRIBE_CONTRACT_EVENTS";
@@ -211,7 +215,6 @@ export namespace Request {
             params: Record<string, string>;
             script: string;
             address: string;
-            id?: string;
             label?: string;
             state?: ContractState;
             expiresAt?: number;
@@ -235,15 +238,15 @@ export namespace Request {
 
     export interface UpdateContract extends Base {
         type: "UPDATE_CONTRACT";
-        contractId: string;
-        updates: Partial<Omit<Contract, "id" | "createdAt">>;
+        contractScript: string;
+        updates: Partial<Omit<Contract, "script" | "createdAt">>;
     }
 
     export function isUpdateContract(message: Base): message is UpdateContract {
         return (
             message.type === "UPDATE_CONTRACT" &&
-            "contractId" in message &&
-            typeof message.contractId === "string" &&
+            "contractScript" in message &&
+            typeof message.contractScript === "string" &&
             "updates" in message &&
             typeof message.updates === "object"
         );
@@ -251,7 +254,7 @@ export namespace Request {
 
     export interface UpdateContractState extends Base {
         type: "UPDATE_CONTRACT_STATE";
-        contractId: string;
+        contractScript: string;
         state: ContractState;
     }
 
@@ -260,8 +263,8 @@ export namespace Request {
     ): message is UpdateContractState {
         return (
             message.type === "UPDATE_CONTRACT_STATE" &&
-            "contractId" in message &&
-            typeof message.contractId === "string" &&
+            "contractScript" in message &&
+            typeof message.contractScript === "string" &&
             "state" in message &&
             (message.state === "active" || message.state === "inactive")
         );
@@ -269,14 +272,14 @@ export namespace Request {
 
     export interface DeleteContract extends Base {
         type: "DELETE_CONTRACT";
-        contractId: string;
+        contractScript: string;
     }
 
     export function isDeleteContract(message: Base): message is DeleteContract {
         return (
             message.type === "DELETE_CONTRACT" &&
-            "contractId" in message &&
-            typeof message.contractId === "string"
+            "contractScript" in message &&
+            typeof message.contractScript === "string"
         );
     }
 
@@ -289,6 +292,17 @@ export namespace Request {
         message: Base
     ): message is GetSpendablePaths {
         return message.type === "GET_SPENDABLE_PATHS";
+    }
+
+    export interface GetAllSpendingPaths extends Base {
+        type: "GET_ALL_SPENDING_PATHS";
+        options: GetAllSpendingPathsOptions;
+    }
+
+    export function isGetAllSpendingPaths(
+        message: Base
+    ): message is GetAllSpendingPaths {
+        return message.type === "GET_ALL_SPENDING_PATHS";
     }
 
     export interface isContractManagerWatching extends Base {

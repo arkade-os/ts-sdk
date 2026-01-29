@@ -1,21 +1,7 @@
-import {
-    ContractFilter,
-    ContractRepository,
-    CONTRACTS_COLLECTION,
-} from "../contractRepository";
+import { ContractFilter, ContractRepository } from "../contractRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
-import {
-    openDatabase,
-    closeDatabase,
-    STORE_CONTRACTS,
-    STORE_CONTRACT_COLLECTIONS,
-} from "./db";
+import { openDatabase, closeDatabase, STORE_CONTRACTS } from "./db";
 import { Contract } from "../../contracts";
-
-export const contractKey = (contractId: string, key: string) =>
-    `contract:${contractId}:${key}`;
-export const collectionKey = (contractType: string) =>
-    `collection:${contractType}`;
 
 /**
  * IndexedDB-based implementation of ContractRepository.
@@ -26,6 +12,199 @@ export class IndexedDBContractRepository implements ContractRepository {
     private db: IDBDatabase | null = null;
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+
+    async clear(): Promise<void> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [STORE_CONTRACTS],
+                    "readwrite"
+                );
+                const contractDataStore =
+                    transaction.objectStore(STORE_CONTRACTS);
+                const contractsStore = transaction.objectStore(STORE_CONTRACTS);
+
+                const contractDataRequest = contractDataStore.clear();
+                const contractsRequest = contractsStore.clear();
+
+                let completed = 0;
+                const checkComplete = () => {
+                    completed++;
+                    if (completed === 2) {
+                        resolve();
+                    }
+                };
+
+                contractDataRequest.onsuccess = checkComplete;
+                contractsRequest.onsuccess = checkComplete;
+
+                contractDataRequest.onerror = () =>
+                    reject(contractDataRequest.error);
+                contractsRequest.onerror = () => reject(contractsRequest.error);
+            });
+        } catch (error) {
+            console.error("Failed to clear contract data:", error);
+            throw error;
+        }
+    }
+
+    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
+        try {
+            const db = await this.getDB();
+            const store = db
+                .transaction([STORE_CONTRACTS], "readonly")
+                .objectStore(STORE_CONTRACTS);
+
+            if (!filter || Object.keys(filter).length === 0) {
+                return new Promise((resolve, reject) => {
+                    const request = store.getAll();
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => resolve(request.result ?? []);
+                });
+            }
+
+            const normalizedFilter = normalizeFilter(filter);
+
+            // first by script, primary key
+            if (normalizedFilter.has("script")) {
+                const scripts = normalizedFilter.get("script")!;
+                const contracts = await Promise.all(
+                    scripts.map(
+                        (script) =>
+                            new Promise<Contract>((resolve, reject) => {
+                                const req = store.get(script);
+                                req.onerror = () => reject(req.error);
+                                req.onsuccess = () =>
+                                    resolve(req.result as Contract);
+                            })
+                    )
+                );
+                return this.applyContractFilter(contracts, normalizedFilter);
+            }
+
+            // by state, still an index
+            if (normalizedFilter.has("state")) {
+                const contracts = await this.getContractsByIndexValues(
+                    store,
+                    "state",
+                    normalizedFilter.get("state")!
+                );
+                return this.applyContractFilter(contracts, normalizedFilter);
+            }
+
+            // by type, still an index
+            if (normalizedFilter.has("type")) {
+                const contracts = await this.getContractsByIndexValues(
+                    store,
+                    "type",
+                    normalizedFilter.get("type")!
+                );
+                return this.applyContractFilter(contracts, normalizedFilter);
+            }
+
+            // any other filtering happens in-memory
+            const allContracts = await new Promise<Contract[]>(
+                (resolve, reject) => {
+                    const request = store.getAll();
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => resolve(request.result ?? []);
+                }
+            );
+            return this.applyContractFilter(allContracts, normalizedFilter);
+        } catch (error) {
+            console.error("Failed to get contracts:", error);
+            return [];
+        }
+    }
+
+    async saveContract(contract: Contract): Promise<void> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [STORE_CONTRACTS],
+                    "readwrite"
+                );
+                const store = transaction.objectStore(STORE_CONTRACTS);
+                const request = store.put(contract);
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => resolve();
+            });
+        } catch (error) {
+            console.error("Failed to save contract:", error);
+            throw error;
+        }
+    }
+
+    async deleteContract(script: string): Promise<void> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [STORE_CONTRACTS],
+                    "readwrite"
+                );
+                const store = transaction.objectStore(STORE_CONTRACTS);
+                const getRequest = store.get(script);
+
+                getRequest.onerror = () => reject(getRequest.error);
+                getRequest.onsuccess = () => {
+                    const request = store.delete(script);
+
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => resolve();
+                };
+            });
+        } catch (error) {
+            console.error(`Failed to delete contract ${script}:`, error);
+            throw error;
+        }
+    }
+
+    private getContractsByIndexValues(
+        store: IDBObjectStore,
+        indexName: string,
+        values: string[]
+    ): Promise<Contract[]> {
+        if (values.length === 0) return Promise.resolve([]);
+        const index = store.index(indexName);
+        const requests = values.map(
+            (value) =>
+                new Promise<Contract[]>((resolve, reject) => {
+                    const request = index.getAll(value);
+                    request.onerror = () => reject(request.error);
+                    request.onsuccess = () => resolve(request.result ?? []);
+                })
+        );
+        return Promise.all(requests).then((results) =>
+            results.flatMap((result) => result)
+        );
+    }
+
+    private applyContractFilter(
+        contracts: Contract[],
+        filter: ReturnType<typeof normalizeFilter>
+    ): Contract[] {
+        return contracts.filter((contract) => {
+            if (
+                filter.has("script") &&
+                !filter.get("script")?.includes(contract.script)
+            )
+                return false;
+            if (
+                filter.has("state") &&
+                !filter.get("state")?.includes(contract.state)
+            )
+                return false;
+            if (
+                filter.has("type") &&
+                !filter.get("type")?.includes(contract.type)
+            )
+                return false;
+            return true;
+        });
+    }
 
     private async getDB(): Promise<IDBDatabase> {
         if (this.db) return this.db;
@@ -38,345 +217,20 @@ export class IndexedDBContractRepository implements ContractRepository {
         await closeDatabase(this.dbName);
         this.db = null;
     }
+}
 
-    async getContractData<T>(
-        contractId: string,
-        key: string
-    ): Promise<T | null> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_CONTRACTS],
-                    "readonly"
-                );
-                const store = transaction.objectStore(STORE_CONTRACTS);
-                const request = store.get(contractKey(contractId, key));
+const FILTER_FIELDS = ["script", "state", "type"] as (keyof ContractFilter)[];
 
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => {
-                    const result = request.result as
-                        | { value?: string }
-                        | undefined;
-                    if (!result?.value) return resolve(null);
-                    try {
-                        resolve(JSON.parse(result.value) as T);
-                    } catch (error) {
-                        reject(error);
-                    }
-                };
-            });
-        } catch (error) {
-            console.error(
-                `Failed to get contract data for ${contractId}:${key}:`,
-                error
-            );
-            return null;
+// Transform all filter fields into an array of values
+function normalizeFilter(filter: ContractFilter) {
+    const res = new Map<keyof ContractFilter, string[]>();
+    FILTER_FIELDS.forEach((current) => {
+        if (!filter?.[current]) return;
+        if (Array.isArray(filter[current])) {
+            res.set(current, filter[current]);
+        } else {
+            res.set(current, [filter[current]]);
         }
-    }
-
-    async setContractData<T>(
-        contractId: string,
-        key: string,
-        data: T
-    ): Promise<void> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_CONTRACTS],
-                    "readwrite"
-                );
-                const store = transaction.objectStore(STORE_CONTRACTS);
-                const request = store.put({
-                    key: contractKey(contractId, key),
-                    value: JSON.stringify(data),
-                });
-
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve();
-            });
-        } catch (error) {
-            console.error(
-                `Failed to set contract data for ${contractId}:${key}:`,
-                error
-            );
-            throw error;
-        }
-    }
-
-    async deleteContractData(contractId: string, key: string): Promise<void> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_CONTRACTS],
-                    "readwrite"
-                );
-                const store = transaction.objectStore(STORE_CONTRACTS);
-                const request = store.delete(contractKey(contractId, key));
-
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => resolve();
-            });
-        } catch (error) {
-            console.error(
-                `Failed to delete contract data for ${contractId}:${key}:`,
-                error
-            );
-            throw error;
-        }
-    }
-
-    async clearContractData(): Promise<void> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_CONTRACTS, STORE_CONTRACT_COLLECTIONS],
-                    "readwrite"
-                );
-                const contractDataStore =
-                    transaction.objectStore(STORE_CONTRACTS);
-                const collectionsStore = transaction.objectStore(
-                    STORE_CONTRACT_COLLECTIONS
-                );
-
-                const contractDataRequest = contractDataStore.clear();
-                const collectionsRequest = collectionsStore.clear();
-
-                let completed = 0;
-                const checkComplete = () => {
-                    completed++;
-                    if (completed === 2) {
-                        resolve();
-                    }
-                };
-
-                contractDataRequest.onsuccess = checkComplete;
-                collectionsRequest.onsuccess = checkComplete;
-
-                contractDataRequest.onerror = () =>
-                    reject(contractDataRequest.error);
-                collectionsRequest.onerror = () =>
-                    reject(collectionsRequest.error);
-            });
-        } catch (error) {
-            console.error("Failed to clear contract data:", error);
-            throw error;
-        }
-    }
-
-    async getContractCollection<T>(
-        contractType: string
-    ): Promise<ReadonlyArray<T>> {
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_CONTRACT_COLLECTIONS],
-                    "readonly"
-                );
-                const store = transaction.objectStore(
-                    STORE_CONTRACT_COLLECTIONS
-                );
-                const request = store.get(collectionKey(contractType));
-
-                request.onerror = () => reject(request.error);
-                request.onsuccess = () => {
-                    const result = request.result as
-                        | { value?: string }
-                        | undefined;
-                    if (!result?.value) return resolve([]);
-                    try {
-                        resolve(JSON.parse(result.value) as ReadonlyArray<T>);
-                    } catch (error) {
-                        reject(error);
-                    }
-                };
-            });
-        } catch (error) {
-            console.error(
-                `Failed to get contract collection ${contractType}:`,
-                error
-            );
-            return [];
-        }
-    }
-
-    async saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void> {
-        // Validate that the item has the required id field
-        const itemId = item[idField];
-        if (itemId === undefined || itemId === null) {
-            throw new Error(
-                `Item is missing required field '${String(idField)}'`
-            );
-        }
-
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_CONTRACT_COLLECTIONS],
-                    "readwrite"
-                );
-                const store = transaction.objectStore(
-                    STORE_CONTRACT_COLLECTIONS
-                );
-                const key = collectionKey(contractType);
-
-                // Read within the same transaction
-                const getRequest = store.get(key);
-
-                getRequest.onerror = () => reject(getRequest.error);
-                getRequest.onsuccess = () => {
-                    try {
-                        const result = getRequest.result as
-                            | { value?: string }
-                            | undefined;
-                        const collection: T[] = result?.value
-                            ? JSON.parse(result.value)
-                            : [];
-
-                        const existingIndex = collection.findIndex(
-                            (i) => i[idField] === itemId
-                        );
-                        const updated =
-                            existingIndex !== -1
-                                ? collection.map((entry, index) =>
-                                      index === existingIndex ? item : entry
-                                  )
-                                : [...collection, item];
-
-                        // Write within the same transaction
-                        const putRequest = store.put({
-                            key,
-                            value: JSON.stringify(updated),
-                        });
-
-                        putRequest.onerror = () => reject(putRequest.error);
-                        putRequest.onsuccess = () => resolve();
-                    } catch (error) {
-                        reject(error);
-                    }
-                };
-            });
-        } catch (error) {
-            console.error(
-                `Failed to save to contract collection ${contractType}:`,
-                error
-            );
-            throw error;
-        }
-    }
-
-    async removeFromContractCollection<T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ): Promise<void> {
-        // Validate input parameters
-        if (id === undefined || id === null) {
-            throw new Error(`Invalid id provided for removal: ${String(id)}`);
-        }
-
-        try {
-            const db = await this.getDB();
-            return new Promise((resolve, reject) => {
-                const transaction = db.transaction(
-                    [STORE_CONTRACT_COLLECTIONS],
-                    "readwrite"
-                );
-                const store = transaction.objectStore(
-                    STORE_CONTRACT_COLLECTIONS
-                );
-                const key = collectionKey(contractType);
-
-                // Read within the same transaction
-                const getRequest = store.get(key);
-
-                getRequest.onerror = () => reject(getRequest.error);
-                getRequest.onsuccess = () => {
-                    try {
-                        const result = getRequest.result as
-                            | { value?: string }
-                            | undefined;
-                        const collection: T[] = result?.value
-                            ? JSON.parse(result.value)
-                            : [];
-
-                        const filtered = collection.filter(
-                            (item) => item[idField] !== id
-                        );
-
-                        // Write within the same transaction
-                        const putRequest = store.put({
-                            key,
-                            value: JSON.stringify(filtered),
-                        });
-
-                        putRequest.onerror = () => reject(putRequest.error);
-                        putRequest.onsuccess = () => resolve();
-                    } catch (error) {
-                        reject(error);
-                    }
-                };
-            });
-        } catch (error) {
-            console.error(
-                `Failed to remove from contract collection ${contractType}:`,
-                error
-            );
-            throw error;
-        }
-    }
-
-    // Contract entity management methods
-
-    async getContracts(filter?: ContractFilter): Promise<Contract[]> {
-        const contracts =
-            await this.getContractCollection<Contract>(CONTRACTS_COLLECTION);
-
-        if (!filter) {
-            return [...contracts];
-        }
-
-        const matches = <T>(value: T, criterion?: T | T[]) => {
-            if (criterion === undefined) {
-                return true;
-            }
-            return Array.isArray(criterion)
-                ? criterion.includes(value)
-                : value === criterion;
-        };
-
-        return contracts.filter((c) => {
-            return (
-                matches(c.id, filter.id) &&
-                matches(c.script, filter.script) &&
-                matches(c.state, filter.state) &&
-                matches(c.type, filter.type)
-            );
-        });
-    }
-
-    async saveContract(contract: Contract): Promise<void> {
-        await this.saveToContractCollection(
-            CONTRACTS_COLLECTION,
-            contract,
-            "id"
-        );
-    }
-
-    async deleteContract(id: string): Promise<void> {
-        await this.removeFromContractCollection<Contract, "id">(
-            CONTRACTS_COLLECTION,
-            id,
-            "id"
-        );
-    }
+    });
+    return res;
 }

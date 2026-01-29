@@ -18,7 +18,6 @@ const ARKCONTRACT_PREFIX = "arkcontract";
  * @example
  * ```typescript
  * const contract: Contract = {
- *   id: "abc123",
  *   type: "vhtlc",
  *   params: { sender: "ab12...", receiver: "cd34...", ... },
  *   // ...
@@ -111,7 +110,6 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
  * const contract = contractFromArkContract(
  *   "arkcontract=vhtlc&sender=ab12...",
  *   {
- *     id: "my-swap",
  *     label: "Lightning Receive",
  *   }
  * );
@@ -120,7 +118,6 @@ export function decodeArkContract(encoded: string): ParsedArkContract {
 export function contractFromArkContract(
     encoded: string,
     options: {
-        id?: string;
         label?: string;
         state?: "active" | "inactive";
         expiresAt?: number;
@@ -145,7 +142,6 @@ export function contractFromArkContract(
     const params = parsed.data;
 
     return {
-        id: options.id || generateContractId(),
         label: options.label,
         type: parsed.type,
         params,
@@ -170,7 +166,6 @@ export function contractFromArkContractWithAddress(
     serverPubKey: Uint8Array,
     addressPrefix: string,
     options: {
-        id?: string;
         label?: string;
         state?: "active" | "inactive";
         expiresAt?: number;
@@ -184,7 +179,6 @@ export function contractFromArkContractWithAddress(
     const vtxoScript = handler.createScript(params);
 
     return {
-        id: options.id || generateContractId(),
         label: options.label,
         type: parsed.type,
         params,
@@ -195,15 +189,6 @@ export function contractFromArkContractWithAddress(
         expiresAt: options.expiresAt,
         metadata: options.metadata,
     };
-}
-
-/**
- * Generate a unique contract ID.
- */
-function generateContractId(): string {
-    const timestamp = Date.now().toString(36);
-    const random = Math.random().toString(36).substring(2, 10);
-    return `contract_${timestamp}_${random}`;
 }
 
 /**

@@ -3,7 +3,11 @@ import {
     ExtendedVirtualCoin,
     ArkTransaction,
 } from "../../wallet";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    CommitmentTxRecord,
+    WalletRepository,
+    WalletState,
+} from "../walletRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 import {
     openDatabase,
@@ -17,7 +21,6 @@ import {
     deserializeVtxo,
     deserializeUtxo,
     SerializedVtxo,
-    SerializedUtxo,
 } from "./db";
 
 /**
@@ -27,6 +30,52 @@ export class IndexedDBWalletRepository implements WalletRepository {
     private db: IDBDatabase | null = null;
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}
+
+    async clear(): Promise<void> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction(
+                    [
+                        STORE_VTXOS,
+                        STORE_UTXOS,
+                        STORE_TRANSACTIONS,
+                        STORE_WALLET_STATE,
+                    ],
+                    "readwrite"
+                );
+                const vtxosStore = transaction.objectStore(STORE_VTXOS);
+                const utxosStore = transaction.objectStore(STORE_UTXOS);
+                const transactionsStore =
+                    transaction.objectStore(STORE_TRANSACTIONS);
+                const walletStateStore =
+                    transaction.objectStore(STORE_WALLET_STATE);
+
+                const requests = [
+                    vtxosStore.clear(),
+                    utxosStore.clear(),
+                    transactionsStore.clear(),
+                    walletStateStore.clear(),
+                ];
+
+                let completed = 0;
+                const checkComplete = () => {
+                    completed++;
+                    if (completed === requests.length) {
+                        resolve();
+                    }
+                };
+
+                requests.forEach((request) => {
+                    request.onsuccess = checkComplete;
+                    request.onerror = () => reject(request.error);
+                });
+            });
+        } catch (error) {
+            console.error("Failed to clear wallet data:", error);
+            throw error;
+        }
+    }
 
     async [Symbol.asyncDispose](): Promise<void> {
         if (!this.db) return;
@@ -96,7 +145,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async clearVtxos(address: string): Promise<void> {
+    async deleteVtxos(address: string): Promise<void> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
@@ -183,7 +232,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async clearUtxos(address: string): Promise<void> {
+    async deleteUtxos(address: string): Promise<void> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
@@ -279,7 +328,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
         }
     }
 
-    async clearTransactions(address: string): Promise<void> {
+    async deleteTransactions(address: string): Promise<void> {
         try {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {

@@ -285,10 +285,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Get the contract ID for the wallet's default address.
+     * Get the contract script for the wallet's default address.
      * This is the pkScript hex, used to identify the wallet in ContractManager.
      */
-    get defaultContractId(): string {
+    get defaultContractScript(): string {
         return hex.encode(this.offchainTapscript.pkScript);
     }
 
@@ -639,7 +639,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      *
      * // Start watching for events (includes wallet's default address)
      * const stop = await manager.onContractEvent((event) => {
-     *   console.log(`${event.type} on ${event.contractId}`);
+     *   console.log(`${event.type} on ${event.contractScript}`);
      * });
      * ```
      */
@@ -683,7 +683,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // Register the wallet's default address as a contract
         // This ensures it's watched alongside any external contracts
-        // Contract ID defaults to script, so no need to specify id explicitly
+        // Script is the unique contract identifier, so no need to specify it explicitly
         const csvTimelock =
             this.offchainTapscript.options.csvTimelock ??
             DefaultVtxo.Script.DEFAULT_TIMELOCK;
@@ -696,7 +696,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 ),
                 csvTimelock: timelockToSequence(csvTimelock).toString(),
             },
-            script: this.defaultContractId,
+            script: this.defaultContractScript,
             address: await this.getAddress(),
             state: "active",
         });

@@ -1,6 +1,10 @@
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    CommitmentTxRecord,
+    WalletRepository,
+    WalletState,
+} from "../walletRepository";
 import { StorageAdapter } from "../../storage";
 import {
     ArkTransaction,
@@ -107,6 +111,10 @@ export class WalletRepositoryImpl implements WalletRepository {
     }
 
     async clearVtxos(address: string): Promise<void> {
+        return this.deleteVtxos(address);
+    }
+
+    async deleteVtxos(address: string): Promise<void> {
         await this.storage.removeItem(getVtxosStorageKey(address));
     }
 
@@ -145,6 +153,10 @@ export class WalletRepositoryImpl implements WalletRepository {
     }
 
     async clearUtxos(address: string): Promise<void> {
+        return this.deleteVtxos(address);
+    }
+
+    async deleteUtxos(address: string): Promise<void> {
         await this.storage.removeItem(getUtxosStorageKey(address));
     }
 
@@ -190,6 +202,10 @@ export class WalletRepositoryImpl implements WalletRepository {
     }
 
     async clearTransactions(address: string): Promise<void> {
+        return this.deleteTransactions(address);
+    }
+
+    async deleteTransactions(address: string): Promise<void> {
         await this.storage.removeItem(getTransactionsStorageKey(address));
     }
 
@@ -211,6 +227,11 @@ export class WalletRepositoryImpl implements WalletRepository {
             walletStateStorageKey,
             JSON.stringify(state)
         );
+    }
+
+    // New method added in V2, not implemented for legacy
+    async clear(): Promise<void> {
+        throw new Error("Method not implemented.");
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

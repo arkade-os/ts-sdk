@@ -4,8 +4,6 @@ import { Contract, ContractState } from "../contracts/types";
  * Filter options for querying contracts.
  */
 export interface ContractFilter {
-    /** Filter by contract ID(s) */
-    id?: string | string[];
     /** Filter by script(s) */
     script?: string | string[];
     /** Filter by state(s) */
@@ -14,48 +12,11 @@ export interface ContractFilter {
     type?: string | string[];
 }
 
-/** Storage key for the contracts collection */
-export const CONTRACTS_COLLECTION = "ark_contracts";
-
 export interface ContractRepository extends AsyncDisposable {
     /**
-     * @deprecated Use getContracts instead, this was done for boltz-swap compatibility.
+     * Clear all data from storage.
      */
-    getContractData<T>(contractId: string, key: string): Promise<T | null>;
-    /**
-     * @deprecated Use saveContract instead, this was done for boltz-swap compatibility.
-     */
-    setContractData<T>(contractId: string, key: string, data: T): Promise<void>;
-
-    /**
-     * @deprecated Use deleteContract instead, this was done for boltz-swap compatibility.
-     */
-    deleteContractData(contractId: string, key: string): Promise<void>;
-
-    clearContractData(): Promise<void>;
-
-    /**
-     * @deprecated Use getContracts instead, this was done for boltz-swap compatibility.
-     */
-    getContractCollection<T>(contractType: string): Promise<ReadonlyArray<T>>;
-
-    /**
-     * @deprecated Use saveContract instead, this was done for boltz-swap compatibility.
-     */
-    saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void>;
-
-    /**
-     * @deprecated Use deleteContract instead, this was done for boltz-swap compatibility.
-     */
-    removeFromContractCollection<T, K extends keyof T>(
-        contractType: string,
-        id: T[K],
-        idField: K
-    ): Promise<void>;
+    clear(): Promise<void>;
 
     /**
      * Get contracts with optional filter.
@@ -69,7 +30,7 @@ export interface ContractRepository extends AsyncDisposable {
     saveContract(contract: Contract): Promise<void>;
 
     /**
-     * Delete a contract by ID.
+     * Delete a contract by script.
      */
-    deleteContract(id: string): Promise<void>;
+    deleteContract(script: string): Promise<void>;
 }

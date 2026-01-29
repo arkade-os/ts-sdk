@@ -74,10 +74,10 @@ export const createMockExtendedVtxo = (
 
 // Helper to create a mock ContractVtxo
 export const createMockContractVtxo = (
-    contractId: string,
+    contractScript: string,
     overrides: Partial<ContractVtxo> = {}
 ): ContractVtxo => ({
     ...createMockExtendedVtxo(),
-    contractId,
+    contractScript,
     ...overrides,
 });

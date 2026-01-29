@@ -382,8 +382,7 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > import {
 >   IndexedDBWalletRepository,
 >   IndexedDBContractRepository,
->   migrateWalletRepository,
->   migrateContractRepository
+>   migrateWalletRepository
 > } from '@arkade-os/sdk'
 > import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
 >
@@ -395,10 +394,9 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 >   'address-1',
 >   'address-2'
 > ])
->
-> const contractRepository = new IndexedDBContractRepository(newDbName)
-> await migrateContractRepository(oldStorage, contractRepository)
 > ```
+>
+> Anything related to contract repository migration must be handled by the package which created them. The SDK doesn't manage contracts in V1. Data remains untouched and persisted in the same old location.
 >  
 > If you persisted custom data in the ContractRepository via its `setContractData` method, 
 > or a custom collection via `saveToContractCollection`, you'll need to migrate it manually:
@@ -550,25 +548,39 @@ const contract = await manager.createContract({
 const unsubscribe = await manager.onContractEvent((event) => {
   switch (event.type) {
     case 'vtxo_received':
-      console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractId}`)
+      console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractScript}`)
       break
     case 'vtxo_spent':
-      console.log(`Spent VTXOs on ${event.contractId}`)
+      console.log(`Spent VTXOs on ${event.contractScript}`)
       break
     case 'contract_expired':
-      console.log(`Contract ${event.contractId} expired`)
+      console.log(`Contract ${event.contractScript} expired`)
       break
   }
 })
 
 // Update contract data (e.g., set preimage when revealed)
-await manager.updateContractData(contract.id, { preimage: revealedPreimage })
+await manager.updateContractParams(contract.script, { preimage: revealedPreimage })
 
-// Check spendable paths
-const paths = manager.getSpendablePaths(contract.id, true, myPubKey)
+// Check spendable paths (requires a specific VTXO)
+const [withVtxos] = await manager.getContractsWithVtxos({ script: contract.script })
+const vtxo = withVtxos.vtxos[0]
+const paths = manager.getSpendablePaths({
+  contractScript: contract.script,
+  vtxo,
+  collaborative: true,
+  walletPubKey: myPubKey,
+})
 if (paths.length > 0) {
   console.log('Contract is spendable via:', paths[0].leaf)
 }
+
+// Or list all possible paths for the current context (no spendability checks)
+const allPaths = manager.getAllSpendingPaths({
+  contractScript: contract.script,
+  collaborative: true,
+  walletPubKey: myPubKey,
+})
 
 // Get balances across all contracts
 const balances = await manager.getAllBalances()

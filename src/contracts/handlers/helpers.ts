@@ -51,3 +51,36 @@ export function resolveRole(
 
     return undefined;
 }
+
+/**
+ * Check if a CSV timelock is currently satisfied for the given context/VTXO.
+ */
+export function isCsvSpendable(
+    context: PathContext,
+    sequence?: number
+): boolean {
+    if (sequence === undefined) return true;
+    if (!context.vtxo) return false;
+    const timelock = sequenceToTimelock(sequence);
+
+    if (timelock.type === "blocks") {
+        if (
+            context.blockHeight === undefined ||
+            context.vtxo.status.block_height === undefined
+        ) {
+            return false;
+        }
+        return (
+            context.blockHeight - context.vtxo.status.block_height >=
+            Number(timelock.value)
+        );
+    }
+
+    if (timelock.type === "seconds") {
+        const blockTime = context.vtxo.status.block_time;
+        if (blockTime === undefined) return false;
+        return context.currentTime / 1000 - blockTime >= Number(timelock.value);
+    }
+
+    return false;
+}

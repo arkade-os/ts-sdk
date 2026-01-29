@@ -122,7 +122,7 @@ async function main() {
         address: swapAddress,
     });
 
-    console.log("Contract registered with ID:", contract.id);
+    console.log("Contract registered with script:", contract.script);
 
     console.log("\nSubscribing to contract events...");
     const stopWatching = manager.onContractEvent((event) => {
@@ -135,7 +135,9 @@ async function main() {
             );
             return;
         }
-        console.log(`\n[Event] ${event.type} on contract ${event.contractId}`);
+        console.log(
+            `\n[Event] ${event.type} on contract ${event.contractScript}`
+        );
         if (event.vtxos?.length) {
             console.log(`\tVTXOs: ${event.vtxos.length}`);
             for (const vtxo of event.vtxos) {
@@ -156,7 +158,7 @@ async function main() {
 
     // Check contract balance
     const [contractWithVtxos] = await manager.getContractsWithVtxos({
-        id: contract.id,
+        script: contract.script,
     });
     console.log("\nChecking contract VTXOs:");
     contractWithVtxos.vtxos.forEach((vtxo) => {
@@ -170,8 +172,13 @@ async function main() {
 
     // Check spendable paths (Alice is sender, no preimage yet)
     console.log("\nChecking spendable paths for Alice (sender)...");
+    const vtxo = contractWithVtxos.vtxos[0];
+    if (!vtxo) {
+        throw new Error("No VTXOs found for contract");
+    }
     let paths = await manager.getSpendablePaths({
-        contractId: contract.id,
+        contractScript: contract.script,
+        vtxo,
         collaborative: true,
         walletPubKey: hex.encode(alicePubKey),
     });
@@ -195,7 +202,7 @@ async function main() {
     console.log("Bob reveals preimage:", hex.encode(secret));
 
     // Update contract with the revealed preimage
-    await manager.updateContractParams(contract.id, {
+    await manager.updateContractParams(contract.script, {
         preimage: hex.encode(secret),
     });
 
@@ -204,7 +211,8 @@ async function main() {
         "\nChecking spendable paths for Bob (receiver with preimage)..."
     );
     paths = await manager.getSpendablePaths({
-        contractId: contract.id,
+        contractScript: contract.script,
+        vtxo,
         collaborative: true,
         walletPubKey: hex.encode(bobPubKey),
     });
@@ -223,7 +231,7 @@ async function main() {
     console.log("\nRegistered contracts:");
     const contracts = await manager.getContracts();
     for (const c of contracts) {
-        console.log(`  - ${c.id} (${c.type}, ${c.state})`);
+        console.log(`  - ${c.script} (${c.type}, ${c.state})`);
     }
 
     // Clean up

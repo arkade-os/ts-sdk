@@ -155,10 +155,7 @@ import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletReposi
 import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
 import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
 import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
-import {
-    migrateWalletRepository,
-    migrateContractRepository,
-} from "./repositories/migrations/fromStorageAdapter";
+import { migrateWalletRepository } from "./repositories/migrations/fromStorageAdapter";
 
 export * from "./arkfee";
 
@@ -269,7 +266,6 @@ export {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
-    migrateContractRepository,
 
     // Intent proof
     Intent,

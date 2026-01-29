@@ -31,6 +31,7 @@ import type {
 } from "../../contracts";
 import type {
     CreateContractParams,
+    GetAllSpendingPathsOptions,
     GetSpendablePathsOptions,
     IContractManager,
 } from "../../contracts/contractManager";
@@ -229,7 +230,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         // Clear page-side storage to maintain parity with SW
         try {
             const address = await this.getAddress();
-            await this.walletRepository.clearVtxos(address);
+            await this.walletRepository.deleteVtxos(address);
         } catch (_) {
             console.warn("Failed to clear vtxos from wallet repository");
         }
@@ -420,13 +421,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             },
 
             async updateContract(
-                id: string,
-                updates: Partial<Omit<Contract, "id" | "createdAt">>
+                script: string,
+                updates: Partial<Omit<Contract, "script" | "createdAt">>
             ): Promise<Contract> {
                 const message: Request.UpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
-                    contractId: id,
+                    contractScript: script,
                     updates,
                 };
                 const response = await sendContractMessage(message);
@@ -437,13 +438,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             },
 
             async setContractState(
-                id: string,
+                script: string,
                 state: ContractState
             ): Promise<void> {
                 const message: Request.UpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
-                    contractId: id,
+                    contractScript: script,
                     updates: { state },
                 };
                 const response = await sendContractMessage(message);
@@ -453,11 +454,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 throw new UnexpectedResponseError(response);
             },
 
-            async deleteContract(id: string): Promise<void> {
+            async deleteContract(script: string): Promise<void> {
                 const message: Request.DeleteContract = {
                     type: "DELETE_CONTRACT",
                     id: getRandomId(),
-                    contractId: id,
+                    contractScript: script,
                 };
                 const response = await sendContractMessage(message);
                 if (Response.isContractDeleted(response)) {
@@ -476,6 +477,21 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 const response = await sendContractMessage(message);
                 if (Response.isSpendablePaths(response)) {
+                    return response.paths;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async getAllSpendingPaths(
+                options: GetAllSpendingPathsOptions
+            ): Promise<PathSelection[]> {
+                const message: Request.GetAllSpendingPaths = {
+                    type: "GET_ALL_SPENDING_PATHS",
+                    id: getRandomId(),
+                    options,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isAllSpendingPaths(response)) {
                     return response.paths;
                 }
                 throw new UnexpectedResponseError(response);

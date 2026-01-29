@@ -7,7 +7,12 @@ import {
     PathContext,
     PathSelection,
 } from "../types";
-import { resolveRole, sequenceToTimelock, timelockToSequence } from "./helpers";
+import {
+    isCsvSpendable,
+    resolveRole,
+    sequenceToTimelock,
+    timelockToSequence,
+} from "./helpers";
 
 /**
  * Typed parameters for VHTLC contracts.
@@ -114,7 +119,9 @@ export const VHTLCContractHandler: ContractHandler<
             }
 
             if (role === "sender" && BigInt(currentTimeSec) >= refundLocktime) {
-                return { leaf: script.refundWithoutReceiver() };
+                return {
+                    leaf: script.refundWithoutReceiver(),
+                };
             }
 
             return null;
@@ -122,17 +129,21 @@ export const VHTLCContractHandler: ContractHandler<
 
         // Unilateral paths
         if (role === "receiver" && preimage) {
+            const sequence = Number(contract.params.claimDelay);
+            if (!isCsvSpendable(context, sequence)) return null;
             return {
                 leaf: script.unilateralClaim(),
                 extraWitness: [hex.decode(preimage)],
-                sequence: Number(contract.params.claimDelay),
+                sequence,
             };
         }
 
         if (role === "sender") {
+            const sequence = Number(contract.params.refundNoReceiverDelay);
+            if (!isCsvSpendable(context, sequence)) return null;
             return {
                 leaf: script.unilateralRefundWithoutReceiver(),
-                sequence: Number(contract.params.refundNoReceiverDelay),
+                sequence,
             };
         }
 
@@ -140,11 +151,60 @@ export const VHTLCContractHandler: ContractHandler<
     },
 
     /**
-     * Get all currently spendable paths.
+     * Get all possible spending paths (no timelock checks).
      *
      * Role is determined from `context.role` or by matching `context.walletPubKey`
      * against sender/receiver in contract params.
      */
+    getAllSpendingPaths(
+        script: VHTLC.Script,
+        contract: Contract,
+        context: PathContext
+    ): PathSelection[] {
+        const role = resolveRole(contract, context);
+        const paths: PathSelection[] = [];
+
+        if (!role) {
+            return paths;
+        }
+
+        const preimage = contract.params?.preimage;
+
+        if (context.collaborative) {
+            // Collaborative paths (no timelock checks)
+            if (role === "receiver" && preimage) {
+                paths.push({
+                    leaf: script.claim(),
+                    extraWitness: [hex.decode(preimage)],
+                });
+            }
+            if (role === "sender") {
+                paths.push({
+                    leaf: script.refundWithoutReceiver(),
+                });
+            }
+        } else {
+            // Unilateral paths (no timelock checks)
+            if (role === "receiver" && preimage) {
+                const sequence = Number(contract.params.claimDelay);
+                paths.push({
+                    leaf: script.unilateralClaim(),
+                    extraWitness: [hex.decode(preimage)],
+                    sequence,
+                });
+            }
+            if (role === "sender") {
+                const sequence = Number(contract.params.refundNoReceiverDelay);
+                paths.push({
+                    leaf: script.unilateralRefundWithoutReceiver(),
+                    sequence,
+                });
+            }
+        }
+
+        return paths;
+    },
+
     getSpendablePaths(
         script: VHTLC.Script,
         contract: Contract,
@@ -162,7 +222,6 @@ export const VHTLCContractHandler: ContractHandler<
         const currentTimeSec = Math.floor(context.currentTime / 1000);
 
         if (context.collaborative) {
-            // Collaborative paths
             if (role === "receiver" && preimage) {
                 paths.push({
                     leaf: script.claim(),
@@ -170,21 +229,29 @@ export const VHTLCContractHandler: ContractHandler<
                 });
             }
             if (role === "sender" && BigInt(currentTimeSec) >= refundLocktime) {
-                paths.push({ leaf: script.refundWithoutReceiver() });
+                paths.push({
+                    leaf: script.refundWithoutReceiver(),
+                });
             }
-        } else {
-            // Unilateral paths (always include if role matches, CSV checked at tx time)
-            if (role === "receiver" && preimage) {
+            return paths;
+        }
+
+        if (role === "receiver" && preimage) {
+            const sequence = Number(contract.params.claimDelay);
+            if (isCsvSpendable(context, sequence)) {
                 paths.push({
                     leaf: script.unilateralClaim(),
                     extraWitness: [hex.decode(preimage)],
-                    sequence: Number(contract.params.claimDelay),
+                    sequence,
                 });
             }
-            if (role === "sender") {
+        }
+        if (role === "sender") {
+            const sequence = Number(contract.params.refundNoReceiverDelay);
+            if (isCsvSpendable(context, sequence)) {
                 paths.push({
                     leaf: script.unilateralRefundWithoutReceiver(),
-                    sequence: Number(contract.params.refundNoReceiverDelay),
+                    sequence,
                 });
             }
         }

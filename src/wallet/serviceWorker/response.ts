@@ -59,6 +59,7 @@ export namespace Response {
         | "CONTRACT_BALANCES"
         | "TOTAL_CONTRACT_BALANCE"
         | "SPENDABLE_PATHS"
+        | "ALL_SPENDING_PATHS"
         | "CAN_SPEND"
         | "SPENDING_PATH"
         | "CONTRACTS_WITH_VTXOS"
@@ -757,6 +758,32 @@ export namespace Response {
     ): SpendablePathsResponse {
         return {
             type: "SPENDABLE_PATHS",
+            success: true,
+            paths,
+            id,
+        };
+    }
+
+    export interface AllSpendingPathsResponse extends Base {
+        type: "ALL_SPENDING_PATHS";
+        success: true;
+        paths: PathSelection[];
+    }
+
+    export function isAllSpendingPaths(
+        response: Base
+    ): response is AllSpendingPathsResponse {
+        return (
+            response.type === "ALL_SPENDING_PATHS" && response.success === true
+        );
+    }
+
+    export function allSpendingPaths(
+        id: string,
+        paths: PathSelection[]
+    ): AllSpendingPathsResponse {
+        return {
+            type: "ALL_SPENDING_PATHS",
             success: true,
             paths,
             id,
