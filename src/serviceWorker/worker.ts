@@ -68,6 +68,8 @@ export class Worker {
 
         // Start all updaters
         for (const updater of this.updaters.values()) {
+            if (this.debug)
+                console.log(`Starting updater: ${updater.messageTag}`);
             await updater.start();
         }
 

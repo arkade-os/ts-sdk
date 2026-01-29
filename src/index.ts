@@ -192,7 +192,7 @@ import type {
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
 import { closeDatabase, openDatabase } from "./db/manager";
-import { setupServiceWorker } from "./wallet/serviceWorker/utils";
+import { WalletUpdater } from "./wallet/serviceWorker/wallet-updater";
 
 export {
     // Wallets
@@ -225,6 +225,7 @@ export {
     // Service Worker
     setupServiceWorker,
     Worker,
+    WalletUpdater,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
 

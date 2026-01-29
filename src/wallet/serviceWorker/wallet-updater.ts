@@ -14,6 +14,7 @@ import type {
 } from "../../contracts";
 import type {
     CreateContractParams,
+    GetAllSpendingPathsOptions,
     GetSpendablePathsOptions,
 } from "../../contracts/contractManager";
 import {
@@ -175,7 +176,7 @@ export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
 export type RequestUpdateContract = RequestEnvelope & {
     type: "UPDATE_CONTRACT";
     payload: {
-        contractId: string;
+        script: string;
         updates: Partial<Omit<Contract, "id" | "createdAt">>;
     };
 };
@@ -186,7 +187,7 @@ export type ResponseUpdateContract = ResponseEnvelope & {
 
 export type RequestDeleteContract = RequestEnvelope & {
     type: "DELETE_CONTRACT";
-    payload: { contractId: string };
+    payload: { script: string };
 };
 export type ResponseDeleteContract = ResponseEnvelope & {
     type: "CONTRACT_DELETED";
@@ -208,6 +209,15 @@ export type RequestIsContractManagerWatching = RequestEnvelope & {
 export type ResponseIsContractManagerWatching = ResponseEnvelope & {
     type: "CONTRACT_WATCHING";
     payload: { isWatching: boolean };
+};
+
+export type RequestGetAllSpendingPaths = RequestEnvelope & {
+    type: "GET_ALL_SPENDING_PATHS";
+    payload: { options: GetAllSpendingPathsOptions };
+};
+export type ResponseGetAllSpendingPaths = ResponseEnvelope & {
+    type: "ALL_SPENDING_PATHS";
+    payload: { paths: PathSelection[] };
 };
 
 // broadcast messages
@@ -253,6 +263,7 @@ export type WalletUpdaterRequest =
     | RequestUpdateContract
     | RequestDeleteContract
     | RequestGetSpendablePaths
+    | RequestGetAllSpendingPaths
     | RequestIsContractManagerWatching;
 
 export type WalletUpdaterResponse =
@@ -278,6 +289,7 @@ export type WalletUpdaterResponse =
     | ResponseUpdateContract
     | ResponseDeleteContract
     | ResponseGetSpendablePaths
+    | ResponseGetAllSpendingPaths
     | ResponseIsContractManagerWatching
     | ResponseContractEvent;
 
@@ -499,7 +511,7 @@ export class WalletUpdater
                 case "UPDATE_CONTRACT": {
                     const manager = await this.wallet.getContractManager();
                     const contract = await manager.updateContract(
-                        message.payload.contractId,
+                        message.payload.script,
                         message.payload.updates
                     );
                     return this.tagged({
@@ -510,7 +522,7 @@ export class WalletUpdater
                 }
                 case "DELETE_CONTRACT": {
                     const manager = await this.wallet.getContractManager();
-                    await manager.deleteContract(message.payload.contractId);
+                    await manager.deleteContract(message.payload.script);
                     return this.tagged({
                         id,
                         type: "CONTRACT_DELETED",
@@ -775,7 +787,8 @@ export class WalletUpdater
                         await this.wallet?.getBoardingAddress()!;
 
                     // save utxos using unified repository
-                    await this.walletRepository.clearUtxos(boardingAddress);
+                    // TODO: remove UTXOS by address
+                    //  await this.walletRepository.clearUtxos(boardingAddress);
                     await this.walletRepository.saveUtxos(
                         boardingAddress,
                         utxos
@@ -898,8 +911,7 @@ export class WalletUpdater
 
         // Clear page-side storage to maintain parity with SW
         try {
-            const address = await this.wallet.getAddress();
-            await this.walletRepository.clearVtxos(address);
+            await this.walletRepository.clear();
         } catch (_) {
             console.warn("Failed to clear vtxos from wallet repository");
         }
