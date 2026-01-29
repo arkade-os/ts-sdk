@@ -240,6 +240,48 @@ describe("DefaultContractHandler", () => {
         expect(paths).toHaveLength(1);
         expect(paths[0].sequence).toBeUndefined();
     });
+
+    it("should enforce CSV for spendable paths", () => {
+        const params = createDefaultContractParams();
+        const script = DefaultContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "default",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const vtxo = createMockVtxo({
+            status: { confirmed: true, block_height: 100, block_time: 1000 },
+        });
+
+        const notMature = DefaultContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+                blockHeight: 150,
+                vtxo,
+            }
+        );
+        expect(notMature).toHaveLength(0);
+
+        const mature = DefaultContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+                blockHeight: 300,
+                vtxo,
+            }
+        );
+        expect(mature).toHaveLength(1);
+        expect(mature[0].sequence).toBe(Number(params.csvTimelock));
+    });
 });
 
 describe("VHTLCContractHandler", () => {
@@ -298,5 +340,67 @@ describe("VHTLCContractHandler", () => {
         expect(hex.encode(script2.pkScript)).toEqual(
             hex.encode(script.pkScript)
         );
+    });
+
+    it("should enforce CSV for unilateral spendable paths", () => {
+        const receiverXOnly =
+            "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+        const senderXOnly =
+            "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+        const serverXOnly =
+            "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+
+        const params = {
+            sender: senderXOnly,
+            receiver: receiverXOnly,
+            server: serverXOnly,
+            hash: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+            refundLocktime: "800000",
+            claimDelay: "10",
+            refundDelay: "12",
+            refundNoReceiverDelay: "14",
+            preimage: "010203",
+        };
+
+        const script = VHTLCContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "vhtlc",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const vtxo = createMockVtxo({
+            status: { confirmed: true, block_height: 100, block_time: 1000 },
+        });
+
+        const notMature = VHTLCContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+                blockHeight: 105,
+                walletPubKey: receiverXOnly,
+                vtxo,
+            }
+        );
+        expect(notMature).toHaveLength(0);
+
+        const mature = VHTLCContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+                blockHeight: 200,
+                walletPubKey: receiverXOnly,
+                vtxo,
+            }
+        );
+        expect(mature).toHaveLength(1);
+        expect(mature[0].sequence).toBe(Number(params.claimDelay));
     });
 });
