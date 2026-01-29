@@ -17,10 +17,7 @@ export class InMemoryWalletRepository implements WalletRepository {
     private readonly vtxosByAddress = new Map<string, ExtendedVirtualCoin[]>();
     private readonly utxosByAddress = new Map<string, ExtendedCoin[]>();
     private readonly txsByAddress = new Map<string, ArkTransaction[]>();
-    private readonly commitmentTxsByTxid = new Map<
-        string,
-        CommitmentTxRecord
-    >();
+
     private walletState: WalletState | null = null;
 
     async getVtxos(address: string): Promise<ExtendedVirtualCoin[]> {
@@ -40,7 +37,7 @@ export class InMemoryWalletRepository implements WalletRepository {
         this.vtxosByAddress.set(address, next);
     }
 
-    async clearVtxos(address: string): Promise<void> {
+    async deleteVtxos(address: string): Promise<void> {
         this.vtxosByAddress.delete(address);
     }
 
@@ -58,7 +55,7 @@ export class InMemoryWalletRepository implements WalletRepository {
         this.utxosByAddress.set(address, next);
     }
 
-    async clearUtxos(address: string): Promise<void> {
+    async deleteUtxos(address: string): Promise<void> {
         this.utxosByAddress.delete(address);
     }
 
@@ -75,7 +72,7 @@ export class InMemoryWalletRepository implements WalletRepository {
         this.txsByAddress.set(address, next);
     }
 
-    async clearTransactions(address: string): Promise<void> {
+    async deleteTransactions(address: string): Promise<void> {
         this.txsByAddress.delete(address);
     }
 
@@ -85,6 +82,13 @@ export class InMemoryWalletRepository implements WalletRepository {
 
     async saveWalletState(state: WalletState): Promise<void> {
         this.walletState = state;
+    }
+
+    async clear(): Promise<void> {
+        this.vtxosByAddress.clear();
+        this.utxosByAddress.clear();
+        this.txsByAddress.clear();
+        this.walletState = null;
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

@@ -1,11 +1,6 @@
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
-import {
-    openDatabase,
-    closeDatabase,
-    STORE_CONTRACTS,
-    LEGACY_STORE_CONTRACT_COLLECTIONS,
-} from "./db";
+import { openDatabase, closeDatabase, STORE_CONTRACTS } from "./db";
 import { Contract } from "../../contracts";
 
 /**
@@ -23,36 +18,29 @@ export class IndexedDBContractRepository implements ContractRepository {
             const db = await this.getDB();
             return new Promise((resolve, reject) => {
                 const transaction = db.transaction(
-                    [STORE_CONTRACTS, LEGACY_STORE_CONTRACT_COLLECTIONS],
+                    [STORE_CONTRACTS],
                     "readwrite"
                 );
                 const contractDataStore =
                     transaction.objectStore(STORE_CONTRACTS);
-                const collectionsStore = transaction.objectStore(
-                    LEGACY_STORE_CONTRACT_COLLECTIONS
-                );
                 const contractsStore = transaction.objectStore(STORE_CONTRACTS);
 
                 const contractDataRequest = contractDataStore.clear();
-                const collectionsRequest = collectionsStore.clear();
                 const contractsRequest = contractsStore.clear();
 
                 let completed = 0;
                 const checkComplete = () => {
                     completed++;
-                    if (completed === 3) {
+                    if (completed === 2) {
                         resolve();
                     }
                 };
 
                 contractDataRequest.onsuccess = checkComplete;
-                collectionsRequest.onsuccess = checkComplete;
                 contractsRequest.onsuccess = checkComplete;
 
                 contractDataRequest.onerror = () =>
                     reject(contractDataRequest.error);
-                collectionsRequest.onerror = () =>
-                    reject(collectionsRequest.error);
                 contractsRequest.onerror = () => reject(contractsRequest.error);
             });
         } catch (error) {

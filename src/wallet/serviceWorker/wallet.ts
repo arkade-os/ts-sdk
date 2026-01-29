@@ -230,7 +230,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         // Clear page-side storage to maintain parity with SW
         try {
             const address = await this.getAddress();
-            await this.walletRepository.clearVtxos(address);
+            await this.walletRepository.deleteVtxos(address);
         } catch (_) {
             console.warn("Failed to clear vtxos from wallet repository");
         }

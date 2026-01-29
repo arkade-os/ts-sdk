@@ -304,7 +304,7 @@ export class Worker {
                         await this.handler?.getBoardingAddress()!;
 
                     // save utxos using unified repository
-                    await this.walletRepository.clearUtxos(boardingAddress);
+                    await this.walletRepository.deleteUtxos(boardingAddress);
                     await this.walletRepository.saveUtxos(
                         boardingAddress,
                         utxos
