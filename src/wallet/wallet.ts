@@ -292,13 +292,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return hex.encode(this.offchainTapscript.pkScript);
     }
 
-    /**
-     * @deprecated Use defaultContractScript instead.
-     */
-    get defaultContractId(): string {
-        return this.defaultContractScript;
-    }
-
     async getAddress(): Promise<string> {
         return this.arkAddress.encode();
     }
