@@ -4,7 +4,10 @@ import type {
     ContractState,
     GetContractsFilter,
 } from "../../contracts";
-import { GetSpendablePathsOptions } from "../../contracts/contractManager";
+import {
+    GetAllSpendingPathsOptions,
+    GetSpendablePathsOptions,
+} from "../../contracts/contractManager";
 
 /**
  * Request is the namespace that contains the request types for the service worker.
@@ -32,6 +35,7 @@ export namespace Request {
         | "UPDATE_CONTRACT_STATE"
         | "DELETE_CONTRACT"
         | "GET_SPENDABLE_PATHS"
+        | "GET_ALL_SPENDING_PATHS"
         | "IS_CONTRACT_MANAGER_WATCHING"
         | "SUBSCRIBE_CONTRACT_EVENTS"
         | "UNSUBSCRIBE_CONTRACT_EVENTS";
@@ -288,6 +292,17 @@ export namespace Request {
         message: Base
     ): message is GetSpendablePaths {
         return message.type === "GET_SPENDABLE_PATHS";
+    }
+
+    export interface GetAllSpendingPaths extends Base {
+        type: "GET_ALL_SPENDING_PATHS";
+        options: GetAllSpendingPathsOptions;
+    }
+
+    export function isGetAllSpendingPaths(
+        message: Base
+    ): message is GetAllSpendingPaths {
+        return message.type === "GET_ALL_SPENDING_PATHS";
     }
 
     export interface isContractManagerWatching extends Base {

@@ -882,6 +882,10 @@ export class Worker {
                 await this.handleGetSpendablePaths(event);
                 break;
             }
+            case "GET_ALL_SPENDING_PATHS": {
+                await this.handleGetAllSpendingPaths(event);
+                break;
+            }
             case "IS_CONTRACT_MANAGER_WATCHING": {
                 await this.handleIsContractManagerWatching(event);
                 break;
@@ -1173,6 +1177,46 @@ export class Worker {
             );
         } catch (error: unknown) {
             console.error("Error getting spendable paths:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleGetAllSpendingPaths(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isGetAllSpendingPaths(message)) {
+            console.error(
+                "Invalid GET_ALL_SPENDING_PATHS message format",
+                message
+            );
+            event.source?.postMessage(
+                Response.error(
+                    message.id,
+                    "Invalid GET_ALL_SPENDING_PATHS message format"
+                )
+            );
+            return;
+        }
+
+        if (!this.handler) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const manager = await this.handler.getContractManager();
+            const paths = await manager.getAllSpendingPaths(message.options);
+            event.source?.postMessage(
+                Response.allSpendingPaths(message.id, paths)
+            );
+        } catch (error: unknown) {
+            console.error("Error getting all spending paths:", error);
             const errorMessage =
                 error instanceof Error
                     ? error.message

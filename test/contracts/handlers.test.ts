@@ -5,6 +5,7 @@ import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
 import { Contract, contractHandlers, DefaultVtxo } from "../../src";
 import {
     createDefaultContractParams,
+    createMockVtxo,
     TEST_PUB_KEY,
     TEST_SERVER_PUB_KEY,
 } from "./helpers";
@@ -125,6 +126,14 @@ describe("DefaultContractHandler", () => {
         const path = DefaultContractHandler.selectPath(script, contract, {
             collaborative: false,
             currentTime: Date.now(),
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+            blockHeight: 300,
         });
 
         expect(path).toBeDefined();
@@ -149,6 +158,14 @@ describe("DefaultContractHandler", () => {
             {
                 collaborative: true,
                 currentTime: Date.now(),
+                blockHeight: 300,
+                vtxo: createMockVtxo({
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_time: 1000,
+                    },
+                }),
             }
         );
 
@@ -174,6 +191,14 @@ describe("DefaultContractHandler", () => {
             {
                 collaborative: false,
                 currentTime: Date.now(),
+                blockHeight: 300,
+                vtxo: createMockVtxo({
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_time: 1000,
+                    },
+                }),
             }
         );
 
@@ -202,6 +227,13 @@ describe("DefaultContractHandler", () => {
             {
                 collaborative: false,
                 currentTime: Date.now(),
+                vtxo: createMockVtxo({
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_time: 1000,
+                    },
+                }),
             }
         );
 

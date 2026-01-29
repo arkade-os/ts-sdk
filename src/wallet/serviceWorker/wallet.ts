@@ -31,6 +31,7 @@ import type {
 } from "../../contracts";
 import type {
     CreateContractParams,
+    GetAllSpendingPathsOptions,
     GetSpendablePathsOptions,
     IContractManager,
 } from "../../contracts/contractManager";
@@ -476,6 +477,21 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
                 const response = await sendContractMessage(message);
                 if (Response.isSpendablePaths(response)) {
+                    return response.paths;
+                }
+                throw new UnexpectedResponseError(response);
+            },
+
+            async getAllSpendingPaths(
+                options: GetAllSpendingPathsOptions
+            ): Promise<PathSelection[]> {
+                const message: Request.GetAllSpendingPaths = {
+                    type: "GET_ALL_SPENDING_PATHS",
+                    id: getRandomId(),
+                    options,
+                };
+                const response = await sendContractMessage(message);
+                if (Response.isAllSpendingPaths(response)) {
                     return response.paths;
                 }
                 throw new UnexpectedResponseError(response);

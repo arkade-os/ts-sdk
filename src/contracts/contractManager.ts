@@ -110,12 +110,21 @@ export interface IContractManager extends Disposable {
     deleteContract(script: string): Promise<void>;
 
     /**
-     * Get currently spendable paths for a contract.
+     * Get all currently spendable paths for a contract.
      *
      * Returns an empty array if the contract or its handler cannot be found.
      */
     getSpendablePaths(
         options: GetSpendablePathsOptions
+    ): Promise<PathSelection[]>;
+
+    /**
+     * Get all possible spending paths for a contract.
+     *
+     * Returns an empty array if the contract or its handler cannot be found.
+     */
+    getAllSpendingPaths(
+        options: GetAllSpendingPathsOptions
     ): Promise<PathSelection[]>;
 
     /**
@@ -140,6 +149,20 @@ export interface IContractManager extends Disposable {
  * Options for getting spendable paths.
  */
 export type GetSpendablePathsOptions = {
+    /** The contract script */
+    contractScript: string;
+    /** The specific VTXO being evaluated */
+    vtxo: VirtualCoin;
+    /** Whether collaborative spending is available (default: true) */
+    collaborative?: boolean;
+    /** Wallet's public key (hex) to determine role */
+    walletPubKey?: string;
+};
+
+/**
+ * Options for getting all possible spending paths.
+ */
+export type GetAllSpendingPathsOptions = {
     /** The contract script */
     contractScript: string;
     /** Whether collaborative spending is available (default: true) */
@@ -474,13 +497,40 @@ export class ContractManager implements IContractManager {
     }
 
     /**
-     * Get spendable paths for a contract.
+     * Get currently spendable paths for a contract.
      *
      * @param contractScript - The contract script
      * @param options - Options for getting spendable paths
      */
     async getSpendablePaths(
         options: GetSpendablePathsOptions
+    ): Promise<PathSelection[]> {
+        const {
+            contractScript,
+            collaborative = true,
+            walletPubKey,
+            vtxo,
+        } = options;
+
+        const [contract] = await this.getContracts({ script: contractScript });
+        if (!contract) return [];
+
+        const handler = contractHandlers.get(contract.type);
+        if (!handler) return [];
+
+        const script = handler.createScript(contract.params);
+        const context: PathContext = {
+            collaborative,
+            currentTime: Date.now(),
+            walletPubKey,
+            vtxo,
+        };
+
+        return handler.getSpendablePaths(script, contract, context);
+    }
+
+    async getAllSpendingPaths(
+        options: GetAllSpendingPathsOptions
     ): Promise<PathSelection[]> {
         const { contractScript, collaborative = true, walletPubKey } = options;
 
@@ -497,7 +547,7 @@ export class ContractManager implements IContractManager {
             walletPubKey,
         };
 
-        return handler.getSpendablePaths(script, contract, context);
+        return handler.getAllSpendingPaths(script, contract, context);
     }
 
     /**

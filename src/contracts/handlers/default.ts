@@ -7,7 +7,11 @@ import {
     PathContext,
     PathSelection,
 } from "../types";
-import { sequenceToTimelock, timelockToSequence } from "./helpers";
+import {
+    isCsvSpendable,
+    sequenceToTimelock,
+    timelockToSequence,
+} from "./helpers";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
@@ -57,7 +61,7 @@ export const DefaultContractHandler: ContractHandler<
 
     selectPath(
         script: DefaultVtxo.Script,
-        _contract: Contract,
+        contract: Contract,
         context: PathContext
     ): PathSelection | null {
         if (context.collaborative) {
@@ -65,8 +69,39 @@ export const DefaultContractHandler: ContractHandler<
             return { leaf: script.forfeit() };
         }
 
-        // Use exit path for unilateral exit
-        return { leaf: script.exit() };
+        // Use exit path for unilateral exit (only if CSV is satisfied)
+        const sequence = contract.params.csvTimelock
+            ? Number(contract.params.csvTimelock)
+            : undefined;
+        if (!isCsvSpendable(context, sequence)) {
+            return null;
+        }
+        return {
+            leaf: script.exit(),
+            sequence,
+        };
+    },
+
+    getAllSpendingPaths(
+        script: DefaultVtxo.Script,
+        contract: Contract,
+        context: PathContext
+    ): PathSelection[] {
+        const paths: PathSelection[] = [];
+
+        // Forfeit path available with server cooperation
+        if (context.collaborative) {
+            paths.push({ leaf: script.forfeit() });
+        }
+
+        // Exit path always possible (CSV checked at tx time)
+        const exitPath: PathSelection = { leaf: script.exit() };
+        if (contract.params.csvTimelock) {
+            exitPath.sequence = Number(contract.params.csvTimelock);
+        }
+        paths.push(exitPath);
+
+        return paths;
     },
 
     getSpendablePaths(
@@ -77,16 +112,20 @@ export const DefaultContractHandler: ContractHandler<
         const paths: PathSelection[] = [];
 
         if (context.collaborative) {
-            // Forfeit path available with server cooperation
             paths.push({ leaf: script.forfeit() });
         }
 
-        // Exit path always available (CSV checked at tx time)
-        const exitPath: PathSelection = { leaf: script.exit() };
-        if (contract.params.csvTimelock) {
-            exitPath.sequence = Number(contract.params.csvTimelock);
+        const exitSequence = contract.params.csvTimelock
+            ? Number(contract.params.csvTimelock)
+            : undefined;
+
+        if (isCsvSpendable(context, exitSequence)) {
+            const exitPath: PathSelection = { leaf: script.exit() };
+            if (exitSequence !== undefined) {
+                exitPath.sequence = exitSequence;
+            }
+            paths.push(exitPath);
         }
-        paths.push(exitPath);
 
         return paths;
     },

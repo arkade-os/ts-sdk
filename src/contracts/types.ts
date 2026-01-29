@@ -122,6 +122,9 @@ export interface PathContext {
      * If not provided, handler may derive role from walletPubKey.
      */
     role?: string;
+
+    /** The specific VTXO being evaluated */
+    vtxo?: VirtualCoin;
 }
 
 /**
@@ -186,10 +189,21 @@ export interface ContractHandler<
     ): PathSelection | null;
 
     /**
-     * Get all currently spendable paths.
+     * Get all possible spending paths for the current context.
      * Returns empty array if no paths are available.
      *
-     * Useful for showing users which spending options exist.
+     * Useful for showing users which spending options exist regardless of
+     * current spendability.
+     */
+    getAllSpendingPaths(
+        script: S,
+        contract: Contract,
+        context: PathContext
+    ): PathSelection[];
+
+    /**
+     * Get all currently spendable paths.
+     * Returns empty array if no paths are available.
      */
     getSpendablePaths(
         script: S,

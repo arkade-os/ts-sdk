@@ -562,15 +562,25 @@ const unsubscribe = await manager.onContractEvent((event) => {
 // Update contract data (e.g., set preimage when revealed)
 await manager.updateContractParams(contract.script, { preimage: revealedPreimage })
 
-// Check spendable paths
+// Check spendable paths (requires a specific VTXO)
+const [withVtxos] = await manager.getContractsWithVtxos({ script: contract.script })
+const vtxo = withVtxos.vtxos[0]
 const paths = manager.getSpendablePaths({
   contractScript: contract.script,
+  vtxo,
   collaborative: true,
   walletPubKey: myPubKey,
 })
 if (paths.length > 0) {
   console.log('Contract is spendable via:', paths[0].leaf)
 }
+
+// Or list all possible paths for the current context (no spendability checks)
+const allPaths = manager.getAllSpendingPaths({
+  contractScript: contract.script,
+  collaborative: true,
+  walletPubKey: myPubKey,
+})
 
 // Get balances across all contracts
 const balances = await manager.getAllBalances()

@@ -172,8 +172,13 @@ async function main() {
 
     // Check spendable paths (Alice is sender, no preimage yet)
     console.log("\nChecking spendable paths for Alice (sender)...");
+    const vtxo = contractWithVtxos.vtxos[0];
+    if (!vtxo) {
+        throw new Error("No VTXOs found for contract");
+    }
     let paths = await manager.getSpendablePaths({
         contractScript: contract.script,
+        vtxo,
         collaborative: true,
         walletPubKey: hex.encode(alicePubKey),
     });
@@ -207,6 +212,7 @@ async function main() {
     );
     paths = await manager.getSpendablePaths({
         contractScript: contract.script,
+        vtxo,
         collaborative: true,
         walletPubKey: hex.encode(bobPubKey),
     });
