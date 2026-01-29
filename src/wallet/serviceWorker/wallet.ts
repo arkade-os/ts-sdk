@@ -59,6 +59,8 @@ import {
     WalletUpdater,
     WalletUpdaterRequest,
     WalletUpdaterResponse,
+    RequestGetAllSpendingPaths,
+    ResponseGetAllSpendingPaths,
 } from "./wallet-updater";
 import type {
     Contract,
@@ -459,8 +461,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
-                    contractScript: script,
-                    updates,
+                    tag: WalletUpdater.messageTag,
+                    payload: { script, updates },
                 };
                 try {
                     const response = await sendContractMessage(message);
@@ -478,8 +480,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
-                    contractScript: script,
-                    updates: { state },
+                    tag: WalletUpdater.messageTag,
+                    payload: { script, updates: { state } },
                 };
                 try {
                     await sendContractMessage(message);
@@ -493,7 +495,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestDeleteContract = {
                     type: "DELETE_CONTRACT",
                     id: getRandomId(),
-                    contractScript: script,
+                    tag: WalletUpdater.messageTag,
+                    payload: { script },
                 };
                 try {
                     const response = await sendContractMessage(message);
@@ -524,16 +527,19 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             async getAllSpendingPaths(
                 options: GetAllSpendingPathsOptions
             ): Promise<PathSelection[]> {
-                const message: Request.GetAllSpendingPaths = {
+                const message: RequestGetAllSpendingPaths = {
                     type: "GET_ALL_SPENDING_PATHS",
                     id: getRandomId(),
-                    options,
+                    tag: WalletUpdater.messageTag,
+                    payload: { options },
                 };
-                const response = await sendContractMessage(message);
-                if (Response.isAllSpendingPaths(response)) {
-                    return response.paths;
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetAllSpendingPaths).payload
+                        .paths;
+                } catch (e) {
+                    throw new Error("Failed to get all spending paths");
                 }
-                throw new UnexpectedResponseError(response);
             },
 
             onContractEvent(callback: ContractEventCallback): () => void {
