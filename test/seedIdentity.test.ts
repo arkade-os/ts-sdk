@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { SeedIdentity, ReadonlySeedIdentity } from "../src/identity/seedIdentity";
+import {
+    SeedIdentity,
+    ReadonlySeedIdentity,
+} from "../src/identity/seedIdentity";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { hex } from "@scure/base";
 import { schnorr, verifyAsync } from "@noble/secp256k1";

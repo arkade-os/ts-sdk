@@ -53,7 +53,11 @@ export class SeedIdentity implements Identity {
     private readonly accountNode: HDKey;
     private readonly derivedKey: Uint8Array;
 
-    private constructor(seed: Uint8Array, isMainnet: boolean, mnemonic?: string) {
+    private constructor(
+        seed: Uint8Array,
+        isMainnet: boolean,
+        mnemonic?: string
+    ) {
         if (seed.length !== 64) {
             throw new Error("Seed must be 64 bytes");
         }
@@ -130,7 +134,9 @@ export class SeedIdentity implements Identity {
         const identity = new SeedIdentity(seed, isMainnet, mnemonic);
 
         if (identity.accountNode.publicExtendedKey !== xpub) {
-            throw new Error("xpub mismatch: derived key does not match descriptor");
+            throw new Error(
+                "xpub mismatch: derived key does not match descriptor"
+            );
         }
 
         return identity;
