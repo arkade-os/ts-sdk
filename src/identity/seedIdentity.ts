@@ -14,15 +14,30 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 // BIP32 version bytes for xpub/xprv
 const VERSIONS = { private: 0x0488ade4, public: 0x0488b21e };
 
+/**
+ * Options for creating a SeedIdentity from a raw seed.
+ */
 export interface SeedIdentityOptions {
+    /** Whether to use mainnet (coin type 0) or testnet (coin type 1) derivation path. */
     isMainnet: boolean;
 }
 
+/**
+ * Options for creating a SeedIdentity from a BIP39 mnemonic phrase.
+ */
 export interface MnemonicOptions extends SeedIdentityOptions {
+    /** Optional BIP39 passphrase for additional seed entropy. */
     passphrase?: string;
 }
 
-// Helper function for parsing descriptor
+/**
+ * Parses a Taproot output descriptor to extract fingerprint, path, and xpub.
+ *
+ * @param descriptor - Output descriptor in format: tr([fingerprint/path']xpub.../0/*)
+ * @returns Parsed descriptor components
+ * @throws Error if descriptor format is invalid or missing /0/* template
+ * @internal
+ */
 function parseDescriptor(descriptor: string): {
     fingerprint: string;
     path: string;
@@ -45,6 +60,39 @@ function parseDescriptor(descriptor: string): {
     };
 }
 
+/**
+ * HD wallet identity derived from a BIP39 mnemonic or raw seed.
+ *
+ * Uses BIP86 (Taproot) derivation path: m/86'/{coinType}'/0'/0/0
+ * - Mainnet: m/86'/0'/0'/0/0
+ * - Testnet: m/86'/1'/0'/0/0
+ *
+ * The identity stores the seed internally for future multi-address derivation
+ * and serializes to JSON with an output descriptor for wallet interoperability.
+ *
+ * @example
+ * ```typescript
+ * // From mnemonic phrase
+ * const identity = SeedIdentity.fromMnemonic(
+ *   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+ *   { isMainnet: true }
+ * );
+ *
+ * // From mnemonic with passphrase
+ * const identity = SeedIdentity.fromMnemonic(mnemonic, {
+ *   isMainnet: true,
+ *   passphrase: 'my secret passphrase'
+ * });
+ *
+ * // From raw 64-byte seed
+ * const seed = mnemonicToSeedSync(mnemonic);
+ * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+ *
+ * // Serialize and restore
+ * const json = identity.toJSON();
+ * const restored = SeedIdentity.fromJSON(json);
+ * ```
+ */
 export class SeedIdentity implements Identity {
     private readonly seed: Uint8Array;
     private readonly mnemonic?: string;
@@ -87,10 +135,42 @@ export class SeedIdentity implements Identity {
         this.derivedKey = addressNode.privateKey;
     }
 
+    /**
+     * Creates a SeedIdentity from a raw 64-byte BIP39 seed.
+     *
+     * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
+     * @param opts - Options specifying mainnet or testnet derivation
+     * @returns New SeedIdentity instance
+     * @throws Error if seed is not 64 bytes
+     *
+     * @example
+     * ```typescript
+     * import { mnemonicToSeedSync } from '@scure/bip39';
+     *
+     * const seed = mnemonicToSeedSync(mnemonic);
+     * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+     * ```
+     */
     static fromSeed(seed: Uint8Array, opts: SeedIdentityOptions): SeedIdentity {
         return new SeedIdentity(seed, opts.isMainnet);
     }
 
+    /**
+     * Creates a SeedIdentity from a BIP39 mnemonic phrase.
+     *
+     * @param phrase - BIP39 mnemonic phrase (12 or 24 words)
+     * @param opts - Options including network and optional passphrase
+     * @returns New SeedIdentity instance
+     * @throws Error if mnemonic is invalid
+     *
+     * @example
+     * ```typescript
+     * const identity = SeedIdentity.fromMnemonic(
+     *   'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+     *   { isMainnet: true, passphrase: 'optional' }
+     * );
+     * ```
+     */
     static fromMnemonic(phrase: string, opts: MnemonicOptions): SeedIdentity {
         if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");
@@ -99,6 +179,26 @@ export class SeedIdentity implements Identity {
         return new SeedIdentity(seed, opts.isMainnet, phrase);
     }
 
+    /**
+     * Restores a SeedIdentity from a JSON string.
+     *
+     * The JSON must contain either a `mnemonic` or `seed` field, plus a `descriptor`
+     * field. The network (mainnet/testnet) is inferred from the coin type in the
+     * descriptor path. The xpub in the descriptor is validated against the derived key.
+     *
+     * @param json - JSON string from toJSON()
+     * @returns Restored SeedIdentity instance
+     * @throws Error if JSON is invalid, missing required fields, or xpub doesn't match
+     *
+     * @example
+     * ```typescript
+     * const original = SeedIdentity.fromMnemonic(mnemonic, { isMainnet: true });
+     * const json = original.toJSON();
+     *
+     * // Later, restore the identity
+     * const restored = SeedIdentity.fromJSON(json);
+     * ```
+     */
     static fromJSON(json: string): SeedIdentity {
         const parsed = JSON.parse(json);
 
@@ -142,14 +242,29 @@ export class SeedIdentity implements Identity {
         return identity;
     }
 
+    /**
+     * Returns the 32-byte x-only (Schnorr) public key.
+     * @returns X-only public key for Taproot addresses
+     */
     async xOnlyPublicKey(): Promise<Uint8Array> {
         return pubSchnorr(this.derivedKey);
     }
 
+    /**
+     * Returns the 33-byte compressed ECDSA public key.
+     * @returns Compressed public key with prefix byte
+     */
     async compressedPublicKey(): Promise<Uint8Array> {
         return pubECDSA(this.derivedKey, true);
     }
 
+    /**
+     * Signs a transaction using the derived private key.
+     *
+     * @param tx - Transaction to sign
+     * @param inputIndexes - Optional specific input indexes to sign (signs all if omitted)
+     * @returns Signed transaction copy
+     */
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
         const txCpy = tx.clone();
 
@@ -180,6 +295,13 @@ export class SeedIdentity implements Identity {
         return txCpy;
     }
 
+    /**
+     * Signs a message using Schnorr or ECDSA signature.
+     *
+     * @param message - 32-byte message to sign
+     * @param signatureType - Signature algorithm (defaults to "schnorr")
+     * @returns 64-byte signature
+     */
     async signMessage(
         message: Uint8Array,
         signatureType: "schnorr" | "ecdsa" = "schnorr"
@@ -190,10 +312,30 @@ export class SeedIdentity implements Identity {
         return schnorr.signAsync(message, this.derivedKey);
     }
 
+    /**
+     * Creates a new signer session for tree signing operations.
+     * @returns Random signer session
+     */
     signerSession(): SignerSession {
         return TreeSignerSession.random();
     }
 
+    /**
+     * Serializes the identity to JSON for storage.
+     *
+     * The JSON contains:
+     * - `mnemonic`: The mnemonic phrase (if created from mnemonic)
+     * - `seed`: Hex-encoded seed (if created from raw seed)
+     * - `descriptor`: Output descriptor with xpub for wallet interoperability
+     *
+     * @returns JSON string that can be restored with fromJSON()
+     *
+     * @example
+     * ```typescript
+     * const json = identity.toJSON();
+     * // {"mnemonic":"abandon...", "descriptor":"tr([fingerprint/86'/0'/0']xpub.../0/*)"}
+     * ```
+     */
     toJSON(): string {
         const coinType = this.isMainnet ? 0 : 1;
         const path = `86'/${coinType}'/0'`;
@@ -207,6 +349,14 @@ export class SeedIdentity implements Identity {
         }
     }
 
+    /**
+     * Converts to a watch-only identity that cannot sign.
+     *
+     * The readonly identity contains only the xpub and can derive public keys
+     * but has no signing capability. Useful for creating watch-only wallets.
+     *
+     * @returns ReadonlySeedIdentity with same public key
+     */
     async toReadonly(): Promise<ReadonlySeedIdentity> {
         const json = this.toJSON();
         const descriptor = JSON.parse(json).descriptor;
@@ -214,6 +364,28 @@ export class SeedIdentity implements Identity {
     }
 }
 
+/**
+ * Watch-only HD wallet identity from an output descriptor.
+ *
+ * Can derive public keys and verify addresses but cannot sign transactions.
+ * Useful for watch-only wallets and separating signing from query operations.
+ *
+ * @example
+ * ```typescript
+ * // From a full identity
+ * const identity = SeedIdentity.fromMnemonic(mnemonic, { isMainnet: true });
+ * const readonly = await identity.toReadonly();
+ *
+ * // Or from a descriptor directly
+ * const descriptor = "tr([fingerprint/86'/0'/0']xpub.../0/*)";
+ * const readonly = ReadonlySeedIdentity.fromDescriptor(descriptor);
+ *
+ * // Can get public keys
+ * const pubKey = await readonly.xOnlyPublicKey();
+ *
+ * // Cannot sign (methods don't exist)
+ * ```
+ */
 export class ReadonlySeedIdentity implements ReadonlyIdentity {
     private readonly accountXpub: HDKey;
     private readonly descriptor: string;
@@ -223,12 +395,32 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
         this.accountXpub = accountXpub;
     }
 
+    /**
+     * Creates a ReadonlySeedIdentity from an output descriptor.
+     *
+     * @param descriptor - Taproot descriptor in format: tr([fingerprint/path']xpub.../0/*)
+     * @returns New ReadonlySeedIdentity instance
+     * @throws Error if descriptor format is invalid or missing /0/* template
+     *
+     * @example
+     * ```typescript
+     * const descriptor = "tr([12345678/86'/0'/0']xpub.../0/*)";
+     * const readonly = ReadonlySeedIdentity.fromDescriptor(descriptor);
+     * ```
+     */
     static fromDescriptor(descriptor: string): ReadonlySeedIdentity {
         const { xpub } = parseDescriptor(descriptor);
         const accountXpub = HDKey.fromExtendedKey(xpub, VERSIONS);
         return new ReadonlySeedIdentity(descriptor, accountXpub);
     }
 
+    /**
+     * Restores a ReadonlySeedIdentity from a JSON string.
+     *
+     * @param json - JSON string containing a `descriptor` field
+     * @returns Restored ReadonlySeedIdentity instance
+     * @throws Error if JSON is invalid or missing descriptor
+     */
     static fromJSON(json: string): ReadonlySeedIdentity {
         const parsed = JSON.parse(json);
         if (!parsed.descriptor) {
@@ -237,6 +429,10 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
         return ReadonlySeedIdentity.fromDescriptor(parsed.descriptor);
     }
 
+    /**
+     * Returns the 32-byte x-only (Schnorr) public key.
+     * @returns X-only public key for Taproot addresses
+     */
     async xOnlyPublicKey(): Promise<Uint8Array> {
         const addressNode = this.accountXpub.derive("m/0/0");
         if (!addressNode.publicKey) {
@@ -246,6 +442,10 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
         return addressNode.publicKey.slice(1);
     }
 
+    /**
+     * Returns the 33-byte compressed ECDSA public key.
+     * @returns Compressed public key with prefix byte
+     */
     async compressedPublicKey(): Promise<Uint8Array> {
         const addressNode = this.accountXpub.derive("m/0/0");
         if (!addressNode.publicKey) {
@@ -254,6 +454,10 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
         return addressNode.publicKey;
     }
 
+    /**
+     * Serializes to JSON containing only the descriptor.
+     * @returns JSON string that can be restored with fromJSON()
+     */
     toJSON(): string {
         return JSON.stringify({ descriptor: this.descriptor });
     }
