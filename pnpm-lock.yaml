@@ -25,6 +25,12 @@ importers:
       '@scure/base':
         specifier: 2.0.0
         version: 2.0.0
+      '@scure/bip32':
+        specifier: ^1.5.0
+        version: 1.6.2
+      '@scure/bip39':
+        specifier: ^1.4.0
+        version: 1.5.4
       '@scure/btc-signer':
         specifier: 2.0.1
         version: 2.0.1
@@ -1343,6 +1349,12 @@ packages:
 
   '@scure/base@2.0.0':
     resolution: {integrity: sha512-3E1kpuZginKkek01ovG8krQ0Z44E3DHPjc5S2rjJw9lZn3KSQOs8S7wqikF/AH7iRanHypj85uGyxk0XAyC37w==}
+
+  '@scure/bip32@1.6.2':
+    resolution: {integrity: sha512-t96EPDMbtGgtb7onKKqxRLfE5g05k7uHnHRM2xdE6BP/ZmxaLtPek4J4KfVn/90IQNrU1IOAqMgiDtUdtbe3nw==}
+
+  '@scure/bip39@1.5.4':
+    resolution: {integrity: sha512-TFM4ni0vKvCfBpohoh+/lY05i9gRbSwXWngAsF4CABQxoaOHijxuaZ2R6cStDQ5CHtHO9aGJTr4ksVJASRRyMA==}
 
   '@scure/btc-signer@2.0.1':
     resolution: {integrity: sha512-vk5a/16BbSFZkhh1JIJ0+4H9nceZVo5WzKvJGGWiPp3sQOExeW+L53z3dI6u0adTPoE8ZbL+XEb6hEGzVZSvvQ==}
@@ -5888,6 +5900,17 @@ snapshots:
     optional: true
 
   '@scure/base@2.0.0': {}
+
+  '@scure/bip32@1.6.2':
+    dependencies:
+      '@noble/curves': 2.0.0
+      '@noble/hashes': 2.0.0
+      '@scure/base': 2.0.0
+
+  '@scure/bip39@1.5.4':
+    dependencies:
+      '@noble/hashes': 2.0.0
+      '@scure/base': 2.0.0
 
   '@scure/btc-signer@2.0.1':
     dependencies:
