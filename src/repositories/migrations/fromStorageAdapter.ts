@@ -1,7 +1,6 @@
 import { StorageAdapter } from "../../storage";
-import { CommitmentTxRecord, WalletRepository } from "../walletRepository";
+import { WalletRepository } from "../walletRepository";
 import { WalletRepositoryImpl } from "./walletRepositoryImpl";
-import { ContractRepositoryImpl } from "./contractRepositoryImpl";
 
 const MIGRATION_KEY = (repoType: "wallet" | "contract") =>
     `migration-from-storage-adapter-${repoType}`;
@@ -35,7 +34,6 @@ export async function migrateWalletRepository(
     if (!migrate) return;
 
     const old = new WalletRepositoryImpl(storageAdapter);
-    const legacyContracts = new ContractRepositoryImpl(storageAdapter);
 
     const walletData = await old.getWalletState();
 

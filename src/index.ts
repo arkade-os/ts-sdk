@@ -151,11 +151,13 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
-import { IndexedDBWalletRepository } from "./repositories/indexedDB/walletRepository";
-import { IndexedDBContractRepository } from "./repositories/indexedDB/contractRepository";
-import { InMemoryWalletRepository } from "./repositories/inMemory/walletRepository";
-import { InMemoryContractRepository } from "./repositories/inMemory/contractRepository";
-import { migrateWalletRepository } from "./repositories/migrations/fromStorageAdapter";
+import {
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    migrateWalletRepository,
+} from "./repositories";
 
 export * from "./arkfee";
 
@@ -190,6 +192,8 @@ import type {
     DefaultContractParams,
     VHTLCContractParams,
 } from "./contracts";
+import { IContractManager } from "./contracts/contractManager";
+import { closeDatabase, openDatabase } from "./db/manager";
 
 export {
     // Wallets
@@ -259,6 +263,10 @@ export {
 
     // Network
     networks,
+
+    // DB
+    closeDatabase,
+    openDatabase,
 
     // Repositories
     IndexedDBWalletRepository,
@@ -413,6 +421,7 @@ export type {
     ContractBalance,
     ContractWithVtxos,
     ContractHandler,
+    IContractManager,
     PathSelection,
     PathContext,
     ContractManagerConfig,

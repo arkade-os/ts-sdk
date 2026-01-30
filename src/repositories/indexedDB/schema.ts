@@ -10,7 +10,7 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 
 export const DB_VERSION = 2;
 
-export function initDatabase(db: IDBDatabase): IDBDatabase {
+export function initDatabase(db: IDBDatabase): void {
     // Create wallet stores
     if (!db.objectStoreNames.contains(STORE_VTXOS)) {
         const vtxosStore = db.createObjectStore(STORE_VTXOS, {
@@ -164,5 +164,4 @@ export function initDatabase(db: IDBDatabase): IDBDatabase {
             keyPath: "key",
         });
     }
-    return db;
 }

@@ -23,6 +23,8 @@ if (typeof self === "undefined") {
     (globalThis as any).self = globalThis;
 }
 import setGlobalVars from "indexeddbshim/src/node-UnicodeIdentifiers";
+import { execSync } from "child_process";
+import { WalletState } from "../../src/repositories";
 
 (globalThis as any).window = globalThis;
 
@@ -58,35 +60,13 @@ async function main() {
     console.log("[Alice]\tWallet created successfully!");
     console.log("[Alice]\tArk Address:", aliceWallet.arkAddress.encode());
 
-    await bobWallet.contractRepository.setContractData("example-id", "config", {
-        type: "bob-contract",
-        address: bobWallet.arkAddress.encode(),
-    });
+    const state: WalletState = {
+        lastSyncTime: Date.now(),
+        settings: { theme: "dark" },
+    };
 
-    await aliceWallet.contractRepository.setContractData(
-        "example-id",
-        "config",
-        {
-            type: "alice-contract",
-            address: aliceWallet.arkAddress.encode(),
-        }
-    );
-
-    const bobSavedData = await bobWallet.contractRepository.getContractData(
-        "example-id",
-        "config"
-    );
-    console.log("[Bob]\tRetrieved contract data:", bobSavedData);
-
-    const aliceSavedData = await aliceWallet.contractRepository.getContractData(
-        "example-id",
-        "config"
-    );
-    console.log("[Alice]\tRetrieved contract data:", aliceSavedData);
-
-    console.log(
-        "Only Alice's data is present in IndexedDB `contracts` table, check the .sqlite file to verify this."
-    );
+    await aliceWallet.walletRepository.saveWalletState(state);
+    await bobWallet.walletRepository.saveWalletState(state);
 }
 
 main().catch(console.error);
