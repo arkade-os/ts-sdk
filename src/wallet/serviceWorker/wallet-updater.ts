@@ -945,7 +945,7 @@ export class WalletUpdater
     private async withWallet<T>(
         fn: (wallet: Wallet) => Promise<T>
     ): Promise<T> {
-        if (!this.isReadonly) {
+        if (this.isReadonly) {
             throw new Error("Cannot execute action on read-only wallet");
         }
         return fn(this.wallet as Wallet);
