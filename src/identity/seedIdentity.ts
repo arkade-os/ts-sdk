@@ -9,6 +9,16 @@ import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 
+/**
+ * A signing request for a transaction with optional specific input indexes.
+ */
+export interface SigningRequest {
+    /** Transaction to sign */
+    tx: Transaction;
+    /** Specific input indexes to sign (signs all if omitted) */
+    inputIndexes?: number[];
+}
+
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
 // BIP32 version bytes for xpub/xprv
@@ -57,6 +67,37 @@ function parseDescriptor(descriptor: string): {
         fingerprint: match[1],
         path: match[2],
         xpub: match[3],
+    };
+}
+
+/**
+ * Parses a signing descriptor to extract fingerprint, path, xpub, and index.
+ *
+ * @param descriptor - Signing descriptor in format: tr([fingerprint/path']xpub.../0/{index})
+ * @returns Parsed descriptor components including concrete index
+ * @throws Error if descriptor format is invalid
+ * @internal
+ */
+function parseSigningDescriptor(descriptor: string): {
+    fingerprint: string;
+    path: string;
+    xpub: string;
+    index: number;
+} {
+    // Format: tr([fingerprint/path']xpub.../0/{index})
+    const match = descriptor.match(
+        /^tr\(\[([a-f0-9]{8})\/(\d+'\/\d+'\/\d+')\]([a-zA-Z0-9]+)\/0\/(\d+)\)$/
+    );
+    if (!match) {
+        throw new Error(
+            "Invalid signing descriptor format. Expected: tr([fingerprint/86'/coinType'/0']xpub.../0/{index})"
+        );
+    }
+    return {
+        fingerprint: match[1],
+        path: match[2],
+        xpub: match[3],
+        index: parseInt(match[4], 10),
     };
 }
 
@@ -133,6 +174,18 @@ export class SeedIdentity implements Identity {
             throw new Error("Failed to derive private key");
         }
         this.derivedKey = addressNode.privateKey;
+    }
+
+    /**
+     * Derives the private key at a specific index.
+     * @internal
+     */
+    private derivePrivateKeyAtIndex(index: number): Uint8Array {
+        const addressNode = this.accountNode.derive(`m/0/${index}`);
+        if (!addressNode.privateKey) {
+            throw new Error("Failed to derive private key");
+        }
+        return addressNode.privateKey;
     }
 
     /**
@@ -362,6 +415,150 @@ export class SeedIdentity implements Identity {
         const descriptor = JSON.parse(json).descriptor;
         return ReadonlySeedIdentity.fromDescriptor(descriptor);
     }
+
+    /**
+     * Derives a signing descriptor at a specific index.
+     *
+     * @param index - The address index (0, 1, 2, ...)
+     * @returns Descriptor string with concrete index: tr([fp/86'/coinType'/0']xpub.../0/{index})
+     * @throws Error if index is negative
+     *
+     * @example
+     * ```typescript
+     * const descriptor = identity.deriveSigningDescriptor(5);
+     * // → "tr([12345678/86'/0'/0']xpub.../0/5)"
+     * ```
+     */
+    deriveSigningDescriptor(index: number): string {
+        if (index < 0) {
+            throw new Error("Index must be non-negative");
+        }
+        const coinType = this.isMainnet ? 0 : 1;
+        const path = `86'/${coinType}'/0'`;
+        const xpub = this.accountNode.publicExtendedKey;
+        return `tr([${this.masterFingerprint}/${path}]${xpub}/0/${index})`;
+    }
+
+    /**
+     * Checks if a signing descriptor belongs to this identity.
+     *
+     * @param descriptor - A signing descriptor to check
+     * @returns true if fingerprint and xpub match this identity
+     *
+     * @example
+     * ```typescript
+     * if (identity.isOurs(descriptor)) {
+     *     // This descriptor was derived from our seed
+     * }
+     * ```
+     */
+    isOurs(descriptor: string): boolean {
+        try {
+            const parsed = parseSigningDescriptor(descriptor);
+            return (
+                parsed.fingerprint === this.masterFingerprint &&
+                parsed.xpub === this.accountNode.publicExtendedKey
+            );
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Signs multiple transactions using the key derived from a descriptor.
+     *
+     * @param descriptor - Signing descriptor specifying which key to use
+     * @param requests - Array of signing requests
+     * @returns Array of signed transactions (same order as requests)
+     * @throws Error if descriptor doesn't belong to this identity
+     *
+     * @example
+     * ```typescript
+     * const [signedTx1, signedTx2] = await identity.signWithDescriptor(descriptor, [
+     *     { tx: tx1, inputIndexes: [0, 2] },
+     *     { tx: tx2 }  // signs all inputs
+     * ]);
+     * ```
+     */
+    async signWithDescriptor(
+        descriptor: string,
+        requests: SigningRequest[]
+    ): Promise<Transaction[]> {
+        if (!this.isOurs(descriptor)) {
+            throw new Error("Descriptor does not belong to this identity");
+        }
+
+        const { index } = parseSigningDescriptor(descriptor);
+        const privateKey = this.derivePrivateKeyAtIndex(index);
+
+        const results: Transaction[] = [];
+        for (const request of requests) {
+            const txCopy = request.tx.clone();
+
+            if (!request.inputIndexes) {
+                try {
+                    if (!txCopy.sign(privateKey, ALL_SIGHASH)) {
+                        throw new Error("Failed to sign transaction");
+                    }
+                } catch (e) {
+                    if (
+                        e instanceof Error &&
+                        e.message.includes("No inputs signed")
+                    ) {
+                        // ignore - no matching inputs
+                    } else {
+                        throw e;
+                    }
+                }
+            } else {
+                for (const inputIndex of request.inputIndexes) {
+                    if (!txCopy.signIdx(privateKey, inputIndex, ALL_SIGHASH)) {
+                        throw new Error(`Failed to sign input #${inputIndex}`);
+                    }
+                }
+            }
+
+            results.push(txCopy);
+        }
+
+        return results;
+    }
+
+    /**
+     * Signs a message using the key derived from a descriptor.
+     *
+     * @param descriptor - Signing descriptor specifying which key to use
+     * @param message - 32-byte message to sign
+     * @param signatureType - Signature algorithm (defaults to "schnorr")
+     * @returns 64-byte signature
+     * @throws Error if descriptor doesn't belong to this identity
+     *
+     * @example
+     * ```typescript
+     * const signature = await identity.signMessageWithDescriptor(
+     *     descriptor,
+     *     messageHash,
+     *     "schnorr"
+     * );
+     * ```
+     */
+    async signMessageWithDescriptor(
+        descriptor: string,
+        message: Uint8Array,
+        signatureType: "schnorr" | "ecdsa" = "schnorr"
+    ): Promise<Uint8Array> {
+        if (!this.isOurs(descriptor)) {
+            throw new Error("Descriptor does not belong to this identity");
+        }
+
+        const { index } = parseSigningDescriptor(descriptor);
+        const privateKey = this.derivePrivateKeyAtIndex(index);
+
+        if (signatureType === "ecdsa") {
+            return signAsync(message, privateKey, { prehash: false });
+        }
+        return schnorr.signAsync(message, privateKey);
+    }
 }
 
 /**
@@ -389,10 +586,19 @@ export class SeedIdentity implements Identity {
 export class ReadonlySeedIdentity implements ReadonlyIdentity {
     private readonly accountXpub: HDKey;
     private readonly descriptor: string;
+    private readonly masterFingerprint: string;
+    private readonly isMainnet: boolean;
 
-    private constructor(descriptor: string, accountXpub: HDKey) {
+    private constructor(
+        descriptor: string,
+        accountXpub: HDKey,
+        masterFingerprint: string,
+        isMainnet: boolean
+    ) {
         this.descriptor = descriptor;
         this.accountXpub = accountXpub;
+        this.masterFingerprint = masterFingerprint;
+        this.isMainnet = isMainnet;
     }
 
     /**
@@ -409,9 +615,11 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
      * ```
      */
     static fromDescriptor(descriptor: string): ReadonlySeedIdentity {
-        const { xpub } = parseDescriptor(descriptor);
+        const { xpub, fingerprint, path } = parseDescriptor(descriptor);
         const accountXpub = HDKey.fromExtendedKey(xpub, VERSIONS);
-        return new ReadonlySeedIdentity(descriptor, accountXpub);
+        // Infer isMainnet from coin type in path (86'/0'/0' vs 86'/1'/0')
+        const isMainnet = path.includes("86'/0'/0'");
+        return new ReadonlySeedIdentity(descriptor, accountXpub, fingerprint, isMainnet);
     }
 
     /**
@@ -460,5 +668,66 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
      */
     toJSON(): string {
         return JSON.stringify({ descriptor: this.descriptor });
+    }
+
+    /**
+     * Derives a signing descriptor at a specific index.
+     *
+     * @param index - The address index (0, 1, 2, ...)
+     * @returns Descriptor string with concrete index
+     * @throws Error if index is negative
+     */
+    deriveSigningDescriptor(index: number): string {
+        if (index < 0) {
+            throw new Error("Index must be non-negative");
+        }
+        const coinType = this.isMainnet ? 0 : 1;
+        const path = `86'/${coinType}'/0'`;
+        const xpub = this.accountXpub.publicExtendedKey;
+        return `tr([${this.masterFingerprint}/${path}]${xpub}/0/${index})`;
+    }
+
+    /**
+     * Checks if a signing descriptor belongs to this identity.
+     *
+     * @param descriptor - A signing descriptor to check
+     * @returns true if fingerprint and xpub match this identity
+     */
+    isOurs(descriptor: string): boolean {
+        try {
+            const parsed = parseSigningDescriptor(descriptor);
+            return (
+                parsed.fingerprint === this.masterFingerprint &&
+                parsed.xpub === this.accountXpub.publicExtendedKey
+            );
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Returns the 32-byte x-only public key at a specific index.
+     * @param index - The address index
+     * @returns X-only public key for Taproot addresses
+     */
+    async xOnlyPublicKeyAtIndex(index: number): Promise<Uint8Array> {
+        const addressNode = this.accountXpub.derive(`m/0/${index}`);
+        if (!addressNode.publicKey) {
+            throw new Error("Failed to derive public key");
+        }
+        return addressNode.publicKey.slice(1);
+    }
+
+    /**
+     * Returns the 33-byte compressed public key at a specific index.
+     * @param index - The address index
+     * @returns Compressed public key with prefix byte
+     */
+    async compressedPublicKeyAtIndex(index: number): Promise<Uint8Array> {
+        const addressNode = this.accountXpub.derive(`m/0/${index}`);
+        if (!addressNode.publicKey) {
+            throw new Error("Failed to derive public key");
+        }
+        return addressNode.publicKey;
     }
 }

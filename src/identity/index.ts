@@ -17,4 +17,9 @@ export interface ReadonlyIdentity {
 }
 
 export * from "./singleKey";
-export * from "./seedIdentity";
+export { SeedIdentity, ReadonlySeedIdentity } from "./seedIdentity";
+export type {
+    SeedIdentityOptions,
+    MnemonicOptions,
+    SigningRequest,
+} from "./seedIdentity";

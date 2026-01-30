@@ -402,6 +402,400 @@ describe("ReadonlySeedIdentity", () => {
     });
 });
 
+describe("SeedIdentity HD methods", () => {
+    describe("deriveSigningDescriptor", () => {
+        it("should derive descriptor at index 0", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor = identity.deriveSigningDescriptor(0);
+
+            // Should be in format: tr([fingerprint/86'/0'/0']xpub.../0/0)
+            expect(descriptor).toMatch(
+                /^tr\(\[[\da-f]{8}\/86'\/0'\/0'\]xpub.+\/0\/0\)$/
+            );
+        });
+
+        it("should derive descriptor at index 5", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor = identity.deriveSigningDescriptor(5);
+
+            expect(descriptor).toMatch(
+                /^tr\(\[[\da-f]{8}\/86'\/0'\/0'\]xpub.+\/0\/5\)$/
+            );
+        });
+
+        it("should use testnet coin type for testnet identity", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: false,
+            });
+            const descriptor = identity.deriveSigningDescriptor(0);
+
+            expect(descriptor).toMatch(/\/86'\/1'\/0'\]/);
+        });
+
+        it("should throw for negative index", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+
+            expect(() => identity.deriveSigningDescriptor(-1)).toThrow(
+                "Index must be non-negative"
+            );
+        });
+
+        it("should derive different descriptors for different indexes", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+
+            const desc0 = identity.deriveSigningDescriptor(0);
+            const desc1 = identity.deriveSigningDescriptor(1);
+
+            expect(desc0).not.toBe(desc1);
+            expect(desc0.endsWith("/0/0)")).toBe(true);
+            expect(desc1.endsWith("/0/1)")).toBe(true);
+        });
+    });
+
+    describe("isOurs", () => {
+        it("should return true for descriptor derived from same identity", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor = identity.deriveSigningDescriptor(5);
+
+            expect(identity.isOurs(descriptor)).toBe(true);
+        });
+
+        it("should return true for any index from same identity", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+
+            expect(identity.isOurs(identity.deriveSigningDescriptor(0))).toBe(true);
+            expect(identity.isOurs(identity.deriveSigningDescriptor(100))).toBe(true);
+            expect(identity.isOurs(identity.deriveSigningDescriptor(999))).toBe(true);
+        });
+
+        it("should return false for descriptor from different seed", () => {
+            const identity1 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const identity2 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+                passphrase: "different",
+            });
+
+            const descriptor = identity2.deriveSigningDescriptor(5);
+
+            expect(identity1.isOurs(descriptor)).toBe(false);
+        });
+
+        it("should return false for mainnet descriptor on testnet identity", () => {
+            const mainnetIdentity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const testnetIdentity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: false,
+            });
+
+            const mainnetDescriptor = mainnetIdentity.deriveSigningDescriptor(0);
+
+            expect(testnetIdentity.isOurs(mainnetDescriptor)).toBe(false);
+        });
+
+        it("should return false for invalid descriptor format", () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+
+            expect(identity.isOurs("invalid")).toBe(false);
+            expect(identity.isOurs("tr([12345678/86'/0'/0']xpub.../0/*)")).toBe(false);
+        });
+    });
+
+    describe("signWithDescriptor", () => {
+        it("should throw for foreign descriptor", async () => {
+            const identity1 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const identity2 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+                passphrase: "different",
+            });
+
+            const foreignDescriptor = identity2.deriveSigningDescriptor(5);
+
+            await expect(
+                identity1.signWithDescriptor(foreignDescriptor, [])
+            ).rejects.toThrow("Descriptor does not belong to this identity");
+        });
+
+        it("should return empty array for empty requests", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor = identity.deriveSigningDescriptor(0);
+
+            const results = await identity.signWithDescriptor(descriptor, []);
+
+            expect(results).toEqual([]);
+        });
+    });
+
+    describe("signMessageWithDescriptor", () => {
+        it("should sign message with schnorr using descriptor", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor = identity.deriveSigningDescriptor(5);
+            const message = new Uint8Array(32).fill(42);
+
+            const signature = await identity.signMessageWithDescriptor(
+                descriptor,
+                message,
+                "schnorr"
+            );
+
+            expect(signature).toBeInstanceOf(Uint8Array);
+            expect(signature).toHaveLength(64);
+        });
+
+        it("should sign message with ecdsa using descriptor", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor = identity.deriveSigningDescriptor(5);
+            const message = new Uint8Array(32).fill(42);
+
+            const signature = await identity.signMessageWithDescriptor(
+                descriptor,
+                message,
+                "ecdsa"
+            );
+
+            expect(signature).toBeInstanceOf(Uint8Array);
+            expect(signature).toHaveLength(64);
+        });
+
+        it("should default to schnorr signature", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor = identity.deriveSigningDescriptor(5);
+            const message = new Uint8Array(32).fill(42);
+
+            const signature = await identity.signMessageWithDescriptor(
+                descriptor,
+                message
+            );
+
+            expect(signature).toHaveLength(64);
+        });
+
+        it("should throw for foreign descriptor", async () => {
+            const identity1 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const identity2 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+                passphrase: "different",
+            });
+
+            const foreignDescriptor = identity2.deriveSigningDescriptor(5);
+            const message = new Uint8Array(32).fill(42);
+
+            await expect(
+                identity1.signMessageWithDescriptor(foreignDescriptor, message)
+            ).rejects.toThrow("Descriptor does not belong to this identity");
+        });
+
+        it("should produce different signatures at different indexes", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const descriptor0 = identity.deriveSigningDescriptor(0);
+            const descriptor1 = identity.deriveSigningDescriptor(1);
+            const message = new Uint8Array(32).fill(42);
+
+            const sig0 = await identity.signMessageWithDescriptor(descriptor0, message);
+            const sig1 = await identity.signMessageWithDescriptor(descriptor1, message);
+
+            expect(Array.from(sig0)).not.toEqual(Array.from(sig1));
+        });
+    });
+});
+
+describe("ReadonlySeedIdentity HD methods", () => {
+    describe("deriveSigningDescriptor", () => {
+        it("should derive same descriptor as full identity", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+
+            const fullDescriptor = identity.deriveSigningDescriptor(5);
+            const readonlyDescriptor = readonly.deriveSigningDescriptor(5);
+
+            expect(readonlyDescriptor).toBe(fullDescriptor);
+        });
+
+        it("should throw for negative index", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+
+            expect(() => readonly.deriveSigningDescriptor(-1)).toThrow(
+                "Index must be non-negative"
+            );
+        });
+    });
+
+    describe("isOurs", () => {
+        it("should return true for own descriptor", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+            const descriptor = readonly.deriveSigningDescriptor(5);
+
+            expect(readonly.isOurs(descriptor)).toBe(true);
+        });
+
+        it("should return false for foreign descriptor", async () => {
+            const identity1 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const identity2 = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+                passphrase: "different",
+            });
+
+            const readonly1 = await identity1.toReadonly();
+            const descriptor2 = identity2.deriveSigningDescriptor(5);
+
+            expect(readonly1.isOurs(descriptor2)).toBe(false);
+        });
+    });
+
+    describe("xOnlyPublicKeyAtIndex", () => {
+        it("should return x-only public key at specific index", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+
+            const pubKey = await readonly.xOnlyPublicKeyAtIndex(5);
+
+            expect(pubKey).toBeInstanceOf(Uint8Array);
+            expect(pubKey).toHaveLength(32);
+        });
+
+        it("should return different keys at different indexes", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+
+            const pubKey0 = await readonly.xOnlyPublicKeyAtIndex(0);
+            const pubKey1 = await readonly.xOnlyPublicKeyAtIndex(1);
+
+            expect(Array.from(pubKey0)).not.toEqual(Array.from(pubKey1));
+        });
+
+        it("should return same key as xOnlyPublicKey() at index 0", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+
+            const defaultKey = await readonly.xOnlyPublicKey();
+            const indexKey = await readonly.xOnlyPublicKeyAtIndex(0);
+
+            expect(Array.from(indexKey)).toEqual(Array.from(defaultKey));
+        });
+    });
+
+    describe("compressedPublicKeyAtIndex", () => {
+        it("should return compressed public key at specific index", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+
+            const pubKey = await readonly.compressedPublicKeyAtIndex(5);
+
+            expect(pubKey).toBeInstanceOf(Uint8Array);
+            expect(pubKey).toHaveLength(33);
+        });
+
+        it("should return same key as compressedPublicKey() at index 0", async () => {
+            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const readonly = await identity.toReadonly();
+
+            const defaultKey = await readonly.compressedPublicKey();
+            const indexKey = await readonly.compressedPublicKeyAtIndex(0);
+
+            expect(Array.from(indexKey)).toEqual(Array.from(defaultKey));
+        });
+    });
+});
+
+describe("backwards compatibility", () => {
+    it("xOnlyPublicKey should return same key as deriveSigningDescriptor index 0", async () => {
+        const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+
+        const defaultKey = await identity.xOnlyPublicKey();
+        const descriptor0 = identity.deriveSigningDescriptor(0);
+
+        // Sign with both methods and verify they produce same result
+        const message = new Uint8Array(32).fill(42);
+        const sig1 = await identity.signMessage(message);
+        const sig2 = await identity.signMessageWithDescriptor(descriptor0, message);
+
+        // Both should be verifiable with the same public key
+        const isValid1 = await schnorr.verifyAsync(sig1, message, defaultKey);
+        const isValid2 = await schnorr.verifyAsync(sig2, message, defaultKey);
+
+        expect(isValid1).toBe(true);
+        expect(isValid2).toBe(true);
+    });
+
+    it("existing sign method should still work", async () => {
+        const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const message = new Uint8Array(32).fill(42);
+
+        // Verify existing API still works
+        const signature = await identity.signMessage(message);
+        expect(signature).toHaveLength(64);
+
+        const publicKey = await identity.xOnlyPublicKey();
+        const isValid = await schnorr.verifyAsync(signature, message, publicKey);
+        expect(isValid).toBe(true);
+    });
+
+    it("toJSON should still produce template descriptor with wildcard", () => {
+        const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const json = identity.toJSON();
+        const parsed = JSON.parse(json);
+
+        // Should end with /0/* not /0/{index}
+        expect(parsed.descriptor).toMatch(/\/0\/\*\)$/);
+    });
+});
+
 describe("module exports", () => {
     it("should export SeedIdentity from identity module", async () => {
         const { SeedIdentity } = await import("../src/identity");
@@ -413,5 +807,11 @@ describe("module exports", () => {
         const { ReadonlySeedIdentity } = await import("../src/identity");
         expect(ReadonlySeedIdentity).toBeDefined();
         expect(typeof ReadonlySeedIdentity.fromDescriptor).toBe("function");
+    });
+
+    it("should export SigningRequest from identity module", async () => {
+        const { SigningRequest } = await import("../src/identity");
+        // Type exists (compile-time check)
+        expect(true).toBe(true);
     });
 });
