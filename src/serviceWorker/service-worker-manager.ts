@@ -1,12 +1,12 @@
 const registrations = new Map<string, Promise<ServiceWorkerRegistration>>();
 
-const ensureServiceWorkerSupport = () => {
+function ensureServiceWorkerSupport() {
     if (!("serviceWorker" in navigator)) {
         throw new Error("Service workers are not supported in this browser");
     }
-};
+}
 
-const registerOnce = (path: string): Promise<ServiceWorkerRegistration> => {
+function registerOnce(path: string): Promise<ServiceWorkerRegistration> {
     if (!registrations.has(path)) {
         registrations.set(
             path,
@@ -19,18 +19,18 @@ const registerOnce = (path: string): Promise<ServiceWorkerRegistration> => {
         );
     }
     return registrations.get(path)!;
-};
+}
 
-export const setupServiceWorkerOnce = async (
+export async function setupServiceWorkerOnce(
     path: string
-): Promise<ServiceWorkerRegistration> => {
+): Promise<ServiceWorkerRegistration> {
     ensureServiceWorkerSupport();
     return registerOnce(path);
-};
+}
 
-export const getActiveServiceWorker = async (
+export async function getActiveServiceWorker(
     path?: string
-): Promise<ServiceWorker> => {
+): Promise<ServiceWorker> {
     ensureServiceWorkerSupport();
     if (path) {
         await registerOnce(path);
@@ -46,7 +46,7 @@ export const getActiveServiceWorker = async (
         throw new Error("Service worker not ready yet");
     }
     return serviceWorker;
-};
+}
 
 export const __resetServiceWorkerManager = () => {
     registrations.clear();

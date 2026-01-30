@@ -61,6 +61,7 @@ import {
     WalletUpdaterResponse,
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
+    DEFAULT_MESSAGE_TAG,
 } from "./wallet-updater";
 import type {
     Contract,
@@ -123,6 +124,8 @@ interface ServiceWorkerWalletOptions {
     esploraUrl?: string;
     storage?: StorageConfig;
     identity: ReadonlyIdentity | Identity;
+    // Override the default tag for the messages sent and received from the SW
+    walletUpdaterTag?: string;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -141,7 +144,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         public readonly serviceWorker: ServiceWorker,
         identity: ReadonlyIdentity,
         walletRepository: WalletRepository,
-        contractRepository: ContractRepository
+        contractRepository: ContractRepository,
+        protected readonly messageTag: string
     ) {
         this.identity = identity;
         this.walletRepository = walletRepository;
@@ -159,12 +163,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             options.storage?.contractRepository ??
             new IndexedDBContractRepository();
 
+        const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
+
         // Create the wallet instance
         const wallet = new ServiceWorkerReadonlyWallet(
             options.serviceWorker,
             options.identity,
             walletRepository,
-            contractRepository
+            contractRepository,
+            messageTag
         );
 
         const publicKey = await options.identity
@@ -174,7 +181,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: messageTag,
             type: "INIT_WALLET",
             payload: {
                 key: { publicKey },
@@ -257,7 +264,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async clear() {
         const message: RequestClear = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "CLEAR",
         };
         // Clear page-side storage to maintain parity with SW
@@ -274,7 +281,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async getAddress(): Promise<string> {
         const message: RequestGetAddress = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "GET_ADDRESS",
         };
 
@@ -289,7 +296,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async getBoardingAddress(): Promise<string> {
         const message: RequestGetBoardingAddress = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "GET_BOARDING_ADDRESS",
         };
 
@@ -304,7 +311,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async getBalance(): Promise<WalletBalance> {
         const message: RequestGetBalance = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "GET_BALANCE",
         };
 
@@ -319,7 +326,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
         const message: RequestGetBoardingUtxos = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "GET_BOARDING_UTXOS",
         };
 
@@ -334,7 +341,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async getStatus(): Promise<ResponseGetStatus["payload"]> {
         const message: RequestGetStatus = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "GET_STATUS",
         };
         try {
@@ -348,7 +355,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async getTransactionHistory(): Promise<ArkTransaction[]> {
         const message: RequestGetTransactionHistory = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "GET_TRANSACTION_HISTORY",
         };
 
@@ -364,7 +371,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const message: RequestGetVtxos = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "GET_VTXOS",
             payload: { filter },
         };
@@ -380,7 +387,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     async reload(): Promise<boolean> {
         const message: RequestReloadWallet = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "RELOAD_WALLET",
         };
         try {
@@ -400,6 +407,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             return wallet.sendMessage(message as WalletUpdaterRequest);
         };
 
+        const messageTag = this.messageTag;
+
         const manager: IContractManager = {
             async createContract(
                 params: CreateContractParams
@@ -407,7 +416,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestCreateContract = {
                     type: "CREATE_CONTRACT",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: params,
                 };
                 try {
@@ -425,7 +434,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestGetContracts = {
                     type: "GET_CONTRACTS",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: { filter },
                 };
                 try {
@@ -442,7 +451,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestGetContractsWithVtxos = {
                     type: "GET_CONTRACTS_WITH_VTXOS",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: { filter },
                 };
                 try {
@@ -461,7 +470,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: { script, updates },
                 };
                 try {
@@ -480,7 +489,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestUpdateContract = {
                     type: "UPDATE_CONTRACT",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: { script, updates: { state } },
                 };
                 try {
@@ -495,7 +504,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestDeleteContract = {
                     type: "DELETE_CONTRACT",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: { script },
                 };
                 try {
@@ -512,7 +521,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestGetSpendablePaths = {
                     type: "GET_SPENDABLE_PATHS",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: { options },
                 };
                 try {
@@ -530,7 +539,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestGetAllSpendingPaths = {
                     type: "GET_ALL_SPENDING_PATHS",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                     payload: { options },
                 };
                 try {
@@ -569,7 +578,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",
                     id: getRandomId(),
-                    tag: WalletUpdater.messageTag,
+                    tag: messageTag,
                 };
                 try {
                     const response = await sendContractMessage(message);
@@ -608,9 +617,16 @@ export class ServiceWorkerWallet
         public readonly serviceWorker: ServiceWorker,
         identity: PrivateKeyIdentity,
         walletRepository: WalletRepository,
-        contractRepository: ContractRepository
+        contractRepository: ContractRepository,
+        messageTag: string
     ) {
-        super(serviceWorker, identity, walletRepository, contractRepository);
+        super(
+            serviceWorker,
+            identity,
+            walletRepository,
+            contractRepository,
+            messageTag
+        );
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
@@ -640,17 +656,20 @@ export class ServiceWorkerWallet
         // Extract private key for service worker initialization
         const privateKey = identity.toHex();
 
+        const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
+
         // Create the wallet instance
         const wallet = new ServiceWorkerWallet(
             options.serviceWorker,
             identity,
             walletRepository,
-            contractRepository
+            contractRepository,
+            messageTag
         );
 
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
-            tag: WalletUpdater.messageTag,
+            tag: messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
             payload: {
@@ -705,7 +724,7 @@ export class ServiceWorkerWallet
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         const message: RequestSendBitcoin = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "SEND_BITCOIN",
             payload: params,
         };
@@ -724,7 +743,7 @@ export class ServiceWorkerWallet
     ): Promise<string> {
         const message: RequestSettle = {
             id: getRandomId(),
-            tag: WalletUpdater.messageTag,
+            tag: this.messageTag,
             type: "SETTLE",
             payload: { params },
         };

@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-import { WalletUpdater } from "../src/wallet/serviceWorker/wallet-updater";
+import {
+    DEFAULT_MESSAGE_TAG,
+    WalletUpdater,
+} from "../src/wallet/serviceWorker/wallet-updater";
 import { InMemoryContractRepository, InMemoryWalletRepository } from "../src";
 
 const baseMessage = (id: string = "1") => ({
     id,
-    tag: WalletUpdater.messageTag,
+    tag: DEFAULT_MESSAGE_TAG,
 });
 
 describe("WalletUpdater handleMessage", () => {
@@ -45,7 +48,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(initSpy).toHaveBeenCalledWith(message);
         expect(response).toEqual({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             id: "1",
             type: "WALLET_INITIALIZED",
         });
@@ -57,7 +60,7 @@ describe("WalletUpdater handleMessage", () => {
             type: "GET_ADDRESS",
         } as any);
 
-        expect(response.tag).toBe(WalletUpdater.messageTag);
+        expect(response.tag).toBe(updater.messageTag);
         expect(response.error).toBeInstanceOf(Error);
         expect(response.error?.message).toBe("Wallet handler not initialized");
     });
@@ -78,7 +81,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(settleSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "SETTLE_SUCCESS",
             payload: { txid: "tx" },
         });
@@ -100,7 +103,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(sendSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "SEND_BITCOIN_SUCCESS",
             payload: { txid: "tx" },
         });
@@ -123,7 +126,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(signSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "SIGN_TRANSACTION",
             payload: { tx: signedTx },
         });
@@ -140,7 +143,7 @@ describe("WalletUpdater handleMessage", () => {
         } as any);
 
         expect(response).toEqual({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             id: "1",
             type: "ADDRESS",
             payload: { address: "bc1-test" },
@@ -158,7 +161,7 @@ describe("WalletUpdater handleMessage", () => {
         } as any);
 
         expect(response).toEqual({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             id: "1",
             type: "BOARDING_ADDRESS",
             payload: { address: "bc1-boarding" },
@@ -183,7 +186,7 @@ describe("WalletUpdater handleMessage", () => {
         } as any);
 
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "BALANCE",
             payload: balance,
         });
@@ -201,7 +204,7 @@ describe("WalletUpdater handleMessage", () => {
         } as any);
 
         expect(response).toEqual({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             id: "1",
             type: "VTXOS",
             payload: { vtxos },
@@ -221,7 +224,7 @@ describe("WalletUpdater handleMessage", () => {
         } as any);
 
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "BOARDING_UTXOS",
             payload: { utxos },
         });
@@ -239,7 +242,7 @@ describe("WalletUpdater handleMessage", () => {
         } as any);
 
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "TRANSACTION_HISTORY",
             payload: { transactions },
         });
@@ -259,7 +262,7 @@ describe("WalletUpdater handleMessage", () => {
         } as any);
 
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "WALLET_STATUS",
             payload: {
                 walletInitialized: true,
@@ -280,7 +283,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(clearSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "CLEAR_SUCCESS",
             payload: { cleared: true },
         });
@@ -298,7 +301,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(reloadSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "RELOAD_SUCCESS",
             payload: { reloaded: true },
         });
@@ -330,7 +333,7 @@ describe("WalletUpdater handleMessage", () => {
             payload: { type: "test", params: {}, script: "00", address: "a" },
         } as any);
         expect(createResponse).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "CONTRACT_CREATED",
             payload: { contract },
         });
@@ -341,7 +344,7 @@ describe("WalletUpdater handleMessage", () => {
             payload: {},
         } as any);
         expect(getResponse).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "CONTRACTS",
             payload: { contracts },
         });
@@ -352,7 +355,7 @@ describe("WalletUpdater handleMessage", () => {
             payload: {},
         } as any);
         expect(getWithVtxosResponse).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "CONTRACTS_WITH_VTXOS",
             payload: { contracts: contractsWithVtxos },
         });
@@ -363,7 +366,7 @@ describe("WalletUpdater handleMessage", () => {
             payload: { contractId: "c1", updates: { label: "new" } },
         } as any);
         expect(updateResponse).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "CONTRACT_UPDATED",
             payload: { contract },
         });
@@ -374,7 +377,7 @@ describe("WalletUpdater handleMessage", () => {
             payload: { contractId: "c1" },
         } as any);
         expect(deleteResponse).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "CONTRACT_DELETED",
             payload: { deleted: true },
         });
@@ -385,7 +388,7 @@ describe("WalletUpdater handleMessage", () => {
             payload: { options: { contractId: "c1" } },
         } as any);
         expect(spendablePathsResponse).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "SPENDABLE_PATHS",
             payload: { paths },
         });
@@ -395,7 +398,7 @@ describe("WalletUpdater handleMessage", () => {
             type: "IS_CONTRACT_MANAGER_WATCHING",
         } as any);
         expect(watchingResponse).toMatchObject({
-            tag: WalletUpdater.messageTag,
+            tag: updater.messageTag,
             type: "CONTRACT_WATCHING",
             payload: { isWatching: true },
         });
@@ -423,7 +426,7 @@ describe("WalletUpdater handleMessage", () => {
         const tickResponses = await updater.tick(Date.now());
         expect(tickResponses).toEqual([
             {
-                tag: WalletUpdater.messageTag,
+                tag: updater.messageTag,
                 type: "CONTRACT_EVENT",
                 broadcast: true,
                 payload: { event },
@@ -439,7 +442,7 @@ describe("WalletUpdater handleMessage", () => {
             type: "UNKNOWN",
         } as any);
 
-        expect(response.tag).toBe(WalletUpdater.messageTag);
+        expect(response.tag).toBe(updater.messageTag);
         expect(response.error).toBeInstanceOf(Error);
         expect(response.error?.message).toBe("Unknown message");
     });
