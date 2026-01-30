@@ -41,6 +41,8 @@ import {
 } from "../../serviceWorker/worker";
 import { Transaction } from "../../utils/transaction";
 
+export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
+
 export type RequestInitWallet = RequestEnvelope & {
     type: "INIT_WALLET";
     payload: {
@@ -296,8 +298,7 @@ export type WalletUpdaterResponse =
 export class WalletUpdater
     implements IUpdater<WalletUpdaterRequest, WalletUpdaterResponse>
 {
-    static messageTag = "WalletUpdater";
-    readonly messageTag = WalletUpdater.messageTag;
+    readonly messageTag: string;
 
     // declared as Readonly, it uses the flag and a helper function
     // to run specific IWallet methods
@@ -310,10 +311,22 @@ export class WalletUpdater
     private contractEventsSubscription: (() => void) | undefined;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
 
+    /**
+     * Instantiate a new WalletUpdater.
+     * Can override the default `messageTag` allowing more than one updater to run in parallel.
+     * Note that the default ServiceWorkerWallet sends messages to the default WalletUpdater tag.
+     *
+     * @param walletRepository
+     * @param contractRepository
+     * @param options
+     */
     constructor(
         private readonly walletRepository: WalletRepository,
-        private readonly contractRepository: ContractRepository
-    ) {}
+        private readonly contractRepository: ContractRepository,
+        options?: { messageTag?: string }
+    ) {
+        this.messageTag = options?.messageTag ?? DEFAULT_MESSAGE_TAG;
+    }
 
     // lifecycle methods
     async start() {
@@ -335,7 +348,7 @@ export class WalletUpdater
                     return result.value;
                 } else {
                     console.error(
-                        `[${WalletUpdater.messageTag}] tick failed`,
+                        `[${this.messageTag}] tick failed`,
                         result.reason
                     );
                     // TODO: how to deliver errors down the stream? a broadcast?

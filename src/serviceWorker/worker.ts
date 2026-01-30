@@ -23,17 +23,29 @@ export interface IUpdater<
     REQ extends RequestEnvelope = RequestEnvelope,
     RES extends ResponseEnvelope = ResponseEnvelope,
 > {
+    /**
+     * A unique identifier for the updater.
+     * This is used to route messages to the correct updater.
+     */
     readonly messageTag: string;
 
+    /** Called once when the SW is starting up */
     start(): Promise<void>;
 
     /** Called once when the SW is shutting down */
     stop(): Promise<void>;
 
-    /** Called periodically by the Worker */
+    /**
+     * Called by the scheduler to perform a tick.
+     * Can be used by the updater to perform periodic tasks or return
+     * delayed responses (eg: subscriptions).
+     * @param now The current time in milliseconds since the epoch.
+     **/
     tick(now: number): Promise<RES[]>;
 
-    /** Handle routed messages */
+    /**
+     * Handle routed messages from the clients
+     **/
     handleMessage(message: REQ): Promise<RES | null>;
 }
 
