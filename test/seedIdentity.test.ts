@@ -269,9 +269,12 @@ describe("SeedIdentity", () => {
         });
 
         it("should throw for missing mnemonic and seed", () => {
+            // Use a valid descriptor format (xpub is 111 chars: 4-char prefix + 107-char base58)
+            const validXpub =
+                "xpub6CUGRUonZSQ4TWtTMmzXdLcCnaqkRkEqpRPYrLfFdAokzGJWE4F8Z7dHjFPsMzj6Vv6wj3EzxhNoNKZkTvZhgpUebvZjK4zzqYpJXhWsDJTr";
             expect(() =>
                 SeedIdentity.fromJSON(
-                    '{"descriptor": "tr([12345678/86\'/0\'/0\']xpub.../0/*)"}'
+                    `{"descriptor": "tr([12345678/86'/0'/0']${validXpub}/0/*)"}`
                 )
             ).toThrow("Missing mnemonic or seed");
         });
