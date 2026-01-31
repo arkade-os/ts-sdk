@@ -87,7 +87,9 @@ describe("DefaultContractHandler", () => {
 
         // Now stored as descriptors
         expect(deserialized.pubKey).toBe(`tr(${TEST_PUB_KEY_HEX})`);
-        expect(deserialized.serverPubKey).toBe(`tr(${TEST_SERVER_PUB_KEY_HEX})`);
+        expect(deserialized.serverPubKey).toBe(
+            `tr(${TEST_SERVER_PUB_KEY_HEX})`
+        );
     });
 
     it("should select forfeit path when collaborative", () => {
