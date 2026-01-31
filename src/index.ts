@@ -152,6 +152,33 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import {
+    ArkadeBitcoinSkill,
+    createArkadeBitcoinSkill,
+    ArkaLightningSkill,
+    ArkaLightningSkillConfig,
+    createLightningSkill,
+    Skill,
+    BitcoinSkill,
+    RampSkill,
+    LightningSkill,
+    BitcoinAddress,
+    SendParams,
+    SendResult,
+    BalanceInfo,
+    IncomingFundsEvent,
+    OnboardParams,
+    OffboardParams,
+    RampResult,
+    LightningInvoice,
+    CreateInvoiceParams,
+    PayInvoiceParams,
+    PaymentResult,
+    LightningFees,
+    LightningLimits,
+    SwapStatus,
+    SwapInfo,
+} from "./skills";
 
 export * from "./arkfee";
 
@@ -253,6 +280,12 @@ export {
     isSubdust,
     isExpired,
     getSequence,
+
+    // Skills
+    ArkadeBitcoinSkill,
+    createArkadeBitcoinSkill,
+    ArkaLightningSkill,
+    createLightningSkill,
 };
 
 export type {
@@ -349,4 +382,27 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Skill types
+    Skill,
+    BitcoinSkill,
+    RampSkill,
+    LightningSkill,
+    BitcoinAddress,
+    SendParams,
+    SendResult,
+    BalanceInfo,
+    IncomingFundsEvent,
+    OnboardParams,
+    OffboardParams,
+    RampResult,
+    LightningInvoice,
+    CreateInvoiceParams,
+    PayInvoiceParams,
+    PaymentResult,
+    LightningFees,
+    LightningLimits,
+    SwapStatus,
+    SwapInfo,
+    ArkaLightningSkillConfig,
 };
