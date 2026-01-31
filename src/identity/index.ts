@@ -26,3 +26,9 @@ export {
     parseHDDescriptor,
 } from "./descriptor";
 export type { ParsedHDDescriptor } from "./descriptor";
+
+// Descriptor provider interface
+export type {
+    DescriptorProvider,
+    DescriptorSigningRequest,
+} from "./descriptorProvider";
