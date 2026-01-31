@@ -38,3 +38,6 @@ export type {
     DescriptorProvider,
     DescriptorSigningRequest,
 } from "./descriptorProvider";
+
+// Static descriptor provider (wrapper for legacy Identity)
+export { StaticDescriptorProvider } from "./staticDescriptorProvider";
