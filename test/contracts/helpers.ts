@@ -26,15 +26,22 @@ export const createMockIndexerProvider = (): IndexerProvider => ({
     unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
 });
 
-// Test keys for creating valid contracts
-export const TEST_PUB_KEY = new Uint8Array(32).fill(1);
-export const TEST_SERVER_PUB_KEY = new Uint8Array(32).fill(2);
+// Valid secp256k1 x-only public keys for testing
+// These are the generator point (G) and 2G
+export const TEST_PUB_KEY_HEX =
+    "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+export const TEST_SERVER_PUB_KEY_HEX =
+    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
 
-// Helper to create valid default contract params
+// Uint8Array versions for script creation
+export const TEST_PUB_KEY = hex.decode(TEST_PUB_KEY_HEX);
+export const TEST_SERVER_PUB_KEY = hex.decode(TEST_SERVER_PUB_KEY_HEX);
+
+// Helper to create valid default contract params (using descriptors)
 export const createDefaultContractParams = () =>
     DefaultContractHandler.serializeParams({
-        pubKey: TEST_PUB_KEY,
-        serverPubKey: TEST_SERVER_PUB_KEY,
+        pubKey: `tr(${TEST_PUB_KEY_HEX})`,
+        serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
         csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
     });
 
