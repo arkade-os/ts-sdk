@@ -475,9 +475,15 @@ describe("SeedIdentity HD methods", () => {
                 isMainnet: true,
             });
 
-            expect(identity.isOurs(identity.deriveSigningDescriptor(0))).toBe(true);
-            expect(identity.isOurs(identity.deriveSigningDescriptor(100))).toBe(true);
-            expect(identity.isOurs(identity.deriveSigningDescriptor(999))).toBe(true);
+            expect(identity.isOurs(identity.deriveSigningDescriptor(0))).toBe(
+                true
+            );
+            expect(identity.isOurs(identity.deriveSigningDescriptor(100))).toBe(
+                true
+            );
+            expect(identity.isOurs(identity.deriveSigningDescriptor(999))).toBe(
+                true
+            );
         });
 
         it("should return false for descriptor from different seed", () => {
@@ -502,7 +508,8 @@ describe("SeedIdentity HD methods", () => {
                 isMainnet: false,
             });
 
-            const mainnetDescriptor = mainnetIdentity.deriveSigningDescriptor(0);
+            const mainnetDescriptor =
+                mainnetIdentity.deriveSigningDescriptor(0);
 
             expect(testnetIdentity.isOurs(mainnetDescriptor)).toBe(false);
         });
@@ -513,7 +520,9 @@ describe("SeedIdentity HD methods", () => {
             });
 
             expect(identity.isOurs("invalid")).toBe(false);
-            expect(identity.isOurs("tr([12345678/86'/0'/0']xpub.../0/*)")).toBe(false);
+            expect(identity.isOurs("tr([12345678/86'/0'/0']xpub.../0/*)")).toBe(
+                false
+            );
         });
     });
 
@@ -621,8 +630,14 @@ describe("SeedIdentity HD methods", () => {
             const descriptor1 = identity.deriveSigningDescriptor(1);
             const message = new Uint8Array(32).fill(42);
 
-            const sig0 = await identity.signMessageWithDescriptor(descriptor0, message);
-            const sig1 = await identity.signMessageWithDescriptor(descriptor1, message);
+            const sig0 = await identity.signMessageWithDescriptor(
+                descriptor0,
+                message
+            );
+            const sig1 = await identity.signMessageWithDescriptor(
+                descriptor1,
+                message
+            );
 
             expect(Array.from(sig0)).not.toEqual(Array.from(sig1));
         });
@@ -759,7 +774,10 @@ describe("backwards compatibility", () => {
         // Sign with both methods and verify they produce same result
         const message = new Uint8Array(32).fill(42);
         const sig1 = await identity.signMessage(message);
-        const sig2 = await identity.signMessageWithDescriptor(descriptor0, message);
+        const sig2 = await identity.signMessageWithDescriptor(
+            descriptor0,
+            message
+        );
 
         // Both should be verifiable with the same public key
         const isValid1 = await schnorr.verifyAsync(sig1, message, defaultKey);
@@ -780,7 +798,11 @@ describe("backwards compatibility", () => {
         expect(signature).toHaveLength(64);
 
         const publicKey = await identity.xOnlyPublicKey();
-        const isValid = await schnorr.verifyAsync(signature, message, publicKey);
+        const isValid = await schnorr.verifyAsync(
+            signature,
+            message,
+            publicKey
+        );
         expect(isValid).toBe(true);
     });
 

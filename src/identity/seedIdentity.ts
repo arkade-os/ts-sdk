@@ -619,7 +619,12 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
         const accountXpub = HDKey.fromExtendedKey(xpub, VERSIONS);
         // Infer isMainnet from coin type in path (86'/0'/0' vs 86'/1'/0')
         const isMainnet = path.includes("86'/0'/0'");
-        return new ReadonlySeedIdentity(descriptor, accountXpub, fingerprint, isMainnet);
+        return new ReadonlySeedIdentity(
+            descriptor,
+            accountXpub,
+            fingerprint,
+            isMainnet
+        );
     }
 
     /**
