@@ -125,8 +125,7 @@ describe("DefaultContractHandler descriptor support", () => {
                 csvTimelock: { value: 144n, type: "blocks" as const },
             };
 
-            const serialized =
-                DefaultContractHandler.serializeParams(original);
+            const serialized = DefaultContractHandler.serializeParams(original);
             const deserialized =
                 DefaultContractHandler.deserializeParams(serialized);
 
