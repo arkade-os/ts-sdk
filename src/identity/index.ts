@@ -23,3 +23,12 @@ export type {
     MnemonicOptions,
     SigningRequest,
 } from "./seedIdentity";
+
+// Descriptor utilities
+export {
+    isDescriptor,
+    normalizeToDescriptor,
+    extractPubKey,
+    parseHDDescriptor,
+} from "./descriptor";
+export type { ParsedHDDescriptor } from "./descriptor";
