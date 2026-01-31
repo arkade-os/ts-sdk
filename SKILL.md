@@ -29,8 +29,10 @@ A Bitcoin wallet for the Arkade protocol with Lightning Network support. Enables
 ```bash
 npm install
 alias arkade='node cli/arkade.mjs'
-arkade init <private-key-hex> <ark-server-url>
+arkade init <private-key-hex>
 ```
+
+Default server: `arkade.computer`
 
 ## Commands
 
@@ -38,7 +40,7 @@ arkade init <private-key-hex> <ark-server-url>
 
 | Command | Description |
 |---------|-------------|
-| `arkade init <key> <url>` | Initialize wallet with private key and Ark server |
+| `arkade init <key> [url]` | Initialize wallet (default: arkade.computer) |
 | `arkade address` | Show Ark address (off-chain receiving) |
 | `arkade boarding-address` | Show boarding address (on-chain receiving) |
 | `arkade balance` | Show balance breakdown |

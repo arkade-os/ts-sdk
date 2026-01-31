@@ -8,25 +8,28 @@
  * Usage: node cli/arkade.mjs <command> [args]
  *
  * Commands:
- *   init <private-key-hex> <ark-server-url>  Initialize wallet
- *   address                                   Show Ark address for receiving
- *   boarding-address                          Show boarding address (on-chain)
- *   balance                                   Show wallet balance
- *   send <address> <amount>                   Send sats to Ark address
- *   history                                   Show transaction history
- *   onboard                                   Move on-chain funds to Arkade
- *   offboard <btc-address>                    Move Arkade funds to on-chain
- *   ln-invoice <amount> [description]         Create Lightning invoice
- *   ln-pay <bolt11>                           Pay Lightning invoice
- *   ln-fees                                   Show Lightning swap fees
- *   ln-limits                                 Show Lightning swap limits
- *   ln-pending                                Show pending Lightning swaps
+ *   init <private-key-hex> [server-url]   Initialize wallet (default: arkade.computer)
+ *   address                                Show Ark address for receiving
+ *   boarding-address                       Show boarding address (on-chain)
+ *   balance                                Show wallet balance
+ *   send <address> <amount>                Send sats to Ark address
+ *   history                                Show transaction history
+ *   onboard                                Move on-chain funds to Arkade
+ *   offboard <btc-address>                 Move Arkade funds to on-chain
+ *   ln-invoice <amount> [description]      Create Lightning invoice
+ *   ln-pay <bolt11>                        Pay Lightning invoice
+ *   ln-fees                                Show Lightning swap fees
+ *   ln-limits                              Show Lightning swap limits
+ *   ln-pending                             Show pending Lightning swaps
  */
 
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { homedir } from "os";
+
+// Default Ark server
+const DEFAULT_ARK_SERVER = "https://arkade.computer";
 
 // Data directory
 const DATA_DIR = join(homedir(), ".arkade-wallet");
@@ -74,16 +77,18 @@ function formatSats(sats) {
 // Commands
 const commands = {
     async init(args) {
-        if (args.length < 2) {
+        if (args.length < 1) {
+            console.log("Usage: arkade init <private-key-hex> [server-url]");
+            console.log(`\nDefault server: ${DEFAULT_ARK_SERVER}`);
+            console.log("\nExamples:");
+            console.log("  arkade init abc123...def");
             console.log(
-                "Usage: arkade init <private-key-hex> <ark-server-url>"
+                '  arkade init abc123...def "https://custom-server.com"'
             );
-            console.log("\nExample:");
-            console.log('  arkade init abc123...def "https://ark.example.com"');
             process.exit(1);
         }
 
-        const [privateKey, arkServerUrl] = args;
+        const [privateKey, arkServerUrl = DEFAULT_ARK_SERVER] = args;
         const config = { privateKey, arkServerUrl };
 
         // Validate by trying to create wallet
@@ -104,9 +109,7 @@ const commands = {
     async address() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -119,9 +122,7 @@ const commands = {
     async "boarding-address"() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -134,9 +135,7 @@ const commands = {
     async balance() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -170,9 +169,7 @@ const commands = {
 
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -202,9 +199,7 @@ const commands = {
     async history() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -231,9 +226,7 @@ const commands = {
     async onboard() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -267,9 +260,7 @@ const commands = {
 
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -305,9 +296,7 @@ const commands = {
 
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -353,9 +342,7 @@ const commands = {
 
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -385,9 +372,7 @@ const commands = {
     async "ln-fees"() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -417,9 +402,7 @@ const commands = {
     async "ln-limits"() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -440,9 +423,7 @@ const commands = {
     async "ln-pending"() {
         const config = loadConfig();
         if (!config) {
-            console.error(
-                "Wallet not initialized. Run: arkade init <key> <url>"
-            );
+            console.error("Wallet not initialized. Run: arkade init <key>");
             process.exit(1);
         }
 
@@ -477,7 +458,7 @@ Arkade Bitcoin Wallet CLI
 Usage: arkade <command> [args]
 
 Wallet Commands:
-  init <key> <url>       Initialize wallet with private key and Ark server URL
+  init <key> [url]       Initialize wallet (default server: arkade.computer)
   address                Show Ark address for receiving off-chain Bitcoin
   boarding-address       Show boarding address for receiving on-chain Bitcoin
   balance                Show wallet balance (on-chain and off-chain)
@@ -494,7 +475,8 @@ Lightning Commands:
   ln-pending               Show pending Lightning swaps
 
 Examples:
-  arkade init abc123... https://ark.example.com
+  arkade init abc123...def                    # Use default server
+  arkade init abc123... https://custom.com    # Use custom server
   arkade balance
   arkade send ark1qq... 50000
   arkade ln-invoice 25000 "Coffee payment"
