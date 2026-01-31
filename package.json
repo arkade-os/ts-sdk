@@ -45,8 +45,13 @@
             "default": "./dist/esm/adapters/asyncStorage.js"
         }
     },
+    "bin": {
+        "arkade": "./cli/arkade.mjs"
+    },
     "files": [
-        "dist"
+        "dist",
+        "cli",
+        "SKILL.md"
     ],
     "publishConfig": {
         "access": "public",
