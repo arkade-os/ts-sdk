@@ -17,3 +17,12 @@ export interface ReadonlyIdentity {
 }
 
 export * from "./singleKey";
+
+// Descriptor utilities
+export {
+    isDescriptor,
+    normalizeToDescriptor,
+    extractPubKey,
+    parseHDDescriptor,
+} from "./descriptor";
+export type { ParsedHDDescriptor } from "./descriptor";
