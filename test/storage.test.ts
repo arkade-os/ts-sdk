@@ -1,15 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import {
-    WalletRepository,
-    WalletState,
-} from "../src/repositories/walletRepository";
-import { ContractRepository } from "../src/repositories/contractRepository";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
-import { IndexedDBContractRepository } from "../src/repositories/indexedDB/contractRepository";
-import { InMemoryWalletRepository } from "../src/repositories/inMemory/walletRepository";
-import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import { migrateWalletRepository } from "../src/repositories/migrations/fromStorageAdapter";
 import type {
     ExtendedVirtualCoin,
@@ -20,7 +12,6 @@ import type {
 import type { TapLeafScript } from "../src/script/base";
 import { IndexedDBStorageAdapter } from "../src/storage/indexedDB";
 import { WalletRepositoryImpl } from "../src/repositories/migrations/walletRepositoryImpl";
-import { ContractRepositoryImpl } from "../src/repositories/migrations/contractRepositoryImpl";
 
 export type RepositoryTestItem<T> = {
     name: string;

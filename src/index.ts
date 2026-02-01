@@ -60,7 +60,6 @@ import {
     ServiceWorkerReadonlyWallet,
 } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
-import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 import { Worker } from "./wallet/serviceWorker/worker";
 import { Request } from "./wallet/serviceWorker/request";
 import { Response } from "./wallet/serviceWorker/response";
@@ -157,6 +156,8 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 } from "./repositories";
 
 export * from "./arkfee";
@@ -194,6 +195,7 @@ import type {
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
 import { closeDatabase, openDatabase } from "./db/manager";
+import { setupServiceWorker } from "./wallet/serviceWorker/utils";
 
 export {
     // Wallets
@@ -274,6 +276,8 @@ export {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 
     // Intent proof
     Intent,
