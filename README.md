@@ -203,6 +203,63 @@ const balance = await readonlyWallet.getBalance()
 - ✅ Flexible: Convert between full and readonly wallets as needed
 - ✅ Same API: Query operations work identically on both wallet types
 
+### HD Wallet (Multi-Address Support)
+
+For applications that need multiple addresses from a single seed, use `HDWallet` with `SeedIdentity`:
+
+```typescript
+import { HDWallet, SeedIdentity } from '@arkade-os/sdk'
+
+// Create HD identity from mnemonic
+const identity = SeedIdentity.fromMnemonic(mnemonic, { isMainnet: false })
+
+// Create HD wallet
+const wallet = await HDWallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+})
+
+// Get addresses at different derivation indexes
+const addr0 = await wallet.getAddresses(0) // First address
+const addr1 = await wallet.getAddresses(1) // Second address
+
+console.log('Address 0:', addr0.ark)       // Ark address
+console.log('Boarding 0:', addr0.boarding) // Boarding address
+console.log('Descriptor:', addr0.descriptor) // tr([fp/86'/1'/0']xpub/0/0)
+```
+
+#### HD Wallet Balance Model
+
+The HD wallet provides a detailed balance breakdown by spend path:
+
+```typescript
+const balance = await wallet.getBalance()
+
+// Aggregate totals
+console.log('Total:', balance.total)
+console.log('Spendable:', balance.spendable) // Can be used now
+
+// Breakdown by spend path
+console.log('Instant send:', balance.offchainSpendable) // Ark transfers
+console.log('Via batch:', balance.batchSpendable)       // Needs batch round
+console.log('Onchain only:', balance.onchainSpendable)  // Unilateral exit
+console.log('Locked:', balance.locked)                  // Not spendable yet
+
+// Per-contract breakdown
+for (const contract of balance.contracts) {
+  console.log(`${contract.type}: ${contract.spendable} sats (${contract.coinCount} coins)`)
+}
+```
+
+**Spend Path Categories:**
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| `offchainSpendable` | Instant Ark transfers | Settled/preconfirmed VTXOs |
+| `batchSpendable` | Requires batch round | Swept VTXOs, confirmed boarding |
+| `onchainSpendable` | Requires unilateral exit | Expired batch, must withdraw onchain |
+| `locked` | Not spendable yet | Unconfirmed boarding, active timelocks |
+
 ### Receiving Bitcoin
 
 ```typescript
