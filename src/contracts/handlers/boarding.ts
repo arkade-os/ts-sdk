@@ -20,12 +20,10 @@ import {
 } from "../../identity/descriptor";
 
 /**
- * Typed parameters for DefaultVtxo contracts.
- *
- * pubKey and serverPubKey are stored as descriptors (tr(...) format).
- * For backwards compatibility, hex pubkeys are auto-normalized to tr(pubkey).
+ * Typed parameters for Boarding contracts.
+ * Same structure as DefaultContractParams.
  */
-export interface DefaultContractParams {
+export interface BoardingContractParams {
     /** User's public key descriptor (tr(...) format) */
     pubKey: string;
     /** Server's public key descriptor (tr(...) format) */
@@ -39,35 +37,34 @@ export interface DefaultContractParams {
  * Used internally to get the actual pubkey for script creation.
  */
 function extractPubKeyBytes(value: string): Uint8Array {
-    // Normalize first (wraps raw hex as tr(hex))
     const descriptor = normalizeToDescriptor(value);
-    // Extract pubkey from simple descriptor
     const pubKeyHex = extractPubKey(descriptor);
     return hex.decode(pubKeyHex);
 }
 
 /**
- * Handler for default wallet VTXOs.
+ * Handler for boarding UTXOs.
  *
- * Default contracts use the standard forfeit + exit tapscript:
- * - forfeit: (Alice + Server) multisig for collaborative spending
+ * Boarding contracts are onchain UTXOs waiting to be settled into VTXOs.
+ * They use the same script structure as default VTXOs:
+ * - forfeit: (Alice + Server) multisig for collaborative spending (joining a batch)
  * - exit: (Alice) + CSV timelock for unilateral exit
  *
- * Public keys are stored as descriptors for future HD wallet support:
+ * The key difference from default contracts is that boarding UTXOs are onchain,
+ * not virtual. They represent funds waiting to enter the Ark protocol.
+ *
+ * Public keys are stored as descriptors for HD wallet support:
  * - Simple format: tr(pubkey_hex)
  * - HD format: tr([fingerprint/path']xpub/0/{index})
- *
- * Legacy hex pubkeys are automatically normalized to tr(pubkey) on read.
  */
-export const DefaultContractHandler: ContractHandler<
-    DefaultContractParams,
+export const BoardingContractHandler: ContractHandler<
+    BoardingContractParams,
     DefaultVtxo.Script
 > = {
-    type: "default",
+    type: "boarding",
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         const typed = this.deserializeParams(params);
-        // Extract actual pubkey bytes from descriptors
         return new DefaultVtxo.Script({
             pubKey: extractPubKeyBytes(typed.pubKey),
             serverPubKey: extractPubKeyBytes(typed.serverPubKey),
@@ -75,7 +72,7 @@ export const DefaultContractHandler: ContractHandler<
         });
     },
 
-    serializeParams(params: DefaultContractParams): Record<string, string> {
+    serializeParams(params: BoardingContractParams): Record<string, string> {
         return {
             pubKey: params.pubKey,
             serverPubKey: params.serverPubKey,
@@ -83,12 +80,11 @@ export const DefaultContractHandler: ContractHandler<
         };
     },
 
-    deserializeParams(params: Record<string, string>): DefaultContractParams {
+    deserializeParams(params: Record<string, string>): BoardingContractParams {
         const csvTimelock = params.csvTimelock
             ? sequenceToTimelock(Number(params.csvTimelock))
             : DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return {
-            // Normalize hex pubkeys to descriptors for backwards compat
             pubKey: normalizeToDescriptor(params.pubKey),
             serverPubKey: normalizeToDescriptor(params.serverPubKey),
             csvTimelock,
@@ -100,9 +96,11 @@ export const DefaultContractHandler: ContractHandler<
         contract: Contract,
         context: PathContext
     ): PathSelection | null {
+        const descriptor = contract.params.pubKey;
+
         if (context.collaborative) {
-            // Use forfeit path for collaborative spending
-            return { leaf: script.forfeit() };
+            // Use forfeit path for joining a batch
+            return { leaf: script.forfeit(), descriptor };
         }
 
         // Use exit path for unilateral exit (only if CSV is satisfied)
@@ -115,6 +113,7 @@ export const DefaultContractHandler: ContractHandler<
         return {
             leaf: script.exit(),
             sequence,
+            descriptor,
         };
     },
 
@@ -124,14 +123,15 @@ export const DefaultContractHandler: ContractHandler<
         context: PathContext
     ): PathSelection[] {
         const paths: PathSelection[] = [];
+        const descriptor = contract.params.pubKey;
 
         // Forfeit path available with server cooperation
         if (context.collaborative) {
-            paths.push({ leaf: script.forfeit() });
+            paths.push({ leaf: script.forfeit(), descriptor });
         }
 
         // Exit path always possible (CSV checked at tx time)
-        const exitPath: PathSelection = { leaf: script.exit() };
+        const exitPath: PathSelection = { leaf: script.exit(), descriptor };
         if (contract.params.csvTimelock) {
             exitPath.sequence = Number(contract.params.csvTimelock);
         }
@@ -146,7 +146,6 @@ export const DefaultContractHandler: ContractHandler<
         context: PathContext
     ): PathSelection[] {
         const paths: PathSelection[] = [];
-        // The wallet's descriptor for signing (stored in contract params)
         const descriptor = contract.params.pubKey;
 
         if (context.collaborative) {

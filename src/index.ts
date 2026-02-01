@@ -14,6 +14,8 @@ import {
     TxType,
     IWallet,
     IReadonlyWallet,
+    IBaseWallet,
+    IHDWallet,
     BaseWalletConfig,
     WalletConfig,
     ReadonlyWalletConfig,
@@ -23,6 +25,8 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     WalletBalance,
+    HDWalletBalance,
+    AddressInfo,
     SendBitcoinParams,
     Recipient,
     SettleParams,
@@ -39,6 +43,7 @@ import {
     isRecoverable,
     isExpired,
 } from "./wallet";
+import { HDWallet, HDWalletConfig } from "./wallet/hdWallet";
 import { Batch } from "./wallet/batch";
 import {
     Wallet,
@@ -166,6 +171,7 @@ import {
     contractHandlers,
     DefaultContractHandler,
     VHTLCContractHandler,
+    BoardingContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -189,12 +195,14 @@ import type {
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,
+    BoardingContractParams,
 } from "./contracts";
 
 export {
     // Wallets
     Wallet,
     ReadonlyWallet,
+    HDWallet,
     SingleKey,
     ReadonlySingleKey,
     OnchainWallet,
@@ -299,6 +307,7 @@ export {
     contractHandlers,
     DefaultContractHandler,
     VHTLCContractHandler,
+    BoardingContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -312,15 +321,20 @@ export type {
     ReadonlyIdentity,
     IWallet,
     IReadonlyWallet,
+    IBaseWallet,
+    IHDWallet,
     BaseWalletConfig,
     WalletConfig,
     ReadonlyWalletConfig,
+    HDWalletConfig,
     ProviderClass,
     ArkTransaction,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
     WalletBalance,
+    HDWalletBalance,
+    AddressInfo,
     SendBitcoinParams,
     Recipient,
     SettleParams,
@@ -421,4 +435,5 @@ export type {
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,
+    BoardingContractParams,
 };

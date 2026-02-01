@@ -128,4 +128,18 @@ export class StaticDescriptorProvider implements DescriptorProvider {
         }
         return this.identity.signMessage(message, type);
     }
+
+    /**
+     * Derive a signing descriptor at a specific index.
+     *
+     * For static keys, always returns the same descriptor regardless of index,
+     * since there is only one key.
+     *
+     * @param index - The derivation index (ignored for static keys)
+     * @returns The same tr(pubkey) descriptor
+     */
+    deriveSigningDescriptor(_index: number): string {
+        // Static provider always returns the same descriptor
+        return this.descriptor;
+    }
 }

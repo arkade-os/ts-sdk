@@ -85,4 +85,15 @@ export interface DescriptorProvider {
         message: Uint8Array,
         type?: "schnorr" | "ecdsa"
     ): Promise<Uint8Array>;
+
+    /**
+     * Derive a signing descriptor at a specific index.
+     *
+     * For HD wallets: returns tr([fp/path']xpub/0/{index})
+     * For static keys: always returns the same tr(pubkey) regardless of index
+     *
+     * @param index - The derivation index (0, 1, 2, ...)
+     * @returns Output descriptor string for signing at this index
+     */
+    deriveSigningDescriptor(index: number): string;
 }

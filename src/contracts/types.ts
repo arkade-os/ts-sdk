@@ -2,6 +2,7 @@ import { Bytes } from "@scure/btc-signer/utils.js";
 import { TapLeafScript, VtxoScript } from "../script/base";
 import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
 import { ContractFilter } from "../repositories";
+import type { DescriptorProvider } from "../identity";
 
 /**
  * Contract state indicating whether it should be actively monitored.
@@ -96,6 +97,23 @@ export interface PathSelection {
 
     /** Sequence number override (for CSV timelocks) */
     sequence?: number;
+
+    /** Descriptor to use for signing this path */
+    descriptor?: string;
+}
+
+/**
+ * A wallet's descriptor associated with specific spending paths.
+ */
+export interface WalletDescriptorInfo {
+    /** The descriptor for signing */
+    descriptor: string;
+
+    /** Role in the contract (for multi-party contracts) */
+    role?: string;
+
+    /** Which paths this descriptor is used for */
+    pathNames: string[]; // e.g., ["claim", "refund"] or ["forfeit", "exit"]
 }
 
 /**
@@ -218,6 +236,20 @@ export interface ContractHandler<
         contract: Contract,
         context: PathContext
     ): PathSelection[];
+
+    /**
+     * Get all wallet descriptors from contract params.
+     * Returns all descriptors that belong to the wallet, along with
+     * which paths they're used for.
+     *
+     * @param contract - The contract
+     * @param identity - DescriptorProvider to check ownership
+     * @returns Array of wallet's descriptors with path info
+     */
+    getWalletDescriptors(
+        contract: Contract,
+        identity: DescriptorProvider
+    ): WalletDescriptorInfo[];
 }
 
 /**

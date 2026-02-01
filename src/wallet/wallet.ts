@@ -40,7 +40,7 @@ import {
     isRecoverable,
     isSpendable,
     isSubdust,
-    IWallet,
+    ISingleKeyWallet,
     ReadonlyWalletConfig,
     SendBitcoinParams,
     SettleParams,
@@ -738,7 +738,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * });
  * ```
  */
-export class Wallet extends ReadonlyWallet implements IWallet {
+export class Wallet extends ReadonlyWallet implements ISingleKeyWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
