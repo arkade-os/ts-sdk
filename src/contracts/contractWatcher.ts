@@ -10,7 +10,6 @@ import {
     ContractCoin,
     ContractVtxo,
     ContractEventCallback,
-    ContractBalance,
     ContractEvent,
 } from "./types";
 
