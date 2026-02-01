@@ -676,6 +676,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
+            onchainProvider: this.onchainProvider,
             extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
             getDefaultAddress: () => this.getAddress(),
             watcherConfig: this.watcherConfig,

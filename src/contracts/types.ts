@@ -273,6 +273,22 @@ export interface ContractHandler<
 }
 
 /**
+ * Onchain coin associated with a contract.
+ */
+export interface ContractCoin {
+    /** The contract script this coin belongs to */
+    contractScript: string;
+    /** Transaction ID */
+    txid: string;
+    /** Output index */
+    vout: number;
+    /** Value in satoshis */
+    value: number;
+    /** Confirmation status */
+    confirmed: boolean;
+}
+
+/**
  * Event emitted when contract-related changes occur.
  */
 export type ContractEvent =
@@ -287,6 +303,20 @@ export type ContractEvent =
           type: "vtxo_spent";
           contractScript: string;
           vtxos: ContractVtxo[];
+          contract: Contract;
+          timestamp: number;
+      }
+    | {
+          type: "coin_received";
+          contractScript: string;
+          coins: ContractCoin[];
+          contract: Contract;
+          timestamp: number;
+      }
+    | {
+          type: "coin_confirmed";
+          contractScript: string;
+          coins: ContractCoin[];
           contract: Contract;
           timestamp: number;
       }

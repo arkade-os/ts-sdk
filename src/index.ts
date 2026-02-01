@@ -179,6 +179,7 @@ import {
 } from "./contracts";
 import type {
     Contract,
+    ContractCoin,
     ContractVtxo,
     ContractState,
     ContractLayer,
@@ -418,6 +419,7 @@ export type {
 
     // Contract types
     Contract,
+    ContractCoin,
     ContractVtxo,
     ContractState,
     ContractLayer,

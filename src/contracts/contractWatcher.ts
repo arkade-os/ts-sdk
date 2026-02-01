@@ -1,8 +1,13 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
-import { VirtualCoin } from "../wallet";
+import {
+    ExplorerTransaction,
+    OnchainProvider,
+} from "../providers/onchain";
+import { Coin, VirtualCoin } from "../wallet";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
+    ContractCoin,
     ContractVtxo,
     ContractEventCallback,
     ContractBalance,
@@ -18,6 +23,12 @@ export interface ContractWatcherConfig {
 
     /** The wallet repository for VTXO persistence (optional) */
     walletRepository: WalletRepository;
+
+    /**
+     * The onchain provider for watching onchain UTXOs.
+     * Required for contracts with layer "onchain" or "both".
+     */
+    onchainProvider?: OnchainProvider;
 
     /**
      * Interval for failsafe polling (ms).
@@ -53,6 +64,7 @@ export interface ContractWatcherConfig {
 interface ContractState {
     contract: Contract;
     lastKnownVtxos: Map<string, VirtualCoin>; // "txid:vout" -> vtxo
+    lastKnownCoins: Map<string, Coin>; // "txid:vout" -> coin (for onchain)
 }
 
 /**
@@ -95,8 +107,10 @@ type ConnectionState =
  * ```
  */
 export class ContractWatcher {
-    private config: Required<Omit<ContractWatcherConfig, "walletRepository">> &
-        Pick<ContractWatcherConfig, "walletRepository">;
+    private config: Required<
+        Omit<ContractWatcherConfig, "walletRepository" | "onchainProvider">
+    > &
+        Pick<ContractWatcherConfig, "walletRepository" | "onchainProvider">;
     private contracts: Map<string, ContractState> = new Map();
     private subscriptionId?: string;
     private abortController?: AbortController;
@@ -106,6 +120,10 @@ export class ContractWatcher {
     private reconnectAttempts = 0;
     private reconnectTimeoutId?: ReturnType<typeof setTimeout>;
     private failsafePollIntervalId?: ReturnType<typeof setInterval>;
+
+    // Onchain watching state
+    private onchainStopFuncs: Map<string, () => void> = new Map(); // contractScript -> stopFunc
+    private watchedOnchainAddresses: Set<string> = new Set();
 
     constructor(config: ContractWatcherConfig) {
         this.config = {
@@ -121,23 +139,29 @@ export class ContractWatcher {
      * Add a contract to be watched.
      *
      * Active contracts are immediately subscribed. All contracts are polled
-     * to discover any existing VTXOs (which may cause them to be watched
+     * to discover any existing VTXOs/coins (which may cause them to be watched
      * even if inactive).
+     *
+     * For contracts with layer "onchain" or "both", onchain watching is enabled
+     * if onchainProvider is configured.
      */
     async addContract(contract: Contract): Promise<void> {
         const state: ContractState = {
             contract,
             lastKnownVtxos: new Map(),
+            lastKnownCoins: new Map(),
         };
 
         this.contracts.set(contract.script, state);
 
-        // If we're already watching, poll to discover VTXOs and update subscription
+        // If we're already watching, poll to discover VTXOs/coins and update subscription
         if (this.isWatching) {
             // Poll first to discover VTXOs (may affect whether we watch this contract)
             await this.pollContracts([contract.script]);
             // Update subscription based on active state and VTXOs
             await this.tryUpdateSubscription();
+            // Start onchain watching if applicable
+            await this.updateOnchainWatching();
         }
     }
 
@@ -297,7 +321,14 @@ export class ContractWatcher {
             this.failsafePollIntervalId = undefined;
         }
 
-        // Unsubscribe
+        // Stop onchain watching
+        for (const stopFunc of this.onchainStopFuncs.values()) {
+            stopFunc();
+        }
+        this.onchainStopFuncs.clear();
+        this.watchedOnchainAddresses.clear();
+
+        // Unsubscribe from indexer
         if (this.subscriptionId) {
             try {
                 await this.config.indexerProvider.unsubscribeForScripts(
@@ -372,6 +403,9 @@ export class ContractWatcher {
 
         try {
             await this.updateSubscription();
+
+            // Start onchain watching for applicable contracts
+            await this.updateOnchainWatching();
 
             // Poll immediately after connection to sync state
             await this.pollAllContracts();
@@ -533,12 +567,21 @@ export class ContractWatcher {
     }
 
     /**
-     * Update the subscription with scripts that should be watched.
+     * Update the subscription with scripts that should be watched (offchain only).
      *
      * Watches both active contracts and contracts with VTXOs.
+     * Only subscribes for contracts with layer "offchain" or "both".
      */
     private async updateSubscription(): Promise<void> {
-        const scriptsToWatch = this.getScriptsToWatch();
+        // Only subscribe to offchain-capable contracts
+        const scriptsToWatch = this.getScriptsToWatch().filter((script) => {
+            const state = this.contracts.get(script);
+            return (
+                state &&
+                (state.contract.layer === "offchain" ||
+                    state.contract.layer === "both")
+            );
+        });
 
         if (scriptsToWatch.length === 0) {
             if (this.subscriptionId) {
@@ -559,6 +602,170 @@ export class ContractWatcher {
                 scriptsToWatch,
                 this.subscriptionId
             );
+    }
+
+    /**
+     * Get contracts that need onchain watching.
+     *
+     * Returns contracts with layer "onchain" or "both" that are active
+     * or have known coins.
+     */
+    private getOnchainContractsToWatch(): Contract[] {
+        const contracts: Contract[] = [];
+
+        for (const state of this.contracts.values()) {
+            const { contract, lastKnownCoins } = state;
+
+            // Only watch onchain-capable contracts
+            if (contract.layer !== "onchain" && contract.layer !== "both") {
+                continue;
+            }
+
+            // Watch active contracts or those with coins
+            if (contract.state === "active" || lastKnownCoins.size > 0) {
+                contracts.push(contract);
+            }
+        }
+
+        return contracts;
+    }
+
+    /**
+     * Update onchain watching based on contract configuration.
+     *
+     * Starts watching for contracts with layer "onchain" or "both".
+     * Stops watching for removed/deactivated contracts.
+     */
+    private async updateOnchainWatching(): Promise<void> {
+        if (!this.config.onchainProvider || !this.isWatching) {
+            return;
+        }
+
+        const contractsToWatch = this.getOnchainContractsToWatch();
+        const addressesToWatch = new Set(
+            contractsToWatch.map((c) => c.address)
+        );
+
+        // Stop watching addresses that are no longer needed
+        for (const [script, stopFunc] of this.onchainStopFuncs) {
+            const state = this.contracts.get(script);
+            if (!state || !addressesToWatch.has(state.contract.address)) {
+                stopFunc();
+                this.onchainStopFuncs.delete(script);
+                if (state) {
+                    this.watchedOnchainAddresses.delete(state.contract.address);
+                }
+            }
+        }
+
+        // Start watching new addresses
+        for (const contract of contractsToWatch) {
+            if (this.watchedOnchainAddresses.has(contract.address)) {
+                continue; // Already watching
+            }
+
+            try {
+                const stopFunc = await this.config.onchainProvider.watchAddresses(
+                    [contract.address],
+                    (txs) => this.handleOnchainTransactions(contract, txs)
+                );
+
+                this.onchainStopFuncs.set(contract.script, stopFunc);
+                this.watchedOnchainAddresses.add(contract.address);
+            } catch (error) {
+                console.error(
+                    `Failed to start onchain watching for ${contract.script}:`,
+                    error
+                );
+            }
+        }
+    }
+
+    /**
+     * Handle onchain transactions for a contract.
+     */
+    private handleOnchainTransactions(
+        contract: Contract,
+        txs: ExplorerTransaction[]
+    ): void {
+        if (!this.eventCallback) return;
+
+        const state = this.contracts.get(contract.script);
+        if (!state) return;
+
+        const timestamp = Date.now();
+        const newCoins: ContractCoin[] = [];
+        const confirmedCoins: ContractCoin[] = [];
+
+        for (const tx of txs) {
+            // Find outputs to this contract's address
+            for (let vout = 0; vout < tx.vout.length; vout++) {
+                const output = tx.vout[vout];
+                if (output.scriptpubkey_address !== contract.address) {
+                    continue;
+                }
+
+                const key = `${tx.txid}:${vout}`;
+                const existingCoin = state.lastKnownCoins.get(key);
+                const coin: ContractCoin = {
+                    contractScript: contract.script,
+                    txid: tx.txid,
+                    vout,
+                    value: Number(output.value),
+                    confirmed: tx.status.confirmed,
+                };
+
+                if (!existingCoin) {
+                    // New coin received
+                    newCoins.push(coin);
+                    state.lastKnownCoins.set(key, {
+                        txid: tx.txid,
+                        vout,
+                        value: Number(output.value),
+                        status: {
+                            confirmed: tx.status.confirmed,
+                            block_time: tx.status.block_time,
+                        },
+                    });
+                } else if (
+                    !existingCoin.status.confirmed &&
+                    tx.status.confirmed
+                ) {
+                    // Coin confirmed
+                    confirmedCoins.push(coin);
+                    state.lastKnownCoins.set(key, {
+                        txid: tx.txid,
+                        vout,
+                        value: Number(output.value),
+                        status: {
+                            confirmed: tx.status.confirmed,
+                            block_time: tx.status.block_time,
+                        },
+                    });
+                }
+            }
+        }
+
+        // Emit events
+        if (newCoins.length > 0) {
+            this.eventCallback({
+                type: "coin_received",
+                contractScript: contract.script,
+                coins: newCoins,
+                contract,
+                timestamp,
+            });
+        }
+
+        if (confirmedCoins.length > 0) {
+            this.eventCallback({
+                type: "coin_confirmed",
+                contractScript: contract.script,
+                coins: confirmedCoins,
+                contract,
+                timestamp,
+            });
+        }
     }
 
     /**
