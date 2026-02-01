@@ -234,7 +234,12 @@ export class IndexedDBContractRepository implements ContractRepository {
     }
 }
 
-const FILTER_FIELDS = ["script", "state", "type", "layer"] as (keyof ContractFilter)[];
+const FILTER_FIELDS = [
+    "script",
+    "state",
+    "type",
+    "layer",
+] as (keyof ContractFilter)[];
 
 // Transform all filter fields into an array of values
 function normalizeFilter(filter: ContractFilter) {
