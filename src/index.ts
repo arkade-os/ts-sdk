@@ -4,7 +4,12 @@ import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
-import { Worker } from "./serviceWorker/worker";
+import {
+    IUpdater,
+    RequestEnvelope,
+    ResponseEnvelope,
+    Worker,
+} from "./serviceWorker/worker";
 import {
     VtxoScript,
     EncodedVtxoScript,
@@ -155,6 +160,8 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 } from "./repositories";
 
 export * from "./arkfee";
@@ -274,6 +281,8 @@ export {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 
     // Intent proof
     Intent,
@@ -430,4 +439,9 @@ export type {
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,
+
+    // Service Worker types
+    IUpdater,
+    RequestEnvelope,
+    ResponseEnvelope,
 };
