@@ -64,6 +64,7 @@ export const DefaultContractHandler: ContractHandler<
     DefaultVtxo.Script
 > = {
     type: "default",
+    scriptType: "offchain",
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         const typed = this.deserializeParams(params);

@@ -62,6 +62,7 @@ export const BoardingContractHandler: ContractHandler<
     DefaultVtxo.Script
 > = {
     type: "boarding",
+    scriptType: "onchain",
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         const typed = this.deserializeParams(params);

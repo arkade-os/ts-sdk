@@ -180,12 +180,28 @@ export interface PathContext {
  * };
  * ```
  */
+/**
+ * Indicates where the contract's coins exist.
+ * - "onchain": Bitcoin UTXOs (watched via esplora/onchain provider)
+ * - "offchain": Ark VTXOs (watched via indexer)
+ * - "both": Can exist in either form (e.g., during transitions)
+ */
+export type ScriptType = "onchain" | "offchain" | "both";
+
 export interface ContractHandler<
     P = Record<string, unknown>,
     S extends VtxoScript = VtxoScript,
 > {
     /** The contract type this handler manages */
     readonly type: string;
+
+    /**
+     * Where the contract's coins exist.
+     * - "onchain": Bitcoin UTXOs (boarding, unilateral exits)
+     * - "offchain": Ark VTXOs (default, vhtlc)
+     * - "both": Can exist in either form
+     */
+    readonly scriptType: ScriptType;
 
     /**
      * Create the VtxoScript from serialized parameters.
