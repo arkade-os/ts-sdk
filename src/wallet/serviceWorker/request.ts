@@ -1,6 +1,7 @@
 import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
 import type {
     Contract,
+    ContractLayer,
     ContractState,
     GetContractsFilter,
 } from "../../contracts";
@@ -215,6 +216,7 @@ export namespace Request {
             params: Record<string, string>;
             script: string;
             address: string;
+            layer: ContractLayer;
             label?: string;
             state?: ContractState;
             expiresAt?: number;

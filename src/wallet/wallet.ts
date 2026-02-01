@@ -698,6 +698,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             },
             script: this.defaultContractScript,
             address: await this.getAddress(),
+            layer: "offchain",
             state: "active",
         });
 
