@@ -1,8 +1,5 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
-import {
-    ExplorerTransaction,
-    OnchainProvider,
-} from "../providers/onchain";
+import { ExplorerTransaction, OnchainProvider } from "../providers/onchain";
 import { Coin, VirtualCoin } from "../wallet";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
@@ -664,10 +661,11 @@ export class ContractWatcher {
             }
 
             try {
-                const stopFunc = await this.config.onchainProvider.watchAddresses(
-                    [contract.address],
-                    (txs) => this.handleOnchainTransactions(contract, txs)
-                );
+                const stopFunc =
+                    await this.config.onchainProvider.watchAddresses(
+                        [contract.address],
+                        (txs) => this.handleOnchainTransactions(contract, txs)
+                    );
 
                 this.onchainStopFuncs.set(contract.script, stopFunc);
                 this.watchedOnchainAddresses.add(contract.address);
