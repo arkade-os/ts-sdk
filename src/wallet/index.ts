@@ -324,6 +324,12 @@ export interface AddressInfo {
 
 /**
  * Balance summary for a contract.
+ *
+ * Categorizes coins by their available spend paths:
+ * - offchainSpendable: Can send instantly via Ark offchain transfer
+ * - batchSpendable: Can spend via batch (swept VTXOs, confirmed boarding, subdust)
+ * - onchainSpendable: Can only spend via onchain tx (expired, requires unilateral exit)
+ * - locked: Not spendable yet (unconfirmed boarding, active timelocks)
  */
 export interface ContractBalance {
     /** Contract type (e.g., "default", "vhtlc", "boarding") */
@@ -332,14 +338,20 @@ export interface ContractBalance {
     /** Contract script (unique identifier) */
     script: string;
 
-    /** Spendable balance */
+    /** Can spend instantly via offchain send (settled/preconfirmed VTXOs) */
+    offchainSpendable: number;
+
+    /** Can spend via batch only (swept VTXOs, confirmed boarding, subdust) */
+    batchSpendable: number;
+
+    /** Can only spend via onchain tx (expired batch, requires unilateral exit) */
+    onchainSpendable: number;
+
+    /** Not spendable yet (unconfirmed boarding, active timelocks) */
+    locked: number;
+
+    /** Total spendable (offchainSpendable + batchSpendable + onchainSpendable) */
     spendable: number;
-
-    /** Unspendable balance (locked, pending timelocks, unconfirmed boarding) */
-    unspendable: number;
-
-    /** Recoverable balance (can only be spent by joining a batch) */
-    recoverable: number;
 
     /** Total balance */
     total: number;
@@ -350,22 +362,33 @@ export interface ContractBalance {
 
 /**
  * HD Wallet balance structure.
- * Boarding is represented as a contract type for unified concept.
+ *
+ * Provides a unified view of balance across all contracts with spend path categories:
+ * - offchainSpendable: Instant Ark transfers
+ * - batchSpendable: Requires joining a batch round
+ * - onchainSpendable: Requires onchain withdrawal (unilateral exit)
+ * - locked: Awaiting confirmation or timelock
  */
 export interface HDWalletBalance {
     /** Balance by contract */
     contracts: ContractBalance[];
 
-    /** Aggregate spendable across all contracts */
+    /** Can spend instantly via offchain send */
+    offchainSpendable: number;
+
+    /** Can spend via batch only */
+    batchSpendable: number;
+
+    /** Can only spend via onchain tx (unilateral exit) */
+    onchainSpendable: number;
+
+    /** Not spendable yet */
+    locked: number;
+
+    /** Total spendable (offchain + batch + onchain) */
     spendable: number;
 
-    /** Aggregate unspendable across all contracts */
-    unspendable: number;
-
-    /** Aggregate recoverable across all contracts */
-    recoverable: number;
-
-    /** Total balance */
+    /** Grand total */
     total: number;
 }
 

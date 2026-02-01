@@ -10,6 +10,14 @@ import type { DescriptorProvider } from "../identity";
 export type ContractState = "active" | "inactive";
 
 /**
+ * Indicates where the contract's coins can exist.
+ * - "onchain": Bitcoin UTXOs only (watched via esplora/onchain provider)
+ * - "offchain": Ark VTXOs only (watched via indexer)
+ * - "both": Can receive both onchain UTXOs and offchain VTXOs
+ */
+export type ContractLayer = "onchain" | "offchain" | "both";
+
+/**
  * Represents a contract that can receive and manage VTXOs.
  *
  * A contract is defined by its type and parameters, which together
@@ -32,7 +40,7 @@ export type ContractState = "active" | "inactive";
  *     // ... timelocks
  *   },
  *   script: "5120...",
- *   address: "tark1...",
+ *   layer: "offchain",
  *   state: "active",
  *   createdAt: 1704067200000,
  * };
@@ -59,8 +67,20 @@ export interface Contract {
     /** The pkScript hex - unique identifier and primary key for contracts */
     script: string;
 
-    /** The address derived from the script */
+    /**
+     * The address for receiving funds to this contract.
+     * - For offchain contracts: Ark address (tark1.../ark1...)
+     * - For onchain contracts: Bitcoin address (tb1p.../bc1p...)
+     */
     address: string;
+
+    /**
+     * Where the contract's coins can exist.
+     * - "onchain": Bitcoin UTXOs only (boarding addresses)
+     * - "offchain": Ark VTXOs only (default for most contracts)
+     * - "both": Can receive both (e.g., when VTXOs may be unrolled)
+     */
+    layer: ContractLayer;
 
     /** Current state of the contract */
     state: ContractState;
@@ -180,28 +200,12 @@ export interface PathContext {
  * };
  * ```
  */
-/**
- * Indicates where the contract's coins exist.
- * - "onchain": Bitcoin UTXOs (watched via esplora/onchain provider)
- * - "offchain": Ark VTXOs (watched via indexer)
- * - "both": Can exist in either form (e.g., during transitions)
- */
-export type ScriptType = "onchain" | "offchain" | "both";
-
 export interface ContractHandler<
     P = Record<string, unknown>,
     S extends VtxoScript = VtxoScript,
 > {
     /** The contract type this handler manages */
     readonly type: string;
-
-    /**
-     * Where the contract's coins exist.
-     * - "onchain": Bitcoin UTXOs (boarding, unilateral exits)
-     * - "offchain": Ark VTXOs (default, vhtlc)
-     * - "both": Can exist in either form
-     */
-    readonly scriptType: ScriptType;
 
     /**
      * Create the VtxoScript from serialized parameters.

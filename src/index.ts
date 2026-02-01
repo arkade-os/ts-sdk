@@ -171,7 +171,6 @@ import {
     contractHandlers,
     DefaultContractHandler,
     VHTLCContractHandler,
-    BoardingContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -182,6 +181,7 @@ import type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractLayer,
     ContractEvent,
     ContractEventCallback,
     ContractBalance,
@@ -195,7 +195,6 @@ import type {
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,
-    BoardingContractParams,
 } from "./contracts";
 
 export {
@@ -307,7 +306,6 @@ export {
     contractHandlers,
     DefaultContractHandler,
     VHTLCContractHandler,
-    BoardingContractHandler,
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
@@ -422,6 +420,7 @@ export type {
     Contract,
     ContractVtxo,
     ContractState,
+    ContractLayer,
     ContractEvent,
     ContractEventCallback,
     ContractBalance,
@@ -435,5 +434,4 @@ export type {
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,
-    BoardingContractParams,
 };

@@ -196,7 +196,13 @@ export class HDWallet implements IHDWallet {
      * Get the HD wallet balance across all contracts.
      *
      * Returns a unified balance model where each contract (including default
-     * and boarding) is represented with spendable/unspendable/recoverable breakdown.
+     * and boarding) is represented with spend path categories.
+     *
+     * Spend path categories:
+     * - offchainSpendable: Can send instantly via Ark offchain transfer
+     * - batchSpendable: Can spend via batch (swept VTXOs, confirmed boarding, subdust)
+     * - onchainSpendable: Can only spend via onchain tx (expired, requires unilateral exit)
+     * - locked: Not spendable yet (unconfirmed boarding, active timelocks)
      *
      * @returns HDWalletBalance with per-contract breakdowns and aggregates
      *
@@ -204,7 +210,9 @@ export class HDWallet implements IHDWallet {
      * ```typescript
      * const balance = await wallet.getBalance();
      * console.log(`Total: ${balance.total}`);
-     * console.log(`Spendable: ${balance.spendable}`);
+     * console.log(`Instant send: ${balance.offchainSpendable}`);
+     * console.log(`Via batch: ${balance.batchSpendable}`);
+     * console.log(`Onchain only: ${balance.onchainSpendable}`);
      *
      * for (const contract of balance.contracts) {
      *   console.log(`${contract.type}: ${contract.spendable} spendable`);
@@ -212,97 +220,134 @@ export class HDWallet implements IHDWallet {
      * ```
      */
     async getBalance(): Promise<HDWalletBalance> {
-        // For initial implementation, return empty balances
-        // Full implementation will use ContractManager to aggregate
         const contracts: ContractBalance[] = [];
-        let spendable = 0;
-        let unspendable = 0;
-        let recoverable = 0;
-        let total = 0;
+        let offchainSpendable = 0;
+        let batchSpendable = 0;
+        let onchainSpendable = 0;
+        let locked = 0;
 
         try {
             const manager = await this.getContractManager();
             const contractsWithVtxos = await manager.getContractsWithVtxos();
 
             for (const { contract, vtxos } of contractsWithVtxos) {
-                let contractSpendable = 0;
-                let contractUnspendable = 0;
-                let contractRecoverable = 0;
+                let contractOffchain = 0;
+                let contractBatch = 0;
+                let contractOnchain = 0;
+                let contractLocked = 0;
 
                 for (const vtxo of vtxos) {
                     const value = vtxo.value;
                     const state = vtxo.virtualStatus.state;
 
+                    if (vtxo.isSpent) {
+                        // Already spent, don't count
+                        continue;
+                    }
+
                     if (state === "swept") {
-                        // Swept but unspent = recoverable
-                        if (!vtxo.isSpent) {
-                            contractRecoverable += value;
+                        // Swept = batch expired, can only spend onchain
+                        contractOnchain += value;
+                    } else if (vtxo.isUnrolled) {
+                        // Unrolled VTXO - check if batch expired
+                        const expiry = vtxo.virtualStatus.batchExpiry;
+                        const isExpiredBatch =
+                            expiry &&
+                            new Date(expiry).getFullYear() >= 2025 &&
+                            expiry <= Date.now();
+
+                        if (isExpiredBatch) {
+                            // Expired batch = onchain only
+                            contractOnchain += value;
+                        } else {
+                            // Not expired = can still use batch path
+                            contractBatch += value;
                         }
                     } else if (
                         state === "settled" ||
                         state === "preconfirmed"
                     ) {
-                        contractSpendable += value;
+                        // Check if batch expired
+                        const expiry = vtxo.virtualStatus.batchExpiry;
+                        const isExpiredBatch =
+                            expiry &&
+                            new Date(expiry).getFullYear() >= 2025 &&
+                            expiry <= Date.now();
+
+                        if (isExpiredBatch) {
+                            // Expired batch = onchain only (unilateral exit)
+                            contractOnchain += value;
+                        } else {
+                            // Normal spendable offchain
+                            contractOffchain += value;
+                        }
                     } else {
-                        contractUnspendable += value;
+                        // Other states (e.g., pending) = locked
+                        contractLocked += value;
                     }
                 }
 
-                const contractTotal =
-                    contractSpendable +
-                    contractUnspendable +
-                    contractRecoverable;
+                const contractSpendable =
+                    contractOffchain + contractBatch + contractOnchain;
+                const contractTotal = contractSpendable + contractLocked;
 
                 if (contractTotal > 0 || contract.state === "active") {
                     contracts.push({
                         type: contract.type,
                         script: contract.script,
+                        offchainSpendable: contractOffchain,
+                        batchSpendable: contractBatch,
+                        onchainSpendable: contractOnchain,
+                        locked: contractLocked,
                         spendable: contractSpendable,
-                        unspendable: contractUnspendable,
-                        recoverable: contractRecoverable,
                         total: contractTotal,
                         coinCount: vtxos.length,
                     });
                 }
 
-                spendable += contractSpendable;
-                unspendable += contractUnspendable;
-                recoverable += contractRecoverable;
+                offchainSpendable += contractOffchain;
+                batchSpendable += contractBatch;
+                onchainSpendable += contractOnchain;
+                locked += contractLocked;
             }
-
-            total = spendable + unspendable + recoverable;
 
             // Add boarding UTXOs as a "boarding" contract type
             const boardingUtxos = await this.getBoardingUtxos();
             if (boardingUtxos.length > 0) {
-                let boardingConfirmed = 0;
-                let boardingUnconfirmed = 0;
+                let boardingBatch = 0; // confirmed boarding = batch spendable
+                let boardingOnchain = 0; // expired boarding = onchain only
+                let boardingLocked = 0; // unconfirmed = locked
 
                 for (const utxo of boardingUtxos) {
-                    if (utxo.status.confirmed) {
-                        // Confirmed boarding = recoverable (needs batch to become VTXO)
-                        boardingConfirmed += utxo.value;
+                    if (!utxo.status.confirmed) {
+                        // Unconfirmed = locked
+                        boardingLocked += utxo.value;
                     } else {
-                        // Unconfirmed = unspendable
-                        boardingUnconfirmed += utxo.value;
+                        // Confirmed boarding - check if timelock expired
+                        // TODO: Check actual boarding timelock expiry
+                        // For now, assume confirmed boarding can go via batch
+                        boardingBatch += utxo.value;
                     }
                 }
 
-                const boardingTotal = boardingConfirmed + boardingUnconfirmed;
+                const boardingSpendable = boardingBatch + boardingOnchain;
+                const boardingTotal = boardingSpendable + boardingLocked;
 
                 contracts.push({
                     type: "boarding",
-                    script: "boarding", // Special identifier for boarding
-                    spendable: 0, // Boarding UTXOs are never directly spendable
-                    unspendable: boardingUnconfirmed,
-                    recoverable: boardingConfirmed,
+                    script: "boarding",
+                    offchainSpendable: 0, // Boarding never directly offchain spendable
+                    batchSpendable: boardingBatch,
+                    onchainSpendable: boardingOnchain,
+                    locked: boardingLocked,
+                    spendable: boardingSpendable,
                     total: boardingTotal,
                     coinCount: boardingUtxos.length,
                 });
 
-                unspendable += boardingUnconfirmed;
-                recoverable += boardingConfirmed;
-                total += boardingTotal;
+                batchSpendable += boardingBatch;
+                onchainSpendable += boardingOnchain;
+                locked += boardingLocked;
             }
         } catch (error) {
             // If ContractManager fails, fall back to legacy balance calculation
@@ -312,46 +357,56 @@ export class HDWallet implements IHDWallet {
             );
 
             const legacyBalance = await this.wallet.getBalance();
+            const legacyOffchain =
+                legacyBalance.settled + legacyBalance.preconfirmed;
+            const legacyBatch = legacyBalance.boarding.confirmed;
+            const legacyOnchain = legacyBalance.recoverable; // swept = onchain only
+            const legacyLocked = legacyBalance.boarding.unconfirmed;
+
             return {
                 contracts: [
                     {
                         type: "default",
                         script: this.wallet["defaultContractScript"],
-                        spendable:
-                            legacyBalance.settled + legacyBalance.preconfirmed,
-                        unspendable: 0,
-                        recoverable: legacyBalance.recoverable,
-                        total:
-                            legacyBalance.settled +
-                            legacyBalance.preconfirmed +
-                            legacyBalance.recoverable,
+                        offchainSpendable: legacyOffchain,
+                        batchSpendable: 0,
+                        onchainSpendable: legacyOnchain,
+                        locked: 0,
+                        spendable: legacyOffchain + legacyOnchain,
+                        total: legacyOffchain + legacyOnchain,
                         coinCount: 0,
                     },
                     {
                         type: "boarding",
                         script: "boarding",
-                        spendable: 0,
-                        unspendable: legacyBalance.boarding.unconfirmed,
-                        recoverable: legacyBalance.boarding.confirmed,
-                        total: legacyBalance.boarding.total,
+                        offchainSpendable: 0,
+                        batchSpendable: legacyBatch,
+                        onchainSpendable: 0,
+                        locked: legacyLocked,
+                        spendable: legacyBatch,
+                        total: legacyBatch + legacyLocked,
                         coinCount: 0,
                     },
                 ],
-                spendable:
-                    legacyBalance.settled + legacyBalance.preconfirmed,
-                unspendable: legacyBalance.boarding.unconfirmed,
-                recoverable:
-                    legacyBalance.recoverable +
-                    legacyBalance.boarding.confirmed,
+                offchainSpendable: legacyOffchain,
+                batchSpendable: legacyBatch,
+                onchainSpendable: legacyOnchain,
+                locked: legacyLocked,
+                spendable: legacyOffchain + legacyBatch + legacyOnchain,
                 total: legacyBalance.total,
             };
         }
 
+        const spendable = offchainSpendable + batchSpendable + onchainSpendable;
+        const total = spendable + locked;
+
         return {
             contracts,
+            offchainSpendable,
+            batchSpendable,
+            onchainSpendable,
+            locked,
             spendable,
-            unspendable,
-            recoverable,
             total,
         };
     }

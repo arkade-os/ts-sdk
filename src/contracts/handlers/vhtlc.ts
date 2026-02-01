@@ -51,7 +51,6 @@ export const VHTLCContractHandler: ContractHandler<
     VHTLC.Script
 > = {
     type: "vhtlc",
-    scriptType: "offchain",
 
     createScript(params: Record<string, string>): VHTLC.Script {
         const typed = this.deserializeParams(params);

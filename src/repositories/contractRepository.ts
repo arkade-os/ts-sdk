@@ -1,4 +1,4 @@
-import { Contract, ContractState } from "../contracts/types";
+import { Contract, ContractState, ContractLayer } from "../contracts/types";
 
 /**
  * Filter options for querying contracts.
@@ -10,6 +10,8 @@ export interface ContractFilter {
     state?: ContractState | ContractState[];
     /** Filter by contract type(s) */
     type?: string | string[];
+    /** Filter by layer(s) */
+    layer?: ContractLayer | ContractLayer[];
 }
 
 export interface ContractRepository extends AsyncDisposable {

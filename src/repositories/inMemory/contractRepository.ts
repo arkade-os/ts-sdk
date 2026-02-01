@@ -71,7 +71,8 @@ export class InMemoryContractRepository implements ContractRepository {
             if (
                 matches(contract.script, filter.script) &&
                 matches(contract.state, filter.state) &&
-                matches(contract.type, filter.type)
+                matches(contract.type, filter.type) &&
+                matches(contract.layer, filter.layer)
             ) {
                 results.push(contract);
             }
