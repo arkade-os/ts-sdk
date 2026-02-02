@@ -25,10 +25,18 @@ const requiresMigration = async (
     }
 };
 
+/**
+ * Migrate wallet data from the legacy storage adapter to the new one.
+ * It accepts both onchain and offchain addresses, make sure to pass both.
+ *
+ * @param storageAdapter
+ * @param fresh
+ * @param addresses
+ */
 export async function migrateWalletRepository(
     storageAdapter: StorageAdapter,
     fresh: WalletRepository,
-    addresses: string[]
+    addresses: { onchain: string[]; offchain: string[] }
 ): Promise<void> {
     const migrate = await requiresMigration("wallet", storageAdapter);
     if (!migrate) return;
@@ -37,24 +45,31 @@ export async function migrateWalletRepository(
 
     const walletData = await old.getWalletState();
 
-    const addressesData = await Promise.all(
-        addresses.map(async (address) => {
-            const vtxos = await old.getVtxos(address);
+    const onchainAddrData = await Promise.all(
+        addresses.onchain.map(async (address) => {
             const utxos = await old.getUtxos(address);
+            return { address, utxos };
+        })
+    );
+    const offchainAddrData = await Promise.all(
+        addresses.offchain.map(async (address) => {
+            const vtxos = await old.getVtxos(address);
             const txs = await old.getTransactionHistory(address);
-            return { address, vtxos, utxos, txs };
+            return { address, vtxos, txs };
         })
     );
 
     await Promise.all([
         walletData && fresh.saveWalletState(walletData),
-        ...addressesData.map((addressData) => {
-            return Promise.all([
+        ...offchainAddrData.map((addressData) =>
+            Promise.all([
                 fresh.saveVtxos(addressData.address, addressData.vtxos),
-                fresh.saveUtxos(addressData.address, addressData.utxos),
                 fresh.saveTransactions(addressData.address, addressData.txs),
-            ]);
-        }),
+            ])
+        ),
+        ...onchainAddrData.map((addressData) =>
+            fresh.saveUtxos(addressData.address, addressData.utxos)
+        ),
     ]);
 
     await storageAdapter.setItem(MIGRATION_KEY("wallet"), "done");
