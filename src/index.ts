@@ -156,8 +156,6 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
 } from "./repositories";
 
 export * from "./arkfee";
@@ -276,8 +274,6 @@ export {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
-    WalletRepositoryImpl,
-    ContractRepositoryImpl,
 
     // Intent proof
     Intent,
