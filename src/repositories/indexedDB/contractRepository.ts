@@ -1,7 +1,9 @@
-import { ContractFilter, ContractRepository } from "../contractRepository";
-import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
-import { openDatabase, closeDatabase, STORE_CONTRACTS } from "./db";
+import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract } from "../../contracts";
+import { ContractFilter, ContractRepository } from "../contractRepository";
+import { closeDatabase, openDatabase } from "../../db/manager";
+import { initDatabase } from "./schema";
+import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 
 /**
  * IndexedDB-based implementation of ContractRepository.
@@ -72,12 +74,13 @@ export class IndexedDBContractRepository implements ContractRepository {
                 const contracts = await Promise.all(
                     scripts.map(
                         (script) =>
-                            new Promise<Contract>((resolve, reject) => {
-                                const req = store.get(script);
-                                req.onerror = () => reject(req.error);
-                                req.onsuccess = () =>
-                                    resolve(req.result as Contract);
-                            })
+                            new Promise<Contract | undefined>(
+                                (resolve, reject) => {
+                                    const req = store.get(script);
+                                    req.onerror = () => reject(req.error);
+                                    req.onsuccess = () => resolve(req.result);
+                                }
+                            )
                     )
                 );
                 return this.applyContractFilter(contracts, normalizedFilter);
@@ -183,10 +186,12 @@ export class IndexedDBContractRepository implements ContractRepository {
     }
 
     private applyContractFilter(
-        contracts: Contract[],
+        // can filter directly the result of a query
+        contracts: (Contract | undefined)[],
         filter: ReturnType<typeof normalizeFilter>
     ): Contract[] {
         return contracts.filter((contract) => {
+            if (contract === undefined) return false;
             if (
                 filter.has("script") &&
                 !filter.get("script")?.includes(contract.script)
@@ -203,12 +208,12 @@ export class IndexedDBContractRepository implements ContractRepository {
             )
                 return false;
             return true;
-        });
+        }) as Contract[];
     }
 
     private async getDB(): Promise<IDBDatabase> {
         if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName);
+        this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
         return this.db;
     }
 

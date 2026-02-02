@@ -1,10 +1,6 @@
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
-import {
-    CommitmentTxRecord,
-    WalletRepository,
-    WalletState,
-} from "../walletRepository";
+import { WalletRepository, WalletState } from "../walletRepository";
 import { StorageAdapter } from "../../storage";
 import {
     ArkTransaction,

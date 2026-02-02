@@ -3,15 +3,8 @@ import {
     ExtendedVirtualCoin,
     ArkTransaction,
 } from "../../wallet";
+import { WalletRepository, WalletState } from "../walletRepository";
 import {
-    CommitmentTxRecord,
-    WalletRepository,
-    WalletState,
-} from "../walletRepository";
-import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
-import {
-    openDatabase,
-    closeDatabase,
     STORE_VTXOS,
     STORE_UTXOS,
     STORE_TRANSACTIONS,
@@ -21,7 +14,11 @@ import {
     deserializeVtxo,
     deserializeUtxo,
     SerializedVtxo,
+    DB_VERSION,
 } from "./db";
+import { closeDatabase, openDatabase } from "../../db/manager";
+import { initDatabase } from "./schema";
+import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -413,7 +410,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
     private async getDB(): Promise<IDBDatabase> {
         if (this.db) return this.db;
-        this.db = await openDatabase(this.dbName);
+        this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
         return this.db;
     }
 }

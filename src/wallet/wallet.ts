@@ -73,15 +73,7 @@ import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
 } from "../repositories";
-import {
-    ContractManager,
-    CreateContractParams,
-} from "../contracts/contractManager";
-import {
-    Contract,
-    ContractEventCallback,
-    ContractVtxo,
-} from "../contracts/types";
+import { ContractManager } from "../contracts/contractManager";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 
 export type IncomingFunds =

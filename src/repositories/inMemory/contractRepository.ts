@@ -13,35 +13,6 @@ export class InMemoryContractRepository implements ContractRepository {
     private readonly collections = new Map<string, unknown[]>();
     private readonly contractsByScript = new Map<string, Contract>();
 
-    async getContractCollection<T>(
-        contractType: string
-    ): Promise<ReadonlyArray<T>> {
-        return (this.collections.get(contractType) as T[] | undefined) ?? [];
-    }
-
-    async saveToContractCollection<T, K extends keyof T>(
-        contractType: string,
-        item: T,
-        idField: K
-    ): Promise<void> {
-        const itemId = item[idField];
-        if (itemId === undefined || itemId === null) {
-            throw new Error(
-                `Item is missing required field '${String(idField)}'`
-            );
-        }
-
-        const existing = (this.collections.get(contractType) as T[]) ?? [];
-        const existingIndex = existing.findIndex((i) => i[idField] === itemId);
-        const next =
-            existingIndex !== -1
-                ? existing.map((entry, index) =>
-                      index === existingIndex ? item : entry
-                  )
-                : [...existing, item];
-        this.collections.set(contractType, next);
-    }
-
     async clear(): Promise<void> {
         this.contractData.clear();
         this.collections.clear();
