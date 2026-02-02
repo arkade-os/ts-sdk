@@ -18,8 +18,13 @@ export function getGlobalObject(): {
     throw new Error("Global object not found");
 }
 
+type DBCacheEntry = {
+    version: number;
+    promise: Promise<IDBDatabase>;
+};
+
 // database instance cache, avoiding multiple open requests
-const dbCache = new Map<string, Promise<IDBDatabase>>();
+const dbCache = new Map<string, DBCacheEntry>();
 // track reference counts for each database to avoid closing it prematurely
 const refCounts = new Map<string, number>();
 
@@ -46,8 +51,13 @@ export async function openDatabase(
     // Return cached promise if available (handles concurrent calls)
     const cached = dbCache.get(dbName);
     if (cached) {
+        if (cached.version !== dbVersion) {
+            throw new Error(
+                `Database "${dbName}" already opened with version ${cached.version}; requested ${dbVersion}`
+            );
+        }
         refCounts.set(dbName, (refCounts.get(dbName) ?? 0) + 1);
-        return cached;
+        return cached.promise;
     }
 
     const dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
@@ -55,6 +65,7 @@ export async function openDatabase(
 
         request.onerror = () => {
             dbCache.delete(dbName); // Clean up on failure
+            refCounts.delete(dbName);
             reject(request.error);
         };
         request.onsuccess = () => {
@@ -72,7 +83,7 @@ export async function openDatabase(
     });
 
     // Cache immediately before awaiting
-    dbCache.set(dbName, dbPromise);
+    dbCache.set(dbName, { version: dbVersion, promise: dbPromise });
     refCounts.set(dbName, 1);
 
     return dbPromise;
@@ -86,8 +97,8 @@ export async function openDatabase(
  * @returns True if the database was closed, false otherwise.
  */
 export async function closeDatabase(dbName: string): Promise<boolean> {
-    const cachedPromise = dbCache.get(dbName);
-    if (!cachedPromise) return false;
+    const cachedEntry = dbCache.get(dbName);
+    if (!cachedEntry) return false;
 
     const count = (refCounts.get(dbName) ?? 1) - 1;
     if (count > 0) {
@@ -100,7 +111,7 @@ export async function closeDatabase(dbName: string): Promise<boolean> {
     dbCache.delete(dbName);
 
     try {
-        const db = await cachedPromise;
+        const db = await cachedEntry.promise;
         db.close();
     } catch {
         // DB failed to open, nothing to close
