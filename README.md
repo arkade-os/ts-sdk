@@ -361,6 +361,9 @@ navigator.serviceWorker.addEventListener('message', (event) => {
 });
 ```
 
+See `src/serviceWorker/README.md` for architecture details, trade-offs, and
+custom updater examples.
+
 Create a service worker file:
 
 ```typescript

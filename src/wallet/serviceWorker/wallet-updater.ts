@@ -759,7 +759,6 @@ export class WalletUpdater
         // subscribe for incoming funds and notify all clients when new funds arrive
         this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
             async (funds) => {
-                console.log("incomng funds: ", funds);
                 if (funds.type === "vtxo") {
                     const newVtxos =
                         funds.newVtxos.length > 0
