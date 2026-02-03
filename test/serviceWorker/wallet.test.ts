@@ -180,7 +180,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const wallet = createWallet(serviceWorker as any);
         const manager = await wallet.getContractManager();
 
-        expect(
+        await expect(
             manager.createContract({
                 type: "test",
                 params: {},
@@ -188,18 +188,18 @@ describe("ServiceWorkerReadonlyWallet", () => {
                 address: "addr",
             } as any)
         ).resolves.toEqual(contract);
-        expect(manager.getContracts()).resolves.toEqual(contracts);
-        expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(
+        await expect(manager.getContracts()).resolves.toEqual(contracts);
+        await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(
             contractsWithVtxos
         );
-        expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(
+        await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(
             contract
         );
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
-        expect(
+        await expect(
             manager.getSpendablePaths({ contractId: "c1" })
         ).resolves.toEqual(paths);
-        expect(manager.isWatching()).resolves.toBe(true);
+        await expect(manager.isWatching()).resolves.toBe(true);
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
