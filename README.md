@@ -393,10 +393,10 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > const newDbName = 'my-app-db'
 >
 > const walletRepository = new IndexedDBWalletRepository(newDbName)
-> await migrateWalletRepository(oldStorage, walletRepository, [
->   'address-1',
->   'address-2'
-> ])
+> await migrateWalletRepository(oldStorage, walletRepository, {
+>   onchain: [ 'address-1', 'address-2' ],
+>   offchain: [ 'onboardin-address-1' ],
+> })
 > ```
 >
 > Anything related to contract repository migration must be handled by the package which created them. The SDK doesn't manage contracts in V1. Data remains untouched and persisted in the same old location.
