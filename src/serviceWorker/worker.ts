@@ -113,9 +113,9 @@ export class Worker {
 
         self.removeEventListener("message", this.onMessage);
 
-        for (const updater of this.updaters.values()) {
-            updater.stop();
-        }
+        await Promise.all(
+            Array.from(this.updaters.values()).map((updater) => updater.stop())
+        );
     }
 
     private scheduleNextTick() {
@@ -185,10 +185,18 @@ export class Worker {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
 
         if (!id || !tag) {
-            console.error(event.data);
-            throw new Error(
-                "Invalid message received, missing required fields"
+            console.error(
+                "Invalid message received, missing required fields:",
+                event.data
             );
+            event.source?.postMessage({
+                id,
+                tag: tag ?? "unknown",
+                error: new TypeError(
+                    "Invalid message received, missing required fields"
+                ),
+            });
+            return;
         }
 
         if (this.debug) {
@@ -248,7 +256,8 @@ export class Worker {
             }
         } catch (err) {
             console.error(`[${tag}] handleMessage failed`, err);
-            event.source?.postMessage({ id, error: String(err) });
+            const error = err instanceof Error ? err : new Error(String(err));
+            event.source?.postMessage({ id, tag, error });
         }
     };
 

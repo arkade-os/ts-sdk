@@ -32,15 +32,24 @@ export async function getActiveServiceWorker(
     path?: string
 ): Promise<ServiceWorker> {
     ensureServiceWorkerSupport();
-    if (path) {
-        await registerOnce(path);
-    }
-    const registration = await navigator.serviceWorker.ready;
-    const serviceWorker =
+    // Avoid mixing registrations when a specific script path is provided.
+    const registration: ServiceWorkerRegistration = path
+        ? await registerOnce(path)
+        : await navigator.serviceWorker.ready;
+    let serviceWorker =
         registration.active ||
         registration.waiting ||
         registration.installing ||
         navigator.serviceWorker.controller;
+
+    if (!serviceWorker && path) {
+        const readyRegistration = await navigator.serviceWorker.ready;
+        serviceWorker =
+            readyRegistration.active ||
+            readyRegistration.waiting ||
+            readyRegistration.installing ||
+            navigator.serviceWorker.controller;
+    }
 
     if (!serviceWorker) {
         throw new Error("Service worker not ready yet");

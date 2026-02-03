@@ -56,7 +56,6 @@ import {
     ResponseUpdateContract,
     ResponseCreateContract,
     ResponseContractEvent,
-    WalletUpdater,
     WalletUpdaterRequest,
     WalletUpdaterResponse,
     RequestGetAllSpendingPaths,

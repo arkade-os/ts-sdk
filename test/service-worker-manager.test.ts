@@ -12,17 +12,14 @@ const stubNavigator = (serviceWorker: Partial<ServiceWorkerContainer>) => {
 describe("service-worker-manager", () => {
     afterEach(() => {
         __resetServiceWorkerManager();
-    });
-
-    afterEach(() => {
         vi.unstubAllGlobals();
     });
 
     it("registers only once per path", async () => {
         const update = vi.fn().mockResolvedValue(undefined);
-        const register = vi
-            .fn()
-            .mockResolvedValue({ update } as ServiceWorkerRegistration);
+        const register = vi.fn().mockResolvedValue({
+            update,
+        } as unknown as ServiceWorkerRegistration);
 
         stubNavigator({
             register,
@@ -39,9 +36,9 @@ describe("service-worker-manager", () => {
     it("returns the active service worker when ready", async () => {
         const active = { state: "activated" } as ServiceWorker;
         const update = vi.fn().mockResolvedValue(undefined);
-        const register = vi
-            .fn()
-            .mockResolvedValue({ update } as ServiceWorkerRegistration);
+        const register = vi.fn().mockResolvedValue({
+            update,
+        } as unknown as ServiceWorkerRegistration);
 
         stubNavigator({
             register,
