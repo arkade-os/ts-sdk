@@ -341,39 +341,32 @@ Use the modular service worker with the wallet updater:
 
 ```typescript
 // app.ts
-import { ArkSW, WalletUpdater } from '@arkade-os/sdk';
+import { ServiceWorkerWallet } from '@arkade-os/sdk';
 
-await ArkSW.setup('/service-worker.js');
+await ServiceWorkerWallet.setup('/service-worker.js');
 
-const serviceWorker = await ArkSW.getServiceWorker();
-serviceWorker.postMessage({
-  id: crypto.randomUUID(),
-  tag: WalletUpdater.messageTag,
-  type: 'INIT_WALLET',
-  payload: {
-    key: { privateKey: 'your_private_key_hex' },
-    arkServerUrl: 'https://mutinynet.arkade.sh',
-  },
-});
+const serviceWorker = await ServiceWorkerWallet.getServiceWorker();
 
-navigator.serviceWorker.addEventListener('message', (event) => {
-  console.log('SW response:', event.data);
-});
+const address = await ServiceWorkerWallet.getAddress() // runs in the SW
+```
+
+Basic service worker file:
+
+```javascript
+// service-worker.js
+import { Worker, WalletUpdater } from '@arkade-os/sdk'
+
+const walletUpdater = new WalletUpdater(new IndexedDBWalletRepository(), new IndexedDBContractRepository())
+const worker = new Worker({
+   updaters: [walletUpdater],
+   tickIntervalMs: 2000, // defaults to 10s
+})
+worker.start().catch(console.error)
 ```
 
 See `src/serviceWorker/README.md` for architecture details, trade-offs, and
 custom updater examples.
 
-Create a service worker file:
-
-```typescript
-// service-worker.js
-import { ArkSW, WalletUpdater } from '@arkade-os/sdk'
-
-const walletUpdater = new WalletUpdater();
-const sw = new ArkSW({ updaters: [walletUpdater] });
-sw.start();
-```
 
 ### Repositories (Storage)
 

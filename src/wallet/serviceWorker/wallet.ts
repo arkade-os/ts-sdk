@@ -553,11 +553,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             onContractEvent(callback: ContractEventCallback): () => void {
                 const messageHandler = (event: MessageEvent) => {
                     const response = event.data as WalletUpdaterResponse;
-                    if (response.type === "CONTRACT_EVENT") {
-                        callback(
-                            (response as ResponseContractEvent).payload.event
-                        );
+                    if (response.type !== "CONTRACT_EVENT") {
+                        return;
                     }
+                    if (response.tag !== messageTag) {
+                        return;
+                    }
+                    callback((response as ResponseContractEvent).payload.event);
                 };
 
                 navigator.serviceWorker.addEventListener(

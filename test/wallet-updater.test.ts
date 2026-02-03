@@ -363,7 +363,7 @@ describe("WalletUpdater handleMessage", () => {
         const updateResponse = await updater.handleMessage({
             ...baseMessage("u"),
             type: "UPDATE_CONTRACT",
-            payload: { contractId: "c1", updates: { label: "new" } },
+            payload: { script: "00", updates: { label: "new" } },
         } as any);
         expect(updateResponse).toMatchObject({
             tag: updater.messageTag,
@@ -374,7 +374,7 @@ describe("WalletUpdater handleMessage", () => {
         const deleteResponse = await updater.handleMessage({
             ...baseMessage("d"),
             type: "DELETE_CONTRACT",
-            payload: { contractId: "c1" },
+            payload: { script: "00" },
         } as any);
         expect(deleteResponse).toMatchObject({
             tag: updater.messageTag,
