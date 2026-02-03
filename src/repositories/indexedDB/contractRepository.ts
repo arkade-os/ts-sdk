@@ -3,7 +3,7 @@ import { Contract } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { closeDatabase, openDatabase } from "../../db/manager";
 import { initDatabase } from "./schema";
-import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
+import { DEFAULT_DB_NAME } from "../../serviceWorker/utils";
 
 /**
  * IndexedDB-based implementation of ContractRepository.

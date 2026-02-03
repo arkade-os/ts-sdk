@@ -200,8 +200,6 @@ import type {
 import { IContractManager } from "./contracts/contractManager";
 import { closeDatabase, openDatabase } from "./db/manager";
 import { WalletUpdater } from "./wallet/serviceWorker/wallet-updater";
-import { IContractManager } from "./contracts/contractManager";
-import { closeDatabase, openDatabase } from "./db/manager";
 
 export {
     // Wallets
