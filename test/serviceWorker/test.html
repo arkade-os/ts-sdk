@@ -344,6 +344,7 @@
             import {
                 ArkSW,
                 WalletUpdater,
+                DEFAULT_MESSAGE_TAG,
                 Transaction,
             } from "/dist/browser/index.js";
 
@@ -368,7 +369,7 @@
                             if (
                                 !response ||
                                 response.id !== id ||
-                                response.tag !== WalletUpdater.messageTag
+                                response.tag !== DEFAULT_MESSAGE_TAG
                             ) {
                                 return;
                             }
@@ -400,7 +401,7 @@
 
                         const message = {
                             id,
-                            tag: WalletUpdater.messageTag,
+                            tag: DEFAULT_MESSAGE_TAG,
                             type,
                             ...(payload === undefined ? {} : { payload }),
                         };

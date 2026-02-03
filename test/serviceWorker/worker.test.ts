@@ -59,7 +59,7 @@ const createSelfMock = () => {
     return { selfMock, listeners, timeouts, activeTimeouts };
 };
 
-describe("ArkSW", () => {
+describe("Worker", () => {
     beforeEach(() => {
         vi.resetAllMocks();
     });

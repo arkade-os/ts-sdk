@@ -65,7 +65,7 @@ export class Worker {
 
     constructor({
         updaters,
-        tickIntervalMs = 30_000,
+        tickIntervalMs = 10_000,
         debug = false,
     }: WorkerOptions) {
         this.updaters = new Map(updaters.map((u) => [u.messageTag, u]));
@@ -229,10 +229,14 @@ export class Worker {
                         `[${updater.messageTag}] handleMessage failed`,
                         result.reason
                     );
+                    const error =
+                        result.reason instanceof Error
+                            ? result.reason
+                            : new Error(String(result.reason));
                     event.source?.postMessage({
                         id,
                         tag: updater.messageTag,
-                        error: String(result.reason),
+                        error,
                     });
                 }
             });
@@ -261,10 +265,24 @@ export class Worker {
         }
     };
 
-    // TODO: will be moved to the SDK and use utils package, need to manage the registration state somehow
+    /**
+     * Returns the registered SW for the path.
+     * It uses the functions in `service-worker-manager.ts` module.
+     * @param path
+     * @return the Service Worker
+     * @throws if not running in a browser environment
+     */
     static async getServiceWorker(path?: string) {
         return getActiveServiceWorker(path);
     }
+
+    /**
+     * Set up and register the Service Worker, ensuring it's done once at most.
+     * It uses the functions in `service-worker-manager.ts` module.
+     * @param path
+     * @return the Service Worker
+     * @throws if not running in a browser environment
+     */
     static async setup(path: string) {
         await setupServiceWorkerOnce(path);
         return getActiveServiceWorker(path);

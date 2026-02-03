@@ -192,9 +192,9 @@ describe("ServiceWorkerReadonlyWallet", () => {
         await expect(manager.getContractsWithVtxos({} as any)).resolves.toEqual(
             contractsWithVtxos
         );
-        await expect(manager.updateContract("c1", { label: "new" })).resolves.toEqual(
-            contract
-        );
+        await expect(
+            manager.updateContract("c1", { label: "new" })
+        ).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(
             manager.getSpendablePaths({ contractId: "c1" })

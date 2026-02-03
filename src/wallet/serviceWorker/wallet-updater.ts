@@ -239,6 +239,7 @@ export type ResponseVtxoUpdate = ResponseEnvelope & {
     payload: { newVtxos: ExtendedCoin[]; spentVtxos: ExtendedCoin[] };
 };
 export type ResponseContractEvent = ResponseEnvelope & {
+    tag: string;
     broadcast: true;
     type: "CONTRACT_EVENT";
     payload: { event: ContractEvent };
@@ -268,32 +269,34 @@ export type WalletUpdaterRequest =
     | RequestGetAllSpendingPaths
     | RequestIsContractManagerWatching;
 
-export type WalletUpdaterResponse =
-    | ResponseInitWallet
-    | ResponseSettle
-    | ResponseSettleEvent
-    | ResponseSendBitcoin
-    | ResponseGetAddress
-    | ResponseGetBoardingAddress
-    | ResponseGetBalance
-    | ResponseGetVtxos
-    | ResponseGetBoardingUtxos
-    | ResponseGetTransactionHistory
-    | ResponseGetStatus
-    | ResponseClear
-    | ResponseReloadWallet
-    | ResponseUtxoUpdate
-    | ResponseVtxoUpdate
-    | ResponseSignTransaction
-    | ResponseCreateContract
-    | ResponseGetContracts
-    | ResponseGetContractsWithVtxos
-    | ResponseUpdateContract
-    | ResponseDeleteContract
-    | ResponseGetSpendablePaths
-    | ResponseGetAllSpendingPaths
-    | ResponseIsContractManagerWatching
-    | ResponseContractEvent;
+export type WalletUpdaterResponse = ResponseEnvelope &
+    (
+        | ResponseInitWallet
+        | ResponseSettle
+        | ResponseSettleEvent
+        | ResponseSendBitcoin
+        | ResponseGetAddress
+        | ResponseGetBoardingAddress
+        | ResponseGetBalance
+        | ResponseGetVtxos
+        | ResponseGetBoardingUtxos
+        | ResponseGetTransactionHistory
+        | ResponseGetStatus
+        | ResponseClear
+        | ResponseReloadWallet
+        | ResponseUtxoUpdate
+        | ResponseVtxoUpdate
+        | ResponseSignTransaction
+        | ResponseCreateContract
+        | ResponseGetContracts
+        | ResponseGetContractsWithVtxos
+        | ResponseUpdateContract
+        | ResponseDeleteContract
+        | ResponseGetSpendablePaths
+        | ResponseGetAllSpendingPaths
+        | ResponseIsContractManagerWatching
+        | ResponseContractEvent
+    );
 
 export class WalletUpdater
     implements IUpdater<WalletUpdaterRequest, WalletUpdaterResponse>
