@@ -8,10 +8,10 @@ import { InMemoryContractRepository, InMemoryWalletRepository } from "../src";
 
 const baseMessage = (id: string = "1") => ({
     id,
-    tag: DEFAULT_MESSAGE_TAG,
+    targetTag: DEFAULT_MESSAGE_TAG,
 });
 
-describe("WalletUpdater handleMessage", () => {
+describe("WalletUpdater handleRequest", () => {
     let updater: WalletUpdater;
 
     beforeEach(() => {
@@ -22,7 +22,7 @@ describe("WalletUpdater handleMessage", () => {
     });
 
     const init = () =>
-        updater.handleMessage({
+        updater.handleRequest({
             ...baseMessage(),
             type: "INIT_WALLET",
             payload: {
@@ -44,23 +44,23 @@ describe("WalletUpdater handleMessage", () => {
             },
         } as any;
 
-        const response = await updater.handleMessage(message);
+        const response = await updater.handleRequest(message);
 
         expect(initSpy).toHaveBeenCalledWith(message);
         expect(response).toEqual({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             id: "1",
             type: "WALLET_INITIALIZED",
         });
     });
 
     it("returns a tagged error when the wallet is missing", async () => {
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_ADDRESS",
         } as any);
 
-        expect(response.tag).toBe(updater.messageTag);
+        expect(response.sourceTag).toBe(updater.messageTag);
         expect(response.error).toBeInstanceOf(Error);
         expect(response.error?.message).toBe("Wallet handler not initialized");
     });
@@ -73,7 +73,7 @@ describe("WalletUpdater handleMessage", () => {
         });
         (updater as any).handleSettle = settleSpy;
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "SETTLE",
             payload: {},
@@ -81,7 +81,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(settleSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "SETTLE_SUCCESS",
             payload: { txid: "tx" },
         });
@@ -95,7 +95,7 @@ describe("WalletUpdater handleMessage", () => {
         });
         (updater as any).handleSendBitcoin = sendSpy;
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "SEND_BITCOIN",
             payload: { address: "addr", amount: 1 },
@@ -103,7 +103,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(sendSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "SEND_BITCOIN_SUCCESS",
             payload: { txid: "tx" },
         });
@@ -118,7 +118,7 @@ describe("WalletUpdater handleMessage", () => {
         });
         (updater as any).handleSignTransaction = signSpy;
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "SIGN_TRANSACTION",
             payload: { tx: { id: "unsigned-tx" } },
@@ -126,7 +126,7 @@ describe("WalletUpdater handleMessage", () => {
 
         expect(signSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "SIGN_TRANSACTION",
             payload: { tx: signedTx },
         });
@@ -137,13 +137,13 @@ describe("WalletUpdater handleMessage", () => {
             getAddress: vi.fn().mockResolvedValue("bc1-test"),
         };
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_ADDRESS",
         } as any);
 
         expect(response).toEqual({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             id: "1",
             type: "ADDRESS",
             payload: { address: "bc1-test" },
@@ -155,13 +155,13 @@ describe("WalletUpdater handleMessage", () => {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
         };
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_BOARDING_ADDRESS",
         } as any);
 
         expect(response).toEqual({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             id: "1",
             type: "BOARDING_ADDRESS",
             payload: { address: "bc1-boarding" },
@@ -180,13 +180,13 @@ describe("WalletUpdater handleMessage", () => {
         };
         (updater as any).handleGetBalance = vi.fn().mockResolvedValue(balance);
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_BALANCE",
         } as any);
 
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "BALANCE",
             payload: balance,
         });
@@ -197,14 +197,14 @@ describe("WalletUpdater handleMessage", () => {
         const vtxos = [{ id: "v1" }];
         (updater as any).handleGetVtxos = vi.fn().mockResolvedValue(vtxos);
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_VTXOS",
             payload: {},
         } as any);
 
         expect(response).toEqual({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             id: "1",
             type: "VTXOS",
             payload: { vtxos },
@@ -218,13 +218,13 @@ describe("WalletUpdater handleMessage", () => {
         ];
         (updater as any).getAllBoardingUtxos = vi.fn().mockResolvedValue(utxos);
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_BOARDING_UTXOS",
         } as any);
 
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "BOARDING_UTXOS",
             payload: { utxos },
         });
@@ -236,13 +236,13 @@ describe("WalletUpdater handleMessage", () => {
             getTransactionHistory: vi.fn().mockResolvedValue(transactions),
         };
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_TRANSACTION_HISTORY",
         } as any);
 
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "TRANSACTION_HISTORY",
             payload: { transactions },
         });
@@ -256,13 +256,13 @@ describe("WalletUpdater handleMessage", () => {
             },
         };
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "GET_STATUS",
         } as any);
 
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "WALLET_STATUS",
             payload: {
                 walletInitialized: true,
@@ -276,14 +276,14 @@ describe("WalletUpdater handleMessage", () => {
         const clearSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).clear = clearSpy;
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "CLEAR",
         } as any);
 
         expect(clearSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "CLEAR_SUCCESS",
             payload: { cleared: true },
         });
@@ -294,14 +294,14 @@ describe("WalletUpdater handleMessage", () => {
         const reloadSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).onWalletInitialized = reloadSpy;
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "RELOAD_WALLET",
         } as any);
 
         expect(reloadSpy).toHaveBeenCalled();
         expect(response).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "RELOAD_SUCCESS",
             payload: { reloaded: true },
         });
@@ -327,78 +327,78 @@ describe("WalletUpdater handleMessage", () => {
             getContractManager: vi.fn().mockResolvedValue(manager),
         };
 
-        const createResponse = await updater.handleMessage({
+        const createResponse = await updater.handleRequest({
             ...baseMessage("c"),
             type: "CREATE_CONTRACT",
             payload: { type: "test", params: {}, script: "00", address: "a" },
         } as any);
         expect(createResponse).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "CONTRACT_CREATED",
             payload: { contract },
         });
 
-        const getResponse = await updater.handleMessage({
+        const getResponse = await updater.handleRequest({
             ...baseMessage("g"),
             type: "GET_CONTRACTS",
             payload: {},
         } as any);
         expect(getResponse).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "CONTRACTS",
             payload: { contracts },
         });
 
-        const getWithVtxosResponse = await updater.handleMessage({
+        const getWithVtxosResponse = await updater.handleRequest({
             ...baseMessage("gw"),
             type: "GET_CONTRACTS_WITH_VTXOS",
             payload: {},
         } as any);
         expect(getWithVtxosResponse).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "CONTRACTS_WITH_VTXOS",
             payload: { contracts: contractsWithVtxos },
         });
 
-        const updateResponse = await updater.handleMessage({
+        const updateResponse = await updater.handleRequest({
             ...baseMessage("u"),
             type: "UPDATE_CONTRACT",
             payload: { script: "00", updates: { label: "new" } },
         } as any);
         expect(updateResponse).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "CONTRACT_UPDATED",
             payload: { contract },
         });
 
-        const deleteResponse = await updater.handleMessage({
+        const deleteResponse = await updater.handleRequest({
             ...baseMessage("d"),
             type: "DELETE_CONTRACT",
             payload: { script: "00" },
         } as any);
         expect(deleteResponse).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "CONTRACT_DELETED",
             payload: { deleted: true },
         });
 
-        const spendablePathsResponse = await updater.handleMessage({
+        const spendablePathsResponse = await updater.handleRequest({
             ...baseMessage("p"),
             type: "GET_SPENDABLE_PATHS",
             payload: { options: { contractId: "c1" } },
         } as any);
         expect(spendablePathsResponse).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "SPENDABLE_PATHS",
             payload: { paths },
         });
 
-        const watchingResponse = await updater.handleMessage({
+        const watchingResponse = await updater.handleRequest({
             ...baseMessage("w"),
             type: "IS_CONTRACT_MANAGER_WATCHING",
         } as any);
         expect(watchingResponse).toMatchObject({
-            tag: updater.messageTag,
+            sourceTag: updater.messageTag,
             type: "CONTRACT_WATCHING",
             payload: { isWatching: true },
         });
@@ -426,7 +426,7 @@ describe("WalletUpdater handleMessage", () => {
         const tickResponses = await updater.tick(Date.now());
         expect(tickResponses).toEqual([
             {
-                tag: updater.messageTag,
+                sourceTag: updater.messageTag,
                 type: "CONTRACT_EVENT",
                 broadcast: true,
                 payload: { event },
@@ -437,12 +437,12 @@ describe("WalletUpdater handleMessage", () => {
     it("returns a tagged error for unknown message types", async () => {
         (updater as any).wallet = {};
 
-        const response = await updater.handleMessage({
+        const response = await updater.handleRequest({
             ...baseMessage(),
             type: "UNKNOWN",
         } as any);
 
-        expect(response.tag).toBe(updater.messageTag);
+        expect(response.sourceTag).toBe(updater.messageTag);
         expect(response.error).toBeInstanceOf(Error);
         expect(response.error?.message).toBe("Unknown message");
     });

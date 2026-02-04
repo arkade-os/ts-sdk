@@ -26,10 +26,11 @@ Business logic lives in updaters.
    - Starts each updater with `start()`.
    - Hooks `install` (calls `skipWaiting()`) and `activate` (calls `clients.claim()`).
    - Starts the periodic tick loop.
-3. Clients post messages to the service worker. `Worker` routes them by `tag`
+3. Clients post messages to the service worker. `Worker` routes them by `targetTag`
    (the updater's `messageTag`) or broadcasts to all updaters.
-4. Updaters can respond immediately (via `handleMessage`) or later (via `tick`).
-   Responses are posted back to clients.
+4. Updaters can respond immediately (via `handleRequest`) or later (via `tick`).
+   Responses are posted back to clients. Updaters can also emit requests from
+   `tick` to other updaters (see Cross-Updater Requests below).
 
 ## Trade-Offs of the Current Solution
 
@@ -70,10 +71,10 @@ class EchoUpdater implements IUpdater<EchoRequest, EchoResponse> {
         // Clean up resources.
     }
 
-    async tick(): Promise<EchoResponse[]> {
+    async tick(): Promise<Array<EchoResponse | RequestEnvelope>> {
         return [
             {
-                tag: this.messageTag,
+                sourceTag: this.messageTag,
                 id: "heartbeat",
                 broadcast: true,
                 payload: "tick",
@@ -81,9 +82,9 @@ class EchoUpdater implements IUpdater<EchoRequest, EchoResponse> {
         ];
     }
 
-    async handleMessage(message: EchoRequest): Promise<EchoResponse | null> {
+    async handleRequest(message: EchoRequest): Promise<EchoResponse | null> {
         return {
-            tag: this.messageTag,
+            sourceTag: this.messageTag,
             id: message.id,
             payload: message.payload ?? "",
         };
@@ -104,7 +105,7 @@ On the client, you can post a message with the updater's `messageTag`:
 ```ts
 // Client-side
 const sw = await Worker.getServiceWorker("/service-worker.js");
-sw.postMessage({ tag: "echo", id: "req-1", payload: "hello" });
+sw.postMessage({ targetTag: "echo", id: "req-1", payload: "hello" });
 ```
 
 Notes:
@@ -112,3 +113,25 @@ Notes:
 - The `id` is used to correlate responses to requests.
 - If you set `broadcast: true`, the `Worker` will forward the message or response
   to all window clients.
+
+## Cross-Updater Requests (New)
+
+Updaters can now emit **requests** from `tick()` and route them to another updater.
+To do this, return a `RequestEnvelope` from `tick()` with a `targetTag`. The target
+updater handles it via `handleRequest`. If the request includes a `sourceTag`, the
+response will be routed back to that origin updater via `handleResponse` (if implemented).
+If `broadcast: true` is set on the response, it will also be sent to clients.
+
+Example:
+
+```ts
+// Updater A tick() emits a request to Updater B
+return [
+  {
+    targetTag: "updater-b",
+    sourceTag: "updater-a",
+    id: "req-42",
+    payload: { ... },
+  },
+];
+```

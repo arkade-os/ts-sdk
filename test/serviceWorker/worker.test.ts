@@ -72,16 +72,16 @@ describe("Worker", () => {
         const { selfMock, listeners } = createSelfMock();
         vi.stubGlobal("self", selfMock as any);
 
-        const handleMessage = vi
+        const handleRequest = vi
             .fn()
-            .mockResolvedValue({ tag: "wallet", id: "1" });
+            .mockResolvedValue({ sourceTag: "wallet", id: "1" });
 
         const updater: TestUpdater = {
             messageTag: "wallet",
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
             tick: vi.fn().mockResolvedValue([]),
-            handleMessage,
+            handleRequest,
         };
 
         const sw = new Worker({ updaters: [updater] });
@@ -92,13 +92,16 @@ describe("Worker", () => {
 
         const source = { postMessage: vi.fn() };
         await messageHandlers[0]({
-            data: { id: "1", tag: "wallet" },
+            data: { id: "1", targetTag: "wallet" },
             source,
         });
 
-        expect(handleMessage).toHaveBeenCalledWith({ id: "1", tag: "wallet" });
+        expect(handleRequest).toHaveBeenCalledWith({
+            id: "1",
+            targetTag: "wallet",
+        });
         expect(source.postMessage).toHaveBeenCalledWith({
-            tag: "wallet",
+            sourceTag: "wallet",
             id: "1",
         });
     });
@@ -107,13 +110,13 @@ describe("Worker", () => {
         const { selfMock, listeners } = createSelfMock();
         vi.stubGlobal("self", selfMock as any);
 
-        const handleMessage = vi.fn().mockResolvedValue(null);
+        const handleRequest = vi.fn().mockResolvedValue(null);
         const updater: TestUpdater = {
             messageTag: "known",
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
             tick: vi.fn().mockResolvedValue([]),
-            handleMessage,
+            handleRequest,
         };
 
         const sw = new Worker({ updaters: [updater] });
@@ -122,11 +125,11 @@ describe("Worker", () => {
         const messageHandlers = listeners.get("message") || [];
         const source = { postMessage: vi.fn() };
         await messageHandlers[0]({
-            data: { id: "1", tag: "unknown" },
+            data: { id: "1", targetTag: "unknown" },
             source,
         });
 
-        expect(handleMessage).not.toHaveBeenCalled();
+        expect(handleRequest).not.toHaveBeenCalled();
         expect(source.postMessage).not.toHaveBeenCalled();
     });
 
@@ -139,7 +142,7 @@ describe("Worker", () => {
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
             tick: vi.fn().mockResolvedValue([]),
-            handleMessage: vi.fn().mockResolvedValue(null),
+            handleRequest: vi.fn().mockResolvedValue(null),
         };
 
         const sw = new Worker({ updaters: [updater], tickIntervalMs: 10 });
@@ -168,7 +171,7 @@ describe("Worker", () => {
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
             tick: vi.fn().mockReturnValue(tickPromise),
-            handleMessage: vi.fn().mockResolvedValue(null),
+            handleRequest: vi.fn().mockResolvedValue(null),
         };
 
         const sw = new Worker({ updaters: [updater] });
@@ -192,14 +195,20 @@ describe("Worker", () => {
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
             tick: vi.fn().mockResolvedValue([]),
-            handleMessage: vi.fn().mockResolvedValue({ tag: "a", id: "1" }),
+            handleRequest: vi.fn().mockResolvedValue({
+                sourceTag: "a",
+                id: "1",
+            }),
         };
         const updaterB: TestUpdater = {
             messageTag: "b",
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
             tick: vi.fn().mockResolvedValue([]),
-            handleMessage: vi.fn().mockResolvedValue({ tag: "b", id: "1" }),
+            handleRequest: vi.fn().mockResolvedValue({
+                sourceTag: "b",
+                id: "1",
+            }),
         };
 
         const sw = new Worker({ updaters: [updaterA, updaterB] });
@@ -207,14 +216,24 @@ describe("Worker", () => {
 
         const messageHandlers = listeners.get("message") || [];
         const source = { postMessage: vi.fn() };
-        const payload = { id: "1", tag: "broadcast", broadcast: true };
+        const payload = {
+            id: "1",
+            targetTag: "broadcast",
+            broadcast: true,
+        };
 
         await messageHandlers[0]({ data: payload, source });
 
-        expect(updaterA.handleMessage).toHaveBeenCalledWith(payload);
-        expect(updaterB.handleMessage).toHaveBeenCalledWith(payload);
-        expect(source.postMessage).toHaveBeenCalledWith({ tag: "a", id: "1" });
-        expect(source.postMessage).toHaveBeenCalledWith({ tag: "b", id: "1" });
+        expect(updaterA.handleRequest).toHaveBeenCalledWith(payload);
+        expect(updaterB.handleRequest).toHaveBeenCalledWith(payload);
+        expect(source.postMessage).toHaveBeenCalledWith({
+            sourceTag: "a",
+            id: "1",
+        });
+        expect(source.postMessage).toHaveBeenCalledWith({
+            sourceTag: "b",
+            id: "1",
+        });
     });
 
     it("broadcasts tick responses to all clients", async () => {
@@ -228,12 +247,14 @@ describe("Worker", () => {
             messageTag: "wallet",
             start: vi.fn().mockResolvedValue(undefined),
             stop: vi.fn().mockResolvedValue(undefined),
-            tick: vi
-                .fn()
-                .mockResolvedValue([
-                    { tag: "wallet", id: "broadcast", broadcast: true },
-                ]),
-            handleMessage: vi.fn().mockResolvedValue(null),
+            tick: vi.fn().mockResolvedValue([
+                {
+                    sourceTag: "wallet",
+                    id: "broadcast",
+                    broadcast: true,
+                },
+            ]),
+            handleRequest: vi.fn().mockResolvedValue(null),
         };
 
         const sw = new Worker({ updaters: [updater] });
@@ -245,14 +266,127 @@ describe("Worker", () => {
             type: "window",
         });
         expect(clientA.postMessage).toHaveBeenCalledWith({
-            tag: "wallet",
+            sourceTag: "wallet",
             id: "broadcast",
             broadcast: true,
         });
         expect(clientB.postMessage).toHaveBeenCalledWith({
-            tag: "wallet",
+            sourceTag: "wallet",
             id: "broadcast",
             broadcast: true,
+        });
+    });
+
+    // Tick routing: A emits a request to B, B responds, A consumes via handleResponse and emits a broadcast response.
+    it("routes tick requests between updaters and allows origin to emit a broadcast response", async () => {
+        const { selfMock } = createSelfMock();
+        const client = { postMessage: vi.fn() };
+        selfMock.clients.matchAll.mockResolvedValue([client]);
+        vi.stubGlobal("self", selfMock as any);
+
+        const request = {
+            id: "req-1",
+            targetTag: "B",
+            sourceTag: "A",
+        };
+        const responseFromB = {
+            id: "req-1",
+            sourceTag: "B",
+        };
+
+        const updaterA: TestUpdater = {
+            messageTag: "A",
+            start: vi.fn().mockResolvedValue(undefined),
+            stop: vi.fn().mockResolvedValue(undefined),
+            tick: vi.fn().mockResolvedValue([request]),
+            handleRequest: vi.fn().mockResolvedValue(null),
+            handleResponse: vi.fn().mockResolvedValue({
+                id: "final",
+                sourceTag: "A",
+                broadcast: true,
+            }),
+        };
+        const updaterB: TestUpdater = {
+            messageTag: "B",
+            start: vi.fn().mockResolvedValue(undefined),
+            stop: vi.fn().mockResolvedValue(undefined),
+            tick: vi.fn().mockResolvedValue([]),
+            handleRequest: vi.fn().mockResolvedValue(responseFromB),
+        };
+
+        const sw = new Worker({
+            updaters: [updaterA, updaterB],
+            maxRouteIterations: 3,
+        });
+        await sw.start();
+        await (sw as any).runTick();
+
+        expect(updaterB.handleRequest).toHaveBeenCalledWith(request);
+        expect(updaterA.handleResponse).toHaveBeenCalledWith(responseFromB);
+        expect(client.postMessage).toHaveBeenCalledWith({
+            id: "final",
+            sourceTag: "A",
+            broadcast: true,
+        });
+    });
+
+    // Client routing: client message to A, A returns request to B, B responds, A returns final response to the client.
+    it("routes a client request through another updater and returns the final response", async () => {
+        const { selfMock, listeners } = createSelfMock();
+        vi.stubGlobal("self", selfMock as any);
+
+        const updaterA: TestUpdater = {
+            messageTag: "A",
+            start: vi.fn().mockResolvedValue(undefined),
+            stop: vi.fn().mockResolvedValue(undefined),
+            tick: vi.fn().mockResolvedValue([]),
+            handleRequest: vi.fn().mockResolvedValue({
+                id: "req-1",
+                targetTag: "B",
+                sourceTag: "A",
+            }),
+            handleResponse: vi.fn().mockResolvedValue({
+                id: "req-1",
+                sourceTag: "A",
+            }),
+        };
+        const updaterB: TestUpdater = {
+            messageTag: "B",
+            start: vi.fn().mockResolvedValue(undefined),
+            stop: vi.fn().mockResolvedValue(undefined),
+            tick: vi.fn().mockResolvedValue([]),
+            handleRequest: vi.fn().mockResolvedValue({
+                id: "req-1",
+                sourceTag: "B",
+            }),
+        };
+
+        const sw = new Worker({ updaters: [updaterA, updaterB] });
+        await sw.start();
+
+        const messageHandlers = listeners.get("message") || [];
+        const source = { postMessage: vi.fn() };
+        await messageHandlers[0]({
+            data: { id: "req-1", targetTag: "A" },
+            source,
+        });
+
+        expect(updaterA.handleRequest).toHaveBeenCalledWith({
+            id: "req-1",
+            targetTag: "A",
+        });
+        expect(updaterB.handleRequest).toHaveBeenCalledWith({
+            id: "req-1",
+            targetTag: "B",
+            sourceTag: "A",
+        });
+        expect(updaterA.handleResponse).toHaveBeenCalledWith({
+            id: "req-1",
+            sourceTag: "B",
+        });
+        expect(source.postMessage).toHaveBeenCalledWith({
+            id: "req-1",
+            sourceTag: "A",
         });
     });
 });

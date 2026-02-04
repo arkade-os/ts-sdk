@@ -239,7 +239,6 @@ export type ResponseVtxoUpdate = ResponseEnvelope & {
     payload: { newVtxos: ExtendedCoin[]; spentVtxos: ExtendedCoin[] };
 };
 export type ResponseContractEvent = ResponseEnvelope & {
-    tag: string;
     broadcast: true;
     type: "CONTRACT_EVENT";
     payload: { event: ContractEvent };
@@ -317,7 +316,7 @@ export class WalletUpdater
     /**
      * Instantiate a new WalletUpdater.
      * Can override the default `messageTag` allowing more than one updater to run in parallel.
-     * Note that the default ServiceWorkerWallet sends messages to the default WalletUpdater tag.
+     * Note that the default ServiceWorkerWallet sends messages to the default WalletUpdater target tag.
      *
      * @param walletRepository
      * @param contractRepository
@@ -368,15 +367,15 @@ export class WalletUpdater
     private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
         return {
             ...res,
-            tag: this.messageTag,
+            sourceTag: this.messageTag,
         } as WalletUpdaterResponse;
     }
 
-    async handleMessage(
+    async handleRequest(
         message: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         const id = message.id;
-        // console.log(`[${this.messageTag}] handleMessage`, message);
+        // console.log(`[${this.messageTag}] handleRequest`, message);
         if (message.type === "INIT_WALLET") {
             await this.handleInitWallet(message);
             return this.tagged({
@@ -433,12 +432,11 @@ export class WalletUpdater
                 }
                 case "GET_VTXOS": {
                     const vtxos = await this.handleGetVtxos(message);
-                    return {
-                        tag: this.messageTag,
+                    return this.tagged({
                         id,
                         type: "VTXOS",
                         payload: { vtxos },
-                    };
+                    });
                 }
                 case "GET_BOARDING_UTXOS": {
                     const utxos = await this.getAllBoardingUtxos();
