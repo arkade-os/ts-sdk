@@ -135,3 +135,92 @@ return [
   },
 ];
 ```
+
+
+## Cross-platform support
+
+The goal is to support multiple JS runtimes from day zero, even if some targets are “best-effort”. The architecture should not require changes as new runtimes are added.
+
+Proposed API:
+
+```javascript
+import { Worker } from "@arkade-os/sdk";
+import { IndexedDBSwapRepository } from "@arkade-os/boltz-swap";
+import { IndexedDBWalletRepository } from "./walletRepository";
+import { IndexedDBContractRepository } from "./contractRepository";
+
+const walletUpdater = new WalletUpdater(
+    new IndexedDBWalletRepository(),
+    new IndexedDBContractRepository()
+);
+const boltzSwapUpdater = new BoltzSwapUpdater(new IndexedDBSwapRepository());
+
+// Rename ServiceWorkerWallet to WalletRuntime to remove platform-specific naming.
+const browserSvc = WalletRuntime.setupServiceWorker({
+    // current ServiceWorkerWallet.setup()
+    serviceWorkerPath: "wallet-service-worker.mjs",
+    identity: SingleKey.fromHex(privateKey),
+    arkServerUrl,
+    esploraUrl,
+    storage: { walletRepository, contractRepository },
+});
+const nodeSvc = WalletRuntime.setupNodeWorker({
+    updaters: [walletUpdater, boltzSwapUpdater],
+    identity: SingleKey.fromHex(privateKey),
+    arkServerUrl,
+    esploraUrl,
+});
+const expoSvc = WalletRuntime.setupExpoWorker({
+    updaters: [walletUpdater, boltzSwapUpdater],
+    identity: SingleKey.fromHex(privateKey),
+    arkServerUrl,
+    esploraUrl,
+    minimumInterval: 15, // minimum interval for tasks to run
+});
+```
+
+The static methods on `Worker` encapsulate the runtime-specific logic:
+- `setupServiceWorker`: get or create the SW, initialize it. Work runs on the SW side; the main thread uses a message-based thin interface.
+- `setupNodeWorker`: run in the main thread, with optional offload to [Node Worker Threads](https://nodejs.org/api/worker_threads.html#worker-threads). Suggested option: `taskExecutionMode: "inline" | "worker"` (default: `inline`).
+- `setupExpoWorker`: run in the main thread and register [background tasks](https://docs.expo.dev/versions/latest/sdk/background-task/). Background completion is best-effort.
+
+Given `src/wallet/serviceWorker/wallet.ts` and `src/wallet/serviceWorker/wallet-updater.ts` as the baseline:
+- functionality is exposed via the `WalletRuntime` interface (e.g. `WalletRuntime.settle()`).
+- the SW implementation uses `postMessage`.
+- the Node and Expo implementations call `IUpdater.{handleRequest|handleResponse|tick()}` directly.
+
+Tasks are modeled as a response type _Task_ (name subject to change) which is a function that returns `REQ|RES|Task` and is handled differently:
+- SW runs it in-place.
+- Node runs it in-place by default (or in a Worker thread if `taskExecutionMode` is `worker`).
+- Expo registers a task *and* runs it in place. If the local execution succeeds, the registered task is cancelled. On foreground, the runtime checks registered tasks and runs them, cancelling as they complete. This yields immediate execution on a best-effort basis and eventual completion when possible.
+- Note: React Native (bare/ejected) is not directly compatible with Expo TaskManager APIs. A separate scheduler adapter will be required (e.g. `react-native-background-fetch` on Android and background fetch on iOS).
+
+### Task persistence (proposal)
+
+Tasks are not persisted as code. Persist a minimal `TaskRecord` so the runtime can re-evaluate:
+
+```ts
+type TaskRecord = {
+  id: string;            // runtime-generated unique id
+  name: string;          // task name, e.g. "TASK_SETTLE"
+  sourceTag: string;     // updater that owns the task
+  createdAt: number;     // timestamp
+  metadata: any;         // JSON payload, e.g. { vtxos: [1,2,3] }
+};
+```
+
+The runtime **evicts** persisted tasks first, then calls `reviewTasks()` on the owning updater. The updater can inspect storage and decide what to do next:
+
+```ts
+reviewTasks?(tasks: TaskRecord[]): Promise<Array<Request | Response | Task>>;
+```
+
+If the updater wants to retry, it can return the same task again (or a new one). This will be treated as a new task and re-persisted by the runtime if needed.
+
+### Trade-offs
+- [PRO] it's simple for the consumer, only defines the `svc` and its `IUpdater` and the runtime will be managed for you
+- [CONS] it's complex for us to implement and possibly maintain
+
+### Why are we doing this?
+
+**Allow async activities like swaps and settlements to complete**

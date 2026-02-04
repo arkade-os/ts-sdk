@@ -267,6 +267,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             type: "CLEAR",
         };
         // Clear page-side storage to maintain parity with SW
+        // TODO: isn't that the same DB we access?
         try {
             const address = await this.getAddress();
             await this.walletRepository.deleteVtxos(address);
