@@ -341,13 +341,15 @@ Use the modular service worker with the wallet updater:
 
 ```typescript
 // app.ts
-import { ServiceWorkerWallet } from '@arkade-os/sdk';
+import { WalletRuntime, SingleKey } from '@arkade-os/sdk';
 
-await ServiceWorkerWallet.setup('/service-worker.js');
+const wallet = await WalletRuntime.setupServiceWorker({
+  serviceWorkerPath: '/service-worker.js',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: SingleKey.fromHex('your_private_key_hex')
+});
 
-const serviceWorker = await ServiceWorkerWallet.getServiceWorker();
-
-const address = await ServiceWorkerWallet.getAddress() // runs in the SW
+const address = await wallet.getAddress() // runs in the SW
 ```
 
 Basic service worker file:
@@ -516,7 +518,7 @@ This is required for MuSig2 settlements and cryptographic operations.
 
 ### Contract Management
 
-Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for VTXOs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+Both `Wallet` and `WalletRuntime` use a `ContractManager` internally to watch for VTXOs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
 
 When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and failsafe polling for free - no code changes needed.
 

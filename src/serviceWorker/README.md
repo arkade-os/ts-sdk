@@ -148,6 +148,8 @@ import { Worker } from "@arkade-os/sdk";
 import { IndexedDBSwapRepository } from "@arkade-os/boltz-swap";
 import { IndexedDBWalletRepository } from "./walletRepository";
 import { IndexedDBContractRepository } from "./contractRepository";
+import * as BackgroundTask from "expo-background-task";
+import * as TaskManager from "expo-task-manager";
 
 const walletUpdater = new WalletUpdater(
     new IndexedDBWalletRepository(),
@@ -157,7 +159,7 @@ const boltzSwapUpdater = new BoltzSwapUpdater(new IndexedDBSwapRepository());
 
 // Rename ServiceWorkerWallet to WalletRuntime to remove platform-specific naming.
 const browserSvc = WalletRuntime.setupServiceWorker({
-    // current ServiceWorkerWallet.setup()
+    // current WalletRuntime.setupServiceWorker()
     serviceWorkerPath: "wallet-service-worker.mjs",
     identity: SingleKey.fromHex(privateKey),
     arkServerUrl,
@@ -170,13 +172,20 @@ const nodeSvc = WalletRuntime.setupNodeWorker({
     arkServerUrl,
     esploraUrl,
 });
-const expoSvc = WalletRuntime.setupExpoWorker({
-    updaters: [walletUpdater, boltzSwapUpdater],
-    identity: SingleKey.fromHex(privateKey),
-    arkServerUrl,
-    esploraUrl,
-    minimumInterval: 15, // minimum interval for tasks to run
-});
+const expoSvc = WalletRuntime.setupExpoWorker(
+    {
+        updaters: [walletUpdater, boltzSwapUpdater],
+        identity: SingleKey.fromHex(privateKey),
+        arkServerUrl,
+        esploraUrl,
+        minimumInterval: 15, // minimum interval for tasks to run
+        taskName: "ark-wallet-runtime-task",
+    },
+    {
+        BackgroundTask,
+        TaskManager,
+    }
+);
 ```
 
 The static methods on `Worker` encapsulate the runtime-specific logic:
@@ -194,6 +203,7 @@ Tasks are modeled as a response type _Task_ (name subject to change) which is a 
 - Node runs it in-place by default (or in a Worker thread if `taskExecutionMode` is `worker`).
 - Expo registers a task *and* runs it in place. If the local execution succeeds, the registered task is cancelled. On foreground, the runtime checks registered tasks and runs them, cancelling as they complete. This yields immediate execution on a best-effort basis and eventual completion when possible.
 - Note: React Native (bare/ejected) is not directly compatible with Expo TaskManager APIs. A separate scheduler adapter will be required (e.g. `react-native-background-fetch` on Android and background fetch on iOS).
+- Expo details: `TaskManager.defineTask` must be called in the global scope (not inside React lifecycle methods). Expo Background Task uses a single worker; the last registered task determines the minimum interval. `BackgroundTask.getStatusAsync()` can be used to detect availability (web returns `Restricted`).
 
 ### Task persistence (proposal)
 

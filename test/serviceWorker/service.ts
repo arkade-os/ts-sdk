@@ -1,5 +1,5 @@
 import { Worker } from "../../src/serviceWorker/worker";
-import { WalletUpdater } from "../../src/wallet/serviceWorker/wallet";
+import { WalletUpdater } from "../../src/wallet/serviceWorker/wallet-updater";
 
 // ensure crypto is available in the service worker context
 if (typeof crypto === "undefined" || !crypto.getRandomValues) {

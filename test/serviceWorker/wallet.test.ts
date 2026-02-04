@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 import {
-    ServiceWorkerReadonlyWallet,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    ReadonlyWalletRuntime,
+    WalletRuntime,
+    SwReadonlyWalletRuntime,
 } from "../../src";
 import { WalletUpdater } from "../../src/wallet/serviceWorker/wallet-updater";
 
@@ -38,15 +40,15 @@ const createServiceWorkerHarness = (responder?: (message: any) => any) => {
 };
 
 const createWallet = (serviceWorker: ServiceWorker) =>
-    new (ServiceWorkerReadonlyWallet as any)(
+    new (SwReadonlyWalletRuntime as any)(
         serviceWorker,
         {} as any,
         new InMemoryWalletRepository(),
         new InMemoryContractRepository(),
         WalletUpdater.messageTag
-    ) as ServiceWorkerReadonlyWallet;
+    ) as SwReadonlyWalletRuntime;
 
-describe("ServiceWorkerReadonlyWallet", () => {
+describe("ReadonlyWalletRuntime", () => {
     afterEach(() => {
         vi.unstubAllGlobals();
     });
@@ -244,5 +246,71 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         expect(callback).toHaveBeenCalledTimes(1);
         expect(listeners.size).toBe(0);
+    });
+});
+
+describe("WalletRuntime factories", () => {
+    it("throws for ReadonlyWalletRuntime.setupNodeWorker", async () => {
+        await expect(
+            ReadonlyWalletRuntime.setupNodeWorker({
+                arkServerUrl: "http://example.com",
+                identity: {} as any,
+            })
+        ).rejects.toThrow(
+            "ReadonlyWalletRuntime.setupNodeWorker is not implemented"
+        );
+    });
+
+    it("throws for ReadonlyWalletRuntime.setupExpoWorker", async () => {
+        await expect(
+            ReadonlyWalletRuntime.setupExpoWorker(
+                {
+                    arkServerUrl: "http://example.com",
+                    identity: {} as any,
+                },
+                {
+                    BackgroundTask: {
+                        getStatusAsync: vi.fn(),
+                        registerTaskAsync: vi.fn(),
+                        unregisterTaskAsync: vi.fn(),
+                    },
+                    TaskManager: {
+                        defineTask: vi.fn(),
+                    },
+                }
+            )
+        ).rejects.toThrow(
+            "ReadonlyWalletRuntime.setupExpoWorker is not implemented"
+        );
+    });
+
+    it("throws for WalletRuntime.setupNodeWorker", async () => {
+        await expect(
+            WalletRuntime.setupNodeWorker({
+                arkServerUrl: "http://example.com",
+                identity: {} as any,
+            })
+        ).rejects.toThrow("WalletRuntime.setupNodeWorker is not implemented");
+    });
+
+    it("throws for WalletRuntime.setupExpoWorker", async () => {
+        await expect(
+            WalletRuntime.setupExpoWorker(
+                {
+                    arkServerUrl: "http://example.com",
+                    identity: {} as any,
+                },
+                {
+                    BackgroundTask: {
+                        getStatusAsync: vi.fn(),
+                        registerTaskAsync: vi.fn(),
+                        unregisterTaskAsync: vi.fn(),
+                    },
+                    TaskManager: {
+                        defineTask: vi.fn(),
+                    },
+                }
+            )
+        ).rejects.toThrow("WalletRuntime.setupExpoWorker is not implemented");
     });
 });

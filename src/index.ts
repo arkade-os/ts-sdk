@@ -62,9 +62,11 @@ import {
 import { Ramps } from "./wallet/ramps";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import {
-    ServiceWorkerWallet,
-    ServiceWorkerReadonlyWallet,
-} from "./wallet/serviceWorker/wallet";
+    WalletRuntime,
+    ReadonlyWalletRuntime,
+    SwWalletRuntime,
+    SwReadonlyWalletRuntime,
+} from "./wallet/serviceWorker/wallet-runtime";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./serviceWorker/utils";
 import {
@@ -233,8 +235,10 @@ export {
     setupServiceWorker,
     Worker,
     WalletUpdater,
-    ServiceWorkerWallet,
-    ServiceWorkerReadonlyWallet,
+    WalletRuntime,
+    ReadonlyWalletRuntime,
+    SwWalletRuntime,
+    SwReadonlyWalletRuntime,
 
     // Tapscript
     decodeTapscript,

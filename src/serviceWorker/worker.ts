@@ -260,11 +260,29 @@ export class Worker {
                             const origin = this.updaters.get(request.sourceTag);
                             if (origin?.handleResponse) {
                                 responseCallbacks.push(
-                                    origin.handleResponse({
-                                        id: request.id,
-                                        sourceTag: request.targetTag,
-                                        error,
-                                    } as ResponseEnvelope)
+                                    (async () => {
+                                        const followup =
+                                            await origin.handleResponse?.({
+                                                id: request.id,
+                                                sourceTag: request.targetTag,
+                                                error,
+                                            } as ResponseEnvelope);
+                                        if (!followup) return;
+                                        if ("targetTag" in followup) {
+                                            queue.push(
+                                                followup as RequestEnvelope
+                                            );
+                                            return;
+                                        }
+                                        if (followup.broadcast) {
+                                            console.log(
+                                                `[${followup.sourceTag}] broadcasting to ${clients.length} clients: ${followup.id}`
+                                            );
+                                            clients.forEach((client) => {
+                                                client.postMessage(followup);
+                                            });
+                                        }
+                                    })()
                                 );
                             }
                         }
@@ -294,7 +312,7 @@ export class Worker {
                             responseCallbacks.push(
                                 (async () => {
                                     const followup =
-                                        await origin.handleResponse(response);
+                                        await origin.handleResponse?.(response);
                                     if (!followup) return;
                                     if ("targetTag" in followup) {
                                         queue.push(followup as RequestEnvelope);
@@ -486,7 +504,7 @@ export class Worker {
                                     responseCallbacks.push(
                                         (async () => {
                                             const followup =
-                                                await origin.handleResponse({
+                                                await origin.handleResponse?.({
                                                     id: request.id,
                                                     sourceTag:
                                                         request.targetTag,
@@ -530,7 +548,7 @@ export class Worker {
                                 responseCallbacks.push(
                                     (async () => {
                                         const followup =
-                                            await origin.handleResponse(
+                                            await origin.handleResponse?.(
                                                 response as ResponseEnvelope
                                             );
                                         if (!followup) return;

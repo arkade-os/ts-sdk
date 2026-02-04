@@ -79,6 +79,46 @@ import type { ContractState } from "../../contracts/types";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
+export type ExpoWorkerOptions = WalletRuntimeOptions & {
+    minimumInterval?: number;
+    taskName?: string;
+};
+
+export type ExpoWorkerDeps = {
+    BackgroundTask: {
+        getStatusAsync: () => Promise<unknown>;
+        registerTaskAsync: (
+            taskName: string,
+            options?: unknown
+        ) => Promise<void>;
+        unregisterTaskAsync: (taskName: string) => Promise<void>;
+    };
+    TaskManager: {
+        defineTask: (
+            taskName: string,
+            taskExecutor: (...args: unknown[]) => unknown
+        ) => void;
+    };
+};
+
+export type NodeWorkerDeps = {
+    createWorker?: (...args: unknown[]) => unknown;
+};
+
+export interface ReadonlyWalletRuntime extends IReadonlyWallet {
+    readonly serviceWorker: ServiceWorker;
+    readonly walletRepository: WalletRepository;
+    readonly contractRepository: ContractRepository;
+    readonly identity: ReadonlyIdentity;
+}
+
+export interface WalletRuntime extends IWallet {
+    readonly serviceWorker: ServiceWorker;
+    readonly walletRepository: WalletRepository;
+    readonly contractRepository: ContractRepository;
+    readonly identity: Identity;
+}
+
 const isPrivateKeyIdentity = (
     identity: Identity | ReadonlyIdentity
 ): identity is PrivateKeyIdentity => {
@@ -97,7 +137,7 @@ const isPrivateKeyIdentity = (
  * ```typescript
  * // SIMPLE: Recommended approach
  * const identity = SingleKey.fromHex('your_private_key_hex');
- * const wallet = await ServiceWorkerWallet.setup({
+ * const wallet = await WalletRuntime.setupServiceWorker({
  *   serviceWorkerPath: '/service-worker.js',
  *   arkServerUrl: 'https://mutinynet.arkade.sh',
  *   identity
@@ -106,7 +146,7 @@ const isPrivateKeyIdentity = (
  * // ADVANCED: Manual setup with service worker control
  * const serviceWorker = await setupServiceWorker("/service-worker.js");
  * const identity = SingleKey.fromHex('your_private_key_hex');
- * const wallet = await ServiceWorkerWallet.create({
+ * const wallet = await WalletRuntime.create({
  *   serviceWorker,
  *   identity,
  *   arkServerUrl: 'https://mutinynet.arkade.sh'
@@ -117,7 +157,7 @@ const isPrivateKeyIdentity = (
  * const balance = await wallet.getBalance();
  * ```
  */
-interface ServiceWorkerWalletOptions {
+interface WalletRuntimeOptions {
     arkServerPublicKey?: string;
     arkServerUrl: string;
     esploraUrl?: string;
@@ -126,15 +166,15 @@ interface ServiceWorkerWalletOptions {
     // Override the default target tag for the messages sent to the SW
     walletUpdaterTag?: string;
 }
-export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
+export type WalletRuntimeCreateOptions = WalletRuntimeOptions & {
     serviceWorker: ServiceWorker;
 };
 
-export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
+export type WalletRuntimeSetupOptions = WalletRuntimeOptions & {
     serviceWorkerPath: string;
 };
 
-export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
+export class SwReadonlyWalletRuntime implements ReadonlyWalletRuntime {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
@@ -152,8 +192,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     static async create(
-        options: ServiceWorkerWalletCreateOptions
-    ): Promise<ServiceWorkerReadonlyWallet> {
+        options: WalletRuntimeCreateOptions
+    ): Promise<SwReadonlyWalletRuntime> {
         const walletRepository =
             options.storage?.walletRepository ??
             new IndexedDBWalletRepository();
@@ -165,7 +205,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
         // Create the wallet instance
-        const wallet = new ServiceWorkerReadonlyWallet(
+        const wallet = new SwReadonlyWalletRuntime(
             options.serviceWorker,
             options.identity,
             walletRepository,
@@ -202,33 +242,51 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
      * @example
      * ```typescript
      * // One-liner setup - handles everything automatically!
-     * const wallet = await ServiceWorkerReadonlyWallet.setup({
+     * const wallet = await ReadonlyWalletRuntime.setupServiceWorker({
      *   serviceWorkerPath: '/service-worker.js',
      *   arkServerUrl: 'https://mutinynet.arkade.sh'
      * });
      *
      * // With custom readonly identity
      * const identity = ReadonlySingleKey.fromPublicKey('your_public_key_hex');
-     * const wallet = await ServiceWorkerReadonlyWallet.setup({
+     * const wallet = await ReadonlyWalletRuntime.setupServiceWorker({
      *   serviceWorkerPath: '/service-worker.js',
      *   arkServerUrl: 'https://mutinynet.arkade.sh',
      *   identity
      * });
      * ```
      */
-    static async setup(
-        options: ServiceWorkerWalletSetupOptions
-    ): Promise<ServiceWorkerReadonlyWallet> {
+    static async setupServiceWorker(
+        options: WalletRuntimeSetupOptions
+    ): Promise<SwReadonlyWalletRuntime> {
         // Register and setup the service worker
         const serviceWorker = await setupServiceWorker(
             options.serviceWorkerPath
         );
 
         // Use the existing create method
-        return await ServiceWorkerReadonlyWallet.create({
+        return await SwReadonlyWalletRuntime.create({
             ...options,
             serviceWorker,
         });
+    }
+
+    static async setupNodeWorker(
+        _options: WalletRuntimeOptions,
+        _deps?: NodeWorkerDeps
+    ): Promise<SwReadonlyWalletRuntime> {
+        throw new Error(
+            "SwReadonlyWalletRuntime.setupNodeWorker is not implemented"
+        );
+    }
+
+    static async setupExpoWorker(
+        _options: ExpoWorkerOptions,
+        _deps: ExpoWorkerDeps
+    ): Promise<SwReadonlyWalletRuntime> {
+        throw new Error(
+            "SwReadonlyWalletRuntime.setupExpoWorker is not implemented"
+        );
     }
 
     // send a message and wait for a response
@@ -607,9 +665,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 }
 
-export class ServiceWorkerWallet
-    extends ServiceWorkerReadonlyWallet
-    implements IWallet
+export class SwWalletRuntime
+    extends SwReadonlyWalletRuntime
+    implements WalletRuntime
 {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
@@ -635,8 +693,8 @@ export class ServiceWorkerWallet
     }
 
     static async create(
-        options: ServiceWorkerWalletCreateOptions
-    ): Promise<ServiceWorkerWallet> {
+        options: WalletRuntimeCreateOptions
+    ): Promise<SwWalletRuntime> {
         const walletRepository =
             options.storage?.walletRepository ??
             new IndexedDBWalletRepository();
@@ -651,7 +709,7 @@ export class ServiceWorkerWallet
             : null;
         if (!identity) {
             throw new Error(
-                "ServiceWorkerWallet.create() requires a Identity that can expose a single private key"
+                "SwWalletRuntime.create() requires a Identity that can expose a single private key"
             );
         }
 
@@ -661,7 +719,7 @@ export class ServiceWorkerWallet
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
         // Create the wallet instance
-        const wallet = new ServiceWorkerWallet(
+        const wallet = new SwWalletRuntime(
             options.serviceWorker,
             identity,
             walletRepository,
@@ -694,33 +752,47 @@ export class ServiceWorkerWallet
      * @example
      * ```typescript
      * // One-liner setup - handles everything automatically!
-     * const wallet = await ServiceWorkerWallet.setup({
+     * const wallet = await WalletRuntime.setupServiceWorker({
      *   serviceWorkerPath: '/service-worker.js',
      *   arkServerUrl: 'https://mutinynet.arkade.sh'
      * });
      *
      * // With custom identity
      * const identity = SingleKey.fromHex('your_private_key_hex');
-     * const wallet = await ServiceWorkerWallet.setup({
+     * const wallet = await WalletRuntime.setupServiceWorker({
      *   serviceWorkerPath: '/service-worker.js',
      *   arkServerUrl: 'https://mutinynet.arkade.sh',
      *   identity
      * });
      * ```
      */
-    static async setup(
-        options: ServiceWorkerWalletSetupOptions
-    ): Promise<ServiceWorkerWallet> {
+    static async setupServiceWorker(
+        options: WalletRuntimeSetupOptions
+    ): Promise<SwWalletRuntime> {
         // Register and setup the service worker
         const serviceWorker = await setupServiceWorker(
             options.serviceWorkerPath
         );
 
         // Use the existing create method
-        return ServiceWorkerWallet.create({
+        return SwWalletRuntime.create({
             ...options,
             serviceWorker,
         });
+    }
+
+    static async setupNodeWorker(
+        _options: WalletRuntimeOptions,
+        _deps?: NodeWorkerDeps
+    ): Promise<SwWalletRuntime> {
+        throw new Error("SwWalletRuntime.setupNodeWorker is not implemented");
+    }
+
+    static async setupExpoWorker(
+        _options: ExpoWorkerOptions,
+        _deps: ExpoWorkerDeps
+    ): Promise<SwWalletRuntime> {
+        throw new Error("SwWalletRuntime.setupExpoWorker is not implemented");
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
@@ -805,3 +877,17 @@ function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
     return hex.encode(randomValue);
 }
+
+export const ReadonlyWalletRuntime = {
+    create: SwReadonlyWalletRuntime.create,
+    setupServiceWorker: SwReadonlyWalletRuntime.setupServiceWorker,
+    setupNodeWorker: SwReadonlyWalletRuntime.setupNodeWorker,
+    setupExpoWorker: SwReadonlyWalletRuntime.setupExpoWorker,
+};
+
+export const WalletRuntime = {
+    create: SwWalletRuntime.create,
+    setupServiceWorker: SwWalletRuntime.setupServiceWorker,
+    setupNodeWorker: SwWalletRuntime.setupNodeWorker,
+    setupExpoWorker: SwWalletRuntime.setupExpoWorker,
+};

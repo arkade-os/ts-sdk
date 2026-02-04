@@ -316,7 +316,7 @@ export class WalletUpdater
     /**
      * Instantiate a new WalletUpdater.
      * Can override the default `messageTag` allowing more than one updater to run in parallel.
-     * Note that the default ServiceWorkerWallet sends messages to the default WalletUpdater target tag.
+     * Note that the default WalletRuntime sends messages to the default WalletUpdater target tag.
      *
      * @param walletRepository
      * @param contractRepository
