@@ -106,18 +106,30 @@ export type NodeWorkerDeps = {
 };
 
 export interface ReadonlyWalletRuntime extends IReadonlyWallet {
-    readonly serviceWorker: ServiceWorker;
     readonly walletRepository: WalletRepository;
     readonly contractRepository: ContractRepository;
     readonly identity: ReadonlyIdentity;
 }
 
-export interface WalletRuntime extends IWallet {
+export interface ServiceWorkerReadonlyWalletRuntime
+    extends ReadonlyWalletRuntime {
     readonly serviceWorker: ServiceWorker;
+}
+
+export interface WalletRuntime extends IWallet {
     readonly walletRepository: WalletRepository;
     readonly contractRepository: ContractRepository;
     readonly identity: Identity;
 }
+
+export interface ServiceWorkerWalletRuntime extends WalletRuntime {
+    readonly serviceWorker: ServiceWorker;
+}
+
+export interface NodeWalletRuntime extends WalletRuntime {}
+export interface ExpoWalletRuntime extends WalletRuntime {}
+export interface NodeReadonlyWalletRuntime extends ReadonlyWalletRuntime {}
+export interface ExpoReadonlyWalletRuntime extends ReadonlyWalletRuntime {}
 
 const isPrivateKeyIdentity = (
     identity: Identity | ReadonlyIdentity
@@ -174,7 +186,9 @@ export type WalletRuntimeSetupOptions = WalletRuntimeOptions & {
     serviceWorkerPath: string;
 };
 
-export class SwReadonlyWalletRuntime implements ReadonlyWalletRuntime {
+export class SwReadonlyWalletRuntime
+    implements ServiceWorkerReadonlyWalletRuntime
+{
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
@@ -269,24 +283,6 @@ export class SwReadonlyWalletRuntime implements ReadonlyWalletRuntime {
             ...options,
             serviceWorker,
         });
-    }
-
-    static async setupNodeWorker(
-        _options: WalletRuntimeOptions,
-        _deps?: NodeWorkerDeps
-    ): Promise<SwReadonlyWalletRuntime> {
-        throw new Error(
-            "SwReadonlyWalletRuntime.setupNodeWorker is not implemented"
-        );
-    }
-
-    static async setupExpoWorker(
-        _options: ExpoWorkerOptions,
-        _deps: ExpoWorkerDeps
-    ): Promise<SwReadonlyWalletRuntime> {
-        throw new Error(
-            "SwReadonlyWalletRuntime.setupExpoWorker is not implemented"
-        );
     }
 
     // send a message and wait for a response
@@ -667,7 +663,7 @@ export class SwReadonlyWalletRuntime implements ReadonlyWalletRuntime {
 
 export class SwWalletRuntime
     extends SwReadonlyWalletRuntime
-    implements WalletRuntime
+    implements ServiceWorkerWalletRuntime
 {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
@@ -781,20 +777,6 @@ export class SwWalletRuntime
         });
     }
 
-    static async setupNodeWorker(
-        _options: WalletRuntimeOptions,
-        _deps?: NodeWorkerDeps
-    ): Promise<SwWalletRuntime> {
-        throw new Error("SwWalletRuntime.setupNodeWorker is not implemented");
-    }
-
-    static async setupExpoWorker(
-        _options: ExpoWorkerOptions,
-        _deps: ExpoWorkerDeps
-    ): Promise<SwWalletRuntime> {
-        throw new Error("SwWalletRuntime.setupExpoWorker is not implemented");
-    }
-
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         const message: RequestSendBitcoin = {
             id: getRandomId(),
@@ -873,21 +855,47 @@ export class SwWalletRuntime
     }
 }
 
+async function setupNodeReadonlyWalletRuntime(
+    _options: WalletRuntimeOptions,
+    _deps?: NodeWorkerDeps
+): Promise<NodeReadonlyWalletRuntime> {
+    throw new Error("ReadonlyWalletRuntime.setupNodeWorker is not implemented");
+}
+
+async function setupExpoReadonlyWalletRuntime(
+    _options: ExpoWorkerOptions,
+    _deps: ExpoWorkerDeps
+): Promise<ExpoReadonlyWalletRuntime> {
+    throw new Error("ReadonlyWalletRuntime.setupExpoWorker is not implemented");
+}
+
+async function setupNodeWalletRuntime(
+    _options: WalletRuntimeOptions,
+    _deps?: NodeWorkerDeps
+): Promise<NodeWalletRuntime> {
+    throw new Error("WalletRuntime.setupNodeWorker is not implemented");
+}
+
+async function setupExpoWalletRuntime(
+    _options: ExpoWorkerOptions,
+    _deps: ExpoWorkerDeps
+): Promise<ExpoWalletRuntime> {
+    throw new Error("WalletRuntime.setupExpoWorker is not implemented");
+}
+
 function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
     return hex.encode(randomValue);
 }
 
-export const ReadonlyWalletRuntime = {
-    create: SwReadonlyWalletRuntime.create,
+export const ReadonlyWalletRuntimeFactory = {
     setupServiceWorker: SwReadonlyWalletRuntime.setupServiceWorker,
-    setupNodeWorker: SwReadonlyWalletRuntime.setupNodeWorker,
-    setupExpoWorker: SwReadonlyWalletRuntime.setupExpoWorker,
+    setupNodeWorker: setupNodeReadonlyWalletRuntime,
+    setupExpoWorker: setupExpoReadonlyWalletRuntime,
 };
 
-export const WalletRuntime = {
-    create: SwWalletRuntime.create,
+export const WalletRuntimeFactory = {
     setupServiceWorker: SwWalletRuntime.setupServiceWorker,
-    setupNodeWorker: SwWalletRuntime.setupNodeWorker,
-    setupExpoWorker: SwWalletRuntime.setupExpoWorker,
+    setupNodeWorker: setupNodeWalletRuntime,
+    setupExpoWorker: setupExpoWalletRuntime,
 };

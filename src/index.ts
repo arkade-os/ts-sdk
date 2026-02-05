@@ -66,6 +66,15 @@ import {
     ReadonlyWalletRuntime,
     SwWalletRuntime,
     SwReadonlyWalletRuntime,
+    WalletRuntimeFactory,
+} from "./wallet/serviceWorker/wallet-runtime";
+import type {
+    ServiceWorkerWalletRuntime,
+    ServiceWorkerReadonlyWalletRuntime,
+    NodeWalletRuntime,
+    NodeReadonlyWalletRuntime,
+    ExpoWalletRuntime,
+    ExpoReadonlyWalletRuntime,
 } from "./wallet/serviceWorker/wallet-runtime";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./serviceWorker/utils";
@@ -235,8 +244,7 @@ export {
     setupServiceWorker,
     Worker,
     WalletUpdater,
-    WalletRuntime,
-    ReadonlyWalletRuntime,
+    WalletRuntimeFactory,
     SwWalletRuntime,
     SwReadonlyWalletRuntime,
 
@@ -331,6 +339,14 @@ export type {
     ReadonlyIdentity,
     IWallet,
     IReadonlyWallet,
+    WalletRuntime,
+    ReadonlyWalletRuntime,
+    ServiceWorkerWalletRuntime,
+    ServiceWorkerReadonlyWalletRuntime,
+    NodeWalletRuntime,
+    NodeReadonlyWalletRuntime,
+    ExpoWalletRuntime,
+    ExpoReadonlyWalletRuntime,
     BaseWalletConfig,
     WalletConfig,
     ReadonlyWalletConfig,

@@ -234,3 +234,39 @@ If the updater wants to retry, it can return the same task again (or a new one).
 ### Why are we doing this?
 
 **Allow async activities like swaps and settlements to complete**
+
+
+
+Findings
+
+  1. src/serviceWorker/README.md cross-platform section: API naming is inconsistent. The text says static methods live on Worker, but the examples call WalletRuntime.setupServiceWorker/setupNodeWorker/
+     setupExpoWorker. This will confuse integrators and risks dual APIs diverging; settle on a single public surface and mirror it across runtimes.
+  2. Runtime parity is unclear. The browser path uses message envelopes (postMessage, broadcast, sourceTag/targetTag), while Node/Expo paths call IUpdater methods directly. Without a shared envelope adapter,
+     behaviors like correlation ids, broadcast filtering, and error serialization will differ by platform, breaking “write-once” updaters.
+  3. Task model ambiguity. A “Task” returns REQ | RES | Task, but lifecycle, idempotency, and cancellation semantics are not defined. In Expo you plan to run tasks both inline and via TaskManager; without
+     dedup/locking you can double-execute the same task, especially after app restarts or if background task lags.
+  4. Persistence gap. Updater state is explicitly non-persistent, yet TaskRecord persistence is proposed as essential for retries and foreground/background reconciliation. No storage API is specified per
+     platform (IndexedDB vs. file/db vs. SecureStore), so restart resilience is undefined.
+  5. Scheduling mismatch. SW tick defaults to 30s; Expo background tasks have OS-imposed minimums (often 15 min on iOS). The wallet use-cases (swaps/settlements) may need tighter SLAs; without platform-
+     specific scheduling/backoff, reliability will vary widely by platform.
+  6. Error-handling divergence. The SW path stringifies errors into responses; Node/Expo error propagation is unspecified. Missing unified error schema and retry/backoff policy will make cross-platform
+     debugging and correctness brittle.
+  7. React Native (non-Expo) is acknowledged as “separate scheduler adapter required” but no adapter or interface contract is outlined, leaving a gap for that target and risking API churn later.
+  8. Client broadcast privacy. SW broadcasts responses to all window clients; Node/Expo analogs are absent. Without per-client addressing or opt-in broadcast, responses may leak between tabs/windows;
+     documentation should warn and offer targeting options.
+
+  Questions / Clarifications
+
+  - Should the public entry point be WalletRuntime or Worker (or both with one delegating)? What is the intended package export?
+  - Do you want a unified envelope adapter so updaters never see platform differences, or are platform-specific updaters acceptable?
+  - What persistence layer should TaskRecord use on each platform, and who supplies it (caller vs. runtime)?
+  - How do you want to prevent duplicate execution in Expo when inline + background both fire (e.g., task ids with lease/lock)?
+
+  Suggested Next Steps
+
+  1. Pick and document the single public API surface (names, return types, error shapes), then align all examples to it.
+  2. Define a shared message/envelope contract and provide adapters for SW, Node, Expo so updaters run identically.
+  3. Specify the Task lifecycle: creation, persistence API, locking/dedup, cancellation, and retry/backoff policy; implement a minimal persistence plugin per platform.
+  4. Add platform-specific scheduling guidance (tick vs. background intervals) and surface configuration knobs with sane defaults per runtime.
+  5. Document error schema and logging policy; ensure consistent error propagation across all runtimes.
+  6. Stub or design the React Native (bare) scheduler adapter to avoid future API breakage.
