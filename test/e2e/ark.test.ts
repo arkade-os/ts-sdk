@@ -952,3 +952,416 @@ describe("Ark integration tests", () => {
         }
     });
 });
+
+describe("Asset integration tests", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    it(
+        "should issue an asset without control asset",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+
+            // fund alice offchain
+            const fundAmount = 10_000;
+            faucetOffchain(aliceAddress!, fundAmount);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // issue an asset
+            const issueAmount = 1000;
+            const result = await alice.wallet.issueAsset({
+                amount: issueAmount,
+            });
+
+            expect(result.arkTxId).toBeDefined();
+            expect(result.assetId).toBeDefined();
+            expect(result.controlAssetId).toBeUndefined();
+
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+
+            // verify the asset appears on a vtxo
+            const vtxos = await alice.wallet.getVtxos();
+            expect(vtxos.length).toBeGreaterThan(0);
+
+            const assetVtxo = vtxos.find((v) =>
+                v.assets?.some((a) => a.assetId === result.assetId)
+            );
+            expect(assetVtxo).toBeDefined();
+
+            const asset = assetVtxo!.assets!.find(
+                (a) => a.assetId === result.assetId
+            );
+            expect(asset!.amount).toBe(issueAmount);
+        }
+    );
+
+    it(
+        "should issue an asset with a new control asset",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+
+            const fundAmount = 10_000;
+            faucetOffchain(aliceAddress!, fundAmount);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // issue an asset with a new control asset (supply = 1)
+            const issueAmount = 500;
+            const result = await alice.wallet.issueAsset({
+                amount: issueAmount,
+                controlAsset: 1,
+            });
+
+            expect(result.arkTxId).toBeDefined();
+            expect(result.assetId).toBeDefined();
+            expect(result.controlAssetId).toBeDefined();
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // verify both the issued asset and control asset appear
+            const vtxos = await alice.wallet.getVtxos();
+            expect(vtxos.length).toBeGreaterThan(0);
+
+            const allAssets = vtxos.flatMap((v) => v.assets ?? []);
+            const issuedAsset = allAssets.find(
+                (a) => a.assetId === result.assetId
+            );
+            expect(issuedAsset).toBeDefined();
+            expect(issuedAsset!.amount).toBe(issueAmount);
+
+            const controlAsset = allAssets.find(
+                (a) => a.assetId === result.controlAssetId
+            );
+            expect(controlAsset).toBeDefined();
+            expect(controlAsset!.amount).toBe(1);
+        }
+    );
+
+    it("should reissue an asset", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+
+        const fundAmount = 20_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // issue initial asset with control asset
+        const issueAmount = 500;
+        const issueResult = await alice.wallet.issueAsset({
+            amount: issueAmount,
+            controlAsset: 1,
+        });
+
+        expect(issueResult.controlAssetId).toBeDefined();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // reissue more units
+        const reissueAmount = 300;
+        const reissueTxid = await alice.wallet.reissueAsset({
+            controlAssetId: issueResult.controlAssetId!,
+            assetId: issueResult.assetId,
+            amount: reissueAmount,
+        });
+
+        expect(reissueTxid).toBeDefined();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // verify total asset amount is issueAmount + reissueAmount
+        const vtxos = await alice.wallet.getVtxos();
+        const allAssets = vtxos.flatMap((v) => v.assets ?? []);
+
+        const totalAssetAmount = allAssets
+            .filter((a) => a.assetId === issueResult.assetId)
+            .reduce((sum, a) => sum + a.amount, 0);
+        expect(totalAssetAmount).toBe(issueAmount + reissueAmount);
+
+        // control asset should still exist
+        const controlAsset = allAssets.find(
+            (a) => a.assetId === issueResult.controlAssetId
+        );
+        expect(controlAsset).toBeDefined();
+    });
+
+    it("should burn an asset partially", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+
+        const fundAmount = 20_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // issue an asset
+        const issueAmount = 1000;
+        const issueResult = await alice.wallet.issueAsset({
+            amount: issueAmount,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // burn half
+        const burnAmount = 400;
+        const burnTxid = await alice.wallet.burnAsset({
+            assetId: issueResult.assetId,
+            amount: burnAmount,
+        });
+
+        expect(burnTxid).toBeDefined();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // verify remaining amount
+        const vtxos = await alice.wallet.getVtxos();
+        const allAssets = vtxos.flatMap((v) => v.assets ?? []);
+        const remaining = allAssets
+            .filter((a) => a.assetId === issueResult.assetId)
+            .reduce((sum, a) => sum + a.amount, 0);
+        expect(remaining).toBe(issueAmount - burnAmount);
+    });
+
+    it("should burn an asset completely", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+
+        const fundAmount = 20_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // issue an asset
+        const issueAmount = 500;
+        const issueResult = await alice.wallet.issueAsset({
+            amount: issueAmount,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // burn all
+        const burnTxid = await alice.wallet.burnAsset({
+            assetId: issueResult.assetId,
+            amount: issueAmount,
+        });
+
+        expect(burnTxid).toBeDefined();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // verify asset is gone
+        const vtxos = await alice.wallet.getVtxos();
+        const allAssets = vtxos.flatMap((v) => v.assets ?? []);
+        const remaining = allAssets.filter(
+            (a) => a.assetId === issueResult.assetId
+        );
+        expect(remaining).toHaveLength(0);
+    });
+
+    it(
+        "should send an asset to another wallet",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const bob = await createTestArkWallet();
+
+            const aliceAddress = await alice.wallet.getAddress();
+            const bobAddress = await bob.wallet.getAddress();
+
+            const fundAmount = 20_000;
+            faucetOffchain(aliceAddress!, fundAmount);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // alice issues an asset
+            const issueAmount = 1000;
+            const issueResult = await alice.wallet.issueAsset({
+                amount: issueAmount,
+            });
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // alice sends some asset to bob
+            const sendAmount = 400;
+            const sendTxid = await alice.wallet.sendAsset([
+                {
+                    address: bobAddress!,
+                    amount: 0,
+                    assets: [
+                        { assetId: issueResult.assetId, amount: sendAmount },
+                    ],
+                },
+            ]);
+
+            expect(sendTxid).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // verify bob received the asset
+            const bobVtxos = await bob.wallet.getVtxos();
+            const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
+            const bobAsset = bobAssets.find(
+                (a) => a.assetId === issueResult.assetId
+            );
+            expect(bobAsset).toBeDefined();
+            expect(bobAsset!.amount).toBe(sendAmount);
+
+            // verify alice has the remaining asset as change
+            const aliceVtxos = await alice.wallet.getVtxos();
+            const aliceAssets = aliceVtxos.flatMap((v) => v.assets ?? []);
+            const aliceRemaining = aliceAssets
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((sum, a) => sum + a.amount, 0);
+            expect(aliceRemaining).toBe(issueAmount - sendAmount);
+        }
+    );
+
+    it(
+        "should issue with existing control asset",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+
+            const fundAmount = 20_000;
+            faucetOffchain(aliceAddress!, fundAmount);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // issue first asset with new control asset
+            const firstIssue = await alice.wallet.issueAsset({
+                amount: 500,
+                controlAsset: 1,
+            });
+
+            expect(firstIssue.controlAssetId).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // issue second asset using existing control asset
+            const secondIssue = await alice.wallet.issueAsset({
+                amount: 300,
+                controlAsset: firstIssue.controlAssetId!,
+            });
+
+            expect(secondIssue.arkTxId).toBeDefined();
+            expect(secondIssue.assetId).toBeDefined();
+            // control asset ID should be the same as the first issue
+            expect(secondIssue.controlAssetId).toBe(firstIssue.controlAssetId);
+
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // verify both assets exist
+            const vtxos = await alice.wallet.getVtxos();
+            const allAssets = vtxos.flatMap((v) => v.assets ?? []);
+
+            const firstAsset = allAssets.find(
+                (a) => a.assetId === firstIssue.assetId
+            );
+            expect(firstAsset).toBeDefined();
+            expect(firstAsset!.amount).toBe(500);
+
+            const secondAsset = allAssets.find(
+                (a) => a.assetId === secondIssue.assetId
+            );
+            expect(secondAsset).toBeDefined();
+            expect(secondAsset!.amount).toBe(300);
+
+            // control asset should still be present
+            const controlAsset = allAssets.find(
+                (a) => a.assetId === firstIssue.controlAssetId
+            );
+            expect(controlAsset).toBeDefined();
+        }
+    );
+
+    it("should send all units of an asset", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
+
+        const aliceAddress = await alice.wallet.getAddress();
+        const bobAddress = await bob.wallet.getAddress();
+
+        const fundAmount = 20_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // alice issues an asset
+        const issueAmount = 500;
+        const issueResult = await alice.wallet.issueAsset({
+            amount: issueAmount,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // alice sends all units to bob
+        const sendTxid = await alice.wallet.sendAsset([
+            {
+                address: bobAddress!,
+                amount: 0,
+                assets: [{ assetId: issueResult.assetId, amount: issueAmount }],
+            },
+        ]);
+
+        expect(sendTxid).toBeDefined();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // verify bob has all the asset
+        const bobVtxos = await bob.wallet.getVtxos();
+        const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
+        const bobTotal = bobAssets
+            .filter((a) => a.assetId === issueResult.assetId)
+            .reduce((sum, a) => sum + a.amount, 0);
+        expect(bobTotal).toBe(issueAmount);
+
+        // verify alice has no more of this asset
+        const aliceVtxos = await alice.wallet.getVtxos();
+        const aliceAssets = aliceVtxos.flatMap((v) => v.assets ?? []);
+        const aliceTotal = aliceAssets
+            .filter((a) => a.assetId === issueResult.assetId)
+            .reduce((sum, a) => sum + a.amount, 0);
+        expect(aliceTotal).toBe(0);
+    });
+
+    it("should settle VTXOs with assets", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+
+        const fundAmount = 20_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // alice issues an asset
+        const issueAmount = 500;
+        const issueResult = await alice.wallet.issueAsset({
+            amount: issueAmount,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const vtxosBefore = await alice.wallet.getVtxos();
+        expect(vtxosBefore.length).toBeGreaterThan(0);
+        const assetVtxo = vtxosBefore.find((v) =>
+            v.assets?.some((a) => a.assetId === issueResult.assetId)
+        );
+        expect(assetVtxo).toBeDefined();
+
+        // settle with explicit inputs/outputs (includes asset packet)
+        const totalValue = vtxosBefore.reduce((sum, v) => sum + v.value, 0);
+        const settleTxid = await alice.wallet.settle({
+            inputs: vtxosBefore,
+            outputs: [
+                {
+                    address: aliceAddress!,
+                    amount: BigInt(totalValue),
+                },
+            ],
+        });
+
+        expect(settleTxid).toBeDefined();
+
+        execCommand("nigiri rpc --generate 1");
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        // verify the asset is still present on the settled vtxos
+        const vtxosAfter = await alice.wallet.getVtxos();
+        expect(vtxosAfter.length).toBeGreaterThan(0);
+
+        const allAssets = vtxosAfter.flatMap((v) => v.assets ?? []);
+        const assetTotal = allAssets
+            .filter((a) => a.assetId === issueResult.assetId)
+            .reduce((sum, a) => sum + a.amount, 0);
+        expect(assetTotal).toBe(issueAmount);
+    });
+});

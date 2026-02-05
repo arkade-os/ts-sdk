@@ -8,6 +8,11 @@ import {
     ExtendedVirtualCoin,
     GetVtxosFilter,
     IReadonlyWallet,
+    IssueAssetParams,
+    IssueAssetResult,
+    ReissueAssetParams,
+    BurnAssetParams,
+    AssetRecipient,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -528,6 +533,78 @@ export class ServiceWorkerWallet
             });
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
+        }
+    }
+
+    async issueAsset(params: IssueAssetParams): Promise<IssueAssetResult> {
+        const message: Request.IssueAsset = {
+            type: "ISSUE_ASSET",
+            id: getRandomId(),
+            params,
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isIssueAssetSuccess(response)) {
+                return response.result;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Asset issuance failed: ${error}`);
+        }
+    }
+
+    async reissueAsset(params: ReissueAssetParams): Promise<string> {
+        const message: Request.ReissueAsset = {
+            type: "REISSUE_ASSET",
+            id: getRandomId(),
+            params,
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isReissueAssetSuccess(response)) {
+                return response.txid;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Asset reissuance failed: ${error}`);
+        }
+    }
+
+    async burnAsset(params: BurnAssetParams): Promise<string> {
+        const message: Request.BurnAsset = {
+            type: "BURN_ASSET",
+            id: getRandomId(),
+            params,
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isBurnAssetSuccess(response)) {
+                return response.txid;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Asset burn failed: ${error}`);
+        }
+    }
+
+    async sendAsset(receivers: AssetRecipient[]): Promise<string> {
+        const message: Request.SendAsset = {
+            type: "SEND_ASSET",
+            id: getRandomId(),
+            receivers,
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            if (Response.isSendAssetSuccess(response)) {
+                return response.txid;
+            }
+            throw new UnexpectedResponseError(response);
+        } catch (error) {
+            throw new Error(`Asset send failed: ${error}`);
         }
     }
 }

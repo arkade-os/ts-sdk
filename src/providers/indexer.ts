@@ -66,6 +66,11 @@ export interface TxHistoryRecord {
     settledBy: string;
 }
 
+export interface VtxoAsset {
+    assetId: string;
+    amount: string;
+}
+
 export interface Vtxo {
     outpoint: Outpoint;
     createdAt: string;
@@ -80,6 +85,7 @@ export interface Vtxo {
     commitmentTxids: string[];
     settledBy?: string;
     arkTxid?: string;
+    assets?: VtxoAsset[];
 }
 
 export interface VtxoChain {
@@ -585,6 +591,10 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
         isUnrolled: vtxo.isUnrolled,
         isSpent: vtxo.isSpent,
+        assets: vtxo.assets?.map((a) => ({
+            assetId: a.assetId,
+            amount: Number(a.amount),
+        })),
     };
 }
 
@@ -678,6 +688,14 @@ namespace Response {
         return Array.isArray(data) && data.every(isTxid);
     }
 
+    function isVtxoAsset(data: any): data is VtxoAsset {
+        return (
+            typeof data === "object" &&
+            typeof data.assetId === "string" &&
+            (typeof data.amount === "string" || typeof data.amount === "number")
+        );
+    }
+
     function isVtxo(data: any): data is Vtxo {
         return (
             typeof data === "object" &&
@@ -694,7 +712,9 @@ namespace Response {
             (!data.settledBy || typeof data.settledBy === "string") &&
             (!data.arkTxid || typeof data.arkTxid === "string") &&
             Array.isArray(data.commitmentTxids) &&
-            data.commitmentTxids.every(isTxid)
+            data.commitmentTxids.every(isTxid) &&
+            (data.assets === undefined ||
+                (Array.isArray(data.assets) && data.assets.every(isVtxoAsset)))
         );
     }
 

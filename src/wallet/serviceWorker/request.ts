@@ -1,4 +1,12 @@
-import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
+import {
+    SettleParams,
+    SendBitcoinParams,
+    GetVtxosFilter,
+    IssueAssetParams,
+    ReissueAssetParams,
+    BurnAssetParams,
+    AssetRecipient,
+} from "..";
 
 /**
  * Request is the namespace that contains the request types for the service worker.
@@ -17,7 +25,11 @@ export namespace Request {
         | "SEND_BITCOIN"
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
-        | "CLEAR";
+        | "CLEAR"
+        | "ISSUE_ASSET"
+        | "REISSUE_ASSET"
+        | "BURN_ASSET"
+        | "SEND_ASSET";
 
     export interface Base {
         type: Type;
@@ -163,5 +175,41 @@ export namespace Request {
 
     export function isReloadWallet(message: Base): message is ReloadWallet {
         return message.type === "RELOAD_WALLET";
+    }
+
+    export interface IssueAsset extends Base {
+        type: "ISSUE_ASSET";
+        params: IssueAssetParams;
+    }
+
+    export function isIssueAsset(message: Base): message is IssueAsset {
+        return message.type === "ISSUE_ASSET" && "params" in message;
+    }
+
+    export interface ReissueAsset extends Base {
+        type: "REISSUE_ASSET";
+        params: ReissueAssetParams;
+    }
+
+    export function isReissueAsset(message: Base): message is ReissueAsset {
+        return message.type === "REISSUE_ASSET" && "params" in message;
+    }
+
+    export interface BurnAsset extends Base {
+        type: "BURN_ASSET";
+        params: BurnAssetParams;
+    }
+
+    export function isBurnAsset(message: Base): message is BurnAsset {
+        return message.type === "BURN_ASSET" && "params" in message;
+    }
+
+    export interface SendAsset extends Base {
+        type: "SEND_ASSET";
+        receivers: AssetRecipient[];
+    }
+
+    export function isSendAsset(message: Base): message is SendAsset {
+        return message.type === "SEND_ASSET" && "receivers" in message;
     }
 }

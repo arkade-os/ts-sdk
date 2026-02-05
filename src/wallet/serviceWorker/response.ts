@@ -4,8 +4,8 @@ import {
     VirtualCoin,
     ArkTransaction,
     IWallet,
-    Coin,
     ExtendedCoin,
+    IssueAssetResult,
 } from "..";
 import { ExtendedVirtualCoin } from "../..";
 import { SettlementEvent } from "../../providers/ark";
@@ -36,7 +36,11 @@ export namespace Response {
         | "ERROR"
         | "CLEAR_RESPONSE"
         | "VTXO_UPDATE"
-        | "UTXO_UPDATE";
+        | "UTXO_UPDATE"
+        | "ISSUE_ASSET_SUCCESS"
+        | "REISSUE_ASSET_SUCCESS"
+        | "BURN_ASSET_SUCCESS"
+        | "SEND_ASSET_SUCCESS";
 
     export interface Base {
         type: Type;
@@ -389,6 +393,111 @@ export namespace Response {
             id: getRandomId(), // spontaneous update, not tied to a request
             success: true,
             coins,
+        };
+    }
+
+    export interface IssueAssetSuccess extends Base {
+        type: "ISSUE_ASSET_SUCCESS";
+        success: true;
+        result: IssueAssetResult;
+    }
+
+    export function isIssueAssetSuccess(
+        response: Base
+    ): response is IssueAssetSuccess {
+        return (
+            response.type === "ISSUE_ASSET_SUCCESS" && response.success === true
+        );
+    }
+
+    export function issueAssetSuccess(
+        id: string,
+        result: IssueAssetResult
+    ): IssueAssetSuccess {
+        return {
+            type: "ISSUE_ASSET_SUCCESS",
+            success: true,
+            result,
+            id,
+        };
+    }
+
+    export interface ReissueAssetSuccess extends Base {
+        type: "REISSUE_ASSET_SUCCESS";
+        success: true;
+        txid: string;
+    }
+
+    export function isReissueAssetSuccess(
+        response: Base
+    ): response is ReissueAssetSuccess {
+        return (
+            response.type === "REISSUE_ASSET_SUCCESS" &&
+            response.success === true
+        );
+    }
+
+    export function reissueAssetSuccess(
+        id: string,
+        txid: string
+    ): ReissueAssetSuccess {
+        return {
+            type: "REISSUE_ASSET_SUCCESS",
+            success: true,
+            txid,
+            id,
+        };
+    }
+
+    export interface BurnAssetSuccess extends Base {
+        type: "BURN_ASSET_SUCCESS";
+        success: true;
+        txid: string;
+    }
+
+    export function isBurnAssetSuccess(
+        response: Base
+    ): response is BurnAssetSuccess {
+        return (
+            response.type === "BURN_ASSET_SUCCESS" && response.success === true
+        );
+    }
+
+    export function burnAssetSuccess(
+        id: string,
+        txid: string
+    ): BurnAssetSuccess {
+        return {
+            type: "BURN_ASSET_SUCCESS",
+            success: true,
+            txid,
+            id,
+        };
+    }
+
+    export interface SendAssetSuccess extends Base {
+        type: "SEND_ASSET_SUCCESS";
+        success: true;
+        txid: string;
+    }
+
+    export function isSendAssetSuccess(
+        response: Base
+    ): response is SendAssetSuccess {
+        return (
+            response.type === "SEND_ASSET_SUCCESS" && response.success === true
+        );
+    }
+
+    export function sendAssetSuccess(
+        id: string,
+        txid: string
+    ): SendAssetSuccess {
+        return {
+            type: "SEND_ASSET_SUCCESS",
+            success: true,
+            txid,
+            id,
         };
     }
 }

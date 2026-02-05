@@ -727,6 +727,11 @@ export class RestArkProvider implements ArkProvider {
             return null;
         }
 
+        // Skip streamStarted event
+        if (data.streamStarted) {
+            return null;
+        }
+
         console.warn("Unknown event type:", data);
         return null;
     }
@@ -890,6 +895,7 @@ namespace ProtoTypes {
         treeTx?: TreeTxEvent;
         treeSignature?: TreeSignatureEvent;
         heartbeat?: Heartbeat;
+        streamStarted?: any; // TODO: add type for streamStarted event
     }
 
     export interface GetTransactionsStreamResponse {

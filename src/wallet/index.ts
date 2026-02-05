@@ -124,6 +124,7 @@ export interface WalletBalance {
     available: number; // settled + preconfirmed
     recoverable: number; // subdust and (swept=true & unspent=true)
     total: number;
+    assets: Asset[];
 }
 
 export interface SendBitcoinParams {
@@ -134,8 +135,44 @@ export interface SendBitcoinParams {
     selectedVtxos?: VirtualCoin[];
 }
 
-export interface Recipient {
+export interface Asset {
+    assetId: string;
+    amount: number;
+}
+
+export interface AssetRecipient {
     address: string;
+    amount: number;
+    assets?: Asset[];
+}
+
+/**
+ * Control asset for issuance operations.
+ * - number: Creates a new control asset with the specified amount
+ * - string: References an existing control asset by ID
+ */
+export type ControlAsset = number | string;
+
+export interface IssueAssetParams {
+    amount: number;
+    controlAsset?: ControlAsset;
+    metadata?: Array<{ key: string; value: string }>;
+}
+
+export interface IssueAssetResult {
+    arkTxId: string;
+    assetId: string;
+    controlAssetId?: string;
+}
+
+export interface ReissueAssetParams {
+    controlAssetId: string;
+    assetId: string;
+    amount: number;
+}
+
+export interface BurnAssetParams {
+    assetId: string;
     amount: number;
 }
 
@@ -176,6 +213,7 @@ export interface VirtualCoin extends Coin {
     createdAt: Date;
     isUnrolled: boolean;
     isSpent?: boolean;
+    assets?: Asset[];
 }
 
 export enum TxType {
@@ -257,6 +295,12 @@ export interface IWallet extends IReadonlyWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
+
+    // Asset operations
+    issueAsset(params: IssueAssetParams): Promise<IssueAssetResult>;
+    reissueAsset(params: ReissueAssetParams): Promise<string>;
+    burnAsset(params: BurnAssetParams): Promise<string>;
+    sendAsset(recipients: AssetRecipient[]): Promise<string>;
 }
 
 /**
