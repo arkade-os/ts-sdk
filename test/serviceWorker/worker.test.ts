@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
-    Worker,
-    type IUpdater,
+    MessageBus,
+    type MessageHandler,
     type RequestEnvelope,
     type ResponseEnvelope,
-} from "../../src/serviceWorker/worker";
+} from "../../src/worker/messageBus";
 
-type TestUpdater = IUpdater<RequestEnvelope, ResponseEnvelope>;
+type TestUpdater = MessageHandler<RequestEnvelope, ResponseEnvelope>;
 
 type SelfMock = {
     addEventListener: ReturnType<typeof vi.fn>;
@@ -84,7 +84,7 @@ describe("Worker", () => {
             handleMessage,
         };
 
-        const sw = new Worker({ updaters: [updater] });
+        const sw = new MessageBus({ messageHandlers: [updater] });
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -116,7 +116,7 @@ describe("Worker", () => {
             handleMessage,
         };
 
-        const sw = new Worker({ updaters: [updater] });
+        const sw = new MessageBus({ messageHandlers: [updater] });
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -142,7 +142,10 @@ describe("Worker", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new Worker({ updaters: [updater], tickIntervalMs: 10 });
+        const sw = new MessageBus({
+            messageHandlers: [updater],
+            tickIntervalMs: 10,
+        });
         await sw.start();
 
         const [firstId] = Array.from(activeTimeouts);
@@ -171,7 +174,7 @@ describe("Worker", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new Worker({ updaters: [updater] });
+        const sw = new MessageBus({ messageHandlers: [updater] });
         await sw.start();
 
         const firstRun = (sw as any).runTick();
@@ -202,7 +205,7 @@ describe("Worker", () => {
             handleMessage: vi.fn().mockResolvedValue({ tag: "b", id: "1" }),
         };
 
-        const sw = new Worker({ updaters: [updaterA, updaterB] });
+        const sw = new MessageBus({ messageHandlers: [updaterA, updaterB] });
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -236,7 +239,7 @@ describe("Worker", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new Worker({ updaters: [updater] });
+        const sw = new MessageBus({ messageHandlers: [updater] });
         await sw.start();
         await (sw as any).runTick();
 

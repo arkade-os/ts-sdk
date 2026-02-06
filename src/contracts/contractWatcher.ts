@@ -5,7 +5,6 @@ import {
     Contract,
     ContractVtxo,
     ContractEventCallback,
-    ContractBalance,
     ContractEvent,
 } from "./types";
 

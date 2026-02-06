@@ -1,5 +1,6 @@
 import type { Coin, ExtendedCoin, ExtendedVirtualCoin, VirtualCoin } from "..";
 import { ReadonlyWallet } from "./wallet";
+import { hex } from "@scure/base";
 
 export const DUST_AMOUNT = 546; // sats
 
@@ -25,4 +26,9 @@ export function extendCoin(
         intentTapLeafScript: wallet.boardingTapscript.forfeit(),
         tapTree: wallet.boardingTapscript.encode(),
     };
+}
+
+export function getRandomId(): string {
+    const randomValue = crypto.getRandomValues(new Uint8Array(16));
+    return hex.encode(randomValue);
 }

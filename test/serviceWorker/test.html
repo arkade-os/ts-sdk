@@ -347,6 +347,7 @@
                 DEFAULT_MESSAGE_TAG,
                 Transaction,
             } from "/dist/browser/index.js";
+            import { getRandomId } from "../../src/wallet/utils.ts";
 
             let wallet;
 
@@ -362,7 +363,7 @@
 
             function createWalletClient(serviceWorker) {
                 const sendMessage = (type, payload, { onBroadcast } = {}) => {
-                    const id = crypto.randomUUID();
+                    const id = getRandomId();
                     return new Promise((resolve, reject) => {
                         const handler = (event) => {
                             const response = event.data;

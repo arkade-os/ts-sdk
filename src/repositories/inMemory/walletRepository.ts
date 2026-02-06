@@ -3,11 +3,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
 } from "../../wallet";
-import {
-    CommitmentTxRecord,
-    WalletRepository,
-    WalletState,
-} from "../walletRepository";
+import { WalletRepository, WalletState } from "../walletRepository";
 
 /**
  * In-memory implementation of WalletRepository.

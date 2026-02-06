@@ -604,6 +604,7 @@ export class ContractManager implements IContractManager {
             // Every time there is a VTXO event for a contract, refresh all its VTXOs
             case "vtxo_received":
             case "vtxo_spent":
+                // TODO: THERE is at least one VTXO without tapTree
                 await this.fetchContractVxosFromIndexer([event.contract], true);
                 break;
             case "connection_reset":

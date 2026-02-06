@@ -15,7 +15,7 @@ import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
-import { setupServiceWorker } from "../../serviceWorker/utils";
+import { setupServiceWorker } from "../../worker/browser/utils";
 import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
@@ -61,7 +61,7 @@ import {
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
     DEFAULT_MESSAGE_TAG,
-} from "./wallet-updater";
+} from "./wallet-message-handler";
 import type {
     Contract,
     ContractEventCallback,
@@ -76,6 +76,8 @@ import type {
     IContractManager,
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
+import { getRandomId } from "../utils";
+import { MessageBus } from "../../worker/messageBus";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -104,10 +106,10 @@ const isPrivateKeyIdentity = (
  * });
  *
  * // ADVANCED: Manual setup with service worker control
- * const serviceWorker = await setupServiceWorker("/service-worker.js");
+ * const worker = await setupServiceWorker("/service-worker.js");
  * const identity = SingleKey.fromHex('your_private_key_hex');
  * const wallet = await ServiceWorkerWallet.create({
- *   serviceWorker,
+ *   worker,
  *   identity,
  *   arkServerUrl: 'https://mutinynet.arkade.sh'
  * });
@@ -507,7 +509,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     payload: { script },
                 };
                 try {
-                    const response = await sendContractMessage(message);
+                    await sendContractMessage(message);
                     return;
                 } catch (e) {
                     throw new Error("Failed to delete contract");
@@ -668,16 +670,21 @@ export class ServiceWorkerWallet
             messageTag
         );
 
+        const initConfig = {
+            key: { privateKey },
+            arkServerUrl: options.arkServerUrl,
+            arkServerPublicKey: options.arkServerPublicKey,
+        };
+
+        const r = await MessageBus.init(options.serviceWorker, initConfig);
+        console.log("Message bus ready! ", r);
+
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
             tag: messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            payload: {
-                key: { privateKey },
-                arkServerUrl: options.arkServerUrl,
-                arkServerPublicKey: options.arkServerPublicKey,
-            },
+            payload: initConfig,
         };
 
         // Initialize the service worker
@@ -798,9 +805,4 @@ export class ServiceWorkerWallet
             throw new Error(`Settlement failed: ${error}`);
         }
     }
-}
-
-function getRandomId(): string {
-    const randomValue = crypto.getRandomValues(new Uint8Array(16));
-    return hex.encode(randomValue);
 }

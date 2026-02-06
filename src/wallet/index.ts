@@ -8,12 +8,6 @@ import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
-import {
-    Contract,
-    ContractEventCallback,
-    ContractManager,
-    CreateContractParams,
-} from "../contracts";
 import { IContractManager } from "../contracts/contractManager";
 
 /**
