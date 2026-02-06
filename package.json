@@ -6,7 +6,10 @@
     "main": "./dist/cjs/index.js",
     "module": "./dist/esm/index.js",
     "types": "./dist/types/index.d.ts",
-    "sideEffects": false,
+    "sideEffects": [
+        "dist/esm/contracts/handlers/index.js",
+        "dist/cjs/contracts/handlers/index.js"
+    ],
     "exports": {
         ".": {
             "types": "./dist/types/index.d.ts",
