@@ -633,22 +633,16 @@ export class ContractManager implements IContractManager {
             return new Map();
         }
 
-        return await this.fetchContractVxosFromIndexer(
-            contracts,
-            false,
-            this.config.extendVtxo
-        );
+        return await this.fetchContractVxosFromIndexer(contracts, false);
     }
 
     private async fetchContractVxosFromIndexer(
         contracts: Contract[],
-        includeSpent: boolean,
-        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+        includeSpent: boolean
     ): Promise<Map<string, ContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
-            includeSpent,
-            extendVtxo
+            includeSpent
         );
         const result = new Map<string, ContractVtxo[]>();
         for (const [contractScript, vtxos] of fetched) {
@@ -666,8 +660,7 @@ export class ContractManager implements IContractManager {
 
     private async fetchContractVtxosBulk(
         contracts: Contract[],
-        includeSpent: boolean,
-        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+        includeSpent: boolean
     ): Promise<Map<string, ContractVtxo[]>> {
         const result = new Map<string, ContractVtxo[]>();
 
@@ -675,8 +668,7 @@ export class ContractManager implements IContractManager {
             contracts.map(async (contract) => {
                 const vtxos = await this.fetchContractVtxosPaginated(
                     contract,
-                    includeSpent,
-                    extendVtxo
+                    includeSpent
                 );
                 result.set(contract.script, vtxos);
             })
@@ -706,9 +698,7 @@ export class ContractManager implements IContractManager {
             });
 
             for (const vtxo of vtxos) {
-                const ext = extendVtxo
-                    ? extendVtxo(vtxo)
-                    : (vtxo as ExtendedVirtualCoin);
+                const ext = this.config.extendVtxo(vtxo);
 
                 allVtxos.push({
                     ...ext,
