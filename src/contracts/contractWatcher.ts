@@ -380,7 +380,19 @@ export class ContractWatcher {
             this.reconnectAttempts = 0;
 
             // Start listening
-            await this.listenLoop();
+            this.listenLoop().catch((e) => {
+                // This is handled asynchronously otherwise `connect()` would hang
+                // indefinitely and block the caller.
+                // Error management must be implemented to ensure the connection
+                // is restored and events are fired.
+                console.error(e);
+                this.connectionState = "disconnected";
+                this.eventCallback?.({
+                    type: "connection_reset",
+                    timestamp: Date.now(),
+                });
+                this.scheduleReconnect();
+            });
         } catch (error) {
             console.error("ContractWatcher connection failed:", error);
             this.connectionState = "disconnected";
