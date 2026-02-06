@@ -6,7 +6,7 @@ export const DEFAULT_DB_NAME = "arkade-service-worker";
  * @throws if service workers are not supported or activation fails
  * @example
  * ```typescript
- * const serviceWorker = await setupServiceWorker("/service-worker.js");
+ * const worker = await setupServiceWorker("/service-worker.js");
  * ```
  */
 export async function setupServiceWorker(path: string): Promise<ServiceWorker> {

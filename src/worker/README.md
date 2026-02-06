@@ -1,4 +1,4 @@
-# Service Worker Architecture
+# Worker Architecture
 
 This folder contains a small, message-driven Service Worker framework with a
 pluggable "updater" model. It is intentionally minimal: the service worker is
@@ -54,7 +54,7 @@ It can be registered inside your service worker entry script.
 
 ```ts
 // src/service-worker.ts
-import { Worker, IUpdater, RequestEnvelope, ResponseEnvelope } from "./serviceWorker/worker";
+import { Worker, IUpdater, RequestEnvelope, ResponseEnvelope } from "./worker/worker";
 
 type EchoRequest = RequestEnvelope & { payload?: string };
 type EchoResponse = ResponseEnvelope & { payload?: string };

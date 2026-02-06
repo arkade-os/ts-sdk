@@ -1,4 +1,4 @@
-import { Worker } from "../../src/serviceWorker/worker";
+import { MessageBus } from "../../src/worker/messageBus";
 import { WalletUpdater } from "../../src/wallet/serviceWorker/wallet";
 
 // ensure crypto is available in the service worker context
@@ -12,5 +12,5 @@ if (typeof crypto === "undefined" || !crypto.getRandomValues) {
     });
 }
 
-const sw = new Worker({ updaters: [new WalletUpdater()] });
+const sw = new MessageBus({ messageHandlers: [new WalletUpdater()] });
 sw.start();

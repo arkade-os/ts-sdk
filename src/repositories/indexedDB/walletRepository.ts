@@ -18,7 +18,7 @@ import {
 } from "./db";
 import { closeDatabase, openDatabase } from "../../db/manager";
 import { initDatabase } from "./schema";
-import { DEFAULT_DB_NAME } from "../../serviceWorker/utils";
+import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -115,6 +115,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
                 const promises = vtxos.map((vtxo) => {
                     return new Promise<void>((resolveItem, rejectItem) => {
+                        // TODO: this throwing because vtxo.tapTree is undefined. How's that possible?
                         const serialized: SerializedVtxo = serializeVtxo(vtxo);
                         const item = {
                             address,

@@ -1,9 +1,6 @@
 import { ContractFilter, ContractRepository } from "../contractRepository";
 import { Contract } from "../../contracts";
 
-const contractKey = (contractScript: string, key: string) =>
-    `contract:${contractScript}:${key}`;
-
 /**
  * In-memory implementation of ContractRepository.
  * Data is ephemeral and scoped to the instance.

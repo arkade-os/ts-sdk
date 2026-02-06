@@ -3,7 +3,13 @@
 import {
     getActiveServiceWorker,
     setupServiceWorkerOnce,
-} from "./service-worker-manager";
+} from "./browser/service-worker-manager";
+import { ArkProvider, RestArkProvider } from "../providers/ark";
+import { ReadonlySingleKey, SingleKey } from "../identity";
+import { ReadonlyWallet, Wallet } from "../wallet/wallet";
+import { hex } from "@scure/base";
+import { ContractRepository, WalletRepository } from "../repositories";
+import { getRandomId } from "../wallet/utils";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -19,7 +25,7 @@ export type ResponseEnvelope = {
     error?: Error;
     broadcast?: boolean;
 };
-export interface IUpdater<
+export interface MessageHandler<
     REQ extends RequestEnvelope = RequestEnvelope,
     RES extends ResponseEnvelope = ResponseEnvelope,
 > {
@@ -29,8 +35,22 @@ export interface IUpdater<
      */
     readonly messageTag: string;
 
-    /** Called once when the SW is starting up */
-    start(): Promise<void>;
+    /**
+     * Called once when the SW is starting up
+     * @param opts.arkProvider
+     * @param opts.wallet Wallet with signature cababilities
+     * @param opts.readonlyWallet Read-only Wallet
+     **/
+    start(
+        services: {
+            arkProvider: ArkProvider;
+            wallet?: Wallet;
+            readonlyWallet: ReadonlyWallet;
+        },
+        repositories: {
+            walletRepository: WalletRepository;
+        }
+    ): Promise<void>;
 
     /** Called once when the SW is shutting down */
     stop(): Promise<void>;
@@ -49,28 +69,94 @@ export interface IUpdater<
     handleMessage(message: REQ): Promise<RES | null>;
 }
 
-type WorkerOptions = {
-    updaters: IUpdater[];
+type Options = {
+    messageHandlers: MessageHandler[];
     tickIntervalMs?: number;
     debug?: boolean;
 };
 
-export class Worker {
-    private updaters: Map<string, IUpdater>;
+type Initialize = {
+    type: "INITIALIZE_MESSAGE_BUS";
+    id: string;
+    config: {
+        wallet:
+            | {
+                  privateKey: string;
+              }
+            | {
+                  publicKey: string;
+              };
+        arkServer: {
+            url: string;
+            publicKey?: string;
+        };
+    };
+};
+
+export class MessageBus {
+    private handlers: Map<string, MessageHandler>;
     private tickIntervalMs: number;
     private running = false;
     private tickTimeout: number | null = null;
     private tickInProgress = false;
     private debug = false;
+    private initialized = false;
 
-    constructor({
-        updaters,
-        tickIntervalMs = 10_000,
-        debug = false,
-    }: WorkerOptions) {
-        this.updaters = new Map(updaters.map((u) => [u.messageTag, u]));
+    constructor(
+        private readonly walletRepository: WalletRepository,
+        private readonly contractRepository: ContractRepository,
+        { messageHandlers, tickIntervalMs = 10_000, debug = false }: Options
+    ) {
+        this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
         this.debug = debug;
+    }
+
+    static async init(
+        serviceWorker: ServiceWorker,
+        configuration: {
+            key:
+                | {
+                      privateKey: string;
+                  }
+                | {
+                      publicKey: string;
+                  };
+            arkServerUrl: string;
+            arkServerPublicKey?: string;
+        }
+    ): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const initCmd = {
+                tag: "INITIALIZE_MESSAGE_BUS",
+                id: getRandomId(),
+                config: {
+                    wallet: configuration.key,
+                    arkServer: {
+                        url: configuration.arkServerUrl,
+                        publicKey: configuration.arkServerPublicKey,
+                    },
+                },
+            };
+            const messageHandler = (event: any) => {
+                console.log("temporary Message Handler", event);
+                const response = event.data;
+                if (initCmd.id !== response.id) {
+                    return;
+                }
+                navigator.serviceWorker.removeEventListener(
+                    "message",
+                    messageHandler
+                );
+                if (response.error) {
+                    reject(response.error);
+                } else {
+                    resolve(response);
+                }
+            };
+            navigator.serviceWorker.addEventListener("message", messageHandler);
+            serviceWorker.postMessage(initCmd);
+        });
     }
 
     async start() {
@@ -78,15 +164,8 @@ export class Worker {
         if (this.running) return;
         this.running = true;
 
-        // Start all updaters
-        for (const updater of this.updaters.values()) {
-            if (this.debug)
-                console.log(`Starting updater: ${updater.messageTag}`);
-            await updater.start();
-        }
-
         // Hook message routing
-        self.addEventListener("message", this.onMessage);
+        self.addEventListener("message", this.onMessage.bind(this));
 
         // activate service worker immediately
         self.addEventListener("install", () => {
@@ -94,12 +173,12 @@ export class Worker {
         });
         // take control of clients immediately
         self.addEventListener("activate", () => {
+            console.log(`event: activate ${this.initialized}`);
             self.clients.claim();
-            this.runTick();
+            if (this.initialized) {
+                this.runTick();
+            }
         });
-
-        // Kick off scheduler
-        this.scheduleNextTick();
     }
 
     async stop() {
@@ -111,10 +190,10 @@ export class Worker {
             this.tickTimeout = null;
         }
 
-        self.removeEventListener("message", this.onMessage);
+        self.removeEventListener("message", this.onMessage.bind(this));
 
         await Promise.all(
-            Array.from(this.updaters.values()).map((updater) => updater.stop())
+            Array.from(this.handlers.values()).map((updater) => updater.stop())
         );
     }
 
@@ -141,7 +220,7 @@ export class Worker {
         try {
             const now = Date.now();
 
-            for (const updater of this.updaters.values()) {
+            for (const updater of this.handlers.values()) {
                 try {
                     const response = await updater.tick(now);
                     if (this.debug)
@@ -181,8 +260,73 @@ export class Worker {
         }
     }
 
-    private onMessage = async (event: ExtendableMessageEvent) => {
+    private async waitForInit(config: Initialize["config"]) {
+        if (this.initialized) return;
+        console.log("Init command received");
+        const services = await this.buildServices(config);
+        // Start all handlers
+        for (const updater of this.handlers.values()) {
+            if (this.debug)
+                console.log(`Starting updater: ${updater.messageTag}`);
+            await updater.start(services, {
+                walletRepository: this.walletRepository,
+            });
+        }
+
+        // Kick off scheduler
+        console.log("schedule next tick!");
+        this.scheduleNextTick();
+        console.log("removing waitforinit");
+        // this.initialized = true;
+    }
+
+    private async buildServices(config: Initialize["config"]): Promise<{
+        arkProvider: ArkProvider;
+        wallet?: Wallet;
+        readonlyWallet: ReadonlyWallet;
+    }> {
+        const arkProvider = new RestArkProvider(config.arkServer.url);
+        const storage = {
+            walletRepository: this.walletRepository,
+            contractRepository: this.contractRepository,
+        };
+        if ("privateKey" in config.wallet) {
+            const identity = SingleKey.fromHex(config.wallet.privateKey);
+            const wallet = await Wallet.create({
+                identity,
+                arkServerUrl: config.arkServer.url,
+                arkServerPublicKey: config.arkServer.publicKey,
+                storage,
+            });
+            return { wallet, arkProvider, readonlyWallet: wallet };
+        } else if ("publicKey" in config.wallet) {
+            const identity = ReadonlySingleKey.fromPublicKey(
+                hex.decode(config.wallet.publicKey)
+            );
+            const readonlyWallet = await ReadonlyWallet.create({
+                identity,
+                arkServerUrl: config.arkServer.url,
+                arkServerPublicKey: config.arkServer.publicKey,
+                storage,
+            });
+            return { readonlyWallet, arkProvider };
+        } else {
+            throw new Error(
+                "Missing privateKey or publicKey in configuration object"
+            );
+        }
+    }
+
+    private async onMessage(event: ExtendableMessageEvent) {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
+        console.log(event.data);
+
+        if (!this.initialized && "config" in event.data) {
+            await this.waitForInit(event.data.config);
+            event.source?.postMessage({ id, tag });
+            console.log("initialized!!!");
+            return;
+        }
 
         if (!id || !tag) {
             console.error(
@@ -207,7 +351,7 @@ export class Worker {
         }
 
         if (broadcast) {
-            const updaters = Array.from(this.updaters.values());
+            const updaters = Array.from(this.handlers.values());
             const results = await Promise.allSettled(
                 updaters.map((updater) => updater.handleMessage(event.data))
             );
@@ -243,7 +387,7 @@ export class Worker {
             return;
         }
 
-        const updater = this.updaters.get(tag);
+        const updater = this.handlers.get(tag);
         if (!updater) {
             console.warn(
                 `[${tag}] unknown message tag '${tag}', ignoring message`
@@ -263,7 +407,7 @@ export class Worker {
             const error = err instanceof Error ? err : new Error(String(err));
             event.source?.postMessage({ id, tag, error });
         }
-    };
+    }
 
     /**
      * Returns the registered SW for the path.

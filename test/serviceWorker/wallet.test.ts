@@ -5,7 +5,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
 } from "../../src";
-import { WalletUpdater } from "../../src/wallet/serviceWorker/wallet-updater";
+import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
 
 type MessageHandler = (event: { data: any }) => void;
 
@@ -54,7 +54,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const { navigatorServiceWorker, serviceWorker } =
             createServiceWorkerHarness((message) => ({
                 id: message.id,
-                tag: WalletUpdater.messageTag,
+                tag: WalletMessageHandler.messageTag,
                 type: "ADDRESS",
                 payload: { address: "bc1-test" },
             }));
@@ -68,7 +68,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
-                tag: WalletUpdater.messageTag,
+                tag: WalletMessageHandler.messageTag,
                 type: "GET_ADDRESS",
             })
         );
@@ -81,7 +81,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const { navigatorServiceWorker, serviceWorker } =
             createServiceWorkerHarness((message) => ({
                 id: message.id,
-                tag: WalletUpdater.messageTag,
+                tag: WalletMessageHandler.messageTag,
                 type: "BOARDING_UTXOS",
                 payload: { utxos },
             }));
@@ -98,7 +98,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const { navigatorServiceWorker, serviceWorker } =
             createServiceWorkerHarness((message) => ({
                 id: message.id,
-                tag: WalletUpdater.messageTag,
+                tag: WalletMessageHandler.messageTag,
                 error: new Error("boom"),
             }));
 
@@ -122,49 +122,49 @@ describe("ServiceWorkerReadonlyWallet", () => {
                     case "CREATE_CONTRACT":
                         return {
                             id: message.id,
-                            tag: WalletUpdater.messageTag,
+                            tag: WalletMessageHandler.messageTag,
                             type: "CONTRACT_CREATED",
                             payload: { contract },
                         };
                     case "GET_CONTRACTS":
                         return {
                             id: message.id,
-                            tag: WalletUpdater.messageTag,
+                            tag: WalletMessageHandler.messageTag,
                             type: "CONTRACTS",
                             payload: { contracts },
                         };
                     case "GET_CONTRACTS_WITH_VTXOS":
                         return {
                             id: message.id,
-                            tag: WalletUpdater.messageTag,
+                            tag: WalletMessageHandler.messageTag,
                             type: "CONTRACTS_WITH_VTXOS",
                             payload: { contracts: contractsWithVtxos },
                         };
                     case "UPDATE_CONTRACT":
                         return {
                             id: message.id,
-                            tag: WalletUpdater.messageTag,
+                            tag: WalletMessageHandler.messageTag,
                             type: "CONTRACT_UPDATED",
                             payload: { contract },
                         };
                     case "DELETE_CONTRACT":
                         return {
                             id: message.id,
-                            tag: WalletUpdater.messageTag,
+                            tag: WalletMessageHandler.messageTag,
                             type: "CONTRACT_DELETED",
                             payload: { deleted: true },
                         };
                     case "GET_SPENDABLE_PATHS":
                         return {
                             id: message.id,
-                            tag: WalletUpdater.messageTag,
+                            tag: WalletMessageHandler.messageTag,
                             type: "SPENDABLE_PATHS",
                             payload: { paths },
                         };
                     case "IS_CONTRACT_MANAGER_WATCHING":
                         return {
                             id: message.id,
-                            tag: WalletUpdater.messageTag,
+                            tag: WalletMessageHandler.messageTag,
                             type: "CONTRACT_WATCHING",
                             payload: { isWatching: true },
                         };
@@ -203,7 +203,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
-                tag: WalletUpdater.messageTag,
+                tag: WalletMessageHandler.messageTag,
                 type: "CREATE_CONTRACT",
             })
         );
@@ -224,7 +224,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const unsubscribe = manager.onContractEvent(callback);
 
         emit({
-            tag: WalletUpdater.messageTag,
+            tag: WalletMessageHandler.messageTag,
             type: "CONTRACT_EVENT",
             payload: { event: { type: "connection_reset", timestamp: 1 } },
         });
@@ -236,7 +236,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         unsubscribe();
         emit({
-            tag: WalletUpdater.messageTag,
+            tag: WalletMessageHandler.messageTag,
             type: "CONTRACT_EVENT",
             payload: { event: { type: "connection_reset", timestamp: 2 } },
         });

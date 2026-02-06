@@ -7,10 +7,6 @@ import {
     isSubdust,
 } from ".";
 import { SettlementEvent } from "../providers/ark";
-import {
-    ContractManager,
-    IContractManager,
-} from "../contracts/contractManager";
 
 export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
@@ -275,8 +271,10 @@ export class VtxoManager {
         const dustAmount = getDustAmount(this.wallet);
 
         // Filter recoverable VTXOs and handle subdust logic
-        const { vtxosToRecover, includesSubdust, totalAmount } =
-            getRecoverableWithSubdust(allVtxos, dustAmount);
+        const { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(
+            allVtxos,
+            dustAmount
+        );
 
         if (vtxosToRecover.length === 0) {
             throw new Error("No recoverable VTXOs found");

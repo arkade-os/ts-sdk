@@ -5,11 +5,11 @@ import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
 import {
-    IUpdater,
+    MessageHandler,
     RequestEnvelope,
     ResponseEnvelope,
-    Worker,
-} from "./serviceWorker/worker";
+    MessageBus,
+} from "./worker/messageBus";
 import {
     VtxoScript,
     EncodedVtxoScript,
@@ -66,7 +66,7 @@ import {
     ServiceWorkerReadonlyWallet,
 } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
-import { setupServiceWorker } from "./serviceWorker/utils";
+import { setupServiceWorker } from "./worker/browser/utils";
 import {
     ESPLORA_URL,
     EsploraProvider,
@@ -199,7 +199,7 @@ import type {
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
 import { closeDatabase, openDatabase } from "./db/manager";
-import { WalletUpdater } from "./wallet/serviceWorker/wallet-updater";
+import { WalletMessageHandler } from "./wallet/serviceWorker/wallet-message-handler";
 
 export {
     // Wallets
@@ -231,8 +231,8 @@ export {
 
     // Service Worker
     setupServiceWorker,
-    Worker,
-    WalletUpdater,
+    MessageBus,
+    WalletMessageHandler,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
 
@@ -439,7 +439,7 @@ export type {
     VHTLCContractParams,
 
     // Service Worker types
-    IUpdater,
+    MessageHandler,
     RequestEnvelope,
     ResponseEnvelope,
 };

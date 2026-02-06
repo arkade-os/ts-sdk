@@ -13,7 +13,6 @@ import { VtxoScript } from "../script/base";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
 import { Wallet } from "./wallet";
 import { Transaction } from "../utils/transaction";
-import { OnchainWallet } from "./onchain";
 import { DUST_AMOUNT } from "./utils";
 
 export namespace Unroll {

@@ -1,10 +1,6 @@
-import {
-    ArkProvider,
-    RestArkProvider,
-    SettlementEvent,
-} from "../../providers/ark";
+import { ArkProvider, SettlementEvent } from "../../providers/ark";
 import { IndexerProvider, RestIndexerProvider } from "../../providers/indexer";
-import { ContractRepository, WalletRepository } from "../../repositories";
+import { WalletRepository } from "../../repositories";
 import type {
     Contract,
     ContractEvent,
@@ -30,15 +26,13 @@ import {
     SettleParams,
     WalletBalance,
 } from "../index";
-import { ReadonlySingleKey, SingleKey } from "../../identity";
-import { ReadonlyWallet, Wallet } from "../wallet";
-import { hex } from "@scure/base";
+import { Wallet } from "../wallet";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import {
-    IUpdater,
+    MessageHandler,
     RequestEnvelope,
     ResponseEnvelope,
-} from "../../serviceWorker/worker";
+} from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 
 export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
@@ -298,18 +292,17 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseContractEvent
     );
 
-export class WalletUpdater
-    implements IUpdater<WalletUpdaterRequest, WalletUpdaterResponse>
+export class WalletMessageHandler
+    implements MessageHandler<WalletUpdaterRequest, WalletUpdaterResponse>
 {
     readonly messageTag: string;
 
-    // declared as Readonly, it uses the flag and a helper function
-    // to run specific IWallet methods
-    private isReadonly = true;
-    private wallet: ReadonlyWallet | undefined;
+    private wallet: Wallet | undefined;
 
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
+    private walletRepository: WalletRepository | undefined;
+
     private incomingFundsSubscription: (() => void) | undefined;
     private contractEventsSubscription: (() => void) | undefined;
     private onNextTick: (() => WalletUpdaterResponse | null)[] = [];
@@ -323,17 +316,18 @@ export class WalletUpdater
      * @param contractRepository
      * @param options
      */
-    constructor(
-        private readonly walletRepository: WalletRepository,
-        private readonly contractRepository: ContractRepository,
-        options?: { messageTag?: string }
-    ) {
+    constructor(options?: { messageTag?: string }) {
         this.messageTag = options?.messageTag ?? DEFAULT_MESSAGE_TAG;
     }
 
     // lifecycle methods
-    async start() {
-        // TODO: load config from storage/db
+    async start(...params: Parameters<MessageHandler["start"]>): Promise<void> {
+        const [services, repositories] = params;
+        if (!services.wallet) throw new Error("Wallet is required");
+        // TODO: support readonly wallet
+        this.wallet = services.wallet;
+        this.arkProvider = services.arkProvider;
+        this.walletRepository = repositories.walletRepository;
     }
 
     async stop() {
@@ -576,51 +570,8 @@ export class WalletUpdater
 
     // Wallet methods
     private async handleInitWallet({ payload }: RequestInitWallet) {
-        const { arkServerPublicKey, arkServerUrl } = payload;
-        this.arkProvider = new RestArkProvider(arkServerUrl);
+        const { arkServerUrl } = payload;
         this.indexerProvider = new RestIndexerProvider(arkServerUrl);
-        const storage = {
-            walletRepository: this.walletRepository,
-            contractRepository: this.contractRepository,
-        };
-
-        if (
-            "privateKey" in payload.key &&
-            typeof payload.key.privateKey === "string"
-        ) {
-            this.isReadonly = false;
-            const {
-                key: { privateKey },
-            } = payload;
-            const identity = SingleKey.fromHex(privateKey);
-            this.wallet = await Wallet.create({
-                identity,
-                arkServerUrl,
-                arkServerPublicKey,
-                storage,
-            });
-        } else if (
-            "publicKey" in payload.key &&
-            typeof payload.key.publicKey === "string"
-        ) {
-            this.isReadonly = true;
-            const {
-                key: { publicKey },
-            } = payload;
-            const identity = ReadonlySingleKey.fromPublicKey(
-                hex.decode(publicKey)
-            );
-            this.wallet = await ReadonlyWallet.create({
-                identity,
-                arkServerUrl,
-                arkServerPublicKey,
-                storage,
-            });
-        } else {
-            throw new Error("Missing privateKey or publicKey in key object");
-        }
-
-        // TODO: check if can be blocking
         await this.onWalletInitialized();
     }
 
@@ -677,18 +628,15 @@ export class WalletUpdater
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
         if (!this.wallet) return [];
-        const address = await this.wallet.getBoardingAddress();
-
-        return await this.walletRepository.getUtxos(address);
+        return this.wallet.getBoardingUtxos();
     }
     /**
      * Get spendable vtxos for the current wallet address
      */
     private async getSpendableVtxos() {
         if (!this.wallet) return [];
-        const address = await this.wallet.getAddress();
-        const allVtxos = await this.walletRepository.getVtxos(address);
-        return allVtxos.filter(isSpendable);
+        const vtxos = await this.wallet.getVtxos();
+        return vtxos.filter(isSpendable);
     }
 
     /**
@@ -696,9 +644,8 @@ export class WalletUpdater
      */
     private async getSweptVtxos() {
         if (!this.wallet) return [];
-        const address = await this.wallet.getAddress();
-        const allVtxos = await this.walletRepository.getVtxos(address);
-        return allVtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
+        const vtxos = await this.wallet.getVtxos();
+        return vtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
     }
 
     private async onWalletInitialized() {
@@ -706,14 +653,13 @@ export class WalletUpdater
             !this.wallet ||
             !this.arkProvider ||
             !this.indexerProvider ||
-            !this.wallet.offchainTapscript ||
-            !this.wallet.boardingTapscript
+            !this.walletRepository
         ) {
             return;
         }
 
         // Get public key script and set the initial vtxos state
-        const script = hex.encode(this.wallet.offchainTapscript.pkScript);
+        const script = this.wallet.defaultContractScript;
         const response = await this.indexerProvider.getVtxos({
             scripts: [script],
         });
@@ -723,13 +669,11 @@ export class WalletUpdater
 
         try {
             // recover pending transactions if possible
-            const { pending, finalized } = await this.withWallet((w) =>
-                w.finalizePendingTxs(
-                    vtxos.filter(
-                        (vtxo) =>
-                            vtxo.virtualStatus.state !== "swept" &&
-                            vtxo.virtualStatus.state !== "settled"
-                    )
+            const { pending, finalized } = await this.wallet.finalizePendingTxs(
+                vtxos.filter(
+                    (vtxo) =>
+                        vtxo.virtualStatus.state !== "swept" &&
+                        vtxo.virtualStatus.state !== "settled"
                 )
             );
             console.info(
@@ -779,7 +723,7 @@ export class WalletUpdater
                     if ([...newVtxos, ...spentVtxos].length === 0) return;
 
                     // save vtxos using unified repository
-                    await this.walletRepository.saveVtxos(address, [
+                    await this.walletRepository?.saveVtxos(address, [
                         ...newVtxos,
                         ...spentVtxos,
                     ]);
@@ -804,7 +748,7 @@ export class WalletUpdater
                     // save utxos using unified repository
                     // TODO: remove UTXOS by address
                     //  await this.walletRepository.clearUtxos(boardingAddress);
-                    await this.walletRepository.saveUtxos(
+                    await this.walletRepository?.saveUtxos(
                         boardingAddress,
                         utxos
                     );
@@ -824,32 +768,19 @@ export class WalletUpdater
         await this.ensureContractEventBroadcasting();
     }
 
-    private async getAllVtxos() {
-        if (!this.wallet) return { spendable: [], spent: [] };
-        const address = await this.wallet.getAddress();
-        const allVtxos = await this.walletRepository.getVtxos(address);
-
-        return {
-            spendable: allVtxos.filter(isSpendable),
-            spent: allVtxos.filter((vtxo) => !isSpendable(vtxo)),
-        };
-    }
-
     private async handleSettle(message: RequestSettle) {
         if (!this.wallet) {
             throw new Error("Wallet handler not initialized");
         }
-        const txid = await this.withWallet((w) =>
-            w.settle(message.payload.params, (e) => {
-                this.scheduleForNextTick(() =>
-                    this.tagged({
-                        id: message.id,
-                        type: "SETTLE_EVENT",
-                        payload: e,
-                    })
-                );
-            })
-        );
+        const txid = await this.wallet.settle(message.payload.params, (e) => {
+            this.scheduleForNextTick(() =>
+                this.tagged({
+                    id: message.id,
+                    type: "SETTLE_EVENT",
+                    payload: e,
+                })
+            );
+        });
 
         if (!txid) {
             throw new Error("Settlement failed");
@@ -861,9 +792,7 @@ export class WalletUpdater
         if (!this.wallet) {
             throw new Error("Wallet handler not initialized");
         }
-        const txid = await this.withWallet((w) =>
-            w.sendBitcoin(message.payload)
-        );
+        const txid = await this.wallet.sendBitcoin(message.payload);
         if (!txid) {
             throw new Error("Send bitcoin failed");
         }
@@ -878,9 +807,7 @@ export class WalletUpdater
             throw new Error("Wallet handler not initialized");
         }
         const { tx, inputIndexes } = message.payload;
-        const signature = await this.withWallet((w) =>
-            w.identity.sign(tx, inputIndexes)
-        );
+        const signature = await this.wallet.identity.sign(tx, inputIndexes);
         if (!signature) {
             throw new Error("Sign transaction failed");
         }
@@ -924,9 +851,8 @@ export class WalletUpdater
             this.contractEventsSubscription = undefined;
         }
 
-        // Clear page-side storage to maintain parity with SW
         try {
-            await this.walletRepository.clear();
+            await this.walletRepository?.clear();
         } catch (_) {
             console.warn("Failed to clear vtxos from wallet repository");
         }
@@ -955,14 +881,5 @@ export class WalletUpdater
         } catch (error) {
             console.error("Error subscribing to contract events:", error);
         }
-    }
-
-    private async withWallet<T>(
-        fn: (wallet: Wallet) => Promise<T>
-    ): Promise<T> {
-        if (this.isReadonly) {
-            throw new Error("Cannot execute action on read-only wallet");
-        }
-        return fn(this.wallet as Wallet);
     }
 }

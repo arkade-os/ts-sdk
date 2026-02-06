@@ -3,7 +3,7 @@ import {
     getActiveServiceWorker,
     setupServiceWorkerOnce,
     __resetServiceWorkerManager,
-} from "../src/serviceWorker/service-worker-manager";
+} from "../src/worker/browser/service-worker-manager";
 
 const stubNavigator = (serviceWorker: Partial<ServiceWorkerContainer>) => {
     vi.stubGlobal("navigator", { serviceWorker } as Navigator);

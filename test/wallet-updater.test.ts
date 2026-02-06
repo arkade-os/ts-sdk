@@ -2,8 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import {
     DEFAULT_MESSAGE_TAG,
-    WalletUpdater,
-} from "../src/wallet/serviceWorker/wallet-updater";
+    WalletMessageHandler,
+} from "../src/wallet/serviceWorker/wallet-message-handler";
 import { InMemoryContractRepository, InMemoryWalletRepository } from "../src";
 
 const baseMessage = (id: string = "1") => ({
@@ -12,10 +12,10 @@ const baseMessage = (id: string = "1") => ({
 });
 
 describe("WalletUpdater handleMessage", () => {
-    let updater: WalletUpdater;
+    let updater: WalletMessageHandler;
 
     beforeEach(() => {
-        updater = new WalletUpdater(
+        updater = new WalletMessageHandler(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository()
         );
