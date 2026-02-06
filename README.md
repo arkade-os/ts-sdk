@@ -111,6 +111,92 @@ const readonlyWallet = await ReadonlyWallet.create({
 })
 ```
 
+### HD Wallet Identity (SeedIdentity)
+
+The SDK supports HD wallet derivation from BIP39 mnemonic phrases or raw seeds using BIP86 (Taproot) paths. This provides a standard way to derive keys that can be restored across different wallets.
+
+#### Creating from Mnemonic
+
+```typescript
+import { SeedIdentity, Wallet } from '@arkade-os/sdk'
+
+// Create identity from a 12 or 24 word mnemonic
+const identity = SeedIdentity.fromMnemonic(
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+  { isMainnet: true }
+)
+
+// With optional passphrase for additional security
+const identityWithPassphrase = SeedIdentity.fromMnemonic(mnemonic, {
+  isMainnet: true,
+  passphrase: 'my secret passphrase'
+})
+
+// Create wallet as usual
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+```
+
+#### Creating from Raw Seed
+
+```typescript
+import { SeedIdentity } from '@arkade-os/sdk'
+import { mnemonicToSeedSync } from '@scure/bip39'
+
+// If you already have a 64-byte seed
+const seed = mnemonicToSeedSync(mnemonic)
+const identity = SeedIdentity.fromSeed(seed, { isMainnet: true })
+```
+
+#### Serialization and Restoration
+
+SeedIdentity serializes to JSON with an output descriptor for interoperability:
+
+```typescript
+// Serialize to JSON
+const json = identity.toJSON()
+// {"mnemonic":"abandon...", "descriptor":"tr([fingerprint/86'/0'/0']xpub.../0/*)"}
+
+// Store securely, then restore later
+const restored = SeedIdentity.fromJSON(json)
+```
+
+The descriptor uses standard BIP86 format:
+- Mainnet: `tr([fingerprint/86'/0'/0']xpub.../0/*)`
+- Testnet: `tr([fingerprint/86'/1'/0']xpub.../0/*)`
+
+#### Watch-Only with ReadonlySeedIdentity
+
+Create watch-only wallets from an output descriptor:
+
+```typescript
+import { SeedIdentity, ReadonlySeedIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+
+// From a full identity
+const identity = SeedIdentity.fromMnemonic(mnemonic, { isMainnet: true })
+const readonly = await identity.toReadonly()
+
+// Or directly from a descriptor (e.g., from another wallet)
+const descriptor = "tr([12345678/86'/0'/0']xpub.../0/*)"
+const readonlyFromDescriptor = ReadonlySeedIdentity.fromDescriptor(descriptor)
+
+// Use in a watch-only wallet
+const readonlyWallet = await ReadonlyWallet.create({
+  identity: readonly,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+
+// Can query but not sign
+const balance = await readonlyWallet.getBalance()
+```
+
+**Derivation Path:** `m/86'/{coinType}'/0'/0/0`
+- BIP86 (Taproot) purpose
+- Coin type 0 for mainnet, 1 for testnet
+- Account 0, external chain, first address
+
 **Benefits:**
 - ✅ Type-safe: Transaction methods don't exist on readonly types
 - ✅ Secure: Private keys never leave the signing environment
