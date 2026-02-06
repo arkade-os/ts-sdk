@@ -73,6 +73,11 @@ type Options = {
     messageHandlers: MessageHandler[];
     tickIntervalMs?: number;
     debug?: boolean;
+    buildServices?: (config: Initialize["config"]) => Promise<{
+        arkProvider: ArkProvider;
+        wallet?: Wallet;
+        readonlyWallet: ReadonlyWallet;
+    }>;
 };
 
 type Initialize = {
@@ -101,62 +106,28 @@ export class MessageBus {
     private tickInProgress = false;
     private debug = false;
     private initialized = false;
+    private readonly buildServicesFn: (
+        config: Initialize["config"]
+    ) => Promise<{
+        arkProvider: ArkProvider;
+        wallet?: Wallet;
+        readonlyWallet: ReadonlyWallet;
+    }>;
 
     constructor(
         private readonly walletRepository: WalletRepository,
         private readonly contractRepository: ContractRepository,
-        { messageHandlers, tickIntervalMs = 10_000, debug = false }: Options
+        {
+            messageHandlers,
+            tickIntervalMs = 10_000,
+            debug = false,
+            buildServices,
+        }: Options
     ) {
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
         this.debug = debug;
-    }
-
-    static async init(
-        serviceWorker: ServiceWorker,
-        configuration: {
-            key:
-                | {
-                      privateKey: string;
-                  }
-                | {
-                      publicKey: string;
-                  };
-            arkServerUrl: string;
-            arkServerPublicKey?: string;
-        }
-    ): Promise<void> {
-        return new Promise((resolve, reject) => {
-            const initCmd = {
-                tag: "INITIALIZE_MESSAGE_BUS",
-                id: getRandomId(),
-                config: {
-                    wallet: configuration.key,
-                    arkServer: {
-                        url: configuration.arkServerUrl,
-                        publicKey: configuration.arkServerPublicKey,
-                    },
-                },
-            };
-            const messageHandler = (event: any) => {
-                console.log("temporary Message Handler", event);
-                const response = event.data;
-                if (initCmd.id !== response.id) {
-                    return;
-                }
-                navigator.serviceWorker.removeEventListener(
-                    "message",
-                    messageHandler
-                );
-                if (response.error) {
-                    reject(response.error);
-                } else {
-                    resolve(response);
-                }
-            };
-            navigator.serviceWorker.addEventListener("message", messageHandler);
-            serviceWorker.postMessage(initCmd);
-        });
+        this.buildServicesFn = buildServices ?? this.buildServices.bind(this);
     }
 
     async start() {
@@ -184,6 +155,7 @@ export class MessageBus {
     async stop() {
         this.running = false;
         this.tickInProgress = false;
+        this.initialized = false;
 
         if (this.tickTimeout !== null) {
             self.clearTimeout(this.tickTimeout);
@@ -223,11 +195,11 @@ export class MessageBus {
             for (const updater of this.handlers.values()) {
                 try {
                     const response = await updater.tick(now);
-                    if (this.debug)
-                        console.log(
-                            `[${updater.messageTag}] outgoing tick response:`,
-                            response
-                        );
+                    // if (this.debug)
+                    //     console.log(
+                    //         `[${updater.messageTag}] outgoing tick response:`,
+                    //         response
+                    //     );
                     if (response && response.length > 0) {
                         console.log(
                             `[${updater.messageTag}] tick result`,
@@ -262,8 +234,7 @@ export class MessageBus {
 
     private async waitForInit(config: Initialize["config"]) {
         if (this.initialized) return;
-        console.log("Init command received");
-        const services = await this.buildServices(config);
+        const services = await this.buildServicesFn(config);
         // Start all handlers
         for (const updater of this.handlers.values()) {
             if (this.debug)
@@ -274,10 +245,8 @@ export class MessageBus {
         }
 
         // Kick off scheduler
-        console.log("schedule next tick!");
         this.scheduleNextTick();
-        console.log("removing waitforinit");
-        // this.initialized = true;
+        this.initialized = true;
     }
 
     private async buildServices(config: Initialize["config"]): Promise<{
@@ -319,13 +288,25 @@ export class MessageBus {
 
     private async onMessage(event: ExtendableMessageEvent) {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
-        console.log(event.data);
+        console.log(`-- ${tag} incoming, is initialized? ${this.initialized} `);
 
-        if (!this.initialized && "config" in event.data) {
+        if (tag === "INITIALIZE_MESSAGE_BUS") {
+            if (this.debug) {
+                console.log("Init Command received");
+            }
             await this.waitForInit(event.data.config);
             event.source?.postMessage({ id, tag });
-            console.log("initialized!!!");
+            if (this.debug) {
+                console.log("MessageBus initialized");
+            }
             return;
+        }
+
+        if (!this.initialized) {
+            console.warn(
+                "Event received before initialization, dropping ",
+                event.data
+            );
         }
 
         if (!id || !tag) {

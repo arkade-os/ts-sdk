@@ -5,6 +5,10 @@ import {
     type RequestEnvelope,
     type ResponseEnvelope,
 } from "../../src/worker/messageBus";
+import {
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
+} from "../../src";
 
 type TestUpdater = MessageHandler<RequestEnvelope, ResponseEnvelope>;
 
@@ -84,7 +88,11 @@ describe("Worker", () => {
             handleMessage,
         };
 
-        const sw = new MessageBus({ messageHandlers: [updater] });
+        const sw = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            { messageHandlers: [updater] }
+        );
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -116,7 +124,11 @@ describe("Worker", () => {
             handleMessage,
         };
 
-        const sw = new MessageBus({ messageHandlers: [updater] });
+        const sw = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            { messageHandlers: [updater] }
+        );
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -130,31 +142,70 @@ describe("Worker", () => {
         expect(source.postMessage).not.toHaveBeenCalled();
     });
 
-    it("keeps a single scheduled tick while rescheduling", async () => {
-        const { selfMock, activeTimeouts } = createSelfMock();
+    it("handles init message", async () => {
+        vi.useFakeTimers();
+
+        const { selfMock, activeTimeouts, listeners } = createSelfMock();
         vi.stubGlobal("self", selfMock as any);
 
         const updater: TestUpdater = {
             messageTag: "wallet",
-            start: vi.fn().mockResolvedValue(undefined),
+            start: vi.fn().mockResolvedValue([]),
             stop: vi.fn().mockResolvedValue(undefined),
             tick: vi.fn().mockResolvedValue([]),
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new MessageBus({
-            messageHandlers: [updater],
-            tickIntervalMs: 10,
-        });
+        const config = {
+            wallet: {
+                privateKey:
+                    "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
+            },
+            arkServer: {
+                url: "initConfig.arkServerUrl",
+                publicKey: "initConfig.arkServerPublicKey",
+            },
+        };
+
+        const buildServicesSpy = vi.fn(async () => ({
+            arkProvider: {} as any,
+            readonlyWallet: {} as any,
+        }));
+        const walletRepository = new InMemoryWalletRepository();
+        const sw = new MessageBus(
+            walletRepository,
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [updater],
+                tickIntervalMs: 10,
+                buildServices: buildServicesSpy,
+            }
+        );
         await sw.start();
 
-        const [firstId] = Array.from(activeTimeouts);
-        expect(activeTimeouts.size).toBe(1);
+        const messageHandlers = listeners.get("message") || [];
+        expect(messageHandlers.length).toBe(1);
 
-        await (sw as any).runTick();
+        const source = { postMessage: vi.fn() };
+        await messageHandlers[0]({
+            data: {
+                tag: "INITIALIZE_MESSAGE_BUS",
+                id: "abc-def",
+                config,
+            },
+            source,
+        });
 
-        expect(selfMock.clearTimeout).toHaveBeenCalledWith(firstId);
-        expect(activeTimeouts.size).toBe(1);
+        vi.advanceTimersByTime(2000);
+
+        expect(buildServicesSpy).toHaveBeenCalledExactlyOnceWith(config);
+        expect(updater.start).toHaveBeenCalledExactlyOnceWith(
+            {
+                arkProvider: {},
+                readonlyWallet: {},
+            },
+            { walletRepository }
+        );
     });
 
     it("prevents concurrent tick runs", async () => {
@@ -174,7 +225,11 @@ describe("Worker", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new MessageBus({ messageHandlers: [updater] });
+        const sw = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            { messageHandlers: [updater] }
+        );
         await sw.start();
 
         const firstRun = (sw as any).runTick();
@@ -205,7 +260,11 @@ describe("Worker", () => {
             handleMessage: vi.fn().mockResolvedValue({ tag: "b", id: "1" }),
         };
 
-        const sw = new MessageBus({ messageHandlers: [updaterA, updaterB] });
+        const sw = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            { messageHandlers: [updaterA, updaterB] }
+        );
         await sw.start();
 
         const messageHandlers = listeners.get("message") || [];
@@ -239,7 +298,13 @@ describe("Worker", () => {
             handleMessage: vi.fn().mockResolvedValue(null),
         };
 
-        const sw = new MessageBus({ messageHandlers: [updater] });
+        const sw = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [updater],
+            }
+        );
         await sw.start();
         await (sw as any).runTick();
 

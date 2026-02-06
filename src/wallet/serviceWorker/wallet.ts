@@ -258,6 +258,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
+            console.log("[wallet] sending message ", request.type);
             this.serviceWorker.postMessage(request);
         });
     }
@@ -676,7 +677,45 @@ export class ServiceWorkerWallet
             arkServerPublicKey: options.arkServerPublicKey,
         };
 
-        const r = await MessageBus.init(options.serviceWorker, initConfig);
+        const r = await Promise.race([
+            new Promise((resolve, reject) => {
+                const initCmd = {
+                    tag: "INITIALIZE_MESSAGE_BUS",
+                    id: getRandomId(),
+                    config: {
+                        wallet: initConfig.key,
+                        arkServer: {
+                            url: initConfig.arkServerUrl,
+                            publicKey: initConfig.arkServerPublicKey,
+                        },
+                    },
+                };
+                const messageHandler = (event: any) => {
+                    console.log("temporary Message Handler", event);
+                    const response = event.data;
+                    if (initCmd.id !== response.id) {
+                        return;
+                    }
+                    navigator.serviceWorker.removeEventListener(
+                        "message",
+                        messageHandler
+                    );
+                    if (response.error) {
+                        reject(response.error);
+                    } else {
+                        resolve(response);
+                    }
+                };
+                navigator.serviceWorker.addEventListener(
+                    "message",
+                    messageHandler
+                );
+                options.serviceWorker.postMessage(initCmd);
+            }),
+            new Promise((resolve, reject) =>
+                setTimeout(() => reject("MessageBus timed out!"), 2000)
+            ),
+        ]);
         console.log("Message bus ready! ", r);
 
         // Initialize the service worker with the config
@@ -689,6 +728,8 @@ export class ServiceWorkerWallet
 
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
+
+        console.log("Wallet ready! ", r);
 
         return wallet;
     }
