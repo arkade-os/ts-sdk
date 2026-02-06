@@ -1,6 +1,11 @@
 import { RelativeTimelock } from "../../script/tapscript";
 import * as bip68 from "bip68";
 import { Contract, PathContext } from "../types";
+import {
+    isDescriptor,
+    extractPubKey,
+    normalizeToDescriptor,
+} from "../../identity/descriptor";
 
 /**
  * Convert RelativeTimelock to BIP68 sequence number.
@@ -28,7 +33,22 @@ export function sequenceToTimelock(sequence: number): RelativeTimelock {
 }
 
 /**
- * Resolve wallet's role from explicit role or by matching pubkey.
+ * Extract the raw pubkey from a value (descriptor or hex).
+ * Used for role matching.
+ */
+function extractRawPubKey(value: string): string {
+    if (isDescriptor(value)) {
+        return extractPubKey(value);
+    }
+    return value;
+}
+
+/**
+ * Resolve wallet's role from explicit role or by matching pubkey/descriptor.
+ *
+ * Checks both walletDescriptor (preferred) and walletPubKey (deprecated fallback)
+ * against contract params. Contract params may be stored as either descriptors
+ * or raw hex pubkeys, so we normalize both for comparison.
  */
 export function resolveRole(
     contract: Contract,
@@ -39,14 +59,32 @@ export function resolveRole(
         return context.role;
     }
 
-    // Try to match wallet pubkey against contract params
-    if (context.walletPubKey) {
-        if (context.walletPubKey === contract.params.sender) {
-            return "sender";
-        }
-        if (context.walletPubKey === contract.params.receiver) {
-            return "receiver";
-        }
+    // Get wallet's pubkey from descriptor or legacy field
+    let walletPubKey: string | undefined;
+    if (context.walletDescriptor) {
+        walletPubKey = extractRawPubKey(context.walletDescriptor);
+    } else if (context.walletPubKey) {
+        // Deprecated fallback
+        walletPubKey = context.walletPubKey;
+    }
+
+    if (!walletPubKey) {
+        return undefined;
+    }
+
+    // Extract pubkeys from contract params (may be descriptors or raw hex)
+    const senderPubKey = contract.params.sender
+        ? extractRawPubKey(contract.params.sender)
+        : undefined;
+    const receiverPubKey = contract.params.receiver
+        ? extractRawPubKey(contract.params.receiver)
+        : undefined;
+
+    if (senderPubKey && walletPubKey === senderPubKey) {
+        return "sender";
+    }
+    if (receiverPubKey && walletPubKey === receiverPubKey) {
+        return "receiver";
     }
 
     return undefined;
