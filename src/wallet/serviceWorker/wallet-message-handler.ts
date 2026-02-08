@@ -545,6 +545,17 @@ export class WalletMessageHandler
                         payload: { paths },
                     });
                 }
+                case "GET_ALL_SPENDING_PATHS": {
+                    const manager = await this.wallet.getContractManager();
+                    const paths = await manager.getAllSpendingPaths(
+                        message.payload.options
+                    );
+                    return this.tagged({
+                        id,
+                        type: "ALL_SPENDING_PATHS",
+                        payload: { paths },
+                    });
+                }
                 case "IS_CONTRACT_MANAGER_WATCHING": {
                     const manager = await this.wallet.getContractManager();
                     const isWatching = await manager.isWatching();
