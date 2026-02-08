@@ -258,7 +258,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
-            console.log("[wallet] sending message ", request.type);
             this.serviceWorker.postMessage(request);
         });
     }
@@ -691,7 +690,6 @@ export class ServiceWorkerWallet
                     },
                 };
                 const messageHandler = (event: any) => {
-                    console.log("temporary Message Handler", event);
                     const response = event.data;
                     if (initCmd.id !== response.id) {
                         return;
@@ -716,8 +714,6 @@ export class ServiceWorkerWallet
                 setTimeout(() => reject("MessageBus timed out!"), 2000)
             ),
         ]);
-        console.log("Message bus ready! ", r);
-
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
             tag: messageTag,
@@ -728,8 +724,6 @@ export class ServiceWorkerWallet
 
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
-
-        console.log("Wallet ready! ", r);
 
         return wallet;
     }

@@ -4,21 +4,16 @@ import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
-import { InMemoryContractRepository, InMemoryWalletRepository } from "../src";
-
 const baseMessage = (id: string = "1") => ({
     id,
     tag: DEFAULT_MESSAGE_TAG,
 });
 
-describe("WalletUpdater handleMessage", () => {
+describe("WalletMessageHandler handleMessage", () => {
     let updater: WalletMessageHandler;
 
     beforeEach(() => {
-        updater = new WalletMessageHandler(
-            new InMemoryWalletRepository(),
-            new InMemoryContractRepository()
-        );
+        updater = new WalletMessageHandler();
     });
 
     const init = () =>

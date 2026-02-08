@@ -311,10 +311,6 @@ export class WalletMessageHandler
      * Instantiate a new WalletUpdater.
      * Can override the default `messageTag` allowing more than one updater to run in parallel.
      * Note that the default ServiceWorkerWallet sends messages to the default WalletUpdater tag.
-     *
-     * @param walletRepository
-     * @param contractRepository
-     * @param options
      */
     constructor(options?: { messageTag?: string }) {
         this.messageTag = options?.messageTag ?? DEFAULT_MESSAGE_TAG;
@@ -370,7 +366,6 @@ export class WalletMessageHandler
         message: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         const id = message.id;
-        // console.log(`[${this.messageTag}] handleMessage`, message);
         if (message.type === "INIT_WALLET") {
             await this.handleInitWallet(message);
             return this.tagged({

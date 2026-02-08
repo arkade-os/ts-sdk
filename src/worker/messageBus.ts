@@ -131,9 +131,9 @@ export class MessageBus {
     }
 
     async start() {
-        console.log("Starting service worker...");
         if (this.running) return;
         this.running = true;
+        if (this.debug) console.log("MessageBus starting");
 
         // Hook message routing
         self.addEventListener("message", this.onMessage.bind(this));
@@ -144,7 +144,6 @@ export class MessageBus {
         });
         // take control of clients immediately
         self.addEventListener("activate", () => {
-            console.log(`event: activate ${this.initialized}`);
             self.clients.claim();
             if (this.initialized) {
                 this.runTick();
@@ -153,6 +152,7 @@ export class MessageBus {
     }
 
     async stop() {
+        if (this.debug) console.log("MessageBus stopping");
         this.running = false;
         this.tickInProgress = false;
         this.initialized = false;
@@ -195,16 +195,12 @@ export class MessageBus {
             for (const updater of this.handlers.values()) {
                 try {
                     const response = await updater.tick(now);
-                    // if (this.debug)
-                    //     console.log(
-                    //         `[${updater.messageTag}] outgoing tick response:`,
-                    //         response
-                    //     );
-                    if (response && response.length > 0) {
+                    if (this.debug)
                         console.log(
-                            `[${updater.messageTag}] tick result`,
+                            `[${updater.messageTag}] outgoing tick response:`,
                             response
                         );
+                    if (response && response.length > 0) {
                         self.clients
                             .matchAll({
                                 includeUncontrolled: true,
@@ -212,10 +208,6 @@ export class MessageBus {
                             })
                             .then((clients) => {
                                 for (const message of response) {
-                                    if (message.broadcast)
-                                        console.log(
-                                            `[${updater.messageTag}] broadcasting to ${clients.length} clients: ${message.id}`
-                                        );
                                     clients.forEach((client) => {
                                         client.postMessage(message);
                                     });
@@ -223,7 +215,11 @@ export class MessageBus {
                             });
                     }
                 } catch (err) {
-                    console.error(`[${updater.messageTag}] tick failed`, err);
+                    if (this.debug)
+                        console.error(
+                            `[${updater.messageTag}] tick failed`,
+                            err
+                        );
                 }
             }
         } finally {
@@ -288,7 +284,6 @@ export class MessageBus {
 
     private async onMessage(event: ExtendableMessageEvent) {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
-        console.log(`-- ${tag} incoming, is initialized? ${this.initialized} `);
 
         if (tag === "INITIALIZE_MESSAGE_BUS") {
             if (this.debug) {
@@ -303,17 +298,19 @@ export class MessageBus {
         }
 
         if (!this.initialized) {
-            console.warn(
-                "Event received before initialization, dropping ",
-                event.data
-            );
+            if (this.debug)
+                console.warn(
+                    "Event received before initialization, dropping",
+                    event.data
+                );
         }
 
         if (!id || !tag) {
-            console.error(
-                "Invalid message received, missing required fields:",
-                event.data
-            );
+            if (this.debug)
+                console.error(
+                    "Invalid message received, missing required fields:",
+                    event.data
+                );
             event.source?.postMessage({
                 id,
                 tag: tag ?? "unknown",
@@ -322,13 +319,6 @@ export class MessageBus {
                 ),
             });
             return;
-        }
-
-        if (this.debug) {
-            console.log(
-                `[${tag}] incoming ${broadcast ? "broadcast " : ""}message:`,
-                event.data
-            );
         }
 
         if (broadcast) {
@@ -341,19 +331,15 @@ export class MessageBus {
                 const updater = updaters[index];
                 if (result.status === "fulfilled") {
                     const response = result.value;
-                    if (this.debug)
-                        console.log(
-                            `[${updater.messageTag}] outgoing response:`,
-                            response
-                        );
                     if (response) {
                         event.source?.postMessage(response);
                     }
                 } else {
-                    console.error(
-                        `[${updater.messageTag}] handleMessage failed`,
-                        result.reason
-                    );
+                    if (this.debug)
+                        console.error(
+                            `[${updater.messageTag}] handleMessage failed`,
+                            result.reason
+                        );
                     const error =
                         result.reason instanceof Error
                             ? result.reason
@@ -370,9 +356,8 @@ export class MessageBus {
 
         const updater = this.handlers.get(tag);
         if (!updater) {
-            console.warn(
-                `[${tag}] unknown message tag '${tag}', ignoring message`
-            );
+            if (this.debug)
+                console.warn(`[${tag}] unknown message tag, ignoring message`);
             return;
         }
 
@@ -384,7 +369,7 @@ export class MessageBus {
                 event.source?.postMessage(response);
             }
         } catch (err) {
-            console.error(`[${tag}] handleMessage failed`, err);
+            if (this.debug) console.error(`[${tag}] handleMessage failed`, err);
             const error = err instanceof Error ? err : new Error(String(err));
             event.source?.postMessage({ id, tag, error });
         }
