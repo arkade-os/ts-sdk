@@ -37,6 +37,7 @@ describe("ContractWatcher", () => {
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
             state: "active",
+            layer: "offchain",
             createdAt: Date.now(),
         };
 
@@ -56,6 +57,7 @@ describe("ContractWatcher", () => {
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
             state: "inactive",
+            layer: "offchain",
             createdAt: Date.now(),
         };
 
@@ -72,6 +74,7 @@ describe("ContractWatcher", () => {
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
             state: "active",
+            layer: "offchain",
             createdAt: Date.now(),
         };
         await watcher.addContract(contract);
@@ -89,6 +92,7 @@ describe("ContractWatcher", () => {
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
             state: "active",
+            layer: "offchain",
             createdAt: Date.now(),
         };
         await watcher.addContract(contract);
@@ -112,6 +116,7 @@ describe("ContractWatcher", () => {
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
             state: "active",
+            layer: "offchain",
             createdAt: Date.now(),
         };
         await watcher.addContract(contract);

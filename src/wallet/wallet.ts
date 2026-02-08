@@ -40,7 +40,7 @@ import {
     isRecoverable,
     isSpendable,
     isSubdust,
-    IWallet,
+    ISingleKeyWallet,
     ReadonlyWalletConfig,
     SendBitcoinParams,
     SettleParams,
@@ -668,6 +668,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
+            onchainProvider: this.onchainProvider,
             extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
             getDefaultAddress: () => this.getAddress(),
             watcherConfig: this.watcherConfig,
@@ -690,6 +691,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             },
             script: this.defaultContractScript,
             address: await this.getAddress(),
+            layer: "offchain",
             state: "active",
         });
 
@@ -730,7 +732,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * });
  * ```
  */
-export class Wallet extends ReadonlyWallet implements IWallet {
+export class Wallet extends ReadonlyWallet implements ISingleKeyWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;

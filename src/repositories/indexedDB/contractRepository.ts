@@ -106,6 +106,16 @@ export class IndexedDBContractRepository implements ContractRepository {
                 return this.applyContractFilter(contracts, normalizedFilter);
             }
 
+            // by layer, still an index
+            if (normalizedFilter.has("layer")) {
+                const contracts = await this.getContractsByIndexValues(
+                    store,
+                    "layer",
+                    normalizedFilter.get("layer")!
+                );
+                return this.applyContractFilter(contracts, normalizedFilter);
+            }
+
             // any other filtering happens in-memory
             const allContracts = await new Promise<Contract[]>(
                 (resolve, reject) => {
@@ -207,6 +217,11 @@ export class IndexedDBContractRepository implements ContractRepository {
                 !filter.get("type")?.includes(contract.type)
             )
                 return false;
+            if (
+                filter.has("layer") &&
+                !filter.get("layer")?.includes(contract.layer)
+            )
+                return false;
             return true;
         }) as Contract[];
     }
@@ -224,7 +239,12 @@ export class IndexedDBContractRepository implements ContractRepository {
     }
 }
 
-const FILTER_FIELDS = ["script", "state", "type"] as (keyof ContractFilter)[];
+const FILTER_FIELDS = [
+    "script",
+    "state",
+    "type",
+    "layer",
+] as (keyof ContractFilter)[];
 
 // Transform all filter fields into an array of values
 function normalizeFilter(filter: ContractFilter) {

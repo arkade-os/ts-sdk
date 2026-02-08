@@ -17,3 +17,27 @@ export interface ReadonlyIdentity {
 }
 
 export * from "./singleKey";
+export { SeedIdentity, ReadonlySeedIdentity } from "./seedIdentity";
+export type {
+    SeedIdentityOptions,
+    MnemonicOptions,
+    SigningRequest,
+} from "./seedIdentity";
+
+// Descriptor utilities
+export {
+    isDescriptor,
+    normalizeToDescriptor,
+    extractPubKey,
+    parseHDDescriptor,
+} from "./descriptor";
+export type { ParsedHDDescriptor } from "./descriptor";
+
+// Descriptor provider interface
+export type {
+    DescriptorProvider,
+    DescriptorSigningRequest,
+} from "./descriptorProvider";
+
+// Static descriptor provider (wrapper for legacy Identity)
+export { StaticDescriptorProvider } from "./staticDescriptorProvider";

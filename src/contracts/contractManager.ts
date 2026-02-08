@@ -1,5 +1,6 @@
 import { hex } from "@scure/base";
 import { IndexerProvider } from "../providers/indexer";
+import { OnchainProvider } from "../providers/onchain";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -184,6 +185,12 @@ export interface ContractManagerConfig {
     /** The wallet repository for VTXO storage (single source of truth) */
     walletRepository: WalletRepository;
 
+    /**
+     * The onchain provider for watching onchain UTXOs.
+     * Required for contracts with layer "onchain" or "both".
+     */
+    onchainProvider?: OnchainProvider;
+
     /** Function to extend VirtualCoin to ExtendedVirtualCoin */
     extendVtxo: (vtxo: VirtualCoin) => ExtendedVirtualCoin;
 
@@ -251,9 +258,11 @@ export class ContractManager implements IContractManager {
         this.config = config;
 
         // Create watcher with wallet repository for VTXO caching
+        // and onchain provider for watching onchain UTXOs
         this.watcher = new ContractWatcher({
             indexerProvider: config.indexerProvider,
             walletRepository: config.walletRepository,
+            onchainProvider: config.onchainProvider,
             ...config.watcherConfig,
         });
     }

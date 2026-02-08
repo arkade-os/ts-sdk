@@ -111,11 +111,154 @@ const readonlyWallet = await ReadonlyWallet.create({
 })
 ```
 
+### HD Wallet Identity (SeedIdentity)
+
+The SDK supports HD wallet derivation from BIP39 mnemonic phrases or raw seeds using BIP86 (Taproot) paths. This provides a standard way to derive keys that can be restored across different wallets.
+
+#### Creating from Mnemonic
+
+```typescript
+import { SeedIdentity, Wallet } from '@arkade-os/sdk'
+
+// Create identity from a 12 or 24 word mnemonic
+const identity = SeedIdentity.fromMnemonic(
+  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
+  { isMainnet: true }
+)
+
+// With optional passphrase for additional security
+const identityWithPassphrase = SeedIdentity.fromMnemonic(mnemonic, {
+  isMainnet: true,
+  passphrase: 'my secret passphrase'
+})
+
+// Create wallet as usual
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+```
+
+#### Creating from Raw Seed
+
+```typescript
+import { SeedIdentity } from '@arkade-os/sdk'
+import { mnemonicToSeedSync } from '@scure/bip39'
+
+// If you already have a 64-byte seed
+const seed = mnemonicToSeedSync(mnemonic)
+const identity = SeedIdentity.fromSeed(seed, { isMainnet: true })
+```
+
+#### Serialization and Restoration
+
+SeedIdentity serializes to JSON with an output descriptor for interoperability:
+
+```typescript
+// Serialize to JSON
+const json = identity.toJSON()
+// {"mnemonic":"abandon...", "descriptor":"tr([fingerprint/86'/0'/0']xpub.../0/*)"}
+
+// Store securely, then restore later
+const restored = SeedIdentity.fromJSON(json)
+```
+
+The descriptor uses standard BIP86 format:
+- Mainnet: `tr([fingerprint/86'/0'/0']xpub.../0/*)`
+- Testnet: `tr([fingerprint/86'/1'/0']xpub.../0/*)`
+
+#### Watch-Only with ReadonlySeedIdentity
+
+Create watch-only wallets from an output descriptor:
+
+```typescript
+import { SeedIdentity, ReadonlySeedIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+
+// From a full identity
+const identity = SeedIdentity.fromMnemonic(mnemonic, { isMainnet: true })
+const readonly = await identity.toReadonly()
+
+// Or directly from a descriptor (e.g., from another wallet)
+const descriptor = "tr([12345678/86'/0'/0']xpub.../0/*)"
+const readonlyFromDescriptor = ReadonlySeedIdentity.fromDescriptor(descriptor)
+
+// Use in a watch-only wallet
+const readonlyWallet = await ReadonlyWallet.create({
+  identity: readonly,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+
+// Can query but not sign
+const balance = await readonlyWallet.getBalance()
+```
+
+**Derivation Path:** `m/86'/{coinType}'/0'/0/0`
+- BIP86 (Taproot) purpose
+- Coin type 0 for mainnet, 1 for testnet
+- Account 0, external chain, first address
+
 **Benefits:**
 - ✅ Type-safe: Transaction methods don't exist on readonly types
 - ✅ Secure: Private keys never leave the signing environment
 - ✅ Flexible: Convert between full and readonly wallets as needed
 - ✅ Same API: Query operations work identically on both wallet types
+
+### HD Wallet (Multi-Address Support)
+
+For applications that need multiple addresses from a single seed, use `HDWallet` with `SeedIdentity`:
+
+```typescript
+import { HDWallet, SeedIdentity } from '@arkade-os/sdk'
+
+// Create HD identity from mnemonic
+const identity = SeedIdentity.fromMnemonic(mnemonic, { isMainnet: false })
+
+// Create HD wallet
+const wallet = await HDWallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+})
+
+// Get addresses at different derivation indexes
+const addr0 = await wallet.getAddresses(0) // First address
+const addr1 = await wallet.getAddresses(1) // Second address
+
+console.log('Address 0:', addr0.ark)       // Ark address
+console.log('Boarding 0:', addr0.boarding) // Boarding address
+console.log('Descriptor:', addr0.descriptor) // tr([fp/86'/1'/0']xpub/0/0)
+```
+
+#### HD Wallet Balance Model
+
+The HD wallet provides a detailed balance breakdown by spend path:
+
+```typescript
+const balance = await wallet.getBalance()
+
+// Aggregate totals
+console.log('Total:', balance.total)
+console.log('Spendable:', balance.spendable) // Can be used now
+
+// Breakdown by spend path
+console.log('Instant send:', balance.offchainSpendable) // Ark transfers
+console.log('Via batch:', balance.batchSpendable)       // Needs batch round
+console.log('Onchain only:', balance.onchainSpendable)  // Unilateral exit
+console.log('Locked:', balance.locked)                  // Not spendable yet
+
+// Per-contract breakdown
+for (const contract of balance.contracts) {
+  console.log(`${contract.type}: ${contract.spendable} sats (${contract.coinCount} coins)`)
+}
+```
+
+**Spend Path Categories:**
+
+| Category | Description | Example |
+|----------|-------------|---------|
+| `offchainSpendable` | Instant Ark transfers | Settled/preconfirmed VTXOs |
+| `batchSpendable` | Requires batch round | Swept VTXOs, confirmed boarding |
+| `onchainSpendable` | Requires unilateral exit | Expired batch, must withdraw onchain |
+| `locked` | Not spendable yet | Unconfirmed boarding, active timelocks |
 
 ### Receiving Bitcoin
 
@@ -700,3 +843,4 @@ pnpm release:cleanup
 ## License
 
 MIT
+# trigger

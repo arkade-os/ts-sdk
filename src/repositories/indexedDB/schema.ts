@@ -8,7 +8,7 @@ export const STORE_CONTRACTS = "contracts";
 // @deprecated use only for migrations, this is created in V1
 export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 
 export function initDatabase(db: IDBDatabase): void {
     // Create wallet stores
@@ -154,6 +154,11 @@ export function initDatabase(db: IDBDatabase): void {
         }
         if (!contractsStore.indexNames.contains("state")) {
             contractsStore.createIndex("state", "state", {
+                unique: false,
+            });
+        }
+        if (!contractsStore.indexNames.contains("layer")) {
+            contractsStore.createIndex("layer", "layer", {
                 unique: false,
             });
         }

@@ -1,6 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
-import { Identity, ReadonlyIdentity } from "../identity";
+import { DescriptorProvider, Identity, ReadonlyIdentity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { RenewalConfig } from "./vtxo-manager";
@@ -260,22 +260,25 @@ export type GetVtxosFilter = {
 };
 
 /**
- * Core wallet interface for Bitcoin transactions with Ark protocol support.
- *
- * This interface defines the contract that all wallet implementations must follow.
- * It provides methods for address management, balance checking, virtual UTXO
- * operations, and transaction management including sending, settling, and unrolling.
+ * Single-key wallet interface (current behavior).
+ * Uses one fixed keypair for all operations.
+ * Maintains backwards compatibility with existing WalletBalance type.
  */
-export interface IWallet extends IReadonlyWallet {
+export interface ISingleKeyWallet extends IBaseWallet {
     identity: Identity;
 
-    // Transaction operations
-    sendBitcoin(params: SendBitcoinParams): Promise<string>;
-    settle(
-        params?: SettleParams,
-        eventCallback?: (event: SettlementEvent) => void
-    ): Promise<string>;
+    // Single address (implicit index 0)
+    getAddress(): Promise<string>;
+    getBoardingAddress(): Promise<string>;
+
+    // Original balance format (non-breaking change)
+    getBalance(): Promise<WalletBalance>;
 }
+
+/**
+ * @deprecated Use ISingleKeyWallet instead. This alias is provided for backwards compatibility.
+ */
+export type IWallet = ISingleKeyWallet;
 
 /**
  * Readonly wallet interface for Bitcoin transactions with Ark protocol support.
@@ -300,4 +303,124 @@ export interface IReadonlyWallet {
      * This is useful for querying contract state and watching for contract events.
      */
     getContractManager(): Promise<IContractManager>;
+}
+
+/**
+ * Address information at a specific HD derivation index.
+ */
+export interface AddressInfo {
+    /** Ark address for receiving offchain funds */
+    ark: string;
+
+    /** Boarding address for onchain-to-offchain transitions */
+    boarding: string;
+
+    /** Signing descriptor: tr([fp/86'/coinType'/0']xpub/0/{index}) */
+    descriptor: string;
+
+    /** The derivation index */
+    index: number;
+}
+
+/**
+ * Balance summary for a contract.
+ *
+ * Categorizes coins by their available spend paths:
+ * - offchainSpendable: Can send instantly via Ark offchain transfer
+ * - batchSpendable: Can spend via batch (swept VTXOs, confirmed boarding, subdust)
+ * - onchainSpendable: Can only spend via onchain tx (expired, requires unilateral exit)
+ * - locked: Not spendable yet (unconfirmed boarding, active timelocks)
+ */
+export interface ContractBalance {
+    /** Contract type (e.g., "default", "vhtlc", "boarding") */
+    type: string;
+
+    /** Contract script (unique identifier) */
+    script: string;
+
+    /** Can spend instantly via offchain send (settled/preconfirmed VTXOs) */
+    offchainSpendable: number;
+
+    /** Can spend via batch only (swept VTXOs, confirmed boarding, subdust) */
+    batchSpendable: number;
+
+    /** Can only spend via onchain tx (expired batch, requires unilateral exit) */
+    onchainSpendable: number;
+
+    /** Not spendable yet (unconfirmed boarding, active timelocks) */
+    locked: number;
+
+    /** Total spendable (offchainSpendable + batchSpendable + onchainSpendable) */
+    spendable: number;
+
+    /** Total balance */
+    total: number;
+
+    /** Number of coins */
+    coinCount: number;
+}
+
+/**
+ * HD Wallet balance structure.
+ *
+ * Provides a unified view of balance across all contracts with spend path categories:
+ * - offchainSpendable: Instant Ark transfers
+ * - batchSpendable: Requires joining a batch round
+ * - onchainSpendable: Requires onchain withdrawal (unilateral exit)
+ * - locked: Awaiting confirmation or timelock
+ */
+export interface HDWalletBalance {
+    /** Balance by contract */
+    contracts: ContractBalance[];
+
+    /** Can spend instantly via offchain send */
+    offchainSpendable: number;
+
+    /** Can spend via batch only */
+    batchSpendable: number;
+
+    /** Can only spend via onchain tx (unilateral exit) */
+    onchainSpendable: number;
+
+    /** Not spendable yet */
+    locked: number;
+
+    /** Total spendable (offchain + batch + onchain) */
+    spendable: number;
+
+    /** Grand total */
+    total: number;
+}
+
+/**
+ * Base wallet interface - shared by both single-key and HD wallets.
+ * No identity field here - that's implementation-specific.
+ */
+export interface IBaseWallet {
+    // Query operations
+    getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
+    getBoardingUtxos(): Promise<ExtendedCoin[]>;
+    getTransactionHistory(): Promise<ArkTransaction[]>;
+    getContractManager(): Promise<IContractManager>;
+
+    // Transaction operations (same signature for both wallet types)
+    sendBitcoin(params: SendBitcoinParams): Promise<string>;
+    settle(
+        params?: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string>;
+}
+
+/**
+ * HD wallet interface - multiple addresses, descriptor-based signing.
+ * Identity must implement DescriptorProvider for HD key derivation.
+ */
+export interface IHDWallet extends IBaseWallet {
+    identity: Identity & DescriptorProvider;
+
+    // Multi-address operations
+    getAddresses(index: number): Promise<AddressInfo>;
+
+    // New balance format (contract-based, unified model)
+    getBalance(): Promise<HDWalletBalance>;
 }

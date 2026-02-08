@@ -6,7 +6,10 @@ import {
     ContractHandler,
     PathContext,
     PathSelection,
+    WalletDescriptorInfo,
 } from "../types";
+import type { DescriptorProvider } from "../../identity";
+import { normalizeToDescriptor } from "../../identity/descriptor";
 import {
     isCsvSpendable,
     resolveRole,
@@ -221,16 +224,25 @@ export const VHTLCContractHandler: ContractHandler<
         const refundLocktime = BigInt(contract.params.refundLocktime);
         const currentTimeSec = Math.floor(context.currentTime / 1000);
 
+        // Determine the descriptor based on role
+        // Sender and receiver are stored as hex pubkeys, normalize to descriptors
+        const descriptor =
+            role === "sender"
+                ? normalizeToDescriptor(contract.params.sender)
+                : normalizeToDescriptor(contract.params.receiver);
+
         if (context.collaborative) {
             if (role === "receiver" && preimage) {
                 paths.push({
                     leaf: script.claim(),
                     extraWitness: [hex.decode(preimage)],
+                    descriptor,
                 });
             }
             if (role === "sender" && BigInt(currentTimeSec) >= refundLocktime) {
                 paths.push({
                     leaf: script.refundWithoutReceiver(),
+                    descriptor,
                 });
             }
             return paths;
@@ -243,6 +255,7 @@ export const VHTLCContractHandler: ContractHandler<
                     leaf: script.unilateralClaim(),
                     extraWitness: [hex.decode(preimage)],
                     sequence,
+                    descriptor,
                 });
             }
         }
@@ -252,10 +265,44 @@ export const VHTLCContractHandler: ContractHandler<
                 paths.push({
                     leaf: script.unilateralRefundWithoutReceiver(),
                     sequence,
+                    descriptor,
                 });
             }
         }
 
         return paths;
+    },
+
+    getWalletDescriptors(
+        contract: Contract,
+        identity: DescriptorProvider
+    ): WalletDescriptorInfo[] {
+        const result: WalletDescriptorInfo[] = [];
+
+        // Sender and receiver are stored as hex pubkeys, normalize to descriptors
+        const sender = contract.params.sender
+            ? normalizeToDescriptor(contract.params.sender)
+            : undefined;
+        const receiver = contract.params.receiver
+            ? normalizeToDescriptor(contract.params.receiver)
+            : undefined;
+
+        if (sender && identity.isOurs(sender)) {
+            result.push({
+                descriptor: sender,
+                role: "sender",
+                pathNames: ["refund", "unilateralRefund"],
+            });
+        }
+
+        if (receiver && identity.isOurs(receiver)) {
+            result.push({
+                descriptor: receiver,
+                role: "receiver",
+                pathNames: ["claim", "unilateralClaim"],
+            });
+        }
+
+        return result;
     },
 };

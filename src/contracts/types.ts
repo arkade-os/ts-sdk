@@ -2,11 +2,20 @@ import { Bytes } from "@scure/btc-signer/utils.js";
 import { TapLeafScript, VtxoScript } from "../script/base";
 import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
 import { ContractFilter } from "../repositories";
+import type { DescriptorProvider } from "../identity";
 
 /**
  * Contract state indicating whether it should be actively monitored.
  */
 export type ContractState = "active" | "inactive";
+
+/**
+ * Indicates where the contract's coins can exist.
+ * - "onchain": Bitcoin UTXOs only (watched via esplora/onchain provider)
+ * - "offchain": Ark VTXOs only (watched via indexer)
+ * - "both": Can receive both onchain UTXOs and offchain VTXOs
+ */
+export type ContractLayer = "onchain" | "offchain" | "both";
 
 /**
  * Represents a contract that can receive and manage VTXOs.
@@ -31,7 +40,7 @@ export type ContractState = "active" | "inactive";
  *     // ... timelocks
  *   },
  *   script: "5120...",
- *   address: "tark1...",
+ *   layer: "offchain",
  *   state: "active",
  *   createdAt: 1704067200000,
  * };
@@ -58,8 +67,20 @@ export interface Contract {
     /** The pkScript hex - unique identifier and primary key for contracts */
     script: string;
 
-    /** The address derived from the script */
+    /**
+     * The address for receiving funds to this contract.
+     * - For offchain contracts: Ark address (tark1.../ark1...)
+     * - For onchain contracts: Bitcoin address (tb1p.../bc1p...)
+     */
     address: string;
+
+    /**
+     * Where the contract's coins can exist.
+     * - "onchain": Bitcoin UTXOs only (boarding addresses)
+     * - "offchain": Ark VTXOs only (default for most contracts)
+     * - "both": Can receive both (e.g., when VTXOs may be unrolled)
+     */
+    layer: ContractLayer;
 
     /** Current state of the contract */
     state: ContractState;
@@ -96,6 +117,23 @@ export interface PathSelection {
 
     /** Sequence number override (for CSV timelocks) */
     sequence?: number;
+
+    /** Descriptor to use for signing this path */
+    descriptor?: string;
+}
+
+/**
+ * A wallet's descriptor associated with specific spending paths.
+ */
+export interface WalletDescriptorInfo {
+    /** The descriptor for signing */
+    descriptor: string;
+
+    /** Role in the contract (for multi-party contracts) */
+    role?: string;
+
+    /** Which paths this descriptor is used for */
+    pathNames: string[]; // e.g., ["claim", "refund"] or ["forfeit", "exit"]
 }
 
 /**
@@ -112,8 +150,16 @@ export interface PathContext {
     blockHeight?: number;
 
     /**
-     * Wallet's public key (x-only, 32 bytes hex).
+     * Wallet's descriptor for signing.
+     * Format: tr(pubkey) for static keys, tr([fingerprint/path']xpub/0/{index}) for HD.
      * Used by handlers to determine wallet's role in multi-party contracts.
+     */
+    walletDescriptor?: string;
+
+    /**
+     * Wallet's public key (x-only, 32 bytes hex).
+     * @deprecated Use walletDescriptor instead. This field is provided for
+     * backwards compatibility and will be removed in a future version.
      */
     walletPubKey?: string;
 
@@ -210,6 +256,36 @@ export interface ContractHandler<
         contract: Contract,
         context: PathContext
     ): PathSelection[];
+
+    /**
+     * Get all wallet descriptors from contract params.
+     * Returns all descriptors that belong to the wallet, along with
+     * which paths they're used for.
+     *
+     * @param contract - The contract
+     * @param identity - DescriptorProvider to check ownership
+     * @returns Array of wallet's descriptors with path info
+     */
+    getWalletDescriptors(
+        contract: Contract,
+        identity: DescriptorProvider
+    ): WalletDescriptorInfo[];
+}
+
+/**
+ * Onchain coin associated with a contract.
+ */
+export interface ContractCoin {
+    /** The contract script this coin belongs to */
+    contractScript: string;
+    /** Transaction ID */
+    txid: string;
+    /** Output index */
+    vout: number;
+    /** Value in satoshis */
+    value: number;
+    /** Confirmation status */
+    confirmed: boolean;
 }
 
 /**
@@ -227,6 +303,20 @@ export type ContractEvent =
           type: "vtxo_spent";
           contractScript: string;
           vtxos: ContractVtxo[];
+          contract: Contract;
+          timestamp: number;
+      }
+    | {
+          type: "coin_received";
+          contractScript: string;
+          coins: ContractCoin[];
+          contract: Contract;
+          timestamp: number;
+      }
+    | {
+          type: "coin_confirmed";
+          contractScript: string;
+          coins: ContractCoin[];
           contract: Contract;
           timestamp: number;
       }

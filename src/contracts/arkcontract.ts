@@ -145,6 +145,7 @@ export function contractFromArkContract(
         label: options.label,
         type: parsed.type,
         params,
+        layer: "offchain", // arkcontract strings are always offchain
         state: options.state || "active",
         createdAt: Date.now(),
         expiresAt: options.expiresAt,
@@ -184,6 +185,7 @@ export function contractFromArkContractWithAddress(
         params,
         script: hex.encode(vtxoScript.pkScript),
         address: vtxoScript.address(addressPrefix, serverPubKey).encode(),
+        layer: "offchain", // arkcontract strings are always offchain
         state: options.state || "active",
         createdAt: Date.now(),
         expiresAt: options.expiresAt,
