@@ -337,35 +337,59 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-Use the modular service worker with the wallet updater:
+The SDK provides a `MessageBus` orchestrator that runs inside a service worker
+and routes messages to pluggable `MessageHandler`s. The built-in
+`WalletMessageHandler` exposes all wallet operations over this message bus, and
+`ServiceWorkerWallet` is a client-side proxy that communicates with it
+transparently.
 
-```typescript
-// app.ts
-import { ServiceWorkerWallet } from '@arkade-os/sdk';
-
-await ServiceWorkerWallet.setup('/service-worker.js');
-
-const serviceWorker = await ServiceWorkerWallet.getServiceWorker();
-
-const address = await ServiceWorkerWallet.getAddress() // runs in the SW
-```
-
-Basic service worker file:
+#### Service worker file
 
 ```javascript
 // service-worker.js
-import { Worker, WalletUpdater } from '@arkade-os/sdk'
+import {
+  MessageBus,
+  WalletMessageHandler,
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository,
+} from '@arkade-os/sdk'
 
-const walletUpdater = new WalletUpdater(new IndexedDBWalletRepository(), new IndexedDBContractRepository())
-const worker = new Worker({
-   updaters: [walletUpdater],
-   tickIntervalMs: 2000, // defaults to 10s
+const walletRepo = new IndexedDBWalletRepository()
+const contractRepo = new IndexedDBContractRepository()
+
+const bus = new MessageBus(walletRepo, contractRepo, {
+  messageHandlers: [new WalletMessageHandler()],
+  tickIntervalMs: 10_000, // default 10s
 })
-worker.start().catch(console.error)
+
+bus.start()
 ```
 
-See `src/serviceWorker/README.md` for architecture details, trade-offs, and
-custom updater examples.
+#### Client-side usage
+
+```typescript
+// app.ts
+import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
+
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+// One-liner: registers the SW, initializes the MessageBus, and creates the wallet
+const wallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity,
+})
+
+// Use like any other wallet — calls are proxied to the service worker
+const address = await wallet.getAddress()
+const balance = await wallet.getBalance()
+```
+
+For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
+`ReadonlySingleKey` identity instead.
+
+See `src/worker/README.md` for architecture details, trade-offs, and custom
+message handler examples.
 
 
 ### Repositories (Storage)

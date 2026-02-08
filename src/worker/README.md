@@ -1,65 +1,78 @@
 # Worker Architecture
 
-This folder contains a small, message-driven Service Worker framework with a
-pluggable "updater" model. It is intentionally minimal: the service worker is
-only responsible for lifecycle wiring, message routing, and a periodic scheduler.
-Business logic lives in updaters.
+This folder contains a message-driven Service Worker framework built around the
+`MessageBus` orchestrator and pluggable `MessageHandler`s. The message bus handles
+lifecycle wiring, message routing, and a periodic tick scheduler. Business logic
+lives in message handlers.
 
 ## Files and Responsibilities
 
-- `worker.ts`
-  - Defines `IUpdater` and the `Worker` orchestrator.
-  - Registers `install`/`activate` hooks, message routing, and a tick scheduler.
-  - Runs each updater on `start()` and `tick()`, and forwards responses to clients.
-- `service-worker-manager.ts`
+- `messageBus.ts`
+  - Defines `MessageHandler`, `RequestEnvelope`, `ResponseEnvelope`, and the
+    `MessageBus` orchestrator.
+  - Registers `install`/`activate` hooks, message routing (by `tag`), and a tick
+    scheduler.
+  - Manages lazy initialization: handlers are not started until the client sends
+    an `INITIALIZE_MESSAGE_BUS` message with wallet/server configuration.
+  - Provides static helpers `MessageBus.setup()` and
+    `MessageBus.getServiceWorker()` for client-side registration.
+- `browser/service-worker-manager.ts`
   - Browser-side helper for registering a service worker once per path.
-  - Provides `getActiveServiceWorker()` for a ready instance.
-- `utils.ts`
+  - Caches registration promises so subsequent calls reuse the same worker.
+  - Provides `setupServiceWorkerOnce()` and `getActiveServiceWorker()`.
+- `browser/utils.ts`
   - A simpler, one-off `setupServiceWorker()` helper that registers and waits
-    for activation.
+    for activation with a timeout.
 
 ## Runtime Flow
 
-1. The page registers the service worker (via `service-worker-manager.ts` or
-   `utils.ts`).
-2. The service worker calls `Worker.start()`, which:
-   - Starts each updater with `start()`.
-   - Hooks `install` (calls `skipWaiting()`) and `activate` (calls `clients.claim()`).
-   - Starts the periodic tick loop.
-3. Clients post messages to the service worker. `Worker` routes them by `tag`
-   (the updater's `messageTag`) or broadcasts to all updaters.
-4. Updaters can respond immediately (via `handleMessage`) or later (via `tick`).
+1. The page registers the service worker (via `MessageBus.setup()` or the
+   helpers in `browser/`).
+2. Inside the service worker, create a `MessageBus` with message handlers and
+   call `start()`. This hooks `install` (calls `skipWaiting()`) and `activate`
+   (calls `clients.claim()`).
+3. The client sends an `INITIALIZE_MESSAGE_BUS` message with wallet and Ark
+   server configuration. The `MessageBus` builds services (wallet, provider)
+   and calls `start()` on each handler, then begins the tick loop.
+4. Subsequent client messages are routed by `tag` (the handler's `messageTag`)
+   or broadcast to all handlers.
+5. Handlers can respond immediately (via `handleMessage`) or later (via `tick`).
    Responses are posted back to clients.
 
-## Trade-Offs of the Current Solution
+## MessageHandler Interface
 
-- **Polling-based updates**: The tick loop uses `setTimeout`. This is simple but
-  not push-based; updates arrive at most every `tickIntervalMs` (default 30s).
-- **No persistence**: Updater state is in-memory. If the browser kills the
-  service worker, state is lost unless the updater persists it elsewhere.
+Each handler implements the `MessageHandler` interface:
+
+- `messageTag` — unique string used to route messages to this handler.
+- `start(services, repositories)` — called once after initialization with the
+  wallet, Ark provider, and repositories.
+- `stop()` — called on shutdown.
+- `tick(now)` — called periodically; returns responses to broadcast to clients.
+- `handleMessage(message)` — handles a routed message and returns a response.
+
+## Trade-Offs
+
+- **Polling-based updates**: The tick loop uses `setTimeout`. Updates arrive at
+  most every `tickIntervalMs` (default 10s).
+- **No persistence**: Handler state is in-memory. If the browser kills the
+  service worker, state is lost unless the handler persists it elsewhere.
 - **Minimal lifecycle hooks**: Only `install` and `activate` are used. There is
   no `fetch`, `sync`, or `push` integration.
 - **Broadcast granularity**: Broadcast responses are sent to all window clients.
   There is no per-client filtering or backpressure management.
-- **Simple error handling**: Errors are logged and a stringified error response
-  is posted. There is no retry or structured error schema.
 
-These trade-offs keep the worker small and predictable but may limit
-responsiveness or robustness for more complex scenarios.
+## Quick Example
 
-## Quick Example: Creating Your Own Updater
-
-Below is a minimal updater that echoes messages and emits a periodic heartbeat.
-It can be registered inside your service worker entry script.
+Below is a minimal handler that echoes messages and emits a periodic heartbeat.
 
 ```ts
-// src/service-worker.ts
-import { Worker, IUpdater, RequestEnvelope, ResponseEnvelope } from "./worker/worker";
+// Inside your service worker entry script
+import { MessageBus, MessageHandler, RequestEnvelope, ResponseEnvelope } from "./worker/messageBus";
 
 type EchoRequest = RequestEnvelope & { payload?: string };
 type EchoResponse = ResponseEnvelope & { payload?: string };
 
-class EchoUpdater implements IUpdater<EchoRequest, EchoResponse> {
+class EchoHandler implements MessageHandler<EchoRequest, EchoResponse> {
     readonly messageTag = "echo";
 
     async start() {
@@ -70,7 +83,7 @@ class EchoUpdater implements IUpdater<EchoRequest, EchoResponse> {
         // Clean up resources.
     }
 
-    async tick(): Promise<EchoResponse[]> {
+    async tick(_now: number): Promise<EchoResponse[]> {
         return [
             {
                 tag: this.messageTag,
@@ -90,25 +103,38 @@ class EchoUpdater implements IUpdater<EchoRequest, EchoResponse> {
     }
 }
 
-const worker = new Worker({
-    updaters: [new EchoUpdater()],
+const bus = new MessageBus(walletRepository, contractRepository, {
+    messageHandlers: [new EchoHandler()],
     tickIntervalMs: 10_000,
     debug: true,
 });
 
-worker.start();
+bus.start();
 ```
 
-On the client, you can post a message with the updater's `messageTag`:
+On the client side:
 
 ```ts
-// Client-side
-const sw = await Worker.getServiceWorker("/service-worker.js");
+const sw = await MessageBus.setup("/service-worker.js");
+
+// Initialize the message bus with wallet config
+sw.postMessage({
+    type: "INITIALIZE_MESSAGE_BUS",
+    id: "init-1",
+    tag: "INITIALIZE_MESSAGE_BUS",
+    config: {
+        wallet: { privateKey: "..." },
+        arkServer: { url: "https://..." },
+    },
+});
+
+// Send a message to the echo handler
 sw.postMessage({ tag: "echo", id: "req-1", payload: "hello" });
 ```
 
 Notes:
-- Each updater must provide a unique `messageTag`.
-- The `id` is used to correlate responses to requests.
-- If you set `broadcast: true`, the `Worker` will forward the message or response
-  to all window clients.
+- Each handler must provide a unique `messageTag`.
+- The `id` field correlates responses to requests.
+- Set `broadcast: true` on a request to fan it out to all handlers.
+- The `MessageBus` must receive `INITIALIZE_MESSAGE_BUS` before handlers process
+  messages; earlier messages are dropped with a warning.
