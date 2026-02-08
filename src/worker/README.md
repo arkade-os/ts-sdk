@@ -138,3 +138,69 @@ Notes:
 - Set `broadcast: true` on a request to fan it out to all handlers.
 - The `MessageBus` must receive `INITIALIZE_MESSAGE_BUS` before handlers process
   messages; earlier messages are dropped with a warning.
+
+## Planned: Platform-Agnostic Background Processing
+
+The `MessageHandler` interface and envelope types (`RequestEnvelope`,
+`ResponseEnvelope`) are already platform-agnostic — they are pure TypeScript
+types with no Service Worker runtime dependency. The `MessageBus` class,
+however, is tied to the SW global (`self`, `clients.matchAll`, etc.).
+
+The next step is to support platforms where service workers are not available,
+starting with Expo/React Native. The approach reuses the same handler pattern
+while swapping the orchestrator and communication layer.
+
+### Expo Background Tasks — Inbox/Outbox Model
+
+Expo background tasks have different constraints than service workers:
+
+- **Short-lived**: the OS wakes the app every ~15 minutes for a brief window.
+- **No concurrent foreground/background**: the two never run simultaneously.
+- **No message API**: communication happens through shared persistence only.
+
+The planned design introduces two new abstractions:
+
+- **`TaskQueue`** — a persistence layer (inbox + outbox) backed by AsyncStorage
+  (or InMemory for tests). The foreground writes tasks to the inbox; the
+  background reads them, executes, and writes results to the outbox; the
+  foreground reads results on resume.
+- **`TaskProcessor`** — a stateless unit that knows how to execute one type of
+  task (e.g. `contract-poll`, `vtxo-renewal`). Receives dependencies
+  (providers, repositories) at call time.
+
+Two components sit on top of these:
+
+| Component | Role |
+|---|---|
+| `TaskQueueHandler` | Implements `MessageHandler`. On `tick()`, reads the inbox, delegates to the appropriate `TaskProcessor`, persists results to the outbox, and returns broadcast responses. |
+| `ExpoBackgroundService` | Client-facing proxy. Manages the Expo BackgroundTask lifecycle, builds providers from persisted config on wake-up, runs the handler, and dispatches outbox results to callbacks when the app returns to the foreground. |
+
+### Data Flow
+
+```
+Foreground (app active)
+  Consumer → service.registerTask() → TaskQueueHandler → inbox
+
+App suspended
+  Expo BackgroundTask wakes up
+  → loads persisted config
+  → builds providers
+  → handler.tick() processes inbox → outbox
+  → BackgroundTaskResult.Success
+
+App resumes
+  Service reads outbox → dispatches to callbacks → acknowledges results
+```
+
+### Foreground Tick Loop
+
+While the app is active, a lightweight in-process bus (`ExpoMessageBus`)
+replicates the core routing and tick logic of `MessageBus` without any SW
+dependencies. It accepts the same `MessageHandler[]`, keeping handler code
+identical across platforms.
+
+### What Does Not Change
+
+- The existing `MessageBus` class and browser service worker path are untouched.
+- `ContractManager`, `VtxoManager`, and other managers are unaware of the task
+  queue — they remain consumers of repositories and providers as before.

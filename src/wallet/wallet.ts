@@ -636,28 +636,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * ```
      */
     async getContractManager(): Promise<ContractManager> {
-        console.log("[contract-manager] -- getContractManager");
         // Return existing manager if already initialized
         if (this._contractManager) {
-            console.log("[contract-manager] -- found!");
             return this._contractManager;
         }
 
         // If initialization is in progress, wait for it
         if (this._contractManagerInitializing) {
-            console.log("[contract-manager] -- pending promise!");
             return this._contractManagerInitializing;
         }
-
-        console.log("[contract-manager] -- going to initialize!");
 
         // Start initialization and store the promise
         this._contractManagerInitializing = this.initializeContractManager();
 
         try {
-            console.log("[contract-manager] -- awaitng");
             const manager = await this._contractManagerInitializing;
-            console.log("[contract-manager] -- READY!", manager);
             this._contractManager = manager;
             return manager;
         } catch (error) {
@@ -671,7 +664,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     private async initializeContractManager(): Promise<ContractManager> {
-        console.log(".....create contract manager");
         const manager = await ContractManager.create({
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
@@ -681,14 +673,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             watcherConfig: this.watcherConfig,
         });
 
-        console.log("ok", manager);
         // Register the wallet's default address as a contract
         // This ensures it's watched alongside any external contracts
         // Script is the unique contract identifier, so no need to specify it explicitly
         const csvTimelock =
             this.offchainTapscript.options.csvTimelock ??
             DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        console.log("default contract?");
         await manager.createContract({
             type: "default",
             params: {

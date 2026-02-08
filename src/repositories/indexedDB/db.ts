@@ -34,7 +34,6 @@ export const serializeTapLeaf = ([cb, s]: TapLeafScript) => ({
 
 export const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     ...v,
-    // TODO: why v.tapTree can be undefined?
     tapTree: hex.encode(v.tapTree),
     forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),

@@ -1,5 +1,5 @@
 // serve.js is a simple HTTP server that serves the test.html file and the dist folder
-// It is used to test the service worker implementation in test.html
+// It is used to test the ServiceWorkerWallet implementation in test.html
 import http from "http";
 import fs from "fs";
 import path from "path";
