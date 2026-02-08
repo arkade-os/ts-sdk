@@ -82,6 +82,7 @@
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
         "preinstall": "npx only-allow pnpm",
+        "prepack": "pnpm run build",
         "prepare": "husky",
         "prepublishOnly": "pnpm run build",
         "release": "bash scripts/release.sh",
