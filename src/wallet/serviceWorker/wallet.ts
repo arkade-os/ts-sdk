@@ -179,19 +179,60 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             .compressedPublicKey()
             .then(hex.encode);
 
-        // Initialize the service worker with the config
-        const initMessage: RequestInitWallet = {
-            id: getRandomId(),
-            tag: messageTag,
-            type: "INIT_WALLET",
-            payload: {
-                key: { publicKey },
-                arkServerUrl: options.arkServerUrl,
-                arkServerPublicKey: options.arkServerPublicKey,
-            },
+        const initConfig = {
+            key: { publicKey },
+            arkServerUrl: options.arkServerUrl,
+            arkServerPublicKey: options.arkServerPublicKey,
         };
 
-        // Initialize the service worker
+        // Bootstrap the MessageBus in the service worker
+        await Promise.race([
+            new Promise((resolve, reject) => {
+                const initCmd = {
+                    tag: "INITIALIZE_MESSAGE_BUS",
+                    id: getRandomId(),
+                    config: {
+                        wallet: initConfig.key,
+                        arkServer: {
+                            url: initConfig.arkServerUrl,
+                            publicKey: initConfig.arkServerPublicKey,
+                        },
+                    },
+                };
+                const messageHandler = (event: any) => {
+                    const response = event.data;
+                    if (initCmd.id !== response.id) {
+                        return;
+                    }
+                    navigator.serviceWorker.removeEventListener(
+                        "message",
+                        messageHandler
+                    );
+                    if (response.error) {
+                        reject(response.error);
+                    } else {
+                        resolve(response);
+                    }
+                };
+                navigator.serviceWorker.addEventListener(
+                    "message",
+                    messageHandler
+                );
+                options.serviceWorker.postMessage(initCmd);
+            }),
+            new Promise((_, reject) =>
+                setTimeout(() => reject("MessageBus timed out!"), 2000)
+            ),
+        ]);
+
+        // Initialize the wallet handler
+        const initMessage: RequestInitWallet = {
+            tag: messageTag,
+            type: "INIT_WALLET",
+            id: getRandomId(),
+            payload: initConfig,
+        };
+
         await wallet.sendMessage(initMessage);
 
         return wallet;

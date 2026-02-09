@@ -61,6 +61,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles SETTLE messages", async () => {
+        (updater as any).readonlyWallet = {};
         (updater as any).wallet = {};
         const settleSpy = vi.fn().mockResolvedValue({
             type: "SETTLE_SUCCESS",
@@ -83,6 +84,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles SEND_BITCOIN messages", async () => {
+        (updater as any).readonlyWallet = {};
         (updater as any).wallet = {};
         const sendSpy = vi.fn().mockResolvedValue({
             type: "SEND_BITCOIN_SUCCESS",
@@ -105,6 +107,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles SIGN_TRANSACTION messages", async () => {
+        (updater as any).readonlyWallet = {};
         (updater as any).wallet = {};
         const signedTx = { id: "signed-tx" };
         const signSpy = vi.fn().mockResolvedValue({
@@ -128,7 +131,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles GET_ADDRESS messages", async () => {
-        (updater as any).wallet = {
+        (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue("bc1-test"),
         };
 
@@ -146,7 +149,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles GET_BOARDING_ADDRESS messages", async () => {
-        (updater as any).wallet = {
+        (updater as any).readonlyWallet = {
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
         };
 
@@ -164,7 +167,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles GET_BALANCE messages", async () => {
-        (updater as any).wallet = {};
+        (updater as any).readonlyWallet = {};
         const balance = {
             boarding: { confirmed: 1, unconfirmed: 0, total: 1 },
             settled: 1,
@@ -188,7 +191,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles GET_VTXOS messages", async () => {
-        (updater as any).wallet = {};
+        (updater as any).readonlyWallet = {};
         const vtxos = [{ id: "v1" }];
         (updater as any).handleGetVtxos = vi.fn().mockResolvedValue(vtxos);
 
@@ -207,7 +210,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles GET_BOARDING_UTXOS messages", async () => {
-        (updater as any).wallet = {};
+        (updater as any).readonlyWallet = {};
         const utxos = [
             { txid: "tx", vout: 0, value: 1, status: { confirmed: true } },
         ];
@@ -227,7 +230,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("handles GET_TRANSACTION_HISTORY messages", async () => {
         const transactions = [{ txid: "tx" }];
-        (updater as any).wallet = {
+        (updater as any).readonlyWallet = {
             getTransactionHistory: vi.fn().mockResolvedValue(transactions),
         };
 
@@ -245,7 +248,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("handles GET_STATUS messages", async () => {
         const pubkey = new Uint8Array([1, 2, 3]);
-        (updater as any).wallet = {
+        (updater as any).readonlyWallet = {
             identity: {
                 xOnlyPublicKey: vi.fn().mockResolvedValue(pubkey),
             },
@@ -267,7 +270,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles CLEAR messages", async () => {
-        (updater as any).wallet = {};
+        (updater as any).readonlyWallet = {};
         const clearSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).clear = clearSpy;
 
@@ -285,7 +288,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("handles RELOAD_WALLET messages", async () => {
-        (updater as any).wallet = {};
+        (updater as any).readonlyWallet = {};
         const reloadSpy = vi.fn().mockResolvedValue(undefined);
         (updater as any).onWalletInitialized = reloadSpy;
 
@@ -318,7 +321,7 @@ describe("WalletMessageHandler handleMessage", () => {
             getSpendablePaths: vi.fn().mockResolvedValue(paths),
             isWatching: vi.fn().mockResolvedValue(true),
         };
-        (updater as any).wallet = {
+        (updater as any).readonlyWallet = {
             getContractManager: vi.fn().mockResolvedValue(manager),
         };
 
@@ -408,7 +411,7 @@ describe("WalletMessageHandler handleMessage", () => {
                 return unsubscribe;
             }),
         };
-        (updater as any).wallet = {
+        (updater as any).readonlyWallet = {
             getContractManager: vi.fn().mockResolvedValue(manager),
         };
 
@@ -430,7 +433,7 @@ describe("WalletMessageHandler handleMessage", () => {
     });
 
     it("returns a tagged error for unknown message types", async () => {
-        (updater as any).wallet = {};
+        (updater as any).readonlyWallet = {};
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -440,5 +443,88 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(response.tag).toBe(updater.messageTag);
         expect(response.error).toBeInstanceOf(Error);
         expect(response.error?.message).toBe("Unknown message");
+    });
+
+    it("read operations work with readonly wallet only", async () => {
+        (updater as any).readonlyWallet = {
+            getAddress: vi.fn().mockResolvedValue("bc1-readonly"),
+            getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+            getTransactionHistory: vi.fn().mockResolvedValue([]),
+            identity: {
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array([1])),
+            },
+        };
+        // wallet is NOT set — readonly only
+
+        const addrRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_ADDRESS",
+        } as any);
+        expect(addrRes).toMatchObject({
+            type: "ADDRESS",
+            payload: { address: "bc1-readonly" },
+        });
+
+        const boardingRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BOARDING_ADDRESS",
+        } as any);
+        expect(boardingRes).toMatchObject({
+            type: "BOARDING_ADDRESS",
+            payload: { address: "bc1-boarding" },
+        });
+
+        const historyRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_TRANSACTION_HISTORY",
+        } as any);
+        expect(historyRes).toMatchObject({
+            type: "TRANSACTION_HISTORY",
+            payload: { transactions: [] },
+        });
+
+        const statusRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_STATUS",
+        } as any);
+        expect(statusRes).toMatchObject({
+            type: "WALLET_STATUS",
+            payload: { walletInitialized: true },
+        });
+    });
+
+    it("signing operations fail with readonly wallet only", async () => {
+        (updater as any).readonlyWallet = {};
+        // wallet is NOT set — readonly only
+
+        const settleRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SETTLE",
+            payload: {},
+        } as any);
+        expect(settleRes.error).toBeInstanceOf(Error);
+        expect(settleRes.error?.message).toBe(
+            "Read-only wallet: operation requires signing"
+        );
+
+        const sendRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SEND_BITCOIN",
+            payload: { address: "addr", amount: 1 },
+        } as any);
+        expect(sendRes.error).toBeInstanceOf(Error);
+        expect(sendRes.error?.message).toBe(
+            "Read-only wallet: operation requires signing"
+        );
+
+        const signRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SIGN_TRANSACTION",
+            payload: { tx: {} },
+        } as any);
+        expect(signRes.error).toBeInstanceOf(Error);
+        expect(signRes.error?.message).toBe(
+            "Read-only wallet: operation requires signing"
+        );
     });
 });

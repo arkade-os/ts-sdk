@@ -26,7 +26,7 @@ import {
     SettleParams,
     WalletBalance,
 } from "../index";
-import { Wallet } from "../wallet";
+import { ReadonlyWallet, Wallet } from "../wallet";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import {
     MessageHandler,
@@ -298,6 +298,7 @@ export class WalletMessageHandler
     readonly messageTag: string;
 
     private wallet: Wallet | undefined;
+    private readonlyWallet: ReadonlyWallet | undefined;
 
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
@@ -319,8 +320,7 @@ export class WalletMessageHandler
     // lifecycle methods
     async start(...params: Parameters<MessageHandler["start"]>): Promise<void> {
         const [services, repositories] = params;
-        if (!services.wallet) throw new Error("Wallet is required");
-        // TODO: support readonly wallet
+        this.readonlyWallet = services.readonlyWallet;
         this.wallet = services.wallet;
         this.arkProvider = services.arkProvider;
         this.walletRepository = repositories.walletRepository;
@@ -355,6 +355,13 @@ export class WalletMessageHandler
         this.onNextTick.push(callback);
     }
 
+    private requireWallet(): Wallet {
+        if (!this.wallet) {
+            throw new Error("Read-only wallet: operation requires signing");
+        }
+        return this.wallet;
+    }
+
     private tagged(res: Partial<WalletUpdaterResponse>): WalletUpdaterResponse {
         return {
             ...res,
@@ -373,7 +380,7 @@ export class WalletMessageHandler
                 type: "WALLET_INITIALIZED",
             });
         }
-        if (!this.wallet) {
+        if (!this.readonlyWallet) {
             return this.tagged({
                 id,
                 error: new Error("Wallet handler not initialized"),
@@ -397,7 +404,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_ADDRESS": {
-                    const address = await this.wallet.getAddress();
+                    const address = await this.readonlyWallet.getAddress();
                     return this.tagged({
                         id,
                         type: "ADDRESS",
@@ -405,7 +412,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_BOARDING_ADDRESS": {
-                    const address = await this.wallet.getBoardingAddress();
+                    const address =
+                        await this.readonlyWallet.getBoardingAddress();
                     return this.tagged({
                         id,
                         type: "BOARDING_ADDRESS",
@@ -439,7 +447,7 @@ export class WalletMessageHandler
                 }
                 case "GET_TRANSACTION_HISTORY": {
                     const transactions =
-                        await this.wallet.getTransactionHistory();
+                        await this.readonlyWallet.getTransactionHistory();
                     return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
@@ -447,7 +455,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_STATUS": {
-                    const pubKey = await this.wallet.identity.xOnlyPublicKey();
+                    const pubKey =
+                        await this.readonlyWallet.identity.xOnlyPublicKey();
                     return this.tagged({
                         id,
                         type: "WALLET_STATUS",
@@ -481,7 +490,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "CREATE_CONTRACT": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     const contract = await manager.createContract(
                         message.payload
                     );
@@ -492,7 +502,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_CONTRACTS": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     const contracts = await manager.getContracts(
                         message.payload.filter
                     );
@@ -503,7 +514,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_CONTRACTS_WITH_VTXOS": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     const contracts = await manager.getContractsWithVtxos(
                         message.payload.filter
                     );
@@ -514,7 +526,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "UPDATE_CONTRACT": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     const contract = await manager.updateContract(
                         message.payload.script,
                         message.payload.updates
@@ -526,7 +539,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "DELETE_CONTRACT": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     await manager.deleteContract(message.payload.script);
                     return this.tagged({
                         id,
@@ -535,7 +549,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_SPENDABLE_PATHS": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     const paths = await manager.getSpendablePaths(
                         message.payload.options
                     );
@@ -546,7 +561,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_ALL_SPENDING_PATHS": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     const paths = await manager.getAllSpendingPaths(
                         message.payload.options
                     );
@@ -557,7 +573,8 @@ export class WalletMessageHandler
                     });
                 }
                 case "IS_CONTRACT_MANAGER_WATCHING": {
-                    const manager = await this.wallet.getContractManager();
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
                     const isWatching = await manager.isWatching();
                     return this.tagged({
                         id,
@@ -633,15 +650,15 @@ export class WalletMessageHandler
         };
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {
-        if (!this.wallet) return [];
-        return this.wallet.getBoardingUtxos();
+        if (!this.readonlyWallet) return [];
+        return this.readonlyWallet.getBoardingUtxos();
     }
     /**
      * Get spendable vtxos for the current wallet address
      */
     private async getSpendableVtxos() {
-        if (!this.wallet) return [];
-        const vtxos = await this.wallet.getVtxos();
+        if (!this.readonlyWallet) return [];
+        const vtxos = await this.readonlyWallet.getVtxos();
         return vtxos.filter(isSpendable);
     }
 
@@ -649,14 +666,14 @@ export class WalletMessageHandler
      * Get swept vtxos for the current wallet address
      */
     private async getSweptVtxos() {
-        if (!this.wallet) return [];
-        const vtxos = await this.wallet.getVtxos();
+        if (!this.readonlyWallet) return [];
+        const vtxos = await this.readonlyWallet.getVtxos();
         return vtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
     }
 
     private async onWalletInitialized() {
         if (
-            !this.wallet ||
+            !this.readonlyWallet ||
             !this.arkProvider ||
             !this.indexerProvider ||
             !this.walletRepository
@@ -665,64 +682,67 @@ export class WalletMessageHandler
         }
 
         // Get public key script and set the initial vtxos state
-        const script = this.wallet.defaultContractScript;
+        const script = this.readonlyWallet.defaultContractScript;
         const response = await this.indexerProvider.getVtxos({
             scripts: [script],
         });
         const vtxos = response.vtxos.map((vtxo) =>
-            extendVirtualCoin(this.wallet!, vtxo)
+            extendVirtualCoin(this.readonlyWallet!, vtxo)
         );
 
-        try {
-            // recover pending transactions if possible
-            const { pending, finalized } = await this.wallet.finalizePendingTxs(
-                vtxos.filter(
-                    (vtxo) =>
-                        vtxo.virtualStatus.state !== "swept" &&
-                        vtxo.virtualStatus.state !== "settled"
-                )
-            );
-            console.info(
-                `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
-            );
-        } catch (error: unknown) {
-            console.error("Error recovering pending transactions:", error);
+        if (this.wallet) {
+            try {
+                // recover pending transactions if possible
+                const { pending, finalized } =
+                    await this.wallet.finalizePendingTxs(
+                        vtxos.filter(
+                            (vtxo) =>
+                                vtxo.virtualStatus.state !== "swept" &&
+                                vtxo.virtualStatus.state !== "settled"
+                        )
+                    );
+                console.info(
+                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
+                );
+            } catch (error: unknown) {
+                console.error("Error recovering pending transactions:", error);
+            }
         }
 
         // Get wallet address and save vtxos using unified repository
-        const address = await this.wallet.getAddress();
+        const address = await this.readonlyWallet.getAddress();
         await this.walletRepository.saveVtxos(address, vtxos);
 
         // Fetch boarding utxos and save using unified repository
-        const boardingAddress = await this.wallet.getBoardingAddress();
+        const boardingAddress = await this.readonlyWallet.getBoardingAddress();
         const coins =
-            await this.wallet.onchainProvider.getCoins(boardingAddress);
+            await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
         await this.walletRepository.saveUtxos(
             boardingAddress,
-            coins.map((utxo) => extendCoin(this.wallet!, utxo))
+            coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo))
         );
 
         // Get transaction history to cache boarding txs
-        const txs = await this.wallet.getTransactionHistory();
+        const txs = await this.readonlyWallet.getTransactionHistory();
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
         // unsubscribe previous subscription if any
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
 
         // subscribe for incoming funds and notify all clients when new funds arrive
-        this.incomingFundsSubscription = await this.wallet.notifyIncomingFunds(
-            async (funds) => {
+        this.incomingFundsSubscription =
+            await this.readonlyWallet.notifyIncomingFunds(async (funds) => {
                 if (funds.type === "vtxo") {
                     const newVtxos =
                         funds.newVtxos.length > 0
                             ? funds.newVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.wallet!, vtxo)
+                                  extendVirtualCoin(this.readonlyWallet!, vtxo)
                               )
                             : [];
                     const spentVtxos =
                         funds.spentVtxos.length > 0
                             ? funds.spentVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.wallet!, vtxo)
+                                  extendVirtualCoin(this.readonlyWallet!, vtxo)
                               )
                             : [];
 
@@ -745,11 +765,11 @@ export class WalletMessageHandler
                 }
                 if (funds.type === "utxo") {
                     const utxos = funds.coins.map((utxo) =>
-                        extendCoin(this.wallet!, utxo)
+                        extendCoin(this.readonlyWallet!, utxo)
                     );
 
                     const boardingAddress =
-                        await this.wallet?.getBoardingAddress()!;
+                        await this.readonlyWallet?.getBoardingAddress()!;
 
                     // save utxos using unified repository
                     // TODO: remove UTXOS by address
@@ -768,17 +788,14 @@ export class WalletMessageHandler
                         })
                     );
                 }
-            }
-        );
+            });
 
         await this.ensureContractEventBroadcasting();
     }
 
     private async handleSettle(message: RequestSettle) {
-        if (!this.wallet) {
-            throw new Error("Wallet handler not initialized");
-        }
-        const txid = await this.wallet.settle(message.payload.params, (e) => {
+        const wallet = this.requireWallet();
+        const txid = await wallet.settle(message.payload.params, (e) => {
             this.scheduleForNextTick(() =>
                 this.tagged({
                     id: message.id,
@@ -795,10 +812,8 @@ export class WalletMessageHandler
     }
 
     private async handleSendBitcoin(message: RequestSendBitcoin) {
-        if (!this.wallet) {
-            throw new Error("Wallet handler not initialized");
-        }
-        const txid = await this.wallet.sendBitcoin(message.payload);
+        const wallet = this.requireWallet();
+        const txid = await wallet.sendBitcoin(message.payload);
         if (!txid) {
             throw new Error("Send bitcoin failed");
         }
@@ -809,11 +824,9 @@ export class WalletMessageHandler
     }
 
     private async handleSignTransaction(message: RequestSignTransaction) {
-        if (!this.wallet) {
-            throw new Error("Wallet handler not initialized");
-        }
+        const wallet = this.requireWallet();
         const { tx, inputIndexes } = message.payload;
-        const signature = await this.wallet.identity.sign(tx, inputIndexes);
+        const signature = await wallet.identity.sign(tx, inputIndexes);
         if (!signature) {
             throw new Error("Sign transaction failed");
         }
@@ -824,11 +837,11 @@ export class WalletMessageHandler
     }
 
     private async handleGetVtxos(message: RequestGetVtxos) {
-        if (!this.wallet) {
+        if (!this.readonlyWallet) {
             throw new Error("Wallet handler not initialized");
         }
         const vtxos = await this.getSpendableVtxos();
-        const dustAmount = this.wallet.dustAmount;
+        const dustAmount = this.readonlyWallet.dustAmount;
         const includeRecoverable =
             message.payload.filter?.withRecoverable ?? false;
         const filteredVtxos = includeRecoverable
@@ -850,7 +863,7 @@ export class WalletMessageHandler
     }
 
     private async clear() {
-        if (!this.wallet) return;
+        if (!this.readonlyWallet) return;
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
         if (this.contractEventsSubscription) {
             this.contractEventsSubscription();
@@ -864,15 +877,16 @@ export class WalletMessageHandler
         }
 
         this.wallet = undefined;
+        this.readonlyWallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
     }
 
     private async ensureContractEventBroadcasting() {
-        if (!this.wallet) return;
+        if (!this.readonlyWallet) return;
         if (this.contractEventsSubscription) return;
         try {
-            const manager = await this.wallet.getContractManager();
+            const manager = await this.readonlyWallet.getContractManager();
             this.contractEventsSubscription = manager.onContractEvent(
                 (event) => {
                     this.scheduleForNextTick(() =>
