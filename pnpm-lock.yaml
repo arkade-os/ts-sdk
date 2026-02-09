@@ -39,7 +39,7 @@ importers:
         specifier: 3.2.4
         version: 3.2.4(vitest@3.2.4(@types/node@24.3.1)(lightningcss@1.27.0)(terser@5.46.0)(yaml@2.8.2))
       esbuild:
-        specifier: ^0.27.3
+        specifier: '>=0.25.0'
         version: 0.27.3
       eventsource:
         specifier: 4.0.0
