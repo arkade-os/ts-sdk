@@ -1,31 +1,39 @@
 import { hex } from "@scure/base";
-import { AssetInputType, TX_HASH_SIZE, assetTypeToString } from "./types";
+import { AssetInputType, TX_HASH_SIZE } from "./types";
 import { BufferReader, BufferWriter, isZeroBytes } from "./utils";
 
-export class AssetInput {
-    readonly type: AssetInputType;
-    readonly vin: number;
-    readonly txid: Uint8Array;
-    readonly amount: bigint;
+type AssetInputLocal = {
+    type: AssetInputType.Local;
+    vin: number;
+    amount: bigint;
+};
 
-    private constructor(
-        type: AssetInputType,
-        vin: number,
-        amount: bigint,
-        txid?: Uint8Array
-    ) {
-        this.type = type;
-        this.vin = vin;
-        this.amount = amount;
-        this.txid = txid || new Uint8Array(TX_HASH_SIZE);
+type AssetInputIntent = Pick<AssetInputLocal, "vin" | "amount"> & {
+    type: AssetInputType.Intent;
+    txid: Uint8Array;
+};
+
+/**
+ * AssetInput represents an input of an asset group.
+ * a local input references a real transaction input and specify the amount in satoshis.
+ * an intent input references an external intent transaction. It is created by the server to handle batch leaf transaction.
+ */
+export class AssetInput {
+    private constructor(readonly input: AssetInputLocal | AssetInputIntent) {}
+
+    get vin(): number {
+        return this.input.vin;
+    }
+    get amount(): bigint {
+        return this.input.amount;
     }
 
     static create(vin: number, amount: bigint | number): AssetInput {
-        const input = new AssetInput(
-            AssetInputType.Local,
-            vin & 0xffff,
-            typeof amount === "number" ? BigInt(amount) : amount
-        );
+        const input = new AssetInput({
+            type: AssetInputType.Local,
+            vin,
+            amount: typeof amount === "number" ? BigInt(amount) : amount,
+        });
         input.validate();
         return input;
     }
@@ -50,12 +58,12 @@ export class AssetInput {
             throw new Error("invalid input intent txid length");
         }
 
-        const input = new AssetInput(
-            AssetInputType.Intent,
-            vin & 0xffff,
-            typeof amount === "number" ? BigInt(amount) : amount,
-            buf
-        );
+        const input = new AssetInput({
+            type: AssetInputType.Intent,
+            txid: buf,
+            vin,
+            amount: typeof amount === "number" ? BigInt(amount) : amount,
+        });
         input.validate();
         return input;
     }
@@ -85,23 +93,15 @@ export class AssetInput {
         return hex.encode(this.serialize());
     }
 
-    get typeString(): string {
-        return assetTypeToString(this.type);
-    }
-
     validate(): void {
-        switch (this.type) {
+        switch (this.input.type) {
             case AssetInputType.Local:
                 break;
             case AssetInputType.Intent:
-                if (isZeroBytes(this.txid)) {
+                if (isZeroBytes(this.input.txid)) {
                     throw new Error("missing input intent txid");
                 }
                 break;
-            case AssetInputType.Unspecified:
-                throw new Error("asset input type unspecified");
-            default:
-                throw new Error(`asset input type ${this.type} unknown`);
         }
     }
 
@@ -113,7 +113,11 @@ export class AssetInput {
             case AssetInputType.Local: {
                 const vin = reader.readUint16LE();
                 const amount = reader.readVarUint();
-                input = new AssetInput(type, vin, amount);
+                input = new AssetInput({
+                    type: AssetInputType.Local,
+                    vin,
+                    amount,
+                });
                 break;
             }
             case AssetInputType.Intent: {
@@ -123,7 +127,12 @@ export class AssetInput {
                 const txid = reader.readSlice(TX_HASH_SIZE);
                 const vin = reader.readUint16LE();
                 const amount = reader.readVarUint();
-                input = new AssetInput(type, vin, amount, new Uint8Array(txid));
+                input = new AssetInput({
+                    type: AssetInputType.Intent,
+                    txid: new Uint8Array(txid),
+                    vin,
+                    amount,
+                });
                 break;
             }
             case AssetInputType.Unspecified:
@@ -137,32 +146,20 @@ export class AssetInput {
     }
 
     serializeTo(writer: BufferWriter): void {
-        writer.writeByte(this.type);
-
-        switch (this.type) {
-            case AssetInputType.Local:
-                writer.writeUint16LE(this.vin);
-                writer.writeVarUint(this.amount);
-                break;
-            case AssetInputType.Intent:
-                writer.write(this.txid);
-                writer.writeUint16LE(this.vin);
-                writer.writeVarUint(this.amount);
-                break;
-            case AssetInputType.Unspecified:
-                throw new Error("asset input type unspecified");
-            default:
-                throw new Error(`asset input type ${this.type} unknown`);
+        writer.writeByte(this.input.type);
+        if (this.input.type === AssetInputType.Intent) {
+            writer.write(this.input.txid);
         }
+        writer.writeUint16LE(this.input.vin);
+        writer.writeVarUint(this.input.amount);
     }
 }
 
+/**
+ * AssetInputs represents a list of asset inputs.
+ */
 export class AssetInputs {
-    readonly inputs: AssetInput[];
-
-    private constructor(inputs: AssetInput[]) {
-        this.inputs = inputs;
-    }
+    private constructor(readonly inputs: AssetInput[]) {}
 
     static create(inputs: AssetInput[]): AssetInputs {
         const list = new AssetInputs(inputs);
@@ -196,19 +193,26 @@ export class AssetInputs {
 
     validate(): void {
         const seen = new Set<number>();
-        let inputType: AssetInputType = AssetInputType.Unspecified;
+        let listType = AssetInputType.Unspecified;
 
-        for (const input of this.inputs) {
-            if (seen.has(input.vin)) {
-                throw new Error(`duplicated input vin ${input.vin}`);
-            }
-            seen.add(input.vin);
+        for (const assetInput of this.inputs) {
+            assetInput.validate();
 
-            if (inputType === AssetInputType.Unspecified) {
-                inputType = input.type;
-            }
-            if (input.type !== inputType) {
+            if (listType === AssetInputType.Unspecified) {
+                listType = assetInput.input.type;
+            } else if (listType !== assetInput.input.type) {
                 throw new Error("all inputs must be of the same type");
+            }
+
+            // verify the same input vin is not duplicated
+            if (assetInput.input.type === AssetInputType.Local) {
+                if (seen.has(assetInput.input.vin)) {
+                    throw new Error(
+                        `duplicated input vin ${assetInput.input.vin}`
+                    );
+                }
+                seen.add(assetInput.input.vin);
+                continue;
             }
         }
     }

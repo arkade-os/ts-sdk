@@ -2,14 +2,16 @@ import { hex } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { BufferReader, BufferWriter } from "./utils";
 
+/**
+ * Metadata represents a key-value pair.
+ * @param key - the key
+ * @param value - the value
+ */
 export class Metadata {
-    readonly key: Uint8Array;
-    readonly value: Uint8Array;
-
-    private constructor(key: Uint8Array, value: Uint8Array) {
-        this.key = key;
-        this.value = value;
-    }
+    private constructor(
+        readonly key: Uint8Array,
+        readonly value: Uint8Array
+    ) {}
 
     static create(key: string, value: string): Metadata {
         const md = new Metadata(
@@ -97,31 +99,6 @@ export class Metadata {
         writer.writeVarSlice(this.key);
         writer.writeVarSlice(this.value);
     }
-}
-
-export function generateMetadataListHash(
-    metadata: Metadata[]
-): Uint8Array | null {
-    if (!metadata || metadata.length === 0) {
-        return null;
-    }
-
-    const sorted = [...metadata].sort((a, b) => {
-        const keyA = new TextDecoder().decode(a.key);
-        const keyB = new TextDecoder().decode(b.key);
-        return keyB.localeCompare(keyA);
-    });
-
-    let buf = new Uint8Array(0);
-    for (const m of sorted) {
-        const hash = m.hash();
-        const newBuf = new Uint8Array(buf.length + hash.length);
-        newBuf.set(buf);
-        newBuf.set(hash, buf.length);
-        buf = newBuf;
-    }
-
-    return sha256(buf);
 }
 
 export function serializeMetadataList(

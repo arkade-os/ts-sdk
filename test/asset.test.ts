@@ -35,8 +35,8 @@ describe("AssetId", () => {
                 expect(assetId.toString()).toBe(v.serializedHex);
 
                 const fromString = AssetId.fromString(v.serializedHex);
-                expect(fromString.txidString).toBe(v.txid);
-                expect(fromString.index).toBe(index);
+                expect(hex.encode(fromString.txid)).toBe(v.txid);
+                expect(fromString.groupIndex).toBe(index);
                 expect(fromString.toString()).toBe(v.serializedHex);
             });
         });
@@ -424,7 +424,6 @@ describe("AssetGroup", () => {
                 } else {
                     expect(fromString.controlAsset).toBeNull();
                 }
-                expect(fromString.immutable).toBe(true);
             });
         });
     });

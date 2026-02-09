@@ -2,17 +2,19 @@ import { hex } from "@scure/base";
 import { TX_HASH_SIZE, ASSET_ID_SIZE } from "./types";
 import { BufferReader, BufferWriter, isZeroBytes } from "./utils";
 
+/**
+ * AssetId represents the id of an asset.
+ * @param txid - the genesis transaction id (decoded from hex)
+ * @param groupIndex - the asset group index in the genesis transaction
+ */
 export class AssetId {
-    readonly txid: Uint8Array;
-    readonly index: number;
+    private constructor(
+        readonly txid: Uint8Array,
+        readonly groupIndex: number
+    ) {}
 
-    private constructor(txid: Uint8Array, index: number) {
-        this.txid = txid;
-        this.index = index;
-    }
-
-    static create(txid: string, index: number): AssetId {
-        if (!txid || txid.length === 0) {
+    static create(txid: string, groupIndex: number): AssetId {
+        if (!txid) {
             throw new Error("missing txid");
         }
 
@@ -29,7 +31,7 @@ export class AssetId {
             );
         }
 
-        const assetId = new AssetId(new Uint8Array(buf), index & 0xffff);
+        const assetId = new AssetId(buf, groupIndex);
         assetId.validate();
         return assetId;
     }
@@ -62,10 +64,6 @@ export class AssetId {
         return hex.encode(this.serialize());
     }
 
-    get txidString(): string {
-        return hex.encode(this.txid);
-    }
-
     validate(): void {
         if (isZeroBytes(this.txid)) {
             throw new Error("empty txid");
@@ -82,13 +80,13 @@ export class AssetId {
         const txid = reader.readSlice(TX_HASH_SIZE);
         const index = reader.readUint16LE();
 
-        const assetId = new AssetId(new Uint8Array(txid), index);
+        const assetId = new AssetId(txid, index);
         assetId.validate();
         return assetId;
     }
 
     serializeTo(writer: BufferWriter): void {
         writer.write(this.txid);
-        writer.writeUint16LE(this.index);
+        writer.writeUint16LE(this.groupIndex);
     }
 }

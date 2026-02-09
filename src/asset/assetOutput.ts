@@ -1,18 +1,22 @@
 import { hex } from "@scure/base";
 import { BufferReader, BufferWriter } from "./utils";
 
+/**
+ * AssetOuput references a real transaction output and specify the amount in satothis.
+ * it must be present in an AssetGroup.
+ *
+ * @param vout - the output index in the transaction
+ * @param amount - asset amount in satoshis
+ */
 export class AssetOutput {
-    readonly vout: number;
-    readonly amount: bigint;
-
-    private constructor(vout: number, amount: bigint) {
-        this.vout = vout;
-        this.amount = amount;
-    }
+    private constructor(
+        readonly vout: number,
+        readonly amount: bigint
+    ) {}
 
     static create(vout: number, amount: bigint | number): AssetOutput {
         const output = new AssetOutput(
-            vout & 0xffff,
+            vout,
             typeof amount === "number" ? BigInt(amount) : amount
         );
         output.validate();
@@ -73,12 +77,14 @@ export class AssetOutput {
     }
 }
 
+/**
+ * AssetOutputs is a list of AssetOutput references.
+ * it must be present in an AssetGroup.
+ *
+ * @param outputs - the list of asset outputs
+ */
 export class AssetOutputs {
-    readonly outputs: AssetOutput[];
-
-    private constructor(outputs: AssetOutput[]) {
-        this.outputs = outputs;
-    }
+    private constructor(readonly outputs: AssetOutput[]) {}
 
     static create(outputs: AssetOutput[]): AssetOutputs {
         const list = new AssetOutputs(outputs);

@@ -3,35 +3,28 @@ import { AssetRefType } from "./types";
 import { AssetId } from "./assetId";
 import { BufferReader, BufferWriter } from "./utils";
 
-export class AssetRef {
-    readonly type: AssetRefType;
-    readonly assetId?: AssetId;
-    readonly groupIndex?: number;
+type AssetRefByID = {
+    type: AssetRefType.ByID;
+    assetId: AssetId;
+};
+type AssetRefByGroup = {
+    type: AssetRefType.ByGroup;
+    groupIndex: number;
+};
 
-    private constructor(
-        type: AssetRefType,
-        assetId?: AssetId,
-        groupIndex?: number
-    ) {
-        this.type = type;
-        this.assetId = assetId;
-        this.groupIndex = groupIndex;
+export class AssetRef {
+    private constructor(readonly ref: AssetRefByID | AssetRefByGroup) {}
+
+    get type(): AssetRefType {
+        return this.ref.type;
     }
 
     static fromId(assetId: AssetId): AssetRef {
-        const ref = new AssetRef(AssetRefType.ByID, assetId, undefined);
-        ref.validate();
-        return ref;
+        return new AssetRef({ type: AssetRefType.ByID, assetId });
     }
 
     static fromGroupIndex(groupIndex: number): AssetRef {
-        const ref = new AssetRef(
-            AssetRefType.ByGroup,
-            undefined,
-            groupIndex & 0xffff
-        );
-        ref.validate();
-        return ref;
+        return new AssetRef({ type: AssetRefType.ByGroup, groupIndex });
     }
 
     static fromString(s: string): AssetRef {
@@ -62,18 +55,6 @@ export class AssetRef {
         return hex.encode(this.serialize());
     }
 
-    validate(): void {
-        switch (this.type) {
-            case AssetRefType.ByID:
-            case AssetRefType.ByGroup:
-                break;
-            case AssetRefType.Unspecified:
-                throw new Error("asset ref type unspecified");
-            default:
-                throw new Error(`asset ref type unknown ${this.type}`);
-        }
-    }
-
     static fromReader(reader: BufferReader): AssetRef {
         const type = reader.readByte() as AssetRefType;
 
@@ -81,7 +62,7 @@ export class AssetRef {
         switch (type) {
             case AssetRefType.ByID: {
                 const assetId = AssetId.fromReader(reader);
-                ref = new AssetRef(type, assetId, undefined);
+                ref = new AssetRef({ type: AssetRefType.ByID, assetId });
                 break;
             }
             case AssetRefType.ByGroup: {
@@ -89,7 +70,7 @@ export class AssetRef {
                     throw new Error("invalid asset ref length");
                 }
                 const groupIndex = reader.readUint16LE();
-                ref = new AssetRef(type, undefined, groupIndex);
+                ref = new AssetRef({ type: AssetRefType.ByGroup, groupIndex });
                 break;
             }
             case AssetRefType.Unspecified:
@@ -98,19 +79,18 @@ export class AssetRef {
                 throw new Error(`asset ref type unknown ${type}`);
         }
 
-        ref.validate();
         return ref;
     }
 
     serializeTo(writer: BufferWriter): void {
-        writer.writeByte(this.type);
+        writer.writeByte(this.ref.type);
 
-        switch (this.type) {
+        switch (this.ref.type) {
             case AssetRefType.ByID:
-                this.assetId!.serializeTo(writer);
+                this.ref.assetId.serializeTo(writer);
                 break;
             case AssetRefType.ByGroup:
-                writer.writeUint16LE(this.groupIndex!);
+                writer.writeUint16LE(this.ref.groupIndex);
                 break;
         }
     }

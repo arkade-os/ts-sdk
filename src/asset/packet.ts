@@ -13,12 +13,13 @@ export class AssetPacketNotFoundError extends Error {
     }
 }
 
+/**
+ * Packet represents a collection of asset groups.
+ * A packet is encoded in OP_RETURN output of an asset transaction.
+ * @param groups - the asset groups in the packet
+ */
 export class Packet {
-    readonly groups: AssetGroup[];
-
-    private constructor(groups: AssetGroup[]) {
-        this.groups = groups;
-    }
+    private constructor(readonly groups: AssetGroup[]) {}
 
     static create(groups: AssetGroup[]): Packet {
         const p = new Packet(groups);
@@ -70,12 +71,12 @@ export class Packet {
     }
 
     serialize(): Uint8Array {
-        const packetWriter = new BufferWriter();
-        packetWriter.writeVarUint(this.groups.length);
+        const writer = new BufferWriter();
+        writer.writeVarUint(this.groups.length);
         for (const group of this.groups) {
-            group.serializeTo(packetWriter);
+            group.serializeTo(writer);
         }
-        const packetData = packetWriter.toBytes();
+        const packetData = writer.toBytes();
 
         const data = concatBytes(
             ARKADE_MAGIC,
@@ -97,11 +98,11 @@ export class Packet {
         for (const group of this.groups) {
             if (
                 group.controlAsset !== null &&
-                group.controlAsset.type === AssetRefType.ByGroup &&
-                group.controlAsset.groupIndex! >= this.groups.length
+                group.controlAsset.ref.type === AssetRefType.ByGroup &&
+                group.controlAsset.ref.groupIndex >= this.groups.length
             ) {
                 throw new Error(
-                    `invalid control asset group index, ${group.controlAsset.groupIndex} out of range [0, ${this.groups.length - 1}]`
+                    `invalid control asset group index, ${group.controlAsset.ref.groupIndex} out of range [0, ${this.groups.length - 1}]`
                 );
             }
         }

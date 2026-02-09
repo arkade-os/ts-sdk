@@ -1,39 +1,28 @@
 import { hex } from "@scure/base";
-import { MASK_ASSET_ID, MASK_CONTROL_ASSET, MASK_METADATA } from "./types";
+import {
+    AssetInputType,
+    MASK_ASSET_ID,
+    MASK_CONTROL_ASSET,
+    MASK_METADATA,
+} from "./types";
 import { AssetId } from "./assetId";
 import { AssetRef } from "./assetRef";
 import { AssetInput, AssetInputs } from "./assetInput";
 import { AssetOutput, AssetOutputs } from "./assetOutput";
-import {
-    Metadata,
-    serializeMetadataList,
-    deserializeMetadataList,
-} from "./metadata";
+import { Metadata } from "./metadata";
 import { BufferReader, BufferWriter } from "./utils";
 
+/**
+ * An asset group contains inputs/outputs and all data related to a given asset id.
+ */
 export class AssetGroup {
-    readonly assetId: AssetId | null;
-    readonly controlAsset: AssetRef | null;
-    readonly immutable: boolean;
-    readonly outputs: AssetOutput[];
-    readonly inputs: AssetInput[];
-    readonly metadata: Metadata[];
-
     constructor(
-        assetId: AssetId | null,
-        controlAsset: AssetRef | null,
-        inputs: AssetInput[],
-        outputs: AssetOutput[],
-        metadata: Metadata[],
-        immutable: boolean = true
-    ) {
-        this.assetId = assetId;
-        this.controlAsset = controlAsset;
-        this.immutable = immutable;
-        this.inputs = inputs || [];
-        this.outputs = outputs || [];
-        this.metadata = metadata || [];
-    }
+        readonly assetId: AssetId | null,
+        readonly controlAsset: AssetRef | null,
+        readonly inputs: AssetInput[],
+        readonly outputs: AssetOutput[],
+        readonly metadata: Metadata[]
+    ) {}
 
     static create(
         assetId: AssetId | null,
@@ -47,8 +36,7 @@ export class AssetGroup {
             controlAsset,
             inputs,
             outputs,
-            metadata,
-            true
+            metadata
         );
         ag.validate();
         return ag;
@@ -84,7 +72,12 @@ export class AssetGroup {
         const sumReducer = (s: bigint, { amount }: { amount: bigint }) =>
             s + amount;
         const sumOutputs = this.outputs.reduce(sumReducer, 0n);
-        const sumInputs = this.inputs.reduce(sumReducer, 0n);
+        const sumInputs = this.inputs
+            .map((i) => ({
+                amount:
+                    i.input.type === AssetInputType.Local ? i.input.amount : 0n,
+            }))
+            .reduce(sumReducer, 0n);
         return !this.isIssuance() && sumInputs < sumOutputs;
     }
 
@@ -105,25 +98,16 @@ export class AssetGroup {
                 throw new Error("only issuance can have a control asset");
             }
         }
-
-        if (!this.immutable) {
-            throw new Error("asset must be immutable");
-        }
     }
 
     toBatchLeafAssetGroup(intentTxid: Uint8Array): AssetGroup {
-        const leafInput = AssetInput.createIntent(
-            hex.encode(intentTxid),
-            0,
-            0n
-        );
+        const leafInput = AssetInput.createIntent(hex.encode(intentTxid), 0, 0);
         return new AssetGroup(
             this.assetId,
             this.controlAsset,
             [leafInput],
             this.outputs,
-            this.metadata,
-            this.immutable
+            this.metadata
         );
     }
 
@@ -158,8 +142,7 @@ export class AssetGroup {
             controlAsset,
             inputs.inputs,
             outputs.outputs,
-            metadata,
-            true
+            metadata
         );
         ag.validate();
         return ag;
@@ -200,4 +183,30 @@ export class AssetGroup {
             output.serializeTo(writer);
         }
     }
+}
+
+function serializeMetadataList(
+    metadata: Metadata[],
+    writer: BufferWriter
+): void {
+    writer.writeVarUint(metadata.length);
+
+    const sorted = [...metadata].sort((a, b) => {
+        const keyA = new TextDecoder().decode(a.key);
+        const keyB = new TextDecoder().decode(b.key);
+        return keyB.localeCompare(keyA);
+    });
+
+    for (const m of sorted) {
+        m.serializeTo(writer);
+    }
+}
+
+function deserializeMetadataList(reader: BufferReader): Metadata[] {
+    const count = Number(reader.readVarUint());
+    const metadata: Metadata[] = [];
+    for (let i = 0; i < count; i++) {
+        metadata.push(Metadata.fromReader(reader));
+    }
+    return metadata;
 }
