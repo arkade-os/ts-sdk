@@ -303,6 +303,7 @@ export class MessageBus {
                     "Event received before initialization, dropping",
                     event.data
                 );
+            return;
         }
 
         if (!id || !tag) {
