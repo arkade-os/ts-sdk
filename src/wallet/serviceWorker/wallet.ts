@@ -126,6 +126,7 @@ interface ServiceWorkerWalletOptions {
     identity: ReadonlyIdentity | Identity;
     // Override the default tag for the messages sent and received from the SW
     walletUpdaterTag?: string;
+    messageBusTimeoutMs?: number;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -133,6 +134,59 @@ export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
 
 export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
+};
+
+type MessageBusInitConfig = {
+    wallet:
+        | {
+              privateKey: string;
+          }
+        | {
+              publicKey: string;
+          };
+    arkServer: {
+        url: string;
+        publicKey?: string;
+    };
+    timeoutMs?: number;
+};
+
+const initializeMessageBus = (
+    serviceWorker: ServiceWorker,
+    config: MessageBusInitConfig,
+    timeoutMs = 2000
+) => {
+    const initCmd = {
+        tag: "INITIALIZE_MESSAGE_BUS",
+        id: getRandomId(),
+        config: { ...config, timeoutMs },
+    };
+
+    return new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+            navigator.serviceWorker.removeEventListener("message", onMessage);
+            clearTimeout(timeoutId);
+        };
+
+        const onMessage = (event: any) => {
+            const response = event.data;
+            if (response?.id !== initCmd.id) return;
+            cleanup();
+            if (response.error) {
+                reject(response.error);
+            } else {
+                resolve();
+            }
+        };
+
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new Error("MessageBus timed out!"));
+        }, timeoutMs);
+
+        navigator.serviceWorker.addEventListener("message", onMessage);
+        serviceWorker.postMessage(initCmd);
+    });
 };
 
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
@@ -185,44 +239,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         };
 
         // Bootstrap the MessageBus in the service worker
-        await Promise.race([
-            new Promise((resolve, reject) => {
-                const initCmd = {
-                    tag: "INITIALIZE_MESSAGE_BUS",
-                    id: getRandomId(),
-                    config: {
-                        wallet: initConfig.key,
-                        arkServer: {
-                            url: initConfig.arkServerUrl,
-                            publicKey: initConfig.arkServerPublicKey,
-                        },
-                    },
-                };
-                const messageHandler = (event: any) => {
-                    const response = event.data;
-                    if (initCmd.id !== response.id) {
-                        return;
-                    }
-                    navigator.serviceWorker.removeEventListener(
-                        "message",
-                        messageHandler
-                    );
-                    if (response.error) {
-                        reject(response.error);
-                    } else {
-                        resolve(response);
-                    }
-                };
-                navigator.serviceWorker.addEventListener(
-                    "message",
-                    messageHandler
-                );
-                options.serviceWorker.postMessage(initCmd);
-            }),
-            new Promise((_, reject) =>
-                setTimeout(() => reject("MessageBus timed out!"), 2000)
-            ),
-        ]);
+        await initializeMessageBus(
+            options.serviceWorker,
+            {
+                wallet: initConfig.key,
+                arkServer: {
+                    url: initConfig.arkServerUrl,
+                    publicKey: initConfig.arkServerPublicKey,
+                },
+                timeoutMs: options.messageBusTimeoutMs,
+            },
+            options.messageBusTimeoutMs
+        );
 
         // Initialize the wallet handler
         const initMessage: RequestInitWallet = {
@@ -716,44 +744,18 @@ export class ServiceWorkerWallet
             arkServerPublicKey: options.arkServerPublicKey,
         };
 
-        const r = await Promise.race([
-            new Promise((resolve, reject) => {
-                const initCmd = {
-                    tag: "INITIALIZE_MESSAGE_BUS",
-                    id: getRandomId(),
-                    config: {
-                        wallet: initConfig.key,
-                        arkServer: {
-                            url: initConfig.arkServerUrl,
-                            publicKey: initConfig.arkServerPublicKey,
-                        },
-                    },
-                };
-                const messageHandler = (event: any) => {
-                    const response = event.data;
-                    if (initCmd.id !== response.id) {
-                        return;
-                    }
-                    navigator.serviceWorker.removeEventListener(
-                        "message",
-                        messageHandler
-                    );
-                    if (response.error) {
-                        reject(response.error);
-                    } else {
-                        resolve(response);
-                    }
-                };
-                navigator.serviceWorker.addEventListener(
-                    "message",
-                    messageHandler
-                );
-                options.serviceWorker.postMessage(initCmd);
-            }),
-            new Promise((resolve, reject) =>
-                setTimeout(() => reject("MessageBus timed out!"), 2000)
-            ),
-        ]);
+        await initializeMessageBus(
+            options.serviceWorker,
+            {
+                wallet: initConfig.key,
+                arkServer: {
+                    url: initConfig.arkServerUrl,
+                    publicKey: initConfig.arkServerPublicKey,
+                },
+                timeoutMs: options.messageBusTimeoutMs,
+            },
+            options.messageBusTimeoutMs
+        );
         // Initialize the service worker with the config
         const initMessage: RequestInitWallet = {
             tag: messageTag,

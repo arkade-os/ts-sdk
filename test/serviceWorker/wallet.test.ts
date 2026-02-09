@@ -5,7 +5,10 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
 } from "../../src";
-import { WalletMessageHandler } from "../../src/wallet/serviceWorker/wallet-message-handler";
+import {
+    WalletMessageHandler,
+    DEFAULT_MESSAGE_TAG,
+} from "../../src/wallet/serviceWorker/wallet-message-handler";
 
 type MessageHandler = (event: { data: any }) => void;
 
@@ -37,15 +40,22 @@ const createServiceWorkerHarness = (responder?: (message: any) => any) => {
     return { navigatorServiceWorker, serviceWorker, emit, listeners };
 };
 
-const createWallet = (serviceWorker: ServiceWorker) =>
+const createWallet = (
+    serviceWorker: ServiceWorker,
+    messageTag: string = DEFAULT_MESSAGE_TAG
+) =>
     new (ServiceWorkerReadonlyWallet as any)(
         serviceWorker,
         {} as any,
         new InMemoryWalletRepository(),
-        new InMemoryContractRepository()
+        new InMemoryContractRepository(),
+        messageTag
     ) as ServiceWorkerReadonlyWallet;
 
 describe("ServiceWorkerReadonlyWallet", () => {
+    const handler = new WalletMessageHandler();
+    const messageTag = handler.messageTag;
+
     afterEach(() => {
         vi.unstubAllGlobals();
     });
@@ -54,7 +64,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const { navigatorServiceWorker, serviceWorker } =
             createServiceWorkerHarness((message) => ({
                 id: message.id,
-                tag: WalletMessageHandler.messageTag,
+                tag: messageTag,
                 type: "ADDRESS",
                 payload: { address: "bc1-test" },
             }));
@@ -63,12 +73,12 @@ describe("ServiceWorkerReadonlyWallet", () => {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
-        const wallet = createWallet(serviceWorker as any);
+        const wallet = createWallet(serviceWorker as any, messageTag);
         await expect(wallet.getAddress()).resolves.toBe("bc1-test");
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
-                tag: WalletMessageHandler.messageTag,
+                tag: messageTag,
                 type: "GET_ADDRESS",
             })
         );
@@ -81,7 +91,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const { navigatorServiceWorker, serviceWorker } =
             createServiceWorkerHarness((message) => ({
                 id: message.id,
-                tag: WalletMessageHandler.messageTag,
+                tag: messageTag,
                 type: "BOARDING_UTXOS",
                 payload: { utxos },
             }));
@@ -90,7 +100,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
-        const wallet = createWallet(serviceWorker as any);
+        const wallet = createWallet(serviceWorker as any, messageTag);
         await expect(wallet.getBoardingUtxos()).resolves.toEqual(utxos);
     });
 
@@ -98,7 +108,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         const { navigatorServiceWorker, serviceWorker } =
             createServiceWorkerHarness((message) => ({
                 id: message.id,
-                tag: WalletMessageHandler.messageTag,
+                tag: messageTag,
                 error: new Error("boom"),
             }));
 
@@ -106,7 +116,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
-        const wallet = createWallet(serviceWorker as any);
+        const wallet = createWallet(serviceWorker as any, messageTag);
         await expect(wallet.getBalance()).rejects.toThrow("boom");
     });
 
@@ -122,49 +132,49 @@ describe("ServiceWorkerReadonlyWallet", () => {
                     case "CREATE_CONTRACT":
                         return {
                             id: message.id,
-                            tag: WalletMessageHandler.messageTag,
+                            tag: messageTag,
                             type: "CONTRACT_CREATED",
                             payload: { contract },
                         };
                     case "GET_CONTRACTS":
                         return {
                             id: message.id,
-                            tag: WalletMessageHandler.messageTag,
+                            tag: messageTag,
                             type: "CONTRACTS",
                             payload: { contracts },
                         };
                     case "GET_CONTRACTS_WITH_VTXOS":
                         return {
                             id: message.id,
-                            tag: WalletMessageHandler.messageTag,
+                            tag: messageTag,
                             type: "CONTRACTS_WITH_VTXOS",
                             payload: { contracts: contractsWithVtxos },
                         };
                     case "UPDATE_CONTRACT":
                         return {
                             id: message.id,
-                            tag: WalletMessageHandler.messageTag,
+                            tag: messageTag,
                             type: "CONTRACT_UPDATED",
                             payload: { contract },
                         };
                     case "DELETE_CONTRACT":
                         return {
                             id: message.id,
-                            tag: WalletMessageHandler.messageTag,
+                            tag: messageTag,
                             type: "CONTRACT_DELETED",
                             payload: { deleted: true },
                         };
                     case "GET_SPENDABLE_PATHS":
                         return {
                             id: message.id,
-                            tag: WalletMessageHandler.messageTag,
+                            tag: messageTag,
                             type: "SPENDABLE_PATHS",
                             payload: { paths },
                         };
                     case "IS_CONTRACT_MANAGER_WATCHING":
                         return {
                             id: message.id,
-                            tag: WalletMessageHandler.messageTag,
+                            tag: messageTag,
                             type: "CONTRACT_WATCHING",
                             payload: { isWatching: true },
                         };
@@ -177,7 +187,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
-        const wallet = createWallet(serviceWorker as any);
+        const wallet = createWallet(serviceWorker as any, messageTag);
         const manager = await wallet.getContractManager();
 
         await expect(
@@ -203,7 +213,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({
-                tag: WalletMessageHandler.messageTag,
+                tag: messageTag,
                 type: "CREATE_CONTRACT",
             })
         );
@@ -217,14 +227,14 @@ describe("ServiceWorkerReadonlyWallet", () => {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
-        const wallet = createWallet(serviceWorker as any);
+        const wallet = createWallet(serviceWorker as any, messageTag);
         const manager = await wallet.getContractManager();
 
         const callback = vi.fn();
         const unsubscribe = manager.onContractEvent(callback);
 
         emit({
-            tag: WalletMessageHandler.messageTag,
+            tag: messageTag,
             type: "CONTRACT_EVENT",
             payload: { event: { type: "connection_reset", timestamp: 1 } },
         });
@@ -236,7 +246,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         unsubscribe();
         emit({
-            tag: WalletMessageHandler.messageTag,
+            tag: messageTag,
             type: "CONTRACT_EVENT",
             payload: { event: { type: "connection_reset", timestamp: 2 } },
         });
