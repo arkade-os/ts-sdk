@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { BufferReader, BufferWriter } from "./utils";
 
 /**
- * AssetOuput references a real transaction output and specify the amount in satothis.
+ * AssetOutput references a real transaction output and specify the amount in satoshis.
  * it must be present in an AssetGroup.
  *
  * @param vout - the output index in the transaction

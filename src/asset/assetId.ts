@@ -27,7 +27,7 @@ export class AssetId {
 
         if (buf.length !== TX_HASH_SIZE) {
             throw new Error(
-                `invalid txid length, got ${txid.length} want ${TX_HASH_SIZE}`
+                `invalid txid length: got ${buf.length} bytes, want ${TX_HASH_SIZE} bytes`
             );
         }
 

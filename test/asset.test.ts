@@ -429,16 +429,6 @@ describe("AssetGroup", () => {
     });
 
     describe("invalid", () => {
-        describe("Serialize", () => {
-            assetGroupFixtures.invalid.newAssetGroupFromString.forEach((v) => {
-                it(v.name, () => {
-                    expect(() =>
-                        AssetGroup.fromString(v.serializedHex)
-                    ).toThrow(v.expectedError);
-                });
-            });
-        });
-
         describe("fromString", () => {
             assetGroupFixtures.invalid.newAssetGroupFromString.forEach((v) => {
                 it(v.name, () => {

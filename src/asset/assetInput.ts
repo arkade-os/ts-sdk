@@ -219,15 +219,11 @@ export class AssetInputs {
 
     static fromReader(reader: BufferReader): AssetInputs {
         const count = Number(reader.readVarUint());
-        if (count === 0) {
-            return new AssetInputs([]);
-        }
-
         const inputs: AssetInput[] = [];
         for (let i = 0; i < count; i++) {
             inputs.push(AssetInput.fromReader(reader));
         }
-        return new AssetInputs(inputs);
+        return AssetInputs.create(inputs);
     }
 
     serializeTo(writer: BufferWriter): void {

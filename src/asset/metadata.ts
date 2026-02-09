@@ -100,29 +100,3 @@ export class Metadata {
         writer.writeVarSlice(this.value);
     }
 }
-
-export function serializeMetadataList(
-    metadata: Metadata[],
-    writer: BufferWriter
-): void {
-    writer.writeVarUint(metadata.length);
-
-    const sorted = [...metadata].sort((a, b) => {
-        const keyA = new TextDecoder().decode(a.key);
-        const keyB = new TextDecoder().decode(b.key);
-        return keyB.localeCompare(keyA);
-    });
-
-    for (const m of sorted) {
-        m.serializeTo(writer);
-    }
-}
-
-export function deserializeMetadataList(reader: BufferReader): Metadata[] {
-    const count = Number(reader.readVarUint());
-    const metadata: Metadata[] = [];
-    for (let i = 0; i < count; i++) {
-        metadata.push(Metadata.fromReader(reader));
-    }
-    return metadata;
-}

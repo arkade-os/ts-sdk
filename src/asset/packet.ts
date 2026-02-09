@@ -168,7 +168,7 @@ function extractRawPacketFromScript(script: Uint8Array): Uint8Array {
     const marker = payload[ARKADE_MAGIC.length];
     if (marker !== MARKER_ASSET_PAYLOAD) {
         throw new Error(
-            `invalid aset marker, got ${marker} want ${MARKER_ASSET_PAYLOAD}`
+            `invalid asset marker, got ${marker} want ${MARKER_ASSET_PAYLOAD}`
         );
     }
 
