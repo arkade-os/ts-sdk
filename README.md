@@ -415,7 +415,7 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > const walletRepository = new IndexedDBWalletRepository(newDbName)
 > await migrateWalletRepository(oldStorage, walletRepository, {
 >   onchain: [ 'address-1', 'address-2' ],
->   offchain: [ 'onboardin-address-1' ],
+>   offchain: [ 'onboarding-address-1' ],
 > })
 > ```
 >
