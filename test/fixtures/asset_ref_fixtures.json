@@ -8,7 +8,7 @@
                 "serializedHex": "01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2a00"
             }
         ],
-        "newAssetRefFromGroupIndex": [
+        "newAssetRefFromGroup": [
             {
                 "name": "zero index",
                 "index": 0,

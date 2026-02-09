@@ -1,18 +1,13 @@
 import { hex } from "@scure/base";
 import { TX_HASH_SIZE, ASSET_ID_SIZE } from "./types";
-import {
-    BufferReader,
-    BufferWriter,
-    isZeroBytes,
-    serializeUint16,
-} from "./utils";
+import { BufferReader, BufferWriter, isZeroBytes } from "./utils";
 
 export class AssetId {
-    readonly txhash: Uint8Array;
+    readonly txid: Uint8Array;
     readonly index: number;
 
-    private constructor(txhash: Uint8Array, index: number) {
-        this.txhash = txhash;
+    private constructor(txid: Uint8Array, index: number) {
+        this.txid = txid;
         this.index = index;
     }
 
@@ -23,7 +18,7 @@ export class AssetId {
 
         let buf: Uint8Array;
         try {
-            buf = hex.decode(txid).reverse();
+            buf = hex.decode(txid);
         } catch {
             throw new Error("invalid txid format, must be hex");
         }
@@ -68,11 +63,11 @@ export class AssetId {
     }
 
     get txidString(): string {
-        return hex.encode(this.txhash);
+        return hex.encode(this.txid);
     }
 
     validate(): void {
-        if (isZeroBytes(this.txhash)) {
+        if (isZeroBytes(this.txid)) {
             throw new Error("empty txid");
         }
     }
@@ -93,7 +88,7 @@ export class AssetId {
     }
 
     serializeTo(writer: BufferWriter): void {
-        writer.write(this.txhash);
-        writer.write(serializeUint16(this.index));
+        writer.write(this.txid);
+        writer.writeUint16LE(this.index);
     }
 }

@@ -9,7 +9,7 @@ import {
     serializeMetadataList,
     deserializeMetadataList,
 } from "./metadata";
-import { BufferReader, BufferWriter, serializeVarUint } from "./utils";
+import { BufferReader, BufferWriter } from "./utils";
 
 export class AssetGroup {
     readonly assetId: AssetId | null;
@@ -190,12 +190,12 @@ export class AssetGroup {
             serializeMetadataList(this.metadata, writer);
         }
 
-        writer.write(serializeVarUint(this.inputs.length));
+        writer.writeVarUint(this.inputs.length);
         for (const input of this.inputs) {
             input.serializeTo(writer);
         }
 
-        writer.write(serializeVarUint(this.outputs.length));
+        writer.writeVarUint(this.outputs.length);
         for (const output of this.outputs) {
             output.serializeTo(writer);
         }

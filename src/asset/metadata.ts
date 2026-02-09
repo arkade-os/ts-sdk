@@ -1,11 +1,6 @@
 import { hex } from "@scure/base";
 import { sha256 } from "@scure/btc-signer/utils.js";
-import {
-    BufferReader,
-    BufferWriter,
-    serializeVarSlice,
-    serializeVarUint,
-} from "./utils";
+import { BufferReader, BufferWriter } from "./utils";
 
 export class Metadata {
     readonly key: Uint8Array;
@@ -99,8 +94,8 @@ export class Metadata {
     }
 
     serializeTo(writer: BufferWriter): void {
-        writer.write(serializeVarSlice(this.key));
-        writer.write(serializeVarSlice(this.value));
+        writer.writeVarSlice(this.key);
+        writer.writeVarSlice(this.value);
     }
 }
 
@@ -133,7 +128,7 @@ export function serializeMetadataList(
     metadata: Metadata[],
     writer: BufferWriter
 ): void {
-    writer.write(serializeVarUint(metadata.length));
+    writer.writeVarUint(metadata.length);
 
     const sorted = [...metadata].sort((a, b) => {
         const keyA = new TextDecoder().decode(a.key);

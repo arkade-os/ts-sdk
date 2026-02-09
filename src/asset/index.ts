@@ -1,4 +1,8 @@
-export { AssetType, assetTypeToString, AssetRefType } from "./types";
+export {
+    AssetInputType as AssetType,
+    assetTypeToString,
+    AssetRefType,
+} from "./types";
 
 export { AssetId } from "./assetId";
 export { AssetRef } from "./assetRef";

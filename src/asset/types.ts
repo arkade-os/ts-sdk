@@ -2,17 +2,17 @@ export const TX_HASH_SIZE = 32;
 export const ASSET_ID_SIZE = 34;
 export const ASSET_VERSION = 0x01;
 
-export enum AssetType {
+export enum AssetInputType {
     Unspecified = 0,
     Local = 1,
     Intent = 2,
 }
 
-export function assetTypeToString(type: AssetType): string {
+export function assetTypeToString(type: AssetInputType): string {
     switch (type) {
-        case AssetType.Local:
+        case AssetInputType.Local:
             return "local";
-        case AssetType.Intent:
+        case AssetInputType.Intent:
             return "intent";
         default:
             return "unspecified";

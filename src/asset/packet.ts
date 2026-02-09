@@ -3,7 +3,7 @@ import { Script } from "@scure/btc-signer";
 import { concatBytes, equalBytes } from "@scure/btc-signer/utils.js";
 import { ARKADE_MAGIC, MARKER_ASSET_PAYLOAD, AssetRefType } from "./types";
 import { AssetGroup } from "./assetGroup";
-import { BufferReader, BufferWriter, serializeVarUint } from "./utils";
+import { BufferReader, BufferWriter } from "./utils";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
 
 export class AssetPacketNotFoundError extends Error {
@@ -71,7 +71,7 @@ export class Packet {
 
     serialize(): Uint8Array {
         const packetWriter = new BufferWriter();
-        packetWriter.write(serializeVarUint(this.groups.length));
+        packetWriter.writeVarUint(this.groups.length);
         for (const group of this.groups) {
             group.serializeTo(packetWriter);
         }

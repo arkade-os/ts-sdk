@@ -104,7 +104,7 @@
                 "name": "invalid txid format",
                 "type": "intent",
                 "amount": 500,
-                "txid": "invalid intent txid format",
+                "txid": "z000000000000000000000000000000000000000000000000000000000000000",
                 "vin": 10,
                 "expectedError": "invalid input intent txid format"
             },
@@ -119,6 +119,16 @@
         ],
         "newInputFromString": [
             {
+                "name": "empty",
+                "serializedHex": "",
+                "expectedError": "missing asset input"
+            },
+            {
+                "name": "invalid format",
+                "serializedHex": "invalid",
+                "expectedError": "invalid asset input format"
+            },
+            {
                 "name": "unspecified type",
                 "serializedHex": "0005000a",
                 "expectedError": "asset input type unspecified"
@@ -131,7 +141,7 @@
             {
                 "name": "invalid txid length",
                 "serializedHex": "0205000a",
-                "expectedError": "invalid input intent txid length"
+                "expectedError": "invalid asset input txid length"
             }
         ],
         "newInputs": [
@@ -166,7 +176,7 @@
                         "amount": 200
                     }
                 ],
-                "expectedError": "duplicated input vin"
+                "expectedError": "duplicated inputs vin"
             }
         ]
     }

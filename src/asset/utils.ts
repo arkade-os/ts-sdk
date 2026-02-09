@@ -11,6 +11,34 @@ export class BufferWriter {
         this.buffer.push(byte & 0xff);
     }
 
+    writeUint16LE(value: number): void {
+        const buf = new Uint8Array(2);
+        new DataView(buf.buffer).setUint16(0, value, true); // true = little endian
+        this.write(buf);
+    }
+
+    writeVarUint(value: bigint | number): void {
+        const val = typeof value === "number" ? BigInt(value) : value;
+        const bytes: number[] = [];
+        let remaining = val;
+
+        do {
+            let byte = Number(remaining & 0x7fn);
+            remaining >>= 7n;
+            if (remaining > 0n) {
+                byte |= 0x80;
+            }
+            bytes.push(byte);
+        } while (remaining > 0n);
+
+        this.write(new Uint8Array(bytes));
+    }
+
+    writeVarSlice(data: Uint8Array): void {
+        this.writeVarUint(data.length);
+        this.write(data);
+    }
+
     toBytes(): Uint8Array {
         return new Uint8Array(this.buffer);
     }
@@ -80,41 +108,6 @@ export class BufferReader {
     }
 }
 
-export function serializeUint16(value: number): Uint8Array {
-    const buf = new Uint8Array(2);
-    buf[0] = value & 0xff;
-    buf[1] = (value >> 8) & 0xff;
-    return buf;
-}
-
-export function serializeVarUint(value: bigint | number): Uint8Array {
-    const val = typeof value === "number" ? BigInt(value) : value;
-    const bytes: number[] = [];
-    let remaining = val;
-
-    do {
-        let byte = Number(remaining & 0x7fn);
-        remaining >>= 7n;
-        if (remaining > 0n) {
-            byte |= 0x80;
-        }
-        bytes.push(byte);
-    } while (remaining > 0n);
-
-    return new Uint8Array(bytes);
-}
-
-export function serializeVarSlice(data: Uint8Array): Uint8Array {
-    const length = serializeVarUint(data.length);
-    const result = new Uint8Array(length.length + data.length);
-    result.set(length);
-    result.set(data, length.length);
-    return result;
-}
-
 export function isZeroBytes(bytes: Uint8Array): boolean {
-    for (const byte of bytes) {
-        if (byte !== 0) return false;
-    }
-    return true;
+    return bytes.every((byte) => byte === 0);
 }

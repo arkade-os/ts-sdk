@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { AssetRefType } from "./types";
 import { AssetId } from "./assetId";
-import { BufferReader, BufferWriter, serializeUint16 } from "./utils";
+import { BufferReader, BufferWriter } from "./utils";
 
 export class AssetRef {
     readonly type: AssetRefType;
@@ -110,7 +110,7 @@ export class AssetRef {
                 this.assetId!.serializeTo(writer);
                 break;
             case AssetRefType.ByGroup:
-                writer.write(serializeUint16(this.groupIndex!));
+                writer.writeUint16LE(this.groupIndex!);
                 break;
         }
     }

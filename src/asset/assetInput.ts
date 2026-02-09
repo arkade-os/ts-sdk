@@ -1,21 +1,15 @@
 import { hex } from "@scure/base";
-import { AssetType, TX_HASH_SIZE, assetTypeToString } from "./types";
-import {
-    BufferReader,
-    BufferWriter,
-    isZeroBytes,
-    serializeUint16,
-    serializeVarUint,
-} from "./utils";
+import { AssetInputType, TX_HASH_SIZE, assetTypeToString } from "./types";
+import { BufferReader, BufferWriter, isZeroBytes } from "./utils";
 
 export class AssetInput {
-    readonly type: AssetType;
+    readonly type: AssetInputType;
     readonly vin: number;
     readonly txid: Uint8Array;
     readonly amount: bigint;
 
     private constructor(
-        type: AssetType,
+        type: AssetInputType,
         vin: number,
         amount: bigint,
         txid?: Uint8Array
@@ -28,7 +22,7 @@ export class AssetInput {
 
     static create(vin: number, amount: bigint | number): AssetInput {
         const input = new AssetInput(
-            AssetType.Local,
+            AssetInputType.Local,
             vin & 0xffff,
             typeof amount === "number" ? BigInt(amount) : amount
         );
@@ -57,7 +51,7 @@ export class AssetInput {
         }
 
         const input = new AssetInput(
-            AssetType.Intent,
+            AssetInputType.Intent,
             vin & 0xffff,
             typeof amount === "number" ? BigInt(amount) : amount,
             buf
@@ -97,14 +91,14 @@ export class AssetInput {
 
     validate(): void {
         switch (this.type) {
-            case AssetType.Local:
+            case AssetInputType.Local:
                 break;
-            case AssetType.Intent:
+            case AssetInputType.Intent:
                 if (isZeroBytes(this.txid)) {
                     throw new Error("missing input intent txid");
                 }
                 break;
-            case AssetType.Unspecified:
+            case AssetInputType.Unspecified:
                 throw new Error("asset input type unspecified");
             default:
                 throw new Error(`asset input type ${this.type} unknown`);
@@ -112,17 +106,17 @@ export class AssetInput {
     }
 
     static fromReader(reader: BufferReader): AssetInput {
-        const type = reader.readByte() as AssetType;
+        const type = reader.readByte() as AssetInputType;
 
         let input: AssetInput;
         switch (type) {
-            case AssetType.Local: {
+            case AssetInputType.Local: {
                 const vin = reader.readUint16LE();
                 const amount = reader.readVarUint();
                 input = new AssetInput(type, vin, amount);
                 break;
             }
-            case AssetType.Intent: {
+            case AssetInputType.Intent: {
                 if (reader.remaining() < TX_HASH_SIZE) {
                     throw new Error("invalid input intent txid length");
                 }
@@ -132,7 +126,7 @@ export class AssetInput {
                 input = new AssetInput(type, vin, amount, new Uint8Array(txid));
                 break;
             }
-            case AssetType.Unspecified:
+            case AssetInputType.Unspecified:
                 throw new Error("asset input type unspecified");
             default:
                 throw new Error(`asset input type ${type} unknown`);
@@ -146,16 +140,16 @@ export class AssetInput {
         writer.writeByte(this.type);
 
         switch (this.type) {
-            case AssetType.Local:
-                writer.write(serializeUint16(this.vin));
-                writer.write(serializeVarUint(this.amount));
+            case AssetInputType.Local:
+                writer.writeUint16LE(this.vin);
+                writer.writeVarUint(this.amount);
                 break;
-            case AssetType.Intent:
+            case AssetInputType.Intent:
                 writer.write(this.txid);
-                writer.write(serializeUint16(this.vin));
-                writer.write(serializeVarUint(this.amount));
+                writer.writeUint16LE(this.vin);
+                writer.writeVarUint(this.amount);
                 break;
-            case AssetType.Unspecified:
+            case AssetInputType.Unspecified:
                 throw new Error("asset input type unspecified");
             default:
                 throw new Error(`asset input type ${this.type} unknown`);
@@ -202,7 +196,7 @@ export class AssetInputs {
 
     validate(): void {
         const seen = new Set<number>();
-        let inputType: AssetType = AssetType.Unspecified;
+        let inputType: AssetInputType = AssetInputType.Unspecified;
 
         for (const input of this.inputs) {
             if (seen.has(input.vin)) {
@@ -210,7 +204,7 @@ export class AssetInputs {
             }
             seen.add(input.vin);
 
-            if (inputType === AssetType.Unspecified) {
+            if (inputType === AssetInputType.Unspecified) {
                 inputType = input.type;
             }
             if (input.type !== inputType) {
@@ -233,7 +227,7 @@ export class AssetInputs {
     }
 
     serializeTo(writer: BufferWriter): void {
-        writer.write(serializeVarUint(this.inputs.length));
+        writer.writeVarUint(this.inputs.length);
         for (const input of this.inputs) {
             input.serializeTo(writer);
         }

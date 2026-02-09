@@ -1,26 +1,17 @@
 import { hex } from "@scure/base";
-import { AssetType, assetTypeToString } from "./types";
-import {
-    BufferReader,
-    BufferWriter,
-    serializeUint16,
-    serializeVarUint,
-} from "./utils";
+import { BufferReader, BufferWriter } from "./utils";
 
 export class AssetOutput {
-    readonly type: AssetType;
     readonly vout: number;
     readonly amount: bigint;
 
-    private constructor(type: AssetType, vout: number, amount: bigint) {
-        this.type = type;
+    private constructor(vout: number, amount: bigint) {
         this.vout = vout;
         this.amount = amount;
     }
 
     static create(vout: number, amount: bigint | number): AssetOutput {
         const output = new AssetOutput(
-            AssetType.Local,
             vout & 0xffff,
             typeof amount === "number" ? BigInt(amount) : amount
         );
@@ -56,64 +47,29 @@ export class AssetOutput {
         return hex.encode(this.serialize());
     }
 
-    get typeString(): string {
-        return assetTypeToString(this.type);
-    }
-
     validate(): void {
-        switch (this.type) {
-            case AssetType.Local:
-                break;
-            case AssetType.Intent:
-                throw new Error(`asset output type not supported ${this.type}`);
-            case AssetType.Unspecified:
-                throw new Error("asset output type unspecified");
-            default:
-                throw new Error(`asset output type unknown ${this.type}`);
+        if (this.vout < 0) {
+            throw new Error("asset output vout must be non-negative");
+        }
+        if (this.amount <= 0n) {
+            throw new Error("asset output amount must be greater than 0");
         }
     }
 
     static fromReader(reader: BufferReader): AssetOutput {
-        const type = reader.readByte() as AssetType;
-
-        let output: AssetOutput;
-        switch (type) {
-            case AssetType.Local: {
-                if (reader.remaining() < 2) {
-                    throw new Error("invalid asset output vout length");
-                }
-                const vout = reader.readUint16LE();
-                const amount = reader.readVarUint();
-                output = new AssetOutput(type, vout, amount);
-                break;
-            }
-            case AssetType.Intent:
-                throw new Error(`asset output type not supported ${type}`);
-            case AssetType.Unspecified:
-                throw new Error("asset output type unspecified");
-            default:
-                throw new Error(`asset output type unknown ${type}`);
+        if (reader.remaining() < 2) {
+            throw new Error("invalid asset output vout length");
         }
-
+        const vout = reader.readUint16LE();
+        const amount = reader.readVarUint();
+        const output = new AssetOutput(vout, amount);
         output.validate();
         return output;
     }
 
     serializeTo(writer: BufferWriter): void {
-        writer.writeByte(this.type);
-
-        switch (this.type) {
-            case AssetType.Local:
-                writer.write(serializeUint16(this.vout));
-                writer.write(serializeVarUint(this.amount));
-                break;
-            case AssetType.Intent:
-                throw new Error(`asset output type not supported ${this.type}`);
-            case AssetType.Unspecified:
-                throw new Error("asset output type unspecified");
-            default:
-                throw new Error(`asset output type unknown ${this.type}`);
-        }
+        writer.writeUint16LE(this.vout);
+        writer.writeVarUint(this.amount);
     }
 }
 
@@ -156,20 +112,11 @@ export class AssetOutputs {
 
     validate(): void {
         const seen = new Set<number>();
-        let outputType: AssetType = AssetType.Unspecified;
-
         for (const output of this.outputs) {
             if (seen.has(output.vout)) {
                 throw new Error(`duplicated output vout ${output.vout}`);
             }
             seen.add(output.vout);
-
-            if (outputType === AssetType.Unspecified) {
-                outputType = output.type;
-            }
-            if (output.type !== outputType) {
-                throw new Error("all outputs must be of the same type");
-            }
         }
     }
 
@@ -188,7 +135,7 @@ export class AssetOutputs {
 
     serializeTo(writer: BufferWriter): void {
         this.validate();
-        writer.write(serializeVarUint(this.outputs.length));
+        writer.writeVarUint(this.outputs.length);
         for (const output of this.outputs) {
             output.serializeTo(writer);
         }

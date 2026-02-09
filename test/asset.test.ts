@@ -85,10 +85,9 @@ describe("AssetRef", () => {
         });
 
         describe("from group index", () => {
-            assetRefFixtures.valid.newAssetRefFromGroupIndex.forEach((v) => {
+            assetRefFixtures.valid.newAssetRefFromGroup.forEach((v) => {
                 it(v.name, () => {
-                    const index = v.index & 0xffff;
-                    const assetRef = AssetRef.fromGroupIndex(index);
+                    const assetRef = AssetRef.fromGroupIndex(v.index);
 
                     expect(assetRef).toBeDefined();
                     expect(assetRef.type).toBe(AssetRefType.ByGroup);
@@ -432,25 +431,11 @@ describe("AssetGroup", () => {
 
     describe("invalid", () => {
         describe("Serialize", () => {
-            assetGroupFixtures.invalid.newAssetGroup.forEach((v) => {
+            assetGroupFixtures.invalid.newAssetGroupFromString.forEach((v) => {
                 it(v.name, () => {
-                    const inputs = (v.inputs || []).map((i) =>
-                        parseAssetInput(i as AssetInputFixture)
-                    );
-                    const assetId = parseAssetId(v.assetId as AssetIdFixture);
-
-                    const assetGroup = new AssetGroup(
-                        assetId,
-                        null,
-                        inputs,
-                        [],
-                        [],
-                        v.immutable
-                    );
-
-                    expect(() => assetGroup.serialize()).toThrow(
-                        v.expectedError
-                    );
+                    expect(() =>
+                        AssetGroup.fromString(v.serializedHex)
+                    ).toThrow(v.expectedError);
                 });
             });
         });
