@@ -18,7 +18,7 @@ import {
 } from "./db";
 import { closeDatabase, openDatabase } from "../../db/manager";
 import { initDatabase } from "./schema";
-import { DEFAULT_DB_NAME } from "../../wallet/serviceWorker/utils";
+import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
 /**
  * IndexedDB-based implementation of WalletRepository.

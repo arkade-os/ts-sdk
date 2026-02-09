@@ -5,6 +5,12 @@ import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
 import {
+    MessageHandler,
+    RequestEnvelope,
+    ResponseEnvelope,
+    MessageBus,
+} from "./worker/messageBus";
+import {
     VtxoScript,
     EncodedVtxoScript,
     TapLeafScript,
@@ -60,9 +66,7 @@ import {
     ServiceWorkerReadonlyWallet,
 } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
-import { Worker } from "./wallet/serviceWorker/worker";
-import { Request } from "./wallet/serviceWorker/request";
-import { Response } from "./wallet/serviceWorker/response";
+import { setupServiceWorker } from "./worker/browser/utils";
 import {
     ESPLORA_URL,
     EsploraProvider,
@@ -156,6 +160,8 @@ import {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 } from "./repositories";
 
 export * from "./arkfee";
@@ -193,7 +199,7 @@ import type {
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
 import { closeDatabase, openDatabase } from "./db/manager";
-import { setupServiceWorker } from "./wallet/serviceWorker/utils";
+import { WalletMessageHandler } from "./wallet/serviceWorker/wallet-message-handler";
 
 export {
     // Wallets
@@ -225,11 +231,10 @@ export {
 
     // Service Worker
     setupServiceWorker,
-    Worker,
+    MessageBus,
+    WalletMessageHandler,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
-    Request,
-    Response,
 
     // Tapscript
     decodeTapscript,
@@ -274,6 +279,8 @@ export {
     InMemoryWalletRepository,
     InMemoryContractRepository,
     migrateWalletRepository,
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
 
     // Intent proof
     Intent,
@@ -430,4 +437,9 @@ export type {
     ParsedArkContract,
     DefaultContractParams,
     VHTLCContractParams,
+
+    // Service Worker types
+    MessageHandler,
+    RequestEnvelope,
+    ResponseEnvelope,
 };

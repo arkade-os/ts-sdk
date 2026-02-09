@@ -337,37 +337,60 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-**Ultra-simplified setup!** We handle all the complex service worker registration and identity management for you:
+The SDK provides a `MessageBus` orchestrator that runs inside a service worker
+and routes messages to pluggable `MessageHandler`s. The built-in
+`WalletMessageHandler` exposes all wallet operations over this message bus, and
+`ServiceWorkerWallet` is a client-side proxy that communicates with it
+transparently.
+
+#### Service worker file
+
+```javascript
+// service-worker.js
+import {
+  MessageBus,
+  WalletMessageHandler,
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository,
+} from '@arkade-os/sdk'
+
+const walletRepo = new IndexedDBWalletRepository()
+const contractRepo = new IndexedDBContractRepository()
+
+const bus = new MessageBus(walletRepo, contractRepo, {
+  messageHandlers: [new WalletMessageHandler()],
+  tickIntervalMs: 10_000, // default 10s
+})
+
+bus.start()
+```
+
+#### Client-side usage
 
 ```typescript
-// SIMPLE SETUP with identity! 🎉
-import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk';
+// app.ts
+import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
 
-// Create your identity
-const identity = SingleKey.fromHex('your_private_key_hex');
-// Or generate a new one:
-// const identity = SingleKey.fromRandomBytes();
+const identity = SingleKey.fromHex('your_private_key_hex')
 
+// One-liner: registers the SW, initializes the MessageBus, and creates the wallet
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity
-});
+  identity,
+})
 
-// That's it! Ready to use immediately:
-const address = await wallet.getAddress();
-const balance = await wallet.getBalance();
+// Use like any other wallet — calls are proxied to the service worker
+const address = await wallet.getAddress()
+const balance = await wallet.getBalance()
 ```
 
-You'll also need to create a service worker file:
+For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
+`ReadonlySingleKey` identity instead.
 
-```typescript
-// service-worker.js
-import { Worker } from '@arkade-os/sdk'
+See `src/worker/README.md` for architecture details, trade-offs, and custom
+message handler examples.
 
-// Worker handles communication between the main thread and service worker
-new Worker().start()
-```
 
 ### Repositories (Storage)
 
@@ -390,10 +413,10 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > const newDbName = 'my-app-db'
 >
 > const walletRepository = new IndexedDBWalletRepository(newDbName)
-> await migrateWalletRepository(oldStorage, walletRepository, [
->   'address-1',
->   'address-2'
-> ])
+> await migrateWalletRepository(oldStorage, walletRepository, {
+>   onchain: [ 'address-1', 'address-2' ],
+>   offchain: [ 'onboarding-address-1' ],
+> })
 > ```
 >
 > Anything related to contract repository migration must be handled by the package which created them. The SDK doesn't manage contracts in V1. Data remains untouched and persisted in the same old location.

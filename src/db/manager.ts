@@ -1,5 +1,3 @@
-import { initDatabase } from "../repositories/indexedDB/schema";
-
 export function getGlobalObject(): {
     globalObject: typeof globalThis;
 } {
