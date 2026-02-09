@@ -115,7 +115,6 @@ export class IndexedDBWalletRepository implements WalletRepository {
 
                 const promises = vtxos.map((vtxo) => {
                     return new Promise<void>((resolveItem, rejectItem) => {
-                        // TODO: this throwing because vtxo.tapTree is undefined. How's that possible?
                         const serialized: SerializedVtxo = serializeVtxo(vtxo);
                         const item = {
                             address,

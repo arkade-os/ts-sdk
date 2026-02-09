@@ -63,19 +63,51 @@ const createSelfMock = () => {
     return { selfMock, listeners, timeouts, activeTimeouts };
 };
 
+const defaultInitConfig = {
+    wallet: {
+        privateKey:
+            "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c",
+    },
+    arkServer: {
+        url: "https://ark.example.test",
+        publicKey: "initConfig.arkServerPublicKey",
+    },
+};
+
 describe("Worker", () => {
+    let selfMock: SelfMock;
+    let listeners: Map<string, ((event: any) => void)[]>;
+
     beforeEach(() => {
         vi.resetAllMocks();
+        ({ selfMock, listeners } = createSelfMock());
+        vi.stubGlobal("self", selfMock as any);
     });
 
     afterEach(() => {
         vi.unstubAllGlobals();
     });
 
-    it("routes messages to the matching updater and replies to the sender", async () => {
-        const { selfMock, listeners } = createSelfMock();
-        vi.stubGlobal("self", selfMock as any);
+    const initializeMessageBus = async (
+        config = defaultInitConfig
+    ): Promise<{ source: { postMessage: ReturnType<typeof vi.fn> } }> => {
+        const messageHandlers = listeners.get("message") || [];
+        expect(messageHandlers.length).toBeGreaterThan(0);
 
+        const source = { postMessage: vi.fn() };
+        await messageHandlers[0]({
+            data: {
+                tag: "INITIALIZE_MESSAGE_BUS",
+                id: "init",
+                config,
+            },
+            source,
+        });
+
+        return { source };
+    };
+
+    it("routes messages to the matching updater and replies to the sender", async () => {
         const handleMessage = vi
             .fn()
             .mockResolvedValue({ tag: "wallet", id: "1" });
@@ -91,9 +123,16 @@ describe("Worker", () => {
         const sw = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [updater] }
+            {
+                messageHandlers: [updater],
+                buildServices: async () => ({
+                    arkProvider: {} as any,
+                    readonlyWallet: {} as any,
+                }),
+            }
         );
         await sw.start();
+        await initializeMessageBus();
 
         const messageHandlers = listeners.get("message") || [];
         expect(messageHandlers.length).toBe(1);
@@ -112,9 +151,6 @@ describe("Worker", () => {
     });
 
     it("ignores messages with unknown tags", async () => {
-        const { selfMock, listeners } = createSelfMock();
-        vi.stubGlobal("self", selfMock as any);
-
         const handleMessage = vi.fn().mockResolvedValue(null);
         const updater: TestUpdater = {
             messageTag: "known",
@@ -127,9 +163,16 @@ describe("Worker", () => {
         const sw = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [updater] }
+            {
+                messageHandlers: [updater],
+                buildServices: async () => ({
+                    arkProvider: {} as any,
+                    readonlyWallet: {} as any,
+                }),
+            }
         );
         await sw.start();
+        await initializeMessageBus();
 
         const messageHandlers = listeners.get("message") || [];
         const source = { postMessage: vi.fn() };
@@ -143,11 +186,6 @@ describe("Worker", () => {
     });
 
     it("handles init message", async () => {
-        vi.useFakeTimers();
-
-        const { selfMock, activeTimeouts, listeners } = createSelfMock();
-        vi.stubGlobal("self", selfMock as any);
-
         const updater: TestUpdater = {
             messageTag: "wallet",
             start: vi.fn().mockResolvedValue([]),
@@ -196,8 +234,6 @@ describe("Worker", () => {
             source,
         });
 
-        vi.advanceTimersByTime(2000);
-
         expect(buildServicesSpy).toHaveBeenCalledExactlyOnceWith(config);
         expect(updater.start).toHaveBeenCalledExactlyOnceWith(
             {
@@ -209,9 +245,6 @@ describe("Worker", () => {
     });
 
     it("prevents concurrent tick runs", async () => {
-        const { selfMock } = createSelfMock();
-        vi.stubGlobal("self", selfMock as any);
-
         let resolveTick: (() => void) | undefined;
         const tickPromise = new Promise<void>((resolve) => {
             resolveTick = resolve;
@@ -242,9 +275,6 @@ describe("Worker", () => {
     });
 
     it("broadcasts client messages to all updaters", async () => {
-        const { selfMock, listeners } = createSelfMock();
-        vi.stubGlobal("self", selfMock as any);
-
         const updaterA: TestUpdater = {
             messageTag: "a",
             start: vi.fn().mockResolvedValue(undefined),
@@ -263,9 +293,16 @@ describe("Worker", () => {
         const sw = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
-            { messageHandlers: [updaterA, updaterB] }
+            {
+                messageHandlers: [updaterA, updaterB],
+                buildServices: async () => ({
+                    arkProvider: {} as any,
+                    readonlyWallet: {} as any,
+                }),
+            }
         );
         await sw.start();
+        await initializeMessageBus();
 
         const messageHandlers = listeners.get("message") || [];
         const source = { postMessage: vi.fn() };
@@ -280,11 +317,9 @@ describe("Worker", () => {
     });
 
     it("broadcasts tick responses to all clients", async () => {
-        const { selfMock } = createSelfMock();
         const clientA = { postMessage: vi.fn() };
         const clientB = { postMessage: vi.fn() };
         selfMock.clients.matchAll.mockResolvedValue([clientA, clientB]);
-        vi.stubGlobal("self", selfMock as any);
 
         const updater: TestUpdater = {
             messageTag: "wallet",

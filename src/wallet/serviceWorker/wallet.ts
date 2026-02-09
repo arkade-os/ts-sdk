@@ -77,7 +77,6 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import { getRandomId } from "../utils";
-import { MessageBus } from "../../worker/messageBus";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
