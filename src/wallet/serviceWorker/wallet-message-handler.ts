@@ -767,10 +767,8 @@ export class WalletMessageHandler
                     const utxos = funds.coins.map((utxo) =>
                         extendCoin(this.readonlyWallet!, utxo)
                     );
-
                     const boardingAddress =
-                        await this.readonlyWallet?.getBoardingAddress()!;
-
+                        await this.readonlyWallet!.getBoardingAddress();
                     // save utxos using unified repository
                     // TODO: remove UTXOS by address
                     //  await this.walletRepository.clearUtxos(boardingAddress);
