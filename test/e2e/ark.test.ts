@@ -969,14 +969,11 @@ describe("Asset integration tests", () => {
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
             // issue an asset
-            const issueAmount = 1000;
-            const result = await alice.wallet.issueAsset({
-                amount: issueAmount,
-            });
+            const amount = 1000;
+            const result = await alice.wallet.assetManager.issue({ amount });
 
             expect(result.arkTxId).toBeDefined();
             expect(result.assetId).toBeDefined();
-            expect(result.controlAssetId).toBeUndefined();
 
             await new Promise((resolve) => setTimeout(resolve, 3000));
 
@@ -992,12 +989,12 @@ describe("Asset integration tests", () => {
             const asset = assetVtxo!.assets!.find(
                 (a) => a.assetId === result.assetId
             );
-            expect(asset!.amount).toBe(issueAmount);
+            expect(asset!.amount).toBe(amount);
         }
     );
 
     it(
-        "should issue an asset with a new control asset",
+        "should issue an asset with existing control asset",
         { timeout: 60000 },
         async () => {
             const alice = await createTestArkWallet();
@@ -1007,16 +1004,19 @@ describe("Asset integration tests", () => {
             faucetOffchain(aliceAddress!, fundAmount);
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
-            // issue an asset with a new control asset (supply = 1)
-            const issueAmount = 500;
-            const result = await alice.wallet.issueAsset({
-                amount: issueAmount,
-                controlAsset: 1,
+            // first issuance to create a control asset
+            const firstIssueResult = await alice.wallet.assetManager.issue({
+                amount: 1,
             });
 
-            expect(result.arkTxId).toBeDefined();
-            expect(result.assetId).toBeDefined();
-            expect(result.controlAssetId).toBeDefined();
+            // second issuance to create a new asset using the control asset
+            const secondIssueResult = await alice.wallet.assetManager.issue({
+                amount: 500,
+                controlAssetId: firstIssueResult.assetId,
+            });
+
+            expect(secondIssueResult.arkTxId).toBeDefined();
+            expect(secondIssueResult.assetId).toBeDefined();
 
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
@@ -1026,13 +1026,13 @@ describe("Asset integration tests", () => {
 
             const allAssets = vtxos.flatMap((v) => v.assets ?? []);
             const issuedAsset = allAssets.find(
-                (a) => a.assetId === result.assetId
+                (a) => a.assetId === secondIssueResult.assetId
             );
             expect(issuedAsset).toBeDefined();
-            expect(issuedAsset!.amount).toBe(issueAmount);
+            expect(issuedAsset!.amount).toBe(500);
 
             const controlAsset = allAssets.find(
-                (a) => a.assetId === result.controlAssetId
+                (a) => a.assetId === firstIssueResult.assetId
             );
             expect(controlAsset).toBeDefined();
             expect(controlAsset!.amount).toBe(1);
@@ -1047,21 +1047,21 @@ describe("Asset integration tests", () => {
         faucetOffchain(aliceAddress!, fundAmount);
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
-        // issue initial asset with control asset
-        const issueAmount = 500;
-        const issueResult = await alice.wallet.issueAsset({
-            amount: issueAmount,
-            controlAsset: 1,
+        // first issuance to create a control asset
+        const firstIssueResult = await alice.wallet.assetManager.issue({
+            amount: 1,
         });
 
-        expect(issueResult.controlAssetId).toBeDefined();
-        await new Promise((resolve) => setTimeout(resolve, 1000));
+        // second issuance to create a new asset using the control asset
+        const secondIssueResult = await alice.wallet.assetManager.issue({
+            amount: 500,
+            controlAssetId: firstIssueResult.assetId,
+        });
 
         // reissue more units
         const reissueAmount = 300;
-        const reissueTxid = await alice.wallet.reissueAsset({
-            controlAssetId: issueResult.controlAssetId!,
-            assetId: issueResult.assetId,
+        const reissueTxid = await alice.wallet.assetManager.reissue({
+            assetId: secondIssueResult.assetId,
             amount: reissueAmount,
         });
 
@@ -1073,13 +1073,13 @@ describe("Asset integration tests", () => {
         const allAssets = vtxos.flatMap((v) => v.assets ?? []);
 
         const totalAssetAmount = allAssets
-            .filter((a) => a.assetId === issueResult.assetId)
+            .filter((a) => a.assetId === secondIssueResult.assetId)
             .reduce((sum, a) => sum + a.amount, 0);
-        expect(totalAssetAmount).toBe(issueAmount + reissueAmount);
+        expect(totalAssetAmount).toBe(500 + reissueAmount);
 
         // control asset should still exist
         const controlAsset = allAssets.find(
-            (a) => a.assetId === issueResult.controlAssetId
+            (a) => a.assetId === firstIssueResult.assetId
         );
         expect(controlAsset).toBeDefined();
     });
@@ -1094,7 +1094,7 @@ describe("Asset integration tests", () => {
 
         // issue an asset
         const issueAmount = 1000;
-        const issueResult = await alice.wallet.issueAsset({
+        const issueResult = await alice.wallet.assetManager.issue({
             amount: issueAmount,
         });
 
@@ -1102,7 +1102,7 @@ describe("Asset integration tests", () => {
 
         // burn half
         const burnAmount = 400;
-        const burnTxid = await alice.wallet.burnAsset({
+        const burnTxid = await alice.wallet.assetManager.burn({
             assetId: issueResult.assetId,
             amount: burnAmount,
         });
@@ -1129,14 +1129,14 @@ describe("Asset integration tests", () => {
 
         // issue an asset
         const issueAmount = 500;
-        const issueResult = await alice.wallet.issueAsset({
+        const issueResult = await alice.wallet.assetManager.issue({
             amount: issueAmount,
         });
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // burn all
-        const burnTxid = await alice.wallet.burnAsset({
+        const burnTxid = await alice.wallet.assetManager.burn({
             assetId: issueResult.assetId,
             amount: issueAmount,
         });
@@ -1169,7 +1169,7 @@ describe("Asset integration tests", () => {
 
             // alice issues an asset
             const issueAmount = 1000;
-            const issueResult = await alice.wallet.issueAsset({
+            const issueResult = await alice.wallet.assetManager.issue({
                 amount: issueAmount,
             });
 
@@ -1177,15 +1177,11 @@ describe("Asset integration tests", () => {
 
             // alice sends some asset to bob
             const sendAmount = 400;
-            const sendTxid = await alice.wallet.sendAsset([
-                {
-                    address: bobAddress!,
-                    amount: 0,
-                    assets: [
-                        { assetId: issueResult.assetId, amount: sendAmount },
-                    ],
-                },
-            ]);
+            const sendTxid = await alice.wallet.send({
+                address: bobAddress!,
+                amount: 0,
+                assets: [{ assetId: issueResult.assetId, amount: sendAmount }],
+            });
 
             expect(sendTxid).toBeDefined();
             await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -1209,63 +1205,6 @@ describe("Asset integration tests", () => {
         }
     );
 
-    it(
-        "should issue with existing control asset",
-        { timeout: 60000 },
-        async () => {
-            const alice = await createTestArkWallet();
-            const aliceAddress = await alice.wallet.getAddress();
-
-            const fundAmount = 20_000;
-            faucetOffchain(aliceAddress!, fundAmount);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
-            // issue first asset with new control asset
-            const firstIssue = await alice.wallet.issueAsset({
-                amount: 500,
-                controlAsset: 1,
-            });
-
-            expect(firstIssue.controlAssetId).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
-            // issue second asset using existing control asset
-            const secondIssue = await alice.wallet.issueAsset({
-                amount: 300,
-                controlAsset: firstIssue.controlAssetId!,
-            });
-
-            expect(secondIssue.arkTxId).toBeDefined();
-            expect(secondIssue.assetId).toBeDefined();
-            // control asset ID should be the same as the first issue
-            expect(secondIssue.controlAssetId).toBe(firstIssue.controlAssetId);
-
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
-            // verify both assets exist
-            const vtxos = await alice.wallet.getVtxos();
-            const allAssets = vtxos.flatMap((v) => v.assets ?? []);
-
-            const firstAsset = allAssets.find(
-                (a) => a.assetId === firstIssue.assetId
-            );
-            expect(firstAsset).toBeDefined();
-            expect(firstAsset!.amount).toBe(500);
-
-            const secondAsset = allAssets.find(
-                (a) => a.assetId === secondIssue.assetId
-            );
-            expect(secondAsset).toBeDefined();
-            expect(secondAsset!.amount).toBe(300);
-
-            // control asset should still be present
-            const controlAsset = allAssets.find(
-                (a) => a.assetId === firstIssue.controlAssetId
-            );
-            expect(controlAsset).toBeDefined();
-        }
-    );
-
     it("should send all units of an asset", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
         const bob = await createTestArkWallet();
@@ -1279,20 +1218,18 @@ describe("Asset integration tests", () => {
 
         // alice issues an asset
         const issueAmount = 500;
-        const issueResult = await alice.wallet.issueAsset({
+        const issueResult = await alice.wallet.assetManager.issue({
             amount: issueAmount,
         });
 
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // alice sends all units to bob
-        const sendTxid = await alice.wallet.sendAsset([
-            {
-                address: bobAddress!,
-                amount: 0,
-                assets: [{ assetId: issueResult.assetId, amount: issueAmount }],
-            },
-        ]);
+        const sendTxid = await alice.wallet.send({
+            address: bobAddress!,
+            amount: 0,
+            assets: [{ assetId: issueResult.assetId, amount: issueAmount }],
+        });
 
         expect(sendTxid).toBeDefined();
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -1324,7 +1261,7 @@ describe("Asset integration tests", () => {
 
         // alice issues an asset
         const issueAmount = 500;
-        const issueResult = await alice.wallet.issueAsset({
+        const issueResult = await alice.wallet.assetManager.issue({
             amount: issueAmount,
         });
 

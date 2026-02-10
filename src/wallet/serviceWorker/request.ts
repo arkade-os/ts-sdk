@@ -2,10 +2,10 @@ import {
     SettleParams,
     SendBitcoinParams,
     GetVtxosFilter,
-    IssueAssetParams,
-    ReissueAssetParams,
-    BurnAssetParams,
-    AssetRecipient,
+    IssuanceParams,
+    ReissuanceParams,
+    BurnParams,
+    Recipient,
 } from "..";
 
 /**
@@ -26,10 +26,11 @@ export namespace Request {
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
         | "CLEAR"
-        | "ISSUE_ASSET"
-        | "REISSUE_ASSET"
-        | "BURN_ASSET"
-        | "SEND_ASSET";
+        | "ISSUE"
+        | "REISSUE"
+        | "BURN"
+        | "SEND"
+        | "GET_ASSET_DETAILS";
 
     export interface Base {
         type: Type;
@@ -177,39 +178,50 @@ export namespace Request {
         return message.type === "RELOAD_WALLET";
     }
 
-    export interface IssueAsset extends Base {
-        type: "ISSUE_ASSET";
-        params: IssueAssetParams;
+    export interface Issue extends Base {
+        type: "ISSUE";
+        params: IssuanceParams;
     }
 
-    export function isIssueAsset(message: Base): message is IssueAsset {
-        return message.type === "ISSUE_ASSET" && "params" in message;
+    export function isIssue(message: Base): message is Issue {
+        return message.type === "ISSUE" && "params" in message;
     }
 
-    export interface ReissueAsset extends Base {
-        type: "REISSUE_ASSET";
-        params: ReissueAssetParams;
+    export interface Reissue extends Base {
+        type: "REISSUE";
+        params: ReissuanceParams;
     }
 
-    export function isReissueAsset(message: Base): message is ReissueAsset {
-        return message.type === "REISSUE_ASSET" && "params" in message;
+    export function isReissue(message: Base): message is Reissue {
+        return message.type === "REISSUE" && "params" in message;
     }
 
-    export interface BurnAsset extends Base {
-        type: "BURN_ASSET";
-        params: BurnAssetParams;
+    export interface Burn extends Base {
+        type: "BURN";
+        params: BurnParams;
     }
 
-    export function isBurnAsset(message: Base): message is BurnAsset {
-        return message.type === "BURN_ASSET" && "params" in message;
+    export function isBurn(message: Base): message is Burn {
+        return message.type === "BURN" && "params" in message;
     }
 
-    export interface SendAsset extends Base {
-        type: "SEND_ASSET";
-        receivers: AssetRecipient[];
+    export interface Send extends Base {
+        type: "SEND";
+        recipients: Recipient[];
     }
 
-    export function isSendAsset(message: Base): message is SendAsset {
-        return message.type === "SEND_ASSET" && "receivers" in message;
+    export function isSend(message: Base): message is Send {
+        return message.type === "SEND" && "recipients" in message;
+    }
+
+    export interface GetAssetDetails extends Base {
+        type: "GET_ASSET_DETAILS";
+        assetId: string;
+    }
+
+    export function isGetAssetDetails(
+        message: Base
+    ): message is GetAssetDetails {
+        return message.type === "GET_ASSET_DETAILS" && "assetId" in message;
     }
 }

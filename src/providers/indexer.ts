@@ -1,4 +1,5 @@
-import { Outpoint, VirtualCoin } from "../wallet";
+import { hex } from "@scure/base";
+import { AssetDetails, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator } from "./utils";
 
@@ -153,6 +154,7 @@ export interface IndexerProvider {
             recoverableOnly?: boolean;
         }
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }>;
+    getAssetDetails(assetId: string): Promise<AssetDetails>;
     subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -525,6 +527,27 @@ export class RestIndexerProvider implements IndexerProvider {
         };
     }
 
+    async getAssetDetails(assetId: string): Promise<AssetDetails> {
+        const url = `${this.serverUrl}/v1/indexer/asset/${encodeURIComponent(assetId)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch asset details: ${res.statusText}`);
+        }
+        const data = await res.json();
+        if (!Response.isGetAssetResponse(data)) {
+            throw new Error("Invalid get asset response");
+        }
+        const metadata = data.metadata?.length
+            ? parseAssetMetadata(data.metadata)
+            : undefined;
+        return {
+            assetId: data.assetId ?? assetId,
+            supply: Number(data.supply ?? 0),
+            metadata,
+            controlAssetId: data.controlAsset || undefined,
+        };
+    }
+
     async subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -563,6 +586,44 @@ export class RestIndexerProvider implements IndexerProvider {
             console.warn(`Failed to unsubscribe to scripts: ${errorText}`);
         }
     }
+}
+
+interface GetAssetApiMetadata {
+    key: string;
+    value: string;
+}
+
+interface GetAssetApiResponse {
+    assetId?: string;
+    controlAsset?: string;
+    metadata?: GetAssetApiMetadata[];
+    supply?: string;
+}
+
+function decodeHexString(hexString: string): string {
+    try {
+        const bytes = hex.decode(hexString);
+        return new TextDecoder().decode(bytes);
+    } catch {
+        return hexString;
+    }
+}
+
+function parseAssetMetadata(
+    items: GetAssetApiMetadata[]
+): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const { key, value } of items) {
+        const decodedKey = decodeHexString(key);
+        const decodedValue = decodeHexString(value);
+        if (decodedKey === "decimals") {
+            const n = Number(decodedValue);
+            out[decodedKey] = Number.isFinite(n) ? n : decodedValue;
+        } else {
+            out[decodedKey] = decodedValue;
+        }
+    }
+    return out;
 }
 
 function convertVtxo(vtxo: Vtxo): VirtualCoin {
@@ -819,6 +880,26 @@ namespace Response {
             Array.isArray(data.vtxos) &&
             data.vtxos.every(isVtxo) &&
             (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isGetAssetResponse(data: any): data is GetAssetApiResponse {
+        return (
+            typeof data === "object" &&
+            data !== null &&
+            typeof data.assetId === "string" &&
+            (data.supply === undefined || typeof data.supply === "string") &&
+            (data.controlAsset === undefined ||
+                typeof data.controlAsset === "string") &&
+            (data.metadata === undefined ||
+                (Array.isArray(data.metadata) &&
+                    data.metadata.every(
+                        (m: any) =>
+                            typeof m === "object" &&
+                            m !== null &&
+                            typeof m.key === "string" &&
+                            typeof m.value === "string"
+                    )))
         );
     }
 }

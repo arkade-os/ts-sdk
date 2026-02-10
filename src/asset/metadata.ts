@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { BufferReader, BufferWriter } from "./utils";
 
 /**
@@ -13,11 +13,8 @@ export class Metadata {
         readonly value: Uint8Array
     ) {}
 
-    static create(key: string, value: string): Metadata {
-        const md = new Metadata(
-            new TextEncoder().encode(key),
-            new TextEncoder().encode(value)
-        );
+    static create(key: Bytes, value: Bytes): Metadata {
+        const md = new Metadata(key, value);
         md.validate();
         return md;
     }

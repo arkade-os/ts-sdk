@@ -5,7 +5,8 @@ import {
     ArkTransaction,
     IWallet,
     ExtendedCoin,
-    IssueAssetResult,
+    IssuanceResult,
+    AssetDetails,
 } from "..";
 import { ExtendedVirtualCoin } from "../..";
 import { SettlementEvent } from "../../providers/ark";
@@ -37,10 +38,11 @@ export namespace Response {
         | "CLEAR_RESPONSE"
         | "VTXO_UPDATE"
         | "UTXO_UPDATE"
-        | "ISSUE_ASSET_SUCCESS"
-        | "REISSUE_ASSET_SUCCESS"
-        | "BURN_ASSET_SUCCESS"
-        | "SEND_ASSET_SUCCESS";
+        | "ISSUE_SUCCESS"
+        | "REISSUE_SUCCESS"
+        | "BURN_SUCCESS"
+        | "SEND_SUCCESS"
+        | "ASSET_DETAILS";
 
     export interface Base {
         type: Type;
@@ -396,107 +398,107 @@ export namespace Response {
         };
     }
 
-    export interface IssueAssetSuccess extends Base {
-        type: "ISSUE_ASSET_SUCCESS";
+    export interface IssueSuccess extends Base {
+        type: "ISSUE_SUCCESS";
         success: true;
-        result: IssueAssetResult;
+        result: IssuanceResult;
     }
 
-    export function isIssueAssetSuccess(
-        response: Base
-    ): response is IssueAssetSuccess {
-        return (
-            response.type === "ISSUE_ASSET_SUCCESS" && response.success === true
-        );
+    export function isIssueSuccess(response: Base): response is IssueSuccess {
+        return response.type === "ISSUE_SUCCESS" && response.success === true;
     }
 
-    export function issueAssetSuccess(
+    export function issueSuccess(
         id: string,
-        result: IssueAssetResult
-    ): IssueAssetSuccess {
+        result: IssuanceResult
+    ): IssueSuccess {
         return {
-            type: "ISSUE_ASSET_SUCCESS",
+            type: "ISSUE_SUCCESS",
             success: true,
             result,
             id,
         };
     }
 
-    export interface ReissueAssetSuccess extends Base {
-        type: "REISSUE_ASSET_SUCCESS";
+    export interface ReissueSuccess extends Base {
+        type: "REISSUE_SUCCESS";
         success: true;
         txid: string;
     }
 
-    export function isReissueAssetSuccess(
+    export function isReissueSuccess(
         response: Base
-    ): response is ReissueAssetSuccess {
-        return (
-            response.type === "REISSUE_ASSET_SUCCESS" &&
-            response.success === true
-        );
+    ): response is ReissueSuccess {
+        return response.type === "REISSUE_SUCCESS" && response.success === true;
     }
 
-    export function reissueAssetSuccess(
-        id: string,
-        txid: string
-    ): ReissueAssetSuccess {
+    export function reissueSuccess(id: string, txid: string): ReissueSuccess {
         return {
-            type: "REISSUE_ASSET_SUCCESS",
+            type: "REISSUE_SUCCESS",
             success: true,
             txid,
             id,
         };
     }
 
-    export interface BurnAssetSuccess extends Base {
-        type: "BURN_ASSET_SUCCESS";
+    export interface BurnSuccess extends Base {
+        type: "BURN_SUCCESS";
         success: true;
         txid: string;
     }
 
-    export function isBurnAssetSuccess(
-        response: Base
-    ): response is BurnAssetSuccess {
-        return (
-            response.type === "BURN_ASSET_SUCCESS" && response.success === true
-        );
+    export function isBurnSuccess(response: Base): response is BurnSuccess {
+        return response.type === "BURN_SUCCESS" && response.success === true;
     }
 
-    export function burnAssetSuccess(
-        id: string,
-        txid: string
-    ): BurnAssetSuccess {
+    export function burnSuccess(id: string, txid: string): BurnSuccess {
         return {
-            type: "BURN_ASSET_SUCCESS",
+            type: "BURN_SUCCESS",
             success: true,
             txid,
             id,
         };
     }
 
-    export interface SendAssetSuccess extends Base {
-        type: "SEND_ASSET_SUCCESS";
+    export interface SendSuccess extends Base {
+        type: "SEND_SUCCESS";
         success: true;
         txid: string;
     }
 
-    export function isSendAssetSuccess(
-        response: Base
-    ): response is SendAssetSuccess {
-        return (
-            response.type === "SEND_ASSET_SUCCESS" && response.success === true
-        );
+    export function isSendSuccess(response: Base): response is SendSuccess {
+        return response.type === "SEND_SUCCESS" && response.success === true;
     }
 
-    export function sendAssetSuccess(
-        id: string,
-        txid: string
-    ): SendAssetSuccess {
+    export function sendSuccess(id: string, txid: string): SendSuccess {
         return {
-            type: "SEND_ASSET_SUCCESS",
+            type: "SEND_SUCCESS",
             success: true,
             txid,
+            id,
+        };
+    }
+
+    export interface AssetDetailsResponse extends Base {
+        type: "ASSET_DETAILS";
+        success: true;
+        assetDetails: AssetDetails;
+    }
+
+    export function isAssetDetailsResponse(
+        response: Base
+    ): response is AssetDetailsResponse {
+        return response.type === "ASSET_DETAILS" && response.success === true;
+    }
+
+    export function assetDetails(
+        id: string,
+        assetDetails: AssetDetails
+    ): AssetDetailsResponse {
+        return {
+            type: "ASSET_DETAILS",
+            success: true,
+            assetDetails,
             id,
         };
     }

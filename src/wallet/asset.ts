@@ -4,11 +4,9 @@ import {
     AssetRef,
     AssetInput,
     AssetOutput,
-    Metadata,
     Packet,
-    AssetRefType,
 } from "../asset";
-import { Asset, AssetRecipient, VirtualCoin } from "./index";
+import { Asset, Recipient, VirtualCoin } from "./index";
 
 /**
  * Creates an asset packet from asset inputs and receivers.
@@ -20,8 +18,8 @@ import { Asset, AssetRecipient, VirtualCoin } from "./index";
  */
 export function createAssetPacket(
     assetInputs: Map<number, Asset[]>,
-    receivers: AssetRecipient[],
-    changeReceiver?: AssetRecipient
+    receivers: Recipient[],
+    changeReceiver?: Recipient
 ): Packet {
     // map inputs by asset id
     const inputsByAssetId = new Map<string, AssetInput[]>();
@@ -207,6 +205,12 @@ export function selectCoinsWithAsset(
         const assetAmount =
             coin.assets?.find((a) => a.assetId === assetId)?.amount ?? 0;
         totalAssetAmount += BigInt(assetAmount);
+    }
+
+    if (totalAssetAmount < requiredAmount) {
+        throw new Error(
+            `Insufficient asset balance: have ${totalAssetAmount}, need ${requiredAmount}`
+        );
     }
 
     return { selected, totalAssetAmount };

@@ -63,7 +63,7 @@ export class Packet {
         return new Packet(leafGroups);
     }
 
-    txOut(): Pick<TransactionOutput, "script" | "amount"> {
+    txOut(): Required<Pick<TransactionOutput, "script" | "amount">> {
         return {
             script: this.serialize(),
             amount: 0n,

@@ -274,7 +274,9 @@ describe("Metadata", () => {
     describe("valid", () => {
         metadataFixtures.valid.forEach((v) => {
             it(v.name, () => {
-                const metadata = Metadata.create(v.key, v.value);
+                const key = new TextEncoder().encode(v.key);
+                const value = new TextEncoder().encode(v.value);
+                const metadata = Metadata.create(key, value);
                 expect(metadata).toBeDefined();
 
                 const serialized = metadata.serialize();
@@ -296,7 +298,9 @@ describe("Metadata", () => {
         describe("from key value", () => {
             metadataFixtures.invalid.newMetadata.forEach((v) => {
                 it(v.name, () => {
-                    expect(() => Metadata.create(v.key, v.value)).toThrow(
+                    const key = new TextEncoder().encode(v.key);
+                    const value = new TextEncoder().encode(v.value);
+                    expect(() => Metadata.create(key, value)).toThrow(
                         v.expectedError
                     );
                 });
@@ -372,7 +376,9 @@ function parseAssetOutput(f: AssetOutputFixture): AssetOutput {
 }
 
 function parseMetadata(f: MetadataFixture): Metadata {
-    return Metadata.create(f.key, f.value);
+    const key = new TextEncoder().encode(f.key);
+    const value = new TextEncoder().encode(f.value);
+    return Metadata.create(key, value);
 }
 
 describe("AssetGroup", () => {

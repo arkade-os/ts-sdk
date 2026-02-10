@@ -8,11 +8,14 @@ import {
     ExtendedVirtualCoin,
     GetVtxosFilter,
     IReadonlyWallet,
-    IssueAssetParams,
-    IssueAssetResult,
-    ReissueAssetParams,
-    BurnAssetParams,
-    AssetRecipient,
+    IReadonlyAssetManager,
+    IAssetManager,
+    AssetDetails,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
+    Recipient,
 } from "..";
 import { Request } from "./request";
 import { Response } from "./response";
@@ -40,6 +43,72 @@ class UnexpectedResponseError extends Error {
             `Unexpected response type. Got: ${JSON.stringify(response, null, 2)}`
         );
         this.name = "UnexpectedResponseError";
+    }
+}
+
+class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
+    constructor(
+        protected readonly sendMessage: (
+            msg: Request.Base
+        ) => Promise<Response.Base>,
+        protected readonly getRandomId: () => string
+    ) {}
+
+    async getAssetDetails(assetId: string): Promise<AssetDetails> {
+        const message: Request.GetAssetDetails = {
+            type: "GET_ASSET_DETAILS",
+            id: this.getRandomId(),
+            assetId,
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isAssetDetailsResponse(response)) {
+            return response.assetDetails;
+        }
+        throw new UnexpectedResponseError(response);
+    }
+}
+
+class ServiceWorkerAssetManager
+    extends ServiceWorkerReadonlyAssetManager
+    implements IAssetManager
+{
+    async issue(params: IssuanceParams): Promise<IssuanceResult> {
+        const message: Request.Issue = {
+            type: "ISSUE",
+            id: getRandomId(),
+            params,
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isIssueSuccess(response)) {
+            return response.result;
+        }
+        throw new UnexpectedResponseError(response);
+    }
+
+    async reissue(params: ReissuanceParams): Promise<string> {
+        const message: Request.Reissue = {
+            type: "REISSUE",
+            id: this.getRandomId(),
+            params,
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isReissueSuccess(response)) {
+            return response.txid;
+        }
+        throw new UnexpectedResponseError(response);
+    }
+
+    async burn(params: BurnParams): Promise<string> {
+        const message: Request.Burn = {
+            type: "BURN",
+            id: this.getRandomId(),
+            params,
+        };
+        const response = await this.sendMessage(message);
+        if (Response.isBurnSuccess(response)) {
+            return response.txid;
+        }
+        throw new UnexpectedResponseError(response);
     }
 }
 
@@ -108,6 +177,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
+    private readonly _readonlyAssetManager: IReadonlyAssetManager;
+
+    get assetManager(): IReadonlyAssetManager {
+        return this._readonlyAssetManager;
+    }
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -118,6 +192,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
+        this._readonlyAssetManager = new ServiceWorkerReadonlyAssetManager(
+            (msg) => this.sendMessage(msg),
+            getRandomId
+        );
     }
 
     static async create(
@@ -370,6 +448,7 @@ export class ServiceWorkerWallet
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
+    private readonly _assetManager: IAssetManager;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -381,6 +460,14 @@ export class ServiceWorkerWallet
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
+        this._assetManager = new ServiceWorkerAssetManager(
+            (msg) => this.sendMessage(msg),
+            getRandomId
+        );
+    }
+
+    get assetManager(): IAssetManager {
+        return this._assetManager;
     }
 
     static async create(
@@ -536,75 +623,21 @@ export class ServiceWorkerWallet
         }
     }
 
-    async issueAsset(params: IssueAssetParams): Promise<IssueAssetResult> {
-        const message: Request.IssueAsset = {
-            type: "ISSUE_ASSET",
+    async send(...recipients: Recipient[]): Promise<string> {
+        const message: Request.Send = {
+            type: "SEND",
             id: getRandomId(),
-            params,
+            recipients,
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isIssueAssetSuccess(response)) {
-                return response.result;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Asset issuance failed: ${error}`);
-        }
-    }
-
-    async reissueAsset(params: ReissueAssetParams): Promise<string> {
-        const message: Request.ReissueAsset = {
-            type: "REISSUE_ASSET",
-            id: getRandomId(),
-            params,
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isReissueAssetSuccess(response)) {
+            if (Response.isSendSuccess(response)) {
                 return response.txid;
             }
             throw new UnexpectedResponseError(response);
         } catch (error) {
-            throw new Error(`Asset reissuance failed: ${error}`);
-        }
-    }
-
-    async burnAsset(params: BurnAssetParams): Promise<string> {
-        const message: Request.BurnAsset = {
-            type: "BURN_ASSET",
-            id: getRandomId(),
-            params,
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isBurnAssetSuccess(response)) {
-                return response.txid;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Asset burn failed: ${error}`);
-        }
-    }
-
-    async sendAsset(receivers: AssetRecipient[]): Promise<string> {
-        const message: Request.SendAsset = {
-            type: "SEND_ASSET",
-            id: getRandomId(),
-            receivers,
-        };
-
-        try {
-            const response = await this.sendMessage(message);
-            if (Response.isSendAssetSuccess(response)) {
-                return response.txid;
-            }
-            throw new UnexpectedResponseError(response);
-        } catch (error) {
-            throw new Error(`Asset send failed: ${error}`);
+            throw new Error(`Send failed: ${error}`);
         }
     }
 }

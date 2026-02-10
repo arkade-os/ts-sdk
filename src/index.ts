@@ -38,12 +38,11 @@ import {
     isExpired,
     // Asset types
     Asset,
-    AssetRecipient,
-    ControlAsset,
-    IssueAssetParams,
-    IssueAssetResult,
-    ReissueAssetParams,
-    BurnAssetParams,
+    Recipient,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
@@ -346,12 +345,11 @@ export type {
 
     // Asset types
     Asset,
-    AssetRecipient,
-    ControlAsset,
-    IssueAssetParams,
-    IssueAssetResult,
-    ReissueAssetParams,
-    BurnAssetParams,
+    Recipient,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
 
     // Musig2 types
     Nonces,
