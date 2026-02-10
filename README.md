@@ -506,15 +506,46 @@ Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
 
-To use IndexedDB repositories in Expo/React Native, install `indexeddbshim` and a
-SQLite-backed WebSQL adapter (e.g., `expo-sqlite` or `react-native-sqlite-storage`),
-then wire the WebSQL `openDatabase` into the shim before creating repositories:
+To use IndexedDB repositories in Expo/React Native, install `indexeddbshim` and use
+the SDK's WebSQL-over-expo-sqlite adapter exported from `@arkade-os/sdk/adapters/expo`.
+Wire it in before importing the SDK so indexeddbshim can find `openDatabase`:
 
 ```typescript
-import setGlobalVars from 'indexeddbshim'
-import * as SQLite from 'expo-sqlite'
+/**
+ * IndexedDB polyfill for React Native (iOS / Android).
+ *
+ * Uses indexeddbshim backed by our WebSQL-over-expo-sqlite adapter.
+ * Loaded via Metro's .native.ts platform extension — on web the
+ * no-op sibling (indexeddb.ts) is loaded instead.
+ *
+ * Must be imported AFTER the crypto polyfill and BEFORE any SDK import.
+ */
 
-setGlobalVars(globalThis, { openDatabase: SQLite.openDatabase })
+import { openDatabase } from '@arkade-os/sdk/adapters/expo';
+
+// 1. Ensure `window` is defined — the SDK's getGlobalObject() and
+//    indexeddbshim both reference it.
+if (typeof (globalThis as any).window === 'undefined') {
+  (globalThis as any).window = globalThis;
+}
+
+// 2. Stub location.origin — indexeddbshim reads it for origin checks.
+if (typeof (globalThis as any).location === 'undefined') {
+  (globalThis as any).location = { origin: 'expo://localhost' };
+}
+
+// 3. Attach our WebSQL adapter so the shim finds openDatabase.
+(globalThis as any).openDatabase = openDatabase;
+
+// 4. Initialize indexeddbshim — sets globalThis.indexedDB + all IDB* globals.
+// @ts-ignore — no types for the browser-noninvasive entry
+import setGlobalVars from 'indexeddbshim';
+
+setGlobalVars(globalThis, {
+  checkOrigin: false,
+  useSQLiteIndexes: true,
+  cacheDatabaseInstances: true,
+});
 ```
 
 #### Crypto Polyfill Requirement

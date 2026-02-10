@@ -103,6 +103,7 @@
         "esbuild": "^0.27.3",
         "eventsource": "4.0.0",
         "expo": "~52.0.49",
+        "expo-sqlite": "16.0.10",
         "glob": "11.1.0",
         "husky": "9.1.7",
         "indexeddbshim": "16.1.0",

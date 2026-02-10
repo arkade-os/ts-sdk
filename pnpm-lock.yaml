@@ -47,6 +47,9 @@ importers:
       expo:
         specifier: ~52.0.49
         version: 52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
+      expo-sqlite:
+        specifier: 16.0.10
+        version: 16.0.10(expo@52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
       glob:
         specifier: 11.1.0
         version: 11.1.0
@@ -1642,6 +1645,9 @@ packages:
     resolution: {integrity: sha512-+q/t7Ekv1EDY2l6Gda6LLiX14rU9TV20Wa3ofeQmwPFZbOMo9DXrLbOjFaaclkXKWidIaopwAObQDqwWtGUjqg==}
     engines: {node: '>= 4.0.0'}
 
+  await-lock@2.2.2:
+    resolution: {integrity: sha512-aDczADvlvTGajTDjcjpJMqRkOF6Qdz3YbPZm/PyW6tKPkx2hlYBzxMhEywM/tU72HrVZjgl5VCdRuMlA7pZ8Gw==}
+
   babel-core@7.0.0-bridge.0:
     resolution: {integrity: sha512-poPX9mZH/5CSanm50Q+1toVci6pv5KSRv/5TWCwtzQS5XEwn40BcCrgIeMFWP9CKKIniKXNxoIOnOq4VVlGXhg==}
     peerDependencies:
@@ -2244,6 +2250,13 @@ packages:
 
   expo-modules-core@2.2.3:
     resolution: {integrity: sha512-01QqZzpP/wWlxnNly4G06MsOBUTbMDj02DQigZoXfDh80vd/rk3/uVXqnZgOdLSggTs6DnvOgAUy0H2q30XdUg==}
+
+  expo-sqlite@16.0.10:
+    resolution: {integrity: sha512-tUOKxE9TpfneRG3eOfbNfhN9236SJ7IiUnP8gCqU7umd9DtgDGB/5PhYVVfl+U7KskgolgNoB9v9OZ9iwXN8Eg==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
+      react-native: '*'
 
   expo@52.0.49:
     resolution: {integrity: sha512-ge3gUnuyGEePWWKzPY7TQ7FsvtFTdmsdYDHeBVUjMr9KIoQig/gf8A03oH26p3UtTL6sUJcyOIg9vwIHGNPSUw==}
@@ -6248,6 +6261,8 @@ snapshots:
 
   at-least-node@1.0.0: {}
 
+  await-lock@2.2.2: {}
+
   babel-core@7.0.0-bridge.0(@babel/core@7.29.0):
     dependencies:
       '@babel/core': 7.29.0
@@ -6925,6 +6940,13 @@ snapshots:
   expo-modules-core@2.2.3:
     dependencies:
       invariant: 2.2.4
+
+  expo-sqlite@16.0.10(expo@52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4):
+    dependencies:
+      await-lock: 2.2.2
+      expo: 52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
+      react: 19.2.4
+      react-native: 0.83.1(@babel/core@7.29.0)(react@19.2.4)
 
   expo@52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4):
     dependencies:
