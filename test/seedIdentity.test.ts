@@ -69,6 +69,37 @@ describe("SeedIdentity", () => {
                 /^tr\(\[[\da-f]{8}\/86'\/0'\/0'\]xpub.+\/0\/0\)$/
             );
         });
+
+        it("should accept custom descriptor in options", async () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const reference = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+            const identity = SeedIdentity.fromSeed(seed, {
+                descriptor: reference.descriptor,
+            });
+
+            const refPubKey = await reference.xOnlyPublicKey();
+            const pubKey = await identity.xOnlyPublicKey();
+            expect(Array.from(pubKey)).toEqual(Array.from(refPubKey));
+            expect(identity.descriptor).toBe(reference.descriptor);
+        });
+
+        it("should use custom descriptor instead of default BIP86", async () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const mainnet = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            const testnet = SeedIdentity.fromSeed(seed);
+
+            // Pass the mainnet descriptor explicitly — should match mainnet, not testnet
+            const identity = SeedIdentity.fromSeed(seed, {
+                descriptor: mainnet.descriptor,
+            });
+
+            const mainnetPubKey = await mainnet.xOnlyPublicKey();
+            const testnetPubKey = await testnet.xOnlyPublicKey();
+            const pubKey = await identity.xOnlyPublicKey();
+            expect(Array.from(pubKey)).toEqual(Array.from(mainnetPubKey));
+            expect(Array.from(pubKey)).not.toEqual(Array.from(testnetPubKey));
+        });
     });
 
     describe("fromDescriptor", () => {
@@ -277,6 +308,21 @@ describe("MnemonicIdentity", () => {
             expect(() =>
                 MnemonicIdentity.fromMnemonic("invalid mnemonic words here")
             ).toThrow("Invalid mnemonic");
+        });
+
+        it("should accept custom descriptor in options", async () => {
+            const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+
+            const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+                descriptor: reference.descriptor,
+            });
+
+            const refPubKey = await reference.xOnlyPublicKey();
+            const pubKey = await identity.xOnlyPublicKey();
+            expect(Array.from(pubKey)).toEqual(Array.from(refPubKey));
+            expect(identity.descriptor).toBe(reference.descriptor);
         });
     });
 

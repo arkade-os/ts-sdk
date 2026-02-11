@@ -19,15 +19,25 @@ const { expand } = defaultFactory;
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
-export interface SeedIdentityOptions {
+/** Use default BIP86 derivation with network selection. */
+export interface NetworkOptions {
     /** Mainnet (coin type 0) or testnet (coin type 1). Defaults to false (testnet). */
     isMainnet?: boolean;
 }
 
-export interface MnemonicOptions extends SeedIdentityOptions {
+/** Use a custom output descriptor for derivation. */
+export interface DescriptorOptions {
+    /** Custom output descriptor that determines the derivation path. */
+    descriptor: string;
+}
+
+/** Either default BIP86 derivation (with optional network) or a custom descriptor. */
+export type SeedIdentityOptions = NetworkOptions | DescriptorOptions;
+
+export type MnemonicOptions = SeedIdentityOptions & {
     /** Optional BIP39 passphrase for additional seed entropy. */
     passphrase?: string;
-}
+};
 
 /**
  * Detects the network from a descriptor string by checking for tpub (testnet)
@@ -36,6 +46,12 @@ export interface MnemonicOptions extends SeedIdentityOptions {
  */
 function detectNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
+}
+
+function hasDescriptor(opts?: SeedIdentityOptions): opts is DescriptorOptions {
+    return (
+        !!opts && "descriptor" in opts && typeof opts.descriptor === "string"
+    );
 }
 
 /**
@@ -76,8 +92,8 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * // With explicit mainnet
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
  *
- * // With explicit descriptor
- * const identity = SeedIdentity.fromDescriptor(seed, descriptor);
+ * // With custom descriptor
+ * const identity = SeedIdentity.fromSeed(seed, { descriptor });
  *
  * // Serialize and restore
  * const json = identity.toJSON();
@@ -128,17 +144,24 @@ export class SeedIdentity implements Identity {
     }
 
     /**
-     * Creates a SeedIdentity from a raw 64-byte seed using BIP86 derivation.
+     * Creates a SeedIdentity from a raw 64-byte seed.
+     *
+     * Uses BIP86 derivation by default. Pass `{ descriptor }` to use
+     * a custom derivation path instead.
      *
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
-     * @param opts - Options specifying network. Defaults to testnet.
+     * @param opts - Network selection or custom descriptor.
      */
     static fromSeed(
         seed: Uint8Array,
         opts?: SeedIdentityOptions
     ): SeedIdentity {
-        const isMainnet = opts?.isMainnet ?? false;
-        const descriptor = buildDescriptor(seed, isMainnet);
+        const descriptor = hasDescriptor(opts)
+            ? opts.descriptor
+            : buildDescriptor(
+                  seed,
+                  (opts as NetworkOptions)?.isMainnet ?? false
+              );
         return new SeedIdentity(seed, descriptor);
     }
 
@@ -275,10 +298,13 @@ export class MnemonicIdentity extends SeedIdentity {
     }
 
     /**
-     * Creates a MnemonicIdentity from a BIP39 mnemonic phrase using BIP86 derivation.
+     * Creates a MnemonicIdentity from a BIP39 mnemonic phrase.
+     *
+     * Uses BIP86 derivation by default. Pass `{ descriptor }` to use
+     * a custom derivation path instead.
      *
      * @param phrase - BIP39 mnemonic phrase (12 or 24 words)
-     * @param opts - Options including network and optional passphrase
+     * @param opts - Network selection or custom descriptor, plus optional passphrase
      */
     static fromMnemonic(
         phrase: string,
@@ -288,9 +314,13 @@ export class MnemonicIdentity extends SeedIdentity {
             throw new Error("Invalid mnemonic");
         }
         const passphrase = opts?.passphrase;
-        const isMainnet = opts?.isMainnet ?? false;
         const seed = mnemonicToSeedSync(phrase, passphrase);
-        const descriptor = buildDescriptor(seed, isMainnet);
+        const descriptor = hasDescriptor(opts)
+            ? opts.descriptor
+            : buildDescriptor(
+                  seed,
+                  (opts as NetworkOptions | undefined)?.isMainnet ?? false
+              );
         return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
     }
 

@@ -5,6 +5,12 @@ import {
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
 } from "./identity/seedIdentity";
+import type {
+    SeedIdentityOptions,
+    MnemonicOptions,
+    NetworkOptions,
+    DescriptorOptions,
+} from "./identity/seedIdentity";
 import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -300,6 +306,12 @@ export type {
     OffchainTx,
     TapLeaves,
     IncomingFunds,
+
+    // Identity options
+    SeedIdentityOptions,
+    MnemonicOptions,
+    NetworkOptions,
+    DescriptorOptions,
 
     // Indexer types
     IndexerProvider,

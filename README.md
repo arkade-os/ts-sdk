@@ -148,8 +148,14 @@ import { mnemonicToSeedSync } from '@scure/bip39'
 const seed = mnemonicToSeedSync(mnemonic)
 const identity = SeedIdentity.fromSeed(seed, { isMainnet: true })
 
-// Or with an explicit output descriptor
-const identity2 = SeedIdentity.fromDescriptor(seed, descriptor)
+// Or with a custom output descriptor
+const identity2 = SeedIdentity.fromSeed(seed, { descriptor })
+
+// Or with a custom descriptor and passphrase (MnemonicIdentity)
+const identity3 = MnemonicIdentity.fromMnemonic(mnemonic, {
+  descriptor,
+  passphrase: 'my secret passphrase'
+})
 ```
 
 #### Serialization and Restoration
