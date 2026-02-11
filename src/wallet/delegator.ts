@@ -178,7 +178,7 @@ async function delegate(
     }
 
     if (!delegateAt) {
-        const expireAt = vtxos
+        const expireAtSeconds = vtxos
             .filter(
                 (coin) => !isRecoverable(coin) && coin.virtualStatus.batchExpiry
             )
@@ -186,16 +186,18 @@ async function delegate(
                 (min, coin) => Math.min(min, coin.virtualStatus.batchExpiry!),
                 Number.MAX_SAFE_INTEGER
             );
-        if (!expireAt || expireAt === Number.MAX_SAFE_INTEGER) {
+        if (!expireAtSeconds || expireAtSeconds === Number.MAX_SAFE_INTEGER) {
             // if no expiry (recoverable vtxos), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
-            // delegate 10% before the expiry
-            const remainingTime = expireAt - Date.now();
-            if (remainingTime <= 0) {
+            // batchExpiry is Unix seconds; use ms for Date arithmetic
+            const expireAtMs = expireAtSeconds * 1000;
+            const remainingTimeMs = expireAtMs - Date.now();
+            if (remainingTimeMs <= 0) {
                 delegateAt = new Date(Date.now() + 1 * 60 * 1000);
             } else {
-                delegateAt = new Date(expireAt - remainingTime * 0.1);
+                // delegate 10% before the expiry
+                delegateAt = new Date(expireAtMs - remainingTimeMs * 0.1);
             }
         }
     }
