@@ -588,16 +588,16 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 }
 
-interface GetAssetApiMetadata {
+interface GetAssetMetadata {
     key: string;
     value: string;
 }
 
-interface GetAssetApiResponse {
-    assetId?: string;
+interface GetAssetResponse {
+    assetId: string;
+    supply: string;
     controlAsset?: string;
-    metadata?: GetAssetApiMetadata[];
-    supply?: string;
+    metadata?: GetAssetMetadata[];
 }
 
 function decodeHexString(hexString: string): string {
@@ -610,7 +610,7 @@ function decodeHexString(hexString: string): string {
 }
 
 function parseAssetMetadata(
-    items: GetAssetApiMetadata[]
+    items: GetAssetMetadata[]
 ): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const { key, value } of items) {
@@ -884,12 +884,12 @@ namespace Response {
         );
     }
 
-    export function isGetAssetResponse(data: any): data is GetAssetApiResponse {
+    export function isGetAssetResponse(data: any): data is GetAssetResponse {
         return (
             typeof data === "object" &&
             data !== null &&
             typeof data.assetId === "string" &&
-            (data.supply === undefined || typeof data.supply === "string") &&
+            typeof data.supply === "string" &&
             (data.controlAsset === undefined ||
                 typeof data.controlAsset === "string") &&
             (data.metadata === undefined ||
