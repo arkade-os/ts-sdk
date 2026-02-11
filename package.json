@@ -114,7 +114,7 @@
     "peerDependencies": {
         "indexeddbshim": ">=16.0.0",
         "expo": ">=52.0.0",
-        "expo-sqlite": ">=16.0.0"
+        "expo-sqlite": "~15.1.4"
     },
     "peerDependenciesMeta": {
         "indexeddbshim": {
