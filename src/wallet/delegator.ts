@@ -202,17 +202,17 @@ async function delegate(
     const { fees, dust, forfeitAddress, network } =
         await arkInfoProvider.getInfo();
 
-    const deletageAtSeconds = delegateAt.getTime() / 1000;
+    const delegateAtSeconds = delegateAt.getTime() / 1000;
     const estimator = new Estimator({
         ...fees.intentFee,
         // replace now() function with the delegateAt timestamp
         offchainInput: fees.intentFee.offchainInput?.replace(
             "now()",
-            `double(${deletageAtSeconds})`
+            `double(${delegateAtSeconds})`
         ),
         offchainOutput: fees.intentFee.offchainOutput?.replace(
             "now()",
-            `double(${deletageAtSeconds})`
+            `double(${delegateAtSeconds})`
         ),
     });
 
@@ -277,7 +277,7 @@ async function delegate(
         outputs,
         [],
         [pubkey],
-        deletageAtSeconds
+        delegateAtSeconds
     );
 
     const forfeitOutputScript = OutScript.encode(
