@@ -2,7 +2,7 @@
 FROM node:22 AS web-builder
 
 WORKDIR /app
-RUN git clone -b delegator --single-branch https://github.com/louisinger/fulmine.git
+RUN git clone -b master --single-branch https://github.com/ArkLabsHQ/fulmine.git
 WORKDIR /app/fulmine/internal/interface/web
 RUN rm -rf .parcel-cache && yarn && yarn build
 
