@@ -1,5 +1,5 @@
 import { validateMnemonic, mnemonicToSeedSync } from "@scure/bip39";
-import { wordlist } from "@scure/bip39/wordlists/english";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { hex } from "@scure/base";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
