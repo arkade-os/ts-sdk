@@ -23,6 +23,12 @@
             "require": "./dist/cjs/adapters/expo.js",
             "default": "./dist/esm/adapters/expo.js"
         },
+        "./adapters/expo-db": {
+            "types": "./dist/types/adapters/expo-db.d.ts",
+            "import": "./dist/esm/adapters/expo-db.js",
+            "require": "./dist/cjs/adapters/expo-db.js",
+            "default": "./dist/esm/adapters/expo-db.js"
+        },
         "./adapters/localStorage": {
             "types": "./dist/types/adapters/localStorage.d.ts",
             "import": "./dist/esm/adapters/localStorage.js",

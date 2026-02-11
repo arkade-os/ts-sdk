@@ -51,13 +51,12 @@ interface QueuedStatement {
 
 const dbCache = new Map<string, SQLiteDatabase>();
 
-function getSqliteDb(name: string): SQLiteDatabase {
+function getSqliteDb(name: string): { db: SQLiteDatabase; created: boolean } {
     let db = dbCache.get(name);
-    if (!db) {
-        db = openDatabaseSync(name);
-        dbCache.set(name, db);
-    }
-    return db;
+    if (db) return { db, created: false };
+    db = openDatabaseSync(name);
+    dbCache.set(name, db);
+    return { db, created: true };
 }
 
 // ── WebSQLTransaction ────────────────────────────────────────────────
@@ -205,9 +204,9 @@ export function openDatabase(
     _estimatedSize: number,
     _creationCallback?: (db: WebSQLDatabase) => void
 ): WebSQLDatabase {
-    const sqliteDb = getSqliteDb(name);
+    const { db: sqliteDb, created } = getSqliteDb(name);
     const wsdb = new WebSQLDatabase(sqliteDb, version);
-    if (_creationCallback) {
+    if (created && _creationCallback) {
         _creationCallback(wsdb);
     }
     return wsdb;
