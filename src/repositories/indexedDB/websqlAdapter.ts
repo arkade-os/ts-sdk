@@ -132,8 +132,8 @@ function drainQueue(db: SQLiteDatabase, tx: WebSQLTransaction): void {
             };
             if (stmt.errorCb) {
                 const shouldContinue = stmt.errorCb(tx, sqlError);
-                if (shouldContinue === false) {
-                    // Error handler returned false → continue with next statement
+                if (shouldContinue === true) {
+                    // Error handler returned true → swallow error and continue
                     continue;
                 }
             }

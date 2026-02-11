@@ -105,14 +105,14 @@ describe("websqlAdapter", () => {
         expect(resultSet.rows.item(0)).toBeUndefined();
     });
 
-    it("continues processing when a statement error handler returns false", async () => {
+    it("continues processing when a statement error handler returns true", async () => {
         const { webDb, sqliteDb } = await createDb("continue-db");
         sqliteDb.runSync.mockImplementationOnce(() => {
             throw new Error("boom");
         });
         sqliteDb.getAllSync.mockReturnValue([{ ok: true }]);
 
-        const stmtError = vi.fn().mockReturnValue(false);
+        const stmtError = vi.fn().mockReturnValue(true);
         const stmtSuccess = vi.fn();
         const txnSuccess = vi.fn();
         const txnError = vi.fn();
