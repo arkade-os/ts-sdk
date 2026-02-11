@@ -24,7 +24,6 @@ import {
     ExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
-    Recipient,
     SettleParams,
     Status,
     VirtualStatus,
@@ -37,6 +36,13 @@ import {
     isSubdust,
     isRecoverable,
     isExpired,
+    // Asset types
+    Asset,
+    Recipient,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
@@ -154,6 +160,7 @@ import {
 import { buildForfeitTx } from "./forfeit";
 
 export * from "./arkfee";
+export * as asset from "./asset";
 
 export {
     // Wallets
@@ -271,7 +278,6 @@ export type {
     ExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
-    Recipient,
     SettleParams,
     Status,
     VirtualStatus,
@@ -336,6 +342,14 @@ export type {
 
     // Wallet types
     GetVtxosFilter,
+
+    // Asset types
+    Asset,
+    Recipient,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
 
     // Musig2 types
     Nonces,

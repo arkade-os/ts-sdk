@@ -124,6 +124,7 @@ export interface WalletBalance {
     available: number; // settled + preconfirmed
     recoverable: number; // subdust and (swept=true & unspent=true)
     total: number;
+    assets: Asset[];
 }
 
 export interface SendBitcoinParams {
@@ -134,8 +135,51 @@ export interface SendBitcoinParams {
     selectedVtxos?: VirtualCoin[];
 }
 
+export interface Asset {
+    assetId: string;
+    amount: number;
+}
+
 export interface Recipient {
     address: string;
+    amount?: number; // btc, default to dust
+    assets?: Asset[]; // list of assets to send
+}
+
+export type KnownMetadata = Partial<{
+    name: string;
+    ticker: string;
+    decimals: number; // default to 8
+    icon: string; // source that can be passed as src attribute to an <img> element
+}>;
+
+export type AssetMetadata = KnownMetadata & Record<string, unknown>;
+
+export type AssetDetails = {
+    assetId: string;
+    supply: number;
+    metadata?: AssetMetadata;
+    controlAssetId?: string;
+};
+
+export interface IssuanceParams {
+    amount: number;
+    controlAssetId?: string;
+    metadata?: AssetMetadata;
+}
+
+export interface IssuanceResult {
+    arkTxId: string;
+    assetId: string;
+}
+
+export interface ReissuanceParams {
+    assetId: string;
+    amount: number;
+}
+
+export interface BurnParams {
+    assetId: string;
     amount: number;
 }
 
@@ -176,6 +220,7 @@ export interface VirtualCoin extends Coin {
     createdAt: Date;
     isUnrolled: boolean;
     isSpent?: boolean;
+    assets?: Asset[];
 }
 
 export enum TxType {
@@ -242,6 +287,22 @@ export type GetVtxosFilter = {
 };
 
 /**
+ * Readonly asset manager interface for asset operations that do not require wallet identity.
+ */
+export interface IReadonlyAssetManager {
+    getAssetDetails(assetId: string): Promise<AssetDetails>;
+}
+
+/**
+ * Asset manager interface for asset operations that require wallet identity.
+ */
+export interface IAssetManager extends IReadonlyAssetManager {
+    issue(params: IssuanceParams): Promise<IssuanceResult>;
+    reissue(params: ReissuanceParams): Promise<string>;
+    burn(params: BurnParams): Promise<string>;
+}
+
+/**
  * Core wallet interface for Bitcoin transactions with Ark protocol support.
  *
  * This interface defines the contract that all wallet implementations must follow.
@@ -257,6 +318,8 @@ export interface IWallet extends IReadonlyWallet {
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
+    send(...recipients: Recipient[]): Promise<string>;
+    assetManager: IAssetManager;
 }
 
 /**
@@ -276,4 +339,6 @@ export interface IReadonlyWallet {
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
+
+    assetManager: IReadonlyAssetManager;
 }

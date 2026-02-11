@@ -1,0 +1,245 @@
+{
+    "valid": [
+        {
+            "name": "send (with local inputs and outputs)",
+            "assetId": {
+                "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1",
+                "index": 0
+            },
+            "inputs": [
+                {
+                    "type": "local",
+                    "vin": 0,
+                    "amount": 100
+                }
+            ],
+            "outputs": [
+                {
+                    "vout": 0,
+                    "amount": 60
+                },
+                {
+                    "vout": 1,
+                    "amount": 40
+                }
+            ],
+            "serializedHex": "01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1000001010000640200003c010028"
+        },
+        {
+            "name": "refresh (with intent inputs)",
+            "assetId": {
+                "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "index": 0
+            },
+            "inputs": [
+                {
+                    "type": "intent",
+                    "txid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "vin": 0,
+                    "amount": 100
+                }
+            ],
+            "outputs": [
+                {
+                    "amount": 100,
+                    "vout": 0
+                }
+            ],
+            "serializedHex": "01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000102bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb00006401000064"
+        },
+        {
+            "name": "issuance (simple)",
+            "outputs": [
+                {
+                    "amount": 100,
+                    "vout": 2
+                }
+            ],
+            "serializedHex": "000001020064"
+        },
+        {
+            "name": "issuance (with metadata)",
+            "outputs": [
+                {
+                    "amount": 100,
+                    "vout": 2
+                }
+            ],
+            "metadata": [
+                {
+                    "key": "key1",
+                    "value": "value1"
+                },
+                {
+                    "key": "key2",
+                    "value": "👾"
+                }
+            ],
+            "serializedHex": "0402046b65793204f09f91be046b6579310676616c7565310001020064"
+        },
+        {
+            "name": "issuance (with metadata and control asset ref by group index)",
+            "controlAsset": {
+                "groupIndex": 1
+            },
+            "outputs": [
+                {
+                    "amount": 100,
+                    "vout": 1
+                },
+                {
+                    "amount": 1,
+                    "vout": 0
+                }
+            ],
+            "metadata": [
+                {
+                    "key": "key1",
+                    "value": "value1"
+                },
+                {
+                    "key": "key2",
+                    "value": "value2"
+                }
+            ],
+            "serializedHex": "0602010002046b6579320676616c756532046b6579310676616c7565310002010064000001"
+        },
+        {
+            "name": "issuance (with metadata and control asset ref by id)",
+            "controlAsset": {
+                "assetId": {
+                    "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "index": 2
+                }
+            },
+            "outputs": [
+                {
+                    "amount": 100,
+                    "vout": 1
+                },
+                {
+                    "amount": 1,
+                    "vout": 0
+                }
+            ],
+            "metadata": [
+                {
+                    "key": "key1",
+                    "value": "value1"
+                },
+                {
+                    "key": "key2",
+                    "value": "value2"
+                }
+            ],
+            "serializedHex": "0601aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa020002046b6579320676616c756532046b6579310676616c7565310002010064000001"
+        },
+        {
+            "name": "reissuance offchain (with local inputs and outputs)",
+            "assetId": {
+                "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "index": 0
+            },
+            "inputs": [
+                {
+                    "type": "local",
+                    "vin": 1,
+                    "amount": 1
+                },
+                {
+                    "type": "local",
+                    "vin": 0,
+                    "amount": 100
+                }
+            ],
+            "outputs": [
+                {
+                    "amount": 600,
+                    "vout": 1
+                },
+                {
+                    "amount": 1,
+                    "vout": 2
+                }
+            ],
+            "serializedHex": "01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000020101000101000064020100d804020001"
+        },
+        {
+            "name": "reissuance in batch (with intent inputs and outputs)",
+            "assetId": {
+                "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "index": 0
+            },
+            "inputs": [
+                {
+                    "type": "intent",
+                    "vin": 1,
+                    "amount": 1,
+                    "txid": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                },
+                {
+                    "type": "intent",
+                    "vin": 0,
+                    "amount": 100,
+                    "txid": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+                }
+            ],
+            "outputs": [
+                {
+                    "amount": 600,
+                    "vout": 1
+                },
+                {
+                    "amount": 1,
+                    "vout": 2
+                }
+            ],
+            "serializedHex": "01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa00000202dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd01000102dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd000064020100d804020001"
+        },
+        {
+            "name": "burn some (with outputs)",
+            "assetId": {
+                "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "index": 0
+            },
+            "inputs": [
+                {
+                    "type": "local",
+                    "vin": 0,
+                    "amount": 100
+                }
+            ],
+            "outputs": [
+                {
+                    "amount": 80,
+                    "vout": 3
+                }
+            ],
+            "serializedHex": "01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000010100006401030050"
+        },
+        {
+            "name": "burn all (without outputs)",
+            "assetId": {
+                "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "index": 0
+            },
+            "inputs": [
+                {
+                    "type": "local",
+                    "vin": 0,
+                    "amount": 100
+                }
+            ],
+            "serializedHex": "01aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0000010100006400"
+        }
+    ],
+    "invalid": {
+        "newAssetGroupFromString": [
+            {
+                "name": "empty",
+                "serializedHex": "",
+                "expectedError": "missing asset"
+            }
+        ]
+    }
+}

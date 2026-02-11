@@ -11,6 +11,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         value: Number(vtxo.amount),
         status: {
             confirmed: !vtxo.isSwept && !vtxo.isPreconfirmed,
+            isLeaf: !vtxo.isPreconfirmed,
         },
         virtualStatus: {
             state: vtxo.isSwept
@@ -29,6 +30,10 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
         isUnrolled: vtxo.isUnrolled,
         isSpent: vtxo.isSpent,
+        assets: vtxo.assets?.map((a) => ({
+            assetId: a.assetId,
+            amount: Number(a.amount),
+        })),
     };
 }
 

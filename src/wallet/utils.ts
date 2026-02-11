@@ -1,5 +1,14 @@
-import type { Coin, ExtendedCoin, ExtendedVirtualCoin, VirtualCoin } from "..";
+import { TransactionOutput } from "@scure/btc-signer/psbt";
+import { Recipient } from ".";
+import {
+    ArkAddress,
+    type Coin,
+    type ExtendedCoin,
+    type ExtendedVirtualCoin,
+    type VirtualCoin,
+} from "..";
 import { ReadonlyWallet } from "./wallet";
+import { Bytes } from "@scure/btc-signer/utils";
 
 export const DUST_AMOUNT = 546; // sats
 
@@ -25,4 +34,48 @@ export function extendCoin(
         intentTapLeafScript: wallet.boardingTapscript.forfeit(),
         tapTree: wallet.boardingTapscript.encode(),
     };
+}
+
+export function isValidArkAddress(address: string): boolean {
+    try {
+        ArkAddress.decode(address);
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+type ValidatedRecipient = Required<Recipient> & { script: Bytes };
+
+export function validateRecipients(
+    recipients: Recipient[],
+    dustAmount: number
+): ValidatedRecipient[] {
+    const validatedRecipients: ValidatedRecipient[] = [];
+
+    for (const recipient of recipients) {
+        let address: ArkAddress;
+        try {
+            address = ArkAddress.decode(recipient.address);
+        } catch (e) {
+            throw new Error(`Invalid Ark address: ${recipient.address}`);
+        }
+
+        const amount = recipient.amount || dustAmount;
+        if (amount <= 0) {
+            throw new Error("Amount must be positive");
+        }
+
+        validatedRecipients.push({
+            address: recipient.address,
+            assets: recipient.assets ?? [],
+            amount,
+            script:
+                amount < dustAmount
+                    ? address.subdustPkScript
+                    : address.pkScript,
+        });
+    }
+
+    return validatedRecipients;
 }
