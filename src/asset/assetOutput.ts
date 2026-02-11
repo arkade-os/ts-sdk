@@ -52,8 +52,14 @@ export class AssetOutput {
     }
 
     validate(): void {
-        if (this.vout < 0) {
-            throw new Error("asset output vout must be non-negative");
+        if (
+            !Number.isInteger(this.vout) ||
+            this.vout < 0 ||
+            this.vout > 0xffff
+        ) {
+            throw new Error(
+                "asset output vout must be an integer in range [0, 65535]"
+            );
         }
         if (this.amount <= 0n) {
             throw new Error("asset output amount must be greater than 0");
@@ -136,7 +142,9 @@ export class AssetOutputs {
         for (let i = 0; i < count; i++) {
             outputs.push(AssetOutput.fromReader(reader));
         }
-        return new AssetOutputs(outputs);
+        const result = new AssetOutputs(outputs);
+        result.validate();
+        return result;
     }
 
     serializeTo(writer: BufferWriter): void {

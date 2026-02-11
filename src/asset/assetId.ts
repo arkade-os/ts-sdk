@@ -50,6 +50,11 @@ export class AssetId {
         if (!buf || buf.length === 0) {
             throw new Error("missing asset id");
         }
+        if (buf.length !== ASSET_ID_SIZE) {
+            throw new Error(
+                `invalid asset id length: got ${buf.length} bytes, want ${ASSET_ID_SIZE} bytes`
+            );
+        }
         const reader = new BufferReader(buf);
         return AssetId.fromReader(reader);
     }
@@ -67,6 +72,15 @@ export class AssetId {
     validate(): void {
         if (isZeroBytes(this.txid)) {
             throw new Error("empty txid");
+        }
+        if (
+            !Number.isInteger(this.groupIndex) ||
+            this.groupIndex < 0 ||
+            this.groupIndex > 0xffff
+        ) {
+            throw new Error(
+                `invalid group index: ${this.groupIndex}, must be in range [0, 65535]`
+            );
         }
     }
 

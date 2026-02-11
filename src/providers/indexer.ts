@@ -753,7 +753,7 @@ namespace Response {
         return (
             typeof data === "object" &&
             typeof data.assetId === "string" &&
-            (typeof data.amount === "string" || typeof data.amount === "number")
+            typeof data.amount === "string"
         );
     }
 

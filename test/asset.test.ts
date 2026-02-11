@@ -592,7 +592,9 @@ describe("Packet", () => {
                         ? hex.decode(v.script)
                         : new Uint8Array(0);
                     expect(Packet.isAssetPacket(script)).toBe(false);
-                    expect(() => Packet.fromTxOut(script)).toThrow();
+                    expect(() => Packet.fromTxOut(script)).toThrow(
+                        v.expectedError
+                    );
                 });
             });
         });
