@@ -89,6 +89,7 @@
     },
     "dependencies": {
         "@marcbachmann/cel-js": "7.3.1",
+        "@kukks/bitcoin-descriptors": "3.1.0",
         "@noble/curves": "2.0.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",

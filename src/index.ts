@@ -1,5 +1,10 @@
 import { Transaction } from "./utils/transaction";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
+import {
+    SeedIdentity,
+    MnemonicIdentity,
+    ReadonlyDescriptorIdentity,
+} from "./identity/seedIdentity";
 import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -168,6 +173,9 @@ export {
     ReadonlyWallet,
     SingleKey,
     ReadonlySingleKey,
+    SeedIdentity,
+    MnemonicIdentity,
+    ReadonlyDescriptorIdentity,
     OnchainWallet,
     Ramps,
     VtxoManager,

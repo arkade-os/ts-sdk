@@ -16,10 +16,13 @@ npm install @arkade-os/sdk
 ### Creating a Wallet
 
 ```typescript
-import { SingleKey, Wallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
+import { generateMnemonic } from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english'
 
-// Create a new in-memory key (or use an external signer)
-const identity = SingleKey.fromHex('your_private_key_hex')
+// Generate a new mnemonic or use an existing one
+const mnemonic = generateMnemonic(wordlist)
+const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
@@ -103,23 +106,27 @@ const readonlyWallet = await ReadonlyWallet.create({
 })
 ```
 
-### HD Wallet Identity (SeedIdentity)
+### Seed & Mnemonic Identity (Recommended)
 
-The SDK supports HD wallet derivation from BIP39 mnemonic phrases or raw seeds using BIP86 (Taproot) paths. This provides a standard way to derive keys that can be restored across different wallets.
+The SDK supports key derivation from BIP39 mnemonic phrases or raw seeds using BIP86 (Taproot) output descriptors. This is the recommended identity type for new integrations — it uses standard derivation paths that are interoperable with other wallets and HD-ready for future multi-address support.
+
+> **Note:** Prefer `MnemonicIdentity` or `SeedIdentity` over `SingleKey` for new applications. `SingleKey` exists for backward compatibility with raw private keys.
 
 #### Creating from Mnemonic
 
 ```typescript
-import { SeedIdentity, Wallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
+import { generateMnemonic } from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english'
+
+// Generate a new 12-word mnemonic
+const mnemonic = generateMnemonic(wordlist)
 
 // Create identity from a 12 or 24 word mnemonic
-const identity = SeedIdentity.fromMnemonic(
-  'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about',
-  { isMainnet: true }
-)
+const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: true })
 
 // With optional passphrase for additional security
-const identityWithPassphrase = SeedIdentity.fromMnemonic(mnemonic, {
+const identityWithPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
   isMainnet: true,
   passphrase: 'my secret passphrase'
 })
@@ -140,39 +147,44 @@ import { mnemonicToSeedSync } from '@scure/bip39'
 // If you already have a 64-byte seed
 const seed = mnemonicToSeedSync(mnemonic)
 const identity = SeedIdentity.fromSeed(seed, { isMainnet: true })
+
+// Or with an explicit output descriptor
+const identity2 = SeedIdentity.fromDescriptor(seed, descriptor)
 ```
 
 #### Serialization and Restoration
 
-SeedIdentity serializes to JSON with an output descriptor for interoperability:
+Both identity types serialize to JSON with an output descriptor for interoperability:
 
 ```typescript
-// Serialize to JSON
-const json = identity.toJSON()
-// {"mnemonic":"abandon...", "descriptor":"tr([fingerprint/86'/0'/0']xpub.../0/*)"}
+// MnemonicIdentity preserves mnemonic and passphrase
+const json = mnemonicIdentity.toJSON()
+// {"mnemonic":"abandon...", "passphrase":"secret", "descriptor":"tr([fp/86'/0'/0']xpub.../0/0)"}
+const restored = MnemonicIdentity.fromJSON(json)
 
-// Store securely, then restore later
-const restored = SeedIdentity.fromJSON(json)
+// SeedIdentity stores the hex-encoded seed
+const json2 = seedIdentity.toJSON()
+// {"seed":"abcd...", "descriptor":"tr([fp/86'/0'/0']xpub.../0/0)"}
+const restored2 = SeedIdentity.fromJSON(json2)
 ```
 
 The descriptor uses standard BIP86 format:
-- Mainnet: `tr([fingerprint/86'/0'/0']xpub.../0/*)`
-- Testnet: `tr([fingerprint/86'/1'/0']xpub.../0/*)`
+- Mainnet: `tr([fingerprint/86'/0'/0']xpub.../0/0)`
+- Testnet: `tr([fingerprint/86'/1'/0']xpub.../0/0)`
 
-#### Watch-Only with ReadonlySeedIdentity
+#### Watch-Only with ReadonlyDescriptorIdentity
 
 Create watch-only wallets from an output descriptor:
 
 ```typescript
-import { SeedIdentity, ReadonlySeedIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+import { ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
 
 // From a full identity
-const identity = SeedIdentity.fromMnemonic(mnemonic, { isMainnet: true })
 const readonly = await identity.toReadonly()
 
 // Or directly from a descriptor (e.g., from another wallet)
-const descriptor = "tr([12345678/86'/0'/0']xpub.../0/*)"
-const readonlyFromDescriptor = ReadonlySeedIdentity.fromDescriptor(descriptor)
+const descriptor = "tr([12345678/86'/0'/0']xpub.../0/0)"
+const readonlyFromDescriptor = ReadonlyDescriptorIdentity.fromDescriptor(descriptor)
 
 // Use in a watch-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
@@ -189,11 +201,7 @@ const balance = await readonlyWallet.getBalance()
 - Coin type 0 for mainnet, 1 for testnet
 - Account 0, external chain, first address
 
-**Benefits:**
-- ✅ Type-safe: Transaction methods don't exist on readonly types
-- ✅ Secure: Private keys never leave the signing environment
-- ✅ Flexible: Convert between full and readonly wallets as needed
-- ✅ Same API: Query operations work identically on both wallet types
+The descriptor format (`tr([fingerprint/path']xpub.../0/0)`) is HD-ready — future versions will support deriving multiple addresses and change outputs from the same seed.
 
 ### Receiving Bitcoin
 
