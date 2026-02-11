@@ -10,6 +10,7 @@ import {
     Intent,
     isRecoverable,
     MultisigTapscript,
+    Outpoint,
     SignedIntent,
     Transaction,
     VtxoScript,
@@ -27,7 +28,10 @@ export interface DelegatorManager {
         vtxos: ExtendedVirtualCoin[],
         destination: string,
         delegateAt?: Date
-    ): Promise<void>;
+    ): Promise<{
+        delegated: Outpoint[];
+        failed: { outpoints: Outpoint[]; error: unknown }[];
+    }>;
 }
 
 export class DelegatorManagerImpl implements DelegatorManager {
@@ -41,23 +45,31 @@ export class DelegatorManagerImpl implements DelegatorManager {
         vtxos: ExtendedVirtualCoin[],
         destination: string,
         delegateAt?: Date
-    ): Promise<void> {
+    ): Promise<{
+        delegated: Outpoint[];
+        failed: { outpoints: Outpoint[]; error: unknown }[];
+    }> {
         if (vtxos.length === 0) {
-            return;
+            return { delegated: [], failed: [] };
         }
 
         const destinationScript = ArkAddress.decode(destination).pkScript;
 
         // if explicit delegateAt is provided, delegate all vtxos at once without sorting
         if (delegateAt) {
-            return delegate(
-                this.identity,
-                this.delegatorProvider,
-                this.arkInfoProvider,
-                vtxos,
-                destinationScript,
-                delegateAt
-            );
+            try {
+                await delegate(
+                    this.identity,
+                    this.delegatorProvider,
+                    this.arkInfoProvider,
+                    vtxos,
+                    destinationScript,
+                    delegateAt
+                );
+            } catch (error) {
+                return { delegated: [], failed: [{ outpoints: vtxos, error }] };
+            }
+            return { delegated: vtxos, failed: [] };
         }
 
         // if no explicit delegateAt is provided, sort vtxos by expiry and delegate in groups of the same expiry day
@@ -82,30 +94,36 @@ export class DelegatorManagerImpl implements DelegatorManager {
 
         // if no groups, it means we only need to delegate the recoverable vtxos
         if (groupByExpiry.size === 0) {
-            return delegate(
-                this.identity,
-                this.delegatorProvider,
-                this.arkInfoProvider,
-                recoverableVtxos,
-                destinationScript,
-                delegateAt
-            );
+            try {
+                await delegate(
+                    this.identity,
+                    this.delegatorProvider,
+                    this.arkInfoProvider,
+                    recoverableVtxos,
+                    destinationScript,
+                    delegateAt
+                );
+            } catch (error) {
+                return {
+                    delegated: [],
+                    failed: [{ outpoints: recoverableVtxos, error }],
+                };
+            }
+            return { delegated: recoverableVtxos, failed: [] };
         }
 
         // search for the earliest group, include recoverable vtxos into it
-        const entries = Array.from(groupByExpiry.entries());
-        let earliestGroup = entries[0][0];
-        for (const [dayKey] of entries) {
-            earliestGroup = Math.min(earliestGroup, dayKey);
-        }
+        const earliestGroup = Math.min(...groupByExpiry.keys());
 
         groupByExpiry.set(earliestGroup, [
             ...(groupByExpiry.get(earliestGroup) ?? []),
             ...recoverableVtxos,
         ]);
 
+        const groupsList = Array.from(groupByExpiry.entries());
+
         const result = await Promise.allSettled(
-            Array.from(groupByExpiry.entries()).map(async ([, vtxosGroup]) =>
+            groupsList.map(async ([, vtxosGroup]) =>
                 delegate(
                     this.identity,
                     this.delegatorProvider,
@@ -116,11 +134,20 @@ export class DelegatorManagerImpl implements DelegatorManager {
             )
         );
 
-        for (const resultItem of result) {
+        const delegated: Outpoint[] = [];
+        const failed: { outpoints: Outpoint[]; error: unknown }[] = [];
+
+        for (const [index, resultItem] of result.entries()) {
+            const vtxos = groupsList[index][1];
             if (resultItem.status === "rejected") {
-                console.error("delegate error", resultItem.reason);
+                failed.push({ outpoints: vtxos, error: resultItem.reason });
+                continue;
             }
+
+            delegated.push(...vtxos);
         }
+
+        return { delegated, failed };
     }
 }
 

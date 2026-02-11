@@ -322,9 +322,22 @@ export class Worker {
                     );
 
                     // delegate vtxos
-                    await this.handler?.handleDelegate().catch((error) => {
-                        console.error("Error delegating vtxos:", error);
-                    });
+                    const result = await this.handler
+                        ?.handleDelegate()
+                        .catch((error) => {
+                            console.error("Error delegating vtxos:", error);
+                        });
+
+                    if (result && result.delegated.length > 0) {
+                        console.log(
+                            `Delegated ${result.delegated.length} vtxos`
+                        );
+                    }
+                    if (result && result.failed.length > 0) {
+                        console.error(
+                            `Failed to delegate ${result.failed.length} vtxos`
+                        );
+                    }
                 }
                 if (funds.type === "utxo") {
                     const utxos = funds.coins.map((utxo) =>
