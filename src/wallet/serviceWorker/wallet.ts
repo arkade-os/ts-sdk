@@ -75,7 +75,7 @@ class ServiceWorkerAssetManager
     async issue(params: IssuanceParams): Promise<IssuanceResult> {
         const message: Request.Issue = {
             type: "ISSUE",
-            id: getRandomId(),
+            id: this.getRandomId(),
             params,
         };
         const response = await this.sendMessage(message);
