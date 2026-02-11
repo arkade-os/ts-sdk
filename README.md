@@ -506,16 +506,25 @@ Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
 
-To use IndexedDB repositories in Expo/React Native, install `indexeddbshim` and a
-SQLite-backed WebSQL adapter (e.g., `expo-sqlite` or `react-native-sqlite-storage`),
-then wire the WebSQL `openDatabase` into the shim before creating repositories:
+To use IndexedDB repositories in Expo/React Native, call `setupExpoDb()` before any SDK import.
+This sets up `indexeddbshim` backed by expo-sqlite under the hood:
 
 ```typescript
-import setGlobalVars from 'indexeddbshim'
-import * as SQLite from 'expo-sqlite'
+import { setupExpoDb } from '@arkade-os/sdk/adapters/expo-db';
 
-setGlobalVars(globalThis, { openDatabase: SQLite.openDatabase })
+setupExpoDb();
 ```
+
+> **Note:** `setupExpoDb` accepts an optional `SetupExpoDbOptions` object to
+> customise `origin`, `checkOrigin`, and `cacheDatabaseInstances`.
+
+> **Note:** `expo-sqlite` and `indexeddbshim` are optional peer dependencies,
+> only required when importing from `@arkade-os/sdk/adapters/expo-db`. The
+> streaming providers (`@arkade-os/sdk/adapters/expo`) have no expo-sqlite
+> dependency. Install them with:
+> ```bash
+> npx expo install expo-sqlite && npm install indexeddbshim
+> ```
 
 #### Crypto Polyfill Requirement
 
