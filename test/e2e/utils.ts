@@ -71,9 +71,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             forcePolling: true,
             pollingInterval: 2000,
         }),
-        delegatorProvider: new RestDelegatorProvider(
-            "http://localhost:7001/api"
-        ),
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7002"),
     });
 
     return {
