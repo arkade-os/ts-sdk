@@ -72,7 +72,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             pollingInterval: 2000,
         }),
         delegatorProvider: new RestDelegatorProvider(
-            "http://localhost:7004/api"
+            "http://localhost:7001/api"
         ),
     });
 

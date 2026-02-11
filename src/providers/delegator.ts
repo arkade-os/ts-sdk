@@ -8,7 +8,7 @@ export interface DelegateInfo {
 }
 
 export interface DelegateOptions {
-    /** If true, instruct the delegator to not replace an existing delegate that includes at least one VTXO from this request */
+    // if true, instruct the delegator to not replace an existing delegate that includes at least one vtxo from this request
     rejectReplace?: boolean;
 }
 

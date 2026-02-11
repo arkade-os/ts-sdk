@@ -7,7 +7,7 @@ WORKDIR /app/fulmine/internal/interface/web
 RUN rm -rf .parcel-cache && yarn && yarn build
 
 # Build the Go application
-FROM golang:1.25.5 AS go-builder
+FROM golang:1.25.7 AS go-builder
 
 ARG VERSION
 ARG COMMIT
@@ -18,7 +18,7 @@ ARG SENTRY_DSN
 
 WORKDIR /app
 
-RUN git clone -b delegator --single-branch https://github.com/louisinger/fulmine.git
+RUN git clone -b master --single-branch https://github.com/ArkLabsHQ/fulmine.git
 WORKDIR /app/fulmine
 
 # Copy the built web assets from web-builder
