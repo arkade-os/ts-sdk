@@ -752,6 +752,7 @@ namespace Response {
     function isVtxoAsset(data: any): data is VtxoAsset {
         return (
             typeof data === "object" &&
+            data !== null &&
             typeof data.assetId === "string" &&
             typeof data.amount === "string"
         );

@@ -672,6 +672,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     override readonly identity: Identity;
 
+    private _walletAssetManager?: IAssetManager;
+
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
@@ -715,7 +717,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     override get assetManager(): IAssetManager {
-        return new AssetManager(this);
+        this._walletAssetManager ??= new AssetManager(this);
+        return this._walletAssetManager;
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -1834,13 +1837,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             };
         }
 
-        // create asset packet
-        const assetPacket = createAssetPacket(
-            selectedCoinsToAssetInputs(selectedCoins),
-            recipients,
-            changeReceiver
-        );
-        outputs.push(assetPacket.txOut());
+        // create asset packet only if there are assets involved
+        const assetInputs = selectedCoinsToAssetInputs(selectedCoins);
+        const hasAssets =
+            assetInputs.size > 0 ||
+            recipients.some((r) => r.assets && r.assets.length > 0);
+        if (hasAssets) {
+            const assetPacket = createAssetPacket(
+                assetInputs,
+                recipients,
+                changeReceiver
+            );
+            outputs.push(assetPacket.txOut());
+        }
 
         const { arkTxid } = await this.buildAndSubmitOffchainTx(
             selectedCoins,
