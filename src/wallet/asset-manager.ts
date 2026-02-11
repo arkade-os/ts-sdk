@@ -473,7 +473,7 @@ function castMetadata(metadata?: AssetMetadata): Metadata[] {
         if (typeof value === "string") {
             valueBytes = textEncoder.encode(value);
         } else if (typeof value === "number") {
-            valueBytes = new Uint8Array([value]);
+            valueBytes = textEncoder.encode(String(value));
         } else if (value instanceof Uint8Array) {
             valueBytes = value;
         } else if (value instanceof ArrayBuffer) {
