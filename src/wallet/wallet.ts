@@ -1082,9 +1082,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // so the real coin indices are offset by +1
         const assetInputs = new Map<number, Asset[]>();
         for (let i = 0; i < params.inputs.length; i++) {
-            const assets = (params.inputs[i] as unknown as VirtualCoin).assets;
-            if (assets && assets.length > 0) {
-                assetInputs.set(i + 1, assets);
+            if ("assets" in params.inputs[i]) {
+                const assets = (params.inputs[i] as unknown as VirtualCoin)
+                    .assets;
+                if (assets && assets.length > 0) {
+                    assetInputs.set(i + 1, assets);
+                }
             }
         }
 
