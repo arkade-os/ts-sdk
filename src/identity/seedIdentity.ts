@@ -406,10 +406,9 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
         } else if (keyInfo.bip32) {
             this.compressedPubKey = keyInfo.bip32.publicKey;
         } else {
-            // Fallback: 0x02 prefix + x-only (assumes even parity)
-            this.compressedPubKey = new Uint8Array(33);
-            this.compressedPubKey[0] = 0x02;
-            this.compressedPubKey.set(keyInfo.pubkey, 1);
+            throw new Error(
+                "Cannot determine compressed public key parity from descriptor"
+            );
         }
     }
 
