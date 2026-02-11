@@ -7,10 +7,16 @@ export interface DelegateInfo {
     delegatorAddress: string;
 }
 
+export interface DelegateOptions {
+    /** If true, instruct the delegator to not replace an existing delegate that includes at least one VTXO from this request */
+    rejectReplace?: boolean;
+}
+
 export interface DelegatorProvider {
     delegate(
         intent: SignedIntent<Intent.RegisterMessage>,
-        forfeits: string[]
+        forfeitTxs: string[],
+        options?: DelegateOptions
     ): Promise<void>;
     getDelegateInfo(): Promise<DelegateInfo>;
 }
@@ -21,7 +27,7 @@ export interface DelegatorProvider {
  * ```typescript
  * const provider = new RestDelegatorProvider('https://delegator.example.com');
  * const info = await provider.getDelegateInfo();
- * await provider.delegate(intent, forfeits);
+ * await provider.delegate(intent, forfeitTxs);
  * ```
  */
 export class RestDelegatorProvider implements DelegatorProvider {
@@ -29,9 +35,10 @@ export class RestDelegatorProvider implements DelegatorProvider {
 
     async delegate(
         intent: SignedIntent<Intent.RegisterMessage>,
-        forfeits: string[]
+        forfeitTxs: string[],
+        options?: DelegateOptions
     ): Promise<void> {
-        const url = `${this.url}/api/v1/delegate`;
+        const url = `${this.url}/v1/delegate`;
         const response = await fetch(url, {
             method: "POST",
             headers: {
@@ -39,10 +46,11 @@ export class RestDelegatorProvider implements DelegatorProvider {
             },
             body: JSON.stringify({
                 intent: {
-                    proof: intent.proof,
                     message: Intent.encodeMessage(intent.message),
+                    proof: intent.proof,
                 },
-                forfeits,
+                forfeit_txs: forfeitTxs,
+                reject_replace: options?.rejectReplace ?? false,
             }),
         });
 
@@ -53,7 +61,7 @@ export class RestDelegatorProvider implements DelegatorProvider {
     }
 
     async getDelegateInfo(): Promise<DelegateInfo> {
-        const url = `${this.url}/api/v1/delegate/info`;
+        const url = `${this.url}/v1/delegator/info`;
         const response = await fetch(url);
 
         if (!response.ok) {
@@ -69,18 +77,18 @@ export class RestDelegatorProvider implements DelegatorProvider {
     }
 }
 
-function isDelegateInfo(data: any): data is DelegateInfo {
+function isDelegateInfo(data: unknown): data is DelegateInfo {
     return (
-        data &&
+        !!data &&
         typeof data === "object" &&
         "pubkey" in data &&
         "fee" in data &&
         "delegatorAddress" in data &&
-        typeof data.pubkey === "string" &&
-        typeof data.fee === "string" &&
-        typeof data.delegatorAddress === "string" &&
-        data.pubkey !== "" &&
-        data.fee !== "" &&
-        data.delegatorAddress !== ""
+        typeof (data as DelegateInfo).pubkey === "string" &&
+        typeof (data as DelegateInfo).fee === "string" &&
+        typeof (data as DelegateInfo).delegatorAddress === "string" &&
+        (data as DelegateInfo).pubkey !== "" &&
+        (data as DelegateInfo).fee !== "" &&
+        (data as DelegateInfo).delegatorAddress !== ""
     );
 }

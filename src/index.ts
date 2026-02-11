@@ -92,6 +92,7 @@ import {
 import {
     DelegatorProvider,
     DelegateInfo,
+    DelegateOptions,
     RestDelegatorProvider,
 } from "./providers/delegator";
 import {
@@ -362,4 +363,5 @@ export type {
     DelegatorManager,
     DelegatorProvider,
     DelegateInfo,
+    DelegateOptions,
 };
