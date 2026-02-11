@@ -31,6 +31,12 @@ importers:
       bip68:
         specifier: 1.0.4
         version: 1.0.4
+      expo:
+        specifier: '>=52.0.0'
+        version: 52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
+      expo-sqlite:
+        specifier: '>=16.0.0'
+        version: 16.0.10(expo@52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
     devDependencies:
       '@types/node':
         specifier: 24.3.1
@@ -44,12 +50,6 @@ importers:
       eventsource:
         specifier: 4.0.0
         version: 4.0.0
-      expo:
-        specifier: ~52.0.49
-        version: 52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
-      expo-sqlite:
-        specifier: 16.0.10
-        version: 16.0.10(expo@52.0.49(@babel/core@7.29.0)(@babel/preset-env@7.29.0(@babel/core@7.29.0))(encoding@0.1.13)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
       glob:
         specifier: 11.1.0
         version: 11.1.0
