@@ -30,7 +30,7 @@ describe("db manager", () => {
 
         await openDatabase(dbName, 1, initDb);
 
-        expect(openDatabase(dbName, 2, initDb)).rejects.toThrow(
+        await expect(openDatabase(dbName, 2, initDb)).rejects.toThrow(
             /already opened with version 1/
         );
 

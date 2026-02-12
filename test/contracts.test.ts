@@ -101,8 +101,8 @@ describe("Contracts", () => {
             });
         });
 
-        it("should reject contract with invalid params", () => {
-            expect(
+        it("should reject contract with invalid params", async () => {
+            await expect(
                 manager.createContract({
                     type: "default",
                     params: {}, // Missing required pubKey and serverPubKey
@@ -112,8 +112,8 @@ describe("Contracts", () => {
             ).rejects.toThrow();
         });
 
-        it("should reject contract with mismatched script", () => {
-            expect(
+        it("should reject contract with mismatched script", async () => {
+            await expect(
                 manager.createContract({
                     type: "default",
                     params: createDefaultContractParams(),
