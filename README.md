@@ -233,6 +233,83 @@ const balance = await manager.getRecoverableBalance()
 ```
 
 
+### VTXO Delegation
+
+Delegation allows you to outsource VTXO renewal to a third-party delegator service. Instead of renewing VTXOs yourself, the delegator will automatically settle them before they expire, sending the funds back to your wallet address (minus a service fee). This is useful for wallets that cannot be online 24/7.
+
+When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Ark server.
+
+#### Setting Up a Wallet with Delegation
+
+```typescript
+import { Wallet, SingleKey, RestDelegatorProvider } from '@arkade-os/sdk'
+
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  delegatorProvider: new RestDelegatorProvider('https://delegator.example.com'),
+})
+```
+
+> **Note:** Adding a `delegatorProvider` changes your wallet address because the offchain tapscript includes an additional delegation path. Funds sent to an address without delegation cannot be delegated, and vice versa.
+
+#### Delegating VTXOs
+
+Once the wallet is configured with a delegator, use `wallet.delegatorManager` to delegate your VTXOs:
+
+```typescript
+// Get spendable VTXOs
+const vtxos = (await wallet.getVtxos({ withRecoverable: true }))
+  .filter(v => v.virtualStatus.type === 'confirmed')
+
+// Delegate all VTXOs — the delegator will renew them before expiry
+const myAddress = await wallet.getAddress()
+const result = await wallet.delegatorManager.delegate(vtxos, myAddress)
+
+console.log('Delegated:', result.delegated.length)
+console.log('Failed:', result.failed.length)
+```
+
+The `delegate` method groups VTXOs by expiry date and submits them to the delegator service. By default, delegation is scheduled at 90% of each VTXO's remaining lifetime. You can override this with an explicit date:
+
+```typescript
+// Delegate with a specific renewal time
+const delegateAt = new Date(Date.now() + 12 * 60 * 60 * 1000) // 12 hours from now
+await wallet.delegatorManager.delegate(vtxos, myAddress, delegateAt)
+```
+
+#### Service Worker Integration
+
+When using a service worker wallet, pass the `delegatorUrl` option. The service worker will automatically delegate VTXOs after each VTXO update:
+
+```typescript
+import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
+
+const wallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: SingleKey.fromHex('your_private_key_hex'),
+  delegatorUrl: 'https://delegator.example.com',
+})
+```
+
+#### Querying Delegator Info
+
+You can query the delegator service directly to inspect its public key, fee, and payment address:
+
+```typescript
+import { RestDelegatorProvider } from '@arkade-os/sdk'
+
+const provider = new RestDelegatorProvider('https://delegator.example.com')
+const info = await provider.getDelegateInfo()
+
+console.log('Delegator public key:', info.pubkey)
+console.log('Service fee (sats):', info.fee)
+console.log('Fee address:', info.delegatorAddress)
+```
+
 ### Transaction History
 
 ```typescript
