@@ -230,18 +230,8 @@ export class SeedIdentity implements Identity {
  * ```
  */
 export class MnemonicIdentity extends SeedIdentity {
-    private readonly mnemonic: string;
-    private readonly passphrase?: string;
-
-    private constructor(
-        seed: Uint8Array,
-        descriptor: string,
-        mnemonic: string,
-        passphrase?: string
-    ) {
+    private constructor(seed: Uint8Array, descriptor: string) {
         super(seed, descriptor);
-        this.mnemonic = mnemonic;
-        this.passphrase = passphrase;
     }
 
     /**
@@ -265,7 +255,7 @@ export class MnemonicIdentity extends SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet);
-        return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
+        return new MnemonicIdentity(seed, descriptor);
     }
 }
 
