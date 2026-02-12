@@ -129,7 +129,7 @@
     "pnpm": {
         "overrides": {
             "esbuild": ">=0.25.0",
-            "brace-expansion": ">=2.0.2",
+            "brace-expansion": "^2.0.2",
             "minimatch": "9.0.3"
         }
     }
