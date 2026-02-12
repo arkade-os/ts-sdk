@@ -4,6 +4,7 @@ import type { ContractRepository } from "../../repositories/contractRepository";
 import type { IndexerProvider } from "../../providers/indexer";
 import type { ArkProvider } from "../../providers/ark";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../../wallet";
+import { getRandomId } from "../../wallet/utils";
 
 /**
  * Shared dependencies injected into every processor at runtime.
@@ -81,7 +82,7 @@ export async function runTasks(
 
         const result: TaskResult = {
             ...partial,
-            id: crypto.randomUUID(),
+            id: getRandomId(),
             executedAt: Date.now(),
         };
 

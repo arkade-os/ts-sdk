@@ -1,4 +1,6 @@
+import { hex } from "@scure/base";
 import { Wallet } from "../wallet";
+import { RestArkProvider } from "../../providers/ark";
 import type {
     IWallet,
     WalletBalance,
@@ -24,7 +26,10 @@ import {
     contractPollProcessor,
     CONTRACT_POLL_TASK_TYPE,
 } from "../../worker/expo/processors";
-import { extendVirtualCoin } from "../utils";
+import { extendVirtualCoin, getRandomId } from "../utils";
+import { DefaultVtxo } from "../../script/default";
+import type { PersistedBackgroundConfig } from "./background";
+import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
 
 /**
  * Background processing configuration for {@link ExpoWallet}.
@@ -38,6 +43,8 @@ export interface ExpoBackgroundConfig {
     processors?: TaskProcessor[];
     /** If set, automatically polls at this interval (ms) while the app is in the foreground. */
     foregroundIntervalMs?: number;
+    /** If set, registers the background task with the OS at this interval (minutes, min 15). */
+    minimumBackgroundInterval?: number;
 }
 
 /**
@@ -57,7 +64,7 @@ export interface ExpoWalletConfig extends WalletConfig {
  * @example
  * ```ts
  * import { ExpoWallet } from "@arkade-os/sdk/wallet/expo";
- * import { InMemoryTaskQueue } from "@arkade-os/sdk/worker/expo";
+ * import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
  *
  * const wallet = await ExpoWallet.setup({
  *     identity: SingleKey.fromHex(privateKey),
@@ -66,8 +73,9 @@ export interface ExpoWalletConfig extends WalletConfig {
  *     storage: { walletRepository, contractRepository },
  *     background: {
  *         taskName: "ark-background-poll",
- *         taskQueue: new InMemoryTaskQueue(),
+ *         taskQueue: new AsyncStorageTaskQueue(AsyncStorage),
  *         foregroundIntervalMs: 20_000,
+ *         minimumBackgroundInterval: 15,
  *     },
  * });
  *
@@ -78,15 +86,18 @@ export class ExpoWallet implements IWallet {
     readonly identity: Identity;
 
     private foregroundIntervalId?: ReturnType<typeof setInterval>;
+    private readonly taskName: string;
 
     private constructor(
         private readonly wallet: Wallet,
         private readonly taskQueue: TaskQueue,
         private readonly processors: TaskProcessor[],
         private readonly deps: TaskDependencies,
+        taskName: string,
         foregroundIntervalMs?: number
     ) {
         this.identity = wallet.identity;
+        this.taskName = taskName;
 
         if (foregroundIntervalMs && foregroundIntervalMs > 0) {
             this.startForegroundPolling(foregroundIntervalMs);
@@ -98,8 +109,10 @@ export class ExpoWallet implements IWallet {
      *
      * 1. Creates the inner {@link Wallet} via `Wallet.create()`.
      * 2. Wires up processors (defaults to {@link contractPollProcessor}).
-     * 3. Seeds the task queue with a `contract-poll` task.
-     * 4. Starts foreground polling if `foregroundIntervalMs` is set.
+     * 3. Persists background config for the background handler (if the queue supports it).
+     * 4. Seeds the task queue with a `contract-poll` task.
+     * 5. Registers the background task with the OS scheduler (if `minimumBackgroundInterval` is set).
+     * 6. Starts foreground polling if `foregroundIntervalMs` is set.
      */
     static async setup(config: ExpoWalletConfig): Promise<ExpoWallet> {
         const wallet = await Wallet.create(config);
@@ -116,16 +129,66 @@ export class ExpoWallet implements IWallet {
             extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(wallet, vtxo),
         };
 
+        const { taskQueue } = config.background;
+
+        // Persist wallet params so the background handler can rehydrate
+        // without a network call. Only works with AsyncStorageTaskQueue.
+        if ("persistConfig" in taskQueue) {
+            const arkServerUrl =
+                config.arkServerUrl ??
+                (wallet.arkProvider instanceof RestArkProvider
+                    ? wallet.arkProvider.serverUrl
+                    : undefined);
+
+            if (arkServerUrl) {
+                const timelock =
+                    wallet.offchainTapscript.options.csvTimelock ??
+                    DefaultVtxo.Script.DEFAULT_TIMELOCK;
+
+                const bgConfig: PersistedBackgroundConfig = {
+                    arkServerUrl,
+                    pubkeyHex: hex.encode(
+                        wallet.offchainTapscript.options.pubKey
+                    ),
+                    serverPubKeyHex: hex.encode(
+                        wallet.offchainTapscript.options.serverPubKey
+                    ),
+                    exitTimelockValue: timelock.value.toString(),
+                    exitTimelockType: timelock.type,
+                };
+
+                await (taskQueue as AsyncStorageTaskQueue).persistConfig(
+                    bgConfig
+                );
+            }
+        }
+
         const expoWallet = new ExpoWallet(
             wallet,
-            config.background.taskQueue,
+            taskQueue,
             processors,
             deps,
+            config.background.taskName,
             config.background.foregroundIntervalMs
         );
 
         // Seed the queue so the first tick (or background wake) has work to do
         await expoWallet.seedContractPollTask();
+
+        // Activate OS-level background scheduling
+        if (config.background.minimumBackgroundInterval) {
+            try {
+                const { registerExpoBackgroundTask } = await import(
+                    "./background"
+                );
+                await registerExpoBackgroundTask(config.background.taskName, {
+                    minimumInterval:
+                        config.background.minimumBackgroundInterval,
+                });
+            } catch {
+                // expo-background-task not installed — foreground-only mode
+            }
+        }
 
         return expoWallet;
     }
@@ -156,7 +219,7 @@ export class ExpoWallet implements IWallet {
         if (existing.length > 0) return;
 
         const task: TaskItem = {
-            id: crypto.randomUUID(),
+            id: getRandomId(),
             type: CONTRACT_POLL_TASK_TYPE,
             data: {},
             createdAt: Date.now(),
@@ -164,18 +227,24 @@ export class ExpoWallet implements IWallet {
         await this.taskQueue.addTask(task);
     }
 
-    // ── Background wake (TODO: wire to expo-background-task) ─────────
-
-    // TODO: Register `config.background.taskName` with expo-background-task.
-    // On wake: rehydrate providers, load queue, call runTasks(), return.
-    // On foreground resume: read outbox, acknowledge results, re-seed.
-
     // ── Lifecycle ────────────────────────────────────────────────────
 
-    dispose(): void {
+    /**
+     * Stop foreground polling and unregister the background task.
+     */
+    async dispose(): Promise<void> {
         if (this.foregroundIntervalId) {
             clearInterval(this.foregroundIntervalId);
             this.foregroundIntervalId = undefined;
+        }
+
+        try {
+            const { unregisterExpoBackgroundTask } = await import(
+                "./background"
+            );
+            await unregisterExpoBackgroundTask(this.taskName);
+        } catch {
+            // expo-background-task not installed — nothing to unregister
         }
     }
 
