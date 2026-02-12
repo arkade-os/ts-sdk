@@ -84,6 +84,8 @@ export interface ExpoWalletConfig extends WalletConfig {
  */
 export class ExpoWallet implements IWallet {
     readonly identity: Identity;
+    readonly arkProvider: Wallet["arkProvider"];
+    readonly indexerProvider: Wallet["indexerProvider"];
 
     private foregroundIntervalId?: ReturnType<typeof setInterval>;
     private readonly taskName: string;
@@ -97,6 +99,8 @@ export class ExpoWallet implements IWallet {
         foregroundIntervalMs?: number
     ) {
         this.identity = wallet.identity;
+        this.arkProvider = wallet.arkProvider;
+        this.indexerProvider = wallet.indexerProvider;
         this.taskName = taskName;
 
         if (foregroundIntervalMs && foregroundIntervalMs > 0) {
