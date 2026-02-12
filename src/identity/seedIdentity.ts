@@ -1,6 +1,5 @@
 import { validateMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { hex } from "@scure/base";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { Identity, ReadonlyIdentity } from ".";
@@ -94,10 +93,6 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  *
  * // With custom descriptor
  * const identity = SeedIdentity.fromSeed(seed, { descriptor });
- *
- * // Serialize and restore
- * const json = identity.toJSON();
- * const restored = SeedIdentity.fromJSON(json);
  * ```
  */
 export class SeedIdentity implements Identity {
@@ -165,33 +160,6 @@ export class SeedIdentity implements Identity {
         return new SeedIdentity(seed, descriptor);
     }
 
-    /**
-     * Creates a SeedIdentity from a raw seed and an explicit output descriptor.
-     *
-     * @param seed - 64-byte seed
-     * @param descriptor - Taproot descriptor: tr([fingerprint/path']xpub...)
-     */
-    static fromDescriptor(seed: Uint8Array, descriptor: string): SeedIdentity {
-        return new SeedIdentity(seed, descriptor);
-    }
-
-    /**
-     * Restores a SeedIdentity from a JSON string containing `seed` and `descriptor`.
-     */
-    static fromJSON(json: string): SeedIdentity {
-        const parsed = JSON.parse(json);
-
-        if (!parsed.descriptor) {
-            throw new Error("Missing descriptor");
-        }
-        if (!parsed.seed) {
-            throw new Error("Missing seed");
-        }
-
-        const seed = hex.decode(parsed.seed);
-        return new SeedIdentity(seed, parsed.descriptor);
-    }
-
     async xOnlyPublicKey(): Promise<Uint8Array> {
         return pubSchnorr(this.derivedKey);
     }
@@ -245,16 +213,6 @@ export class SeedIdentity implements Identity {
     }
 
     /**
-     * Serializes to JSON with hex-encoded seed and output descriptor.
-     */
-    toJSON(): string {
-        return JSON.stringify({
-            seed: hex.encode(this.seed),
-            descriptor: this.descriptor,
-        });
-    }
-
-    /**
      * Converts to a watch-only identity that cannot sign.
      */
     async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
@@ -267,8 +225,8 @@ export class SeedIdentity implements Identity {
  *
  * This is the most user-friendly identity type — recommended for wallet
  * applications where users manage their own backup phrase. Extends
- * {@link SeedIdentity} with mnemonic-specific serialization, including
- * passphrase support for lossless round-tripping through JSON.
+ * {@link SeedIdentity} with mnemonic validation and optional passphrase
+ * support.
  *
  * @example
  * ```typescript
@@ -276,10 +234,6 @@ export class SeedIdentity implements Identity {
  *   'abandon abandon abandon ...',
  *   { isMainnet: true, passphrase: 'secret' }
  * );
- *
- * // toJSON preserves both mnemonic and passphrase
- * const json = identity.toJSON();
- * const restored = MnemonicIdentity.fromJSON(json);
  * ```
  */
 export class MnemonicIdentity extends SeedIdentity {
@@ -323,46 +277,6 @@ export class MnemonicIdentity extends SeedIdentity {
               );
         return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
     }
-
-    /**
-     * Restores a MnemonicIdentity from a JSON string containing
-     * `mnemonic`, optional `passphrase`, and `descriptor`.
-     */
-    static override fromJSON(json: string): MnemonicIdentity {
-        const parsed = JSON.parse(json);
-
-        if (!parsed.descriptor) {
-            throw new Error("Missing descriptor");
-        }
-        if (!parsed.mnemonic) {
-            throw new Error("Missing mnemonic");
-        }
-        if (!validateMnemonic(parsed.mnemonic, wordlist)) {
-            throw new Error("Invalid mnemonic");
-        }
-
-        const seed = mnemonicToSeedSync(parsed.mnemonic, parsed.passphrase);
-        return new MnemonicIdentity(
-            seed,
-            parsed.descriptor,
-            parsed.mnemonic,
-            parsed.passphrase
-        );
-    }
-
-    /**
-     * Serializes to JSON with mnemonic, optional passphrase, and descriptor.
-     */
-    override toJSON(): string {
-        const obj: Record<string, string> = {
-            mnemonic: this.mnemonic,
-            descriptor: this.descriptor,
-        };
-        if (this.passphrase) {
-            obj.passphrase = this.passphrase;
-        }
-        return JSON.stringify(obj);
-    }
 }
 
 /**
@@ -382,11 +296,8 @@ export class MnemonicIdentity extends SeedIdentity {
 export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
     private readonly xOnlyPubKey: Uint8Array;
     private readonly compressedPubKey: Uint8Array;
-    readonly descriptor: string;
 
-    private constructor(descriptor: string) {
-        this.descriptor = descriptor;
-
+    private constructor(readonly descriptor: string) {
         const network = detectNetwork(descriptor);
         const expansion = expand({ descriptor, network });
         const keyInfo = expansion.expansionMap?.["@0"];
@@ -421,29 +332,11 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
         return new ReadonlyDescriptorIdentity(descriptor);
     }
 
-    /**
-     * Restores a ReadonlyDescriptorIdentity from a JSON string containing a `descriptor`.
-     */
-    static fromJSON(json: string): ReadonlyDescriptorIdentity {
-        const parsed = JSON.parse(json);
-        if (!parsed.descriptor) {
-            throw new Error("Missing descriptor");
-        }
-        return ReadonlyDescriptorIdentity.fromDescriptor(parsed.descriptor);
-    }
-
     async xOnlyPublicKey(): Promise<Uint8Array> {
         return this.xOnlyPubKey;
     }
 
     async compressedPublicKey(): Promise<Uint8Array> {
         return this.compressedPubKey;
-    }
-
-    /**
-     * Serializes to JSON containing only the descriptor.
-     */
-    toJSON(): string {
-        return JSON.stringify({ descriptor: this.descriptor });
     }
 }

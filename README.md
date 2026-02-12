@@ -18,7 +18,7 @@ npm install @arkade-os/sdk
 ```typescript
 import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 import { generateMnemonic } from '@scure/bip39'
-import { wordlist } from '@scure/bip39/wordlists/english'
+import { wordlist } from '@scure/bip39/wordlists/english.js'
 
 // Generate a new mnemonic or use an existing one
 const mnemonic = generateMnemonic(wordlist)
@@ -117,7 +117,7 @@ The SDK supports key derivation from BIP39 mnemonic phrases or raw seeds using B
 ```typescript
 import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 import { generateMnemonic } from '@scure/bip39'
-import { wordlist } from '@scure/bip39/wordlists/english'
+import { wordlist } from '@scure/bip39/wordlists/english.js'
 
 // Generate a new 12-word mnemonic
 const mnemonic = generateMnemonic(wordlist)
@@ -157,26 +157,6 @@ const identity3 = MnemonicIdentity.fromMnemonic(mnemonic, {
   passphrase: 'my secret passphrase'
 })
 ```
-
-#### Serialization and Restoration
-
-Both identity types serialize to JSON with an output descriptor for interoperability:
-
-```typescript
-// MnemonicIdentity preserves mnemonic and passphrase
-const json = mnemonicIdentity.toJSON()
-// {"mnemonic":"abandon...", "passphrase":"secret", "descriptor":"tr([fp/86'/0'/0']xpub.../0/0)"}
-const restored = MnemonicIdentity.fromJSON(json)
-
-// SeedIdentity stores the hex-encoded seed
-const json2 = seedIdentity.toJSON()
-// {"seed":"abcd...", "descriptor":"tr([fp/86'/0'/0']xpub.../0/0)"}
-const restored2 = SeedIdentity.fromJSON(json2)
-```
-
-The descriptor uses standard BIP86 format:
-- Mainnet: `tr([fingerprint/86'/0'/0']xpub.../0/0)`
-- Testnet: `tr([fingerprint/86'/1'/0']xpub.../0/0)`
 
 #### Watch-Only with ReadonlyDescriptorIdentity
 

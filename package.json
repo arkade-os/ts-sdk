@@ -93,8 +93,8 @@
         "@noble/curves": "2.0.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
-        "@scure/bip32": "^2.0.0",
-        "@scure/bip39": "^2.0.1",
+        "@scure/bip32": "2.0.0",
+        "@scure/bip39": "2.0.1",
         "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4"
     },
