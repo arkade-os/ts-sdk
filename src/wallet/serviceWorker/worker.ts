@@ -24,6 +24,11 @@ import {
 } from "../../repositories/walletRepository";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import { DEFAULT_DB_NAME } from "./utils";
+import {
+    DelegatorProvider,
+    RestDelegatorProvider,
+} from "../../providers/delegator";
+import { DelegatorManager } from "../delegator";
 
 class ReadonlyHandler {
     constructor(protected readonly wallet: ReadonlyWallet) {}
@@ -80,6 +85,12 @@ class ReadonlyHandler {
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
         return undefined;
     }
+
+    async handleDelegate(): Promise<
+        Awaited<ReturnType<DelegatorManager["delegate"]>> | undefined
+    > {
+        return undefined;
+    }
 }
 
 class Handler extends ReadonlyHandler {
@@ -105,6 +116,20 @@ class Handler extends ReadonlyHandler {
         ...args: Parameters<Wallet["sendBitcoin"]>
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
         return this.wallet.sendBitcoin(...args);
+    }
+
+    async handleDelegate(): Promise<
+        Awaited<ReturnType<DelegatorManager["delegate"]>> | undefined
+    > {
+        if (!this.wallet.delegatorManager) return;
+        const spendableVtxos = (
+            await this.wallet.getVtxos({ withRecoverable: true })
+        ).filter(isSpendable);
+        if (spendableVtxos.length === 0) return;
+        return this.wallet.delegatorManager.delegate(
+            spendableVtxos,
+            await this.wallet.getAddress()
+        );
     }
 }
 
@@ -295,6 +320,24 @@ export class Worker {
                     await this.sendMessageToAllClients(
                         Response.vtxoUpdate(newVtxos, spentVtxos)
                     );
+
+                    // delegate vtxos
+                    const result = await this.handler
+                        ?.handleDelegate()
+                        .catch((error) => {
+                            console.error("Error delegating vtxos:", error);
+                        });
+
+                    if (result && result.delegated.length > 0) {
+                        console.log(
+                            `Delegated ${result.delegated.length} vtxos`
+                        );
+                    }
+                    if (result && result.failed.length > 0) {
+                        console.error(
+                            `Failed to delegate ${result.failed.length} vtxos`
+                        );
+                    }
                 }
                 if (funds.type === "utxo") {
                     const utxos = funds.coins.map((utxo) =>
@@ -318,6 +361,11 @@ export class Worker {
                 }
             }
         );
+
+        // delegate vtxos
+        await this.handler.handleDelegate().catch((error) => {
+            console.error("Error delegating vtxos:", error);
+        });
     }
 
     private async handleClear(event: ExtendableMessageEvent) {
@@ -342,9 +390,14 @@ export class Worker {
         }
 
         const message = event.data;
-        const { arkServerPublicKey, arkServerUrl } = message;
+        const { arkServerPublicKey, arkServerUrl, delegatorUrl } = message;
         this.arkProvider = new RestArkProvider(arkServerUrl);
         this.indexerProvider = new RestIndexerProvider(arkServerUrl);
+
+        let delegatorProvider: DelegatorProvider | undefined;
+        if (delegatorUrl) {
+            delegatorProvider = new RestDelegatorProvider(delegatorUrl);
+        }
 
         try {
             if (
@@ -360,6 +413,7 @@ export class Worker {
                     arkServerUrl,
                     arkServerPublicKey,
                     storage: this.storage, // Use unified storage for wallet too
+                    delegatorProvider,
                 });
                 this.handler = new Handler(wallet);
             } else if (
@@ -377,6 +431,7 @@ export class Worker {
                     arkServerUrl,
                     arkServerPublicKey,
                     storage: this.storage, // Use unified storage for wallet too
+                    delegatorProvider,
                 });
                 this.handler = new ReadonlyHandler(wallet);
             } else {

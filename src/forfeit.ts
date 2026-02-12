@@ -1,5 +1,8 @@
 import { Transaction } from "./utils/transaction";
-import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
+import {
+    TransactionInputUpdate,
+    TransactionOutput,
+} from "@scure/btc-signer/psbt.js";
 import { P2A } from "./utils/anchor";
 
 export function buildForfeitTx(
@@ -7,28 +10,37 @@ export function buildForfeitTx(
     forfeitPkScript: Uint8Array,
     txLocktime?: number
 ): Transaction {
-    const tx = new Transaction({
-        version: 3,
-        lockTime: txLocktime,
-    });
-
     let amount = 0n;
     for (const input of inputs) {
         if (!input.witnessUtxo) {
             throw new Error("input needs witness utxo");
         }
         amount += input.witnessUtxo.amount;
-        tx.addInput(input);
     }
 
-    // Add main output to server
-    tx.addOutput({
-        script: forfeitPkScript,
-        amount,
+    return buildForfeitTxWithOutput(
+        inputs,
+        {
+            script: forfeitPkScript,
+            amount,
+        },
+        txLocktime
+    );
+}
+
+export function buildForfeitTxWithOutput(
+    inputs: TransactionInputUpdate[],
+    output: TransactionOutput,
+    txLocktime?: number
+): Transaction {
+    const tx = new Transaction({
+        version: 3,
+        lockTime: txLocktime,
     });
-
-    // Add P2A output
+    for (const input of inputs) {
+        tx.addInput(input);
+    }
+    tx.addOutput(output);
     tx.addOutput(P2A);
-
     return tx;
 }
