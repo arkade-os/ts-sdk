@@ -159,7 +159,7 @@ export class WebSQLDatabase {
         errorCb?: (error: SQLError) => void,
         successCb?: () => void
     ): void {
-        // WebSQL is async/callback-based.  Schedule via microtask so the
+        // WebSQL is async/callback-based.  Schedule via macrotask so the
         // caller's subsequent code runs first (matches browser behavior).
         setTimeout(() => {
             const tx = new WebSQLTransaction();
