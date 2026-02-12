@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "Tether Flow",
+    "slug": "tether-flow",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "scheme": "tetherflow",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#50AF95",
+      "resizeMode": "contain"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./assets/favicon.png",
+      "name": "Tether Flow",
+      "shortName": "Tether Flow",
+      "description": "Send and receive USDT instantly",
+      "backgroundColor": "#F7FBF9",
+      "themeColor": "#50AF95",
+      "startUrl": "/",
+      "display": "standalone"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

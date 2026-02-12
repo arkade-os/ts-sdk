@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+
+  <title>Tether Flow</title>
+  <meta name="description" content="Send and receive USDT instantly. A Tether-only wallet powered by Arkade." />
+  <meta name="theme-color" content="#50AF95" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Tether Flow" />
+
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+
+  <style>
+    html, body, #root {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      background-color: #F7FBF9;
+      overflow: hidden;
+    }
+    #root {
+      display: flex;
+      flex: 1;
+    }
+    /* Splash screen */
+    .splash {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, #50AF95 0%, #3D8F78 100%);
+      z-index: 9999;
+      transition: opacity 0.3s ease;
+    }
+    .splash.hide { opacity: 0; pointer-events: none; }
+    .splash-logo {
+      width: 80px; height: 80px;
+      border-radius: 20px;
+      background: rgba(255,255,255,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 48px;
+      font-weight: 800;
+      color: white;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .splash-name {
+      margin-top: 16px;
+      font-size: 24px;
+      font-weight: 700;
+      color: white;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      letter-spacing: 0.5px;
+    }
+  </style>
+</head>
+<body>
+  <div id="splash" class="splash">
+    <div class="splash-logo">&#x20AE;</div>
+    <div class="splash-name">Tether Flow</div>
+  </div>
+  <div id="root"></div>
+  <script>
+    // Hide splash when app loads
+    window.addEventListener('load', function() {
+      setTimeout(function() {
+        var splash = document.getElementById('splash');
+        if (splash) {
+          splash.classList.add('hide');
+          setTimeout(function() { splash.remove(); }, 300);
+        }
+      }, 500);
+    });
+  </script>
+</body>
+</html>
