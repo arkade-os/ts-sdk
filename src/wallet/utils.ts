@@ -1,6 +1,8 @@
 import type { Coin, ExtendedCoin, ExtendedVirtualCoin, VirtualCoin } from "..";
 import { ReadonlyWallet } from "./wallet";
 
+export const DUST_AMOUNT = 546; // sats
+
 export function extendVirtualCoin(
     wallet: { offchainTapscript: ReadonlyWallet["offchainTapscript"] },
     vtxo: VirtualCoin
