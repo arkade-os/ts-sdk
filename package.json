@@ -52,6 +52,18 @@
             "import": "./dist/esm/adapters/asyncStorage.js",
             "require": "./dist/cjs/adapters/asyncStorage.js",
             "default": "./dist/esm/adapters/asyncStorage.js"
+        },
+        "./worker/expo": {
+            "types": "./dist/types/worker/expo/index.d.ts",
+            "import": "./dist/esm/worker/expo/index.js",
+            "require": "./dist/cjs/worker/expo/index.js",
+            "default": "./dist/esm/worker/expo/index.js"
+        },
+        "./wallet/expo": {
+            "types": "./dist/types/wallet/expo/index.d.ts",
+            "import": "./dist/esm/wallet/expo/index.js",
+            "require": "./dist/cjs/wallet/expo/index.js",
+            "default": "./dist/esm/wallet/expo/index.js"
         }
     },
     "files": [
