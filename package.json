@@ -88,10 +88,13 @@
         "release:cleanup": "bash scripts/release.sh --cleanup"
     },
     "dependencies": {
+        "@kukks/bitcoin-descriptors": "3.1.0",
         "@marcbachmann/cel-js": "7.3.1",
         "@noble/curves": "2.0.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
+        "@scure/bip32": "2.0.0",
+        "@scure/bip39": "2.0.1",
         "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4"
     },
@@ -119,14 +122,14 @@
     ],
     "author": "Ark Labs",
     "license": "MIT",
-    "packageManager": "pnpm@10.20.0",
+    "packageManager": "pnpm@10.29.2+sha512.bef43fa759d91fd2da4b319a5a0d13ef7a45bb985a3d7342058470f9d2051a3ba8674e629672654686ef9443ad13a82da2beb9eeb3e0221c87b8154fff9d74b8",
     "engines": {
         "node": ">=20.0.0"
     },
     "pnpm": {
         "overrides": {
             "esbuild": ">=0.25.0",
-            "brace-expansion": ">=2.0.2",
+            "brace-expansion": "^2.0.2",
             "minimatch": "9.0.3"
         }
     }
