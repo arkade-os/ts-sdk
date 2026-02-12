@@ -20,8 +20,8 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
 /** Use default BIP86 derivation with network selection. */
 export interface NetworkOptions {
-    /** Mainnet (coin type 0) or testnet (coin type 1). Defaults to false (testnet). */
-    isMainnet?: boolean;
+    /** Mainnet (coin type 0) or testnet (coin type 1). */
+    isMainnet: boolean;
 }
 
 /** Use a custom output descriptor for derivation. */
@@ -47,10 +47,8 @@ function detectNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
 }
 
-function hasDescriptor(opts?: SeedIdentityOptions): opts is DescriptorOptions {
-    return (
-        !!opts && "descriptor" in opts && typeof opts.descriptor === "string"
-    );
+function hasDescriptor(opts: SeedIdentityOptions): opts is DescriptorOptions {
+    return "descriptor" in opts && typeof opts.descriptor === "string";
 }
 
 /**
@@ -84,14 +82,15 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  *
  * @example
  * ```typescript
- * // From raw 64-byte seed (defaults to testnet BIP86 path)
  * const seed = mnemonicToSeedSync(mnemonic);
- * const identity = SeedIdentity.fromSeed(seed);
  *
- * // With explicit mainnet
+ * // Testnet (BIP86 path m/86'/1'/0'/0/0)
+ * const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
+ *
+ * // Mainnet (BIP86 path m/86'/0'/0'/0/0)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
  *
- * // With custom descriptor
+ * // Custom descriptor
  * const identity = SeedIdentity.fromSeed(seed, { descriptor });
  * ```
  */
@@ -141,22 +140,16 @@ export class SeedIdentity implements Identity {
     /**
      * Creates a SeedIdentity from a raw 64-byte seed.
      *
-     * Uses BIP86 derivation by default. Pass `{ descriptor }` to use
-     * a custom derivation path instead.
+     * Pass `{ isMainnet }` for default BIP86 derivation, or
+     * `{ descriptor }` for a custom derivation path.
      *
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
      * @param opts - Network selection or custom descriptor.
      */
-    static fromSeed(
-        seed: Uint8Array,
-        opts?: SeedIdentityOptions
-    ): SeedIdentity {
+    static fromSeed(seed: Uint8Array, opts: SeedIdentityOptions): SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
-            : buildDescriptor(
-                  seed,
-                  (opts as NetworkOptions)?.isMainnet ?? false
-              );
+            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet);
         return new SeedIdentity(seed, descriptor);
     }
 
@@ -254,27 +247,24 @@ export class MnemonicIdentity extends SeedIdentity {
     /**
      * Creates a MnemonicIdentity from a BIP39 mnemonic phrase.
      *
-     * Uses BIP86 derivation by default. Pass `{ descriptor }` to use
-     * a custom derivation path instead.
+     * Pass `{ isMainnet }` for default BIP86 derivation, or
+     * `{ descriptor }` for a custom derivation path.
      *
      * @param phrase - BIP39 mnemonic phrase (12 or 24 words)
      * @param opts - Network selection or custom descriptor, plus optional passphrase
      */
     static fromMnemonic(
         phrase: string,
-        opts?: MnemonicOptions
+        opts: MnemonicOptions
     ): MnemonicIdentity {
         if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");
         }
-        const passphrase = opts?.passphrase;
+        const passphrase = opts.passphrase;
         const seed = mnemonicToSeedSync(phrase, passphrase);
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
-            : buildDescriptor(
-                  seed,
-                  (opts as NetworkOptions | undefined)?.isMainnet ?? false
-              );
+            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet);
         return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
     }
 }

@@ -86,7 +86,9 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
 
 export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> {
     const mnemonic = generateMnemonic(wordlist);
-    const identity = MnemonicIdentity.fromMnemonic(mnemonic);
+    const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
+        isMainnet: false,
+    });
 
     const wallet = await Wallet.create({
         identity,

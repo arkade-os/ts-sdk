@@ -21,18 +21,10 @@ describe("SeedIdentity", () => {
             expect(xOnlyPubKey).toHaveLength(32);
         });
 
-        it("should default to testnet when no options provided", async () => {
+        it("should require network selection", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const defaultIdentity = SeedIdentity.fromSeed(seed);
-            const testnetIdentity = SeedIdentity.fromSeed(seed, {
-                isMainnet: false,
-            });
-
-            const defaultPubKey = await defaultIdentity.xOnlyPublicKey();
-            const testnetPubKey = await testnetIdentity.xOnlyPublicKey();
-            expect(Array.from(defaultPubKey)).toEqual(
-                Array.from(testnetPubKey)
-            );
+            // @ts-expect-error opts is required
+            expect(() => SeedIdentity.fromSeed(seed)).toThrow();
         });
 
         it("should derive different keys for mainnet vs testnet", async () => {
@@ -86,7 +78,9 @@ describe("SeedIdentity", () => {
         it("should use custom descriptor instead of default BIP86", async () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const mainnet = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const testnet = SeedIdentity.fromSeed(seed);
+            const testnet = SeedIdentity.fromSeed(seed, {
+                isMainnet: false,
+            });
 
             // Pass the mainnet descriptor explicitly — should match mainnet, not testnet
             const identity = SeedIdentity.fromSeed(seed, {
@@ -207,19 +201,11 @@ describe("MnemonicIdentity", () => {
             expect(xOnlyPubKey).toHaveLength(32);
         });
 
-        it("should default to testnet", async () => {
-            const defaultIdentity =
-                MnemonicIdentity.fromMnemonic(TEST_MNEMONIC);
-            const testnetIdentity = MnemonicIdentity.fromMnemonic(
-                TEST_MNEMONIC,
-                { isMainnet: false }
-            );
-
-            const defaultPubKey = await defaultIdentity.xOnlyPublicKey();
-            const testnetPubKey = await testnetIdentity.xOnlyPublicKey();
-            expect(Array.from(defaultPubKey)).toEqual(
-                Array.from(testnetPubKey)
-            );
+        it("should require network selection", () => {
+            // @ts-expect-error opts is required
+            expect(() =>
+                MnemonicIdentity.fromMnemonic(TEST_MNEMONIC)
+            ).toThrow();
         });
 
         it("should produce same key as SeedIdentity.fromSeed with equivalent seed", async () => {
@@ -240,11 +226,13 @@ describe("MnemonicIdentity", () => {
         });
 
         it("should derive different key with passphrase", async () => {
-            const withoutPassphrase =
-                MnemonicIdentity.fromMnemonic(TEST_MNEMONIC);
+            const withoutPassphrase = MnemonicIdentity.fromMnemonic(
+                TEST_MNEMONIC,
+                { isMainnet: false }
+            );
             const withPassphrase = MnemonicIdentity.fromMnemonic(
                 TEST_MNEMONIC,
-                { passphrase: "secret" }
+                { isMainnet: false, passphrase: "secret" }
             );
 
             const pubKey1 = await withoutPassphrase.xOnlyPublicKey();
@@ -255,7 +243,9 @@ describe("MnemonicIdentity", () => {
 
         it("should throw for invalid mnemonic", () => {
             expect(() =>
-                MnemonicIdentity.fromMnemonic("invalid mnemonic words here")
+                MnemonicIdentity.fromMnemonic("invalid mnemonic words here", {
+                    isMainnet: false,
+                })
             ).toThrow("Invalid mnemonic");
         });
 

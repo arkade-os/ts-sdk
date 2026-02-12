@@ -22,7 +22,7 @@ import { wordlist } from '@scure/bip39/wordlists/english.js'
 
 // Generate a new mnemonic or use an existing one
 const mnemonic = generateMnemonic(wordlist)
-const identity = MnemonicIdentity.fromMnemonic(mnemonic)
+const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: false })
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
