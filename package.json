@@ -143,9 +143,10 @@
     ],
     "author": "Ark Labs",
     "license": "MIT",
-    "packageManager": "pnpm@10.20.0",
+    "packageManager": "pnpm@10.25.0",
     "engines": {
-        "node": ">=20.0.0"
+        "node": ">=22.12.0 <23",
+        "pnpm": ">=10.25.0 <11"
     },
     "pnpm": {
         "overrides": {
