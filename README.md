@@ -545,8 +545,21 @@ const balance = await wallet.getBalance()
 For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
 `ReadonlySingleKey` identity instead.
 
-See `src/worker/README.md` for architecture details, trade-offs, and custom
-message handler examples.
+### Worker Architecture
+
+The _worker_ captures the background processing infrastructure for the SDK.
+Two platform-specific implementations share common patterns (pluggable
+handlers, periodic scheduling, repository/provider dependency injection) but
+differ in orchestration and communication.
+
+| Platform | Directory                                    | Orchestrator | Communication |
+|----------|----------------------------------------------|-------------|---------------|
+| **Browser** | [`browser/`](./src/worker/browser/README.md) | `MessageBus` inside a Service Worker | `postMessage` between SW and window clients |
+| **Expo/React Native** | [`expo/`](./src/worker/expo/README.md)       | `runTasks()` called from foreground interval and OS background wake | `AsyncStorageTaskQueue` inbox/outbox |
+
+See the platform READMEs for architecture details, runtime flow, and usage
+examples.
+
 
 
 ### Repositories (Storage)
