@@ -17,3 +17,4 @@ export interface ReadonlyIdentity {
 }
 
 export * from "./singleKey";
+export * from "./seedIdentity";

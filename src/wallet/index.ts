@@ -9,6 +9,7 @@ import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
+import { DelegatorProvider } from "../providers/delegator";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -35,6 +36,7 @@ export interface BaseWalletConfig {
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
+    delegatorProvider?: DelegatorProvider;
 }
 
 /**

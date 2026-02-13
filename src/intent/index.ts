@@ -3,6 +3,10 @@ import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { Transaction } from "../utils/transaction";
+import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
+import { hex } from "@scure/base";
+import { getSequence, VtxoScript } from "../script/base";
+import { ExtendedCoin } from "../wallet";
 
 /**
  * Intent proof implementation for Bitcoin message signing.
@@ -46,15 +50,16 @@ export namespace Intent {
      */
     export function create(
         message: string | Message,
-        inputs: TransactionInput[],
+        ins: (TransactionInput | ExtendedCoin)[],
         outputs: TransactionOutput[] = []
     ): Proof {
         if (typeof message !== "string") {
             message = encodeMessage(message);
         }
 
-        if (inputs.length == 0)
+        if (ins.length == 0)
             throw new Error("intent proof requires at least one input");
+        const inputs = ins.map(prepareCoinAsIntentProofInput);
         if (!validateInputs(inputs)) throw new Error("invalid inputs");
         if (!validateOutputs(outputs)) throw new Error("invalid outputs");
 
@@ -279,4 +284,31 @@ function hashMessage(message: string): Uint8Array {
         TAG_INTENT_PROOF,
         new TextEncoder().encode(message)
     );
+}
+
+function prepareCoinAsIntentProofInput(
+    coin: ExtendedCoin | TransactionInput
+): TransactionInput {
+    if (!("tapTree" in coin)) {
+        return coin;
+    }
+    const vtxoScript = VtxoScript.decode(coin.tapTree);
+    const sequence = getSequence(coin.intentTapLeafScript);
+
+    const unknown = [VtxoTaprootTree.encode(coin.tapTree)];
+    if (coin.extraWitness) {
+        unknown.push(ConditionWitness.encode(coin.extraWitness));
+    }
+
+    return {
+        txid: hex.decode(coin.txid),
+        index: coin.vout,
+        witnessUtxo: {
+            amount: BigInt(coin.value),
+            script: vtxoScript.pkScript,
+        },
+        sequence,
+        tapLeafScript: [coin.intentTapLeafScript],
+        unknown,
+    };
 }

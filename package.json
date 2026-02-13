@@ -72,8 +72,9 @@
         "test": "vitest run",
         "test:master": "ARK_ENV=master vitest run",
         "test:unit": "vitest run --exclude test/e2e",
-        "test:setup": "node test/setup.js",
-        "test:setup-docker": "node test/setup.js docker",
+        "test:setup": "node test/setup.mjs",
+        "regtest": "pnpm test:down-docker && pnpm test:build-docker && pnpm test:up-docker && pnpm test:setup-docker",
+        "test:setup-docker": "node test/setup.mjs docker",
         "test:build-docker": "docker compose -f docker-compose.yml build --no-cache",
         "test:up-docker": "docker compose -f docker-compose.yml up -d",
         "test:down-docker": "docker compose -f docker-compose.yml down",
@@ -96,10 +97,13 @@
         "release:cleanup": "bash scripts/release.sh --cleanup"
     },
     "dependencies": {
+        "@kukks/bitcoin-descriptors": "3.1.0",
         "@marcbachmann/cel-js": "7.3.1",
         "@noble/curves": "2.0.0",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
+        "@scure/bip32": "2.0.0",
+        "@scure/bip39": "2.0.1",
         "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4"
     },
@@ -151,7 +155,7 @@
     "pnpm": {
         "overrides": {
             "esbuild": ">=0.25.0",
-            "brace-expansion": ">=2.0.2",
+            "brace-expansion": "^2.0.2",
             "minimatch": "9.0.3"
         },
         "onlyBuiltDependencies": [

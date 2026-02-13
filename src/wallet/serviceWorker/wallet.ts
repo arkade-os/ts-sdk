@@ -124,6 +124,7 @@ interface ServiceWorkerWalletOptions {
     esploraUrl?: string;
     storage?: StorageConfig;
     identity: ReadonlyIdentity | Identity;
+    delegatorUrl?: string;
     // Override the default tag for the messages sent and received from the SW
     walletUpdaterTag?: string;
     messageBusTimeoutMs?: number;
@@ -236,6 +237,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             key: { publicKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
+            delegatorUrl: options.delegatorUrl,
         };
 
         // Bootstrap the MessageBus in the service worker
@@ -742,6 +744,7 @@ export class ServiceWorkerWallet
             key: { privateKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
+            delegatorUrl: options.delegatorUrl,
         };
 
         await initializeMessageBus(

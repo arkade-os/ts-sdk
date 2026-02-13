@@ -17,14 +17,17 @@ npm install @arkade-os/sdk
 
 ```typescript
 import {
-  SingleKey,
+  MnemonicIdentity,
   Wallet,
   IndexedDBWalletRepository,
   IndexedDBContractRepository
 } from '@arkade-os/sdk'
+import { generateMnemonic } from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english.js'
 
-// Create a new in-memory key (or use an external signer)
-const identity = SingleKey.fromHex('your_private_key_hex')
+// Generate a new mnemonic or use an existing one
+const mnemonic = generateMnemonic(wordlist)
+const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: false })
 
 // Create a wallet with Ark support
 const wallet = await Wallet.create({
@@ -111,11 +114,88 @@ const readonlyWallet = await ReadonlyWallet.create({
 })
 ```
 
-**Benefits:**
-- ✅ Type-safe: Transaction methods don't exist on readonly types
-- ✅ Secure: Private keys never leave the signing environment
-- ✅ Flexible: Convert between full and readonly wallets as needed
-- ✅ Same API: Query operations work identically on both wallet types
+### Seed & Mnemonic Identity (Recommended)
+
+The SDK supports key derivation from BIP39 mnemonic phrases or raw seeds using BIP86 (Taproot) output descriptors. This is the recommended identity type for new integrations — it uses standard derivation paths that are interoperable with other wallets and HD-ready for future multi-address support.
+
+> **Note:** Prefer `MnemonicIdentity` or `SeedIdentity` over `SingleKey` for new applications. `SingleKey` exists for backward compatibility with raw private keys.
+
+#### Creating from Mnemonic
+
+```typescript
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
+import { generateMnemonic } from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english.js'
+
+// Generate a new 12-word mnemonic
+const mnemonic = generateMnemonic(wordlist)
+
+// Create identity from a 12 or 24 word mnemonic
+const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: true })
+
+// With optional passphrase for additional security
+const identityWithPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
+  isMainnet: true,
+  passphrase: 'my secret passphrase'
+})
+
+// Create wallet as usual
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+```
+
+#### Creating from Raw Seed
+
+```typescript
+import { SeedIdentity } from '@arkade-os/sdk'
+import { mnemonicToSeedSync } from '@scure/bip39'
+
+// If you already have a 64-byte seed
+const seed = mnemonicToSeedSync(mnemonic)
+const identity = SeedIdentity.fromSeed(seed, { isMainnet: true })
+
+// Or with a custom output descriptor
+const identity2 = SeedIdentity.fromSeed(seed, { descriptor })
+
+// Or with a custom descriptor and passphrase (MnemonicIdentity)
+const identity3 = MnemonicIdentity.fromMnemonic(mnemonic, {
+  descriptor,
+  passphrase: 'my secret passphrase'
+})
+```
+
+#### Watch-Only with ReadonlyDescriptorIdentity
+
+Create watch-only wallets from an output descriptor:
+
+```typescript
+import { ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+
+// From a full identity
+const readonly = await identity.toReadonly()
+
+// Or directly from a descriptor (e.g., from another wallet)
+const descriptor = "tr([12345678/86'/0'/0']xpub.../0/0)"
+const readonlyFromDescriptor = ReadonlyDescriptorIdentity.fromDescriptor(descriptor)
+
+// Use in a watch-only wallet
+const readonlyWallet = await ReadonlyWallet.create({
+  identity: readonly,
+  arkServerUrl: 'https://mutinynet.arkade.sh'
+})
+
+// Can query but not sign
+const balance = await readonlyWallet.getBalance()
+```
+
+**Derivation Path:** `m/86'/{coinType}'/0'/0/0`
+- BIP86 (Taproot) purpose
+- Coin type 0 for mainnet, 1 for testnet
+- Account 0, external chain, first address
+
+The descriptor format (`tr([fingerprint/path']xpub.../0/0)`) is HD-ready — future versions will support deriving multiple addresses and change outputs from the same seed.
 
 ### Receiving Bitcoin
 
@@ -240,6 +320,83 @@ console.log('Recovered:', txid)
 const balance = await manager.getRecoverableBalance()
 ```
 
+
+### VTXO Delegation
+
+Delegation allows you to outsource VTXO renewal to a third-party delegator service. Instead of renewing VTXOs yourself, the delegator will automatically settle them before they expire, sending the funds back to your wallet address (minus a service fee). This is useful for wallets that cannot be online 24/7.
+
+When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Ark server.
+
+#### Setting Up a Wallet with Delegation
+
+```typescript
+import { Wallet, SingleKey, RestDelegatorProvider } from '@arkade-os/sdk'
+
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  delegatorProvider: new RestDelegatorProvider('https://delegator.example.com'),
+})
+```
+
+> **Note:** Adding a `delegatorProvider` changes your wallet address because the offchain tapscript includes an additional delegation path. Funds sent to an address without delegation cannot be delegated, and vice versa.
+
+#### Delegating VTXOs
+
+Once the wallet is configured with a delegator, use `wallet.delegatorManager` to delegate your VTXOs:
+
+```typescript
+// Get spendable VTXOs
+const vtxos = (await wallet.getVtxos({ withRecoverable: true }))
+  .filter(v => v.virtualStatus.type === 'confirmed')
+
+// Delegate all VTXOs — the delegator will renew them before expiry
+const myAddress = await wallet.getAddress()
+const result = await wallet.delegatorManager.delegate(vtxos, myAddress)
+
+console.log('Delegated:', result.delegated.length)
+console.log('Failed:', result.failed.length)
+```
+
+The `delegate` method groups VTXOs by expiry date and submits them to the delegator service. By default, delegation is scheduled at 90% of each VTXO's remaining lifetime. You can override this with an explicit date:
+
+```typescript
+// Delegate with a specific renewal time
+const delegateAt = new Date(Date.now() + 12 * 60 * 60 * 1000) // 12 hours from now
+await wallet.delegatorManager.delegate(vtxos, myAddress, delegateAt)
+```
+
+#### Service Worker Integration
+
+When using a service worker wallet, pass the `delegatorUrl` option. The service worker will automatically delegate VTXOs after each VTXO update:
+
+```typescript
+import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
+
+const wallet = await ServiceWorkerWallet.setup({
+  serviceWorkerPath: '/service-worker.js',
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: SingleKey.fromHex('your_private_key_hex'),
+  delegatorUrl: 'https://delegator.example.com',
+})
+```
+
+#### Querying Delegator Info
+
+You can query the delegator service directly to inspect its public key, fee, and payment address:
+
+```typescript
+import { RestDelegatorProvider } from '@arkade-os/sdk'
+
+const provider = new RestDelegatorProvider('https://delegator.example.com')
+const info = await provider.getDelegateInfo()
+
+console.log('Delegator public key:', info.pubkey)
+console.log('Service fee (sats):', info.fee)
+console.log('Fee address:', info.delegatorAddress)
+```
 
 ### Transaction History
 
