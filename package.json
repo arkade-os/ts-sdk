@@ -62,10 +62,14 @@
         "registry": "https://registry.npmjs.org/"
     },
     "scripts": {
-        "build": "rimraf dist && pnpm run build:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:types && node scripts/generate-package-files.js",
+        "build": "rimraf dist && pnpm run build:esm && pnpm run build:expo:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:expo:cjs && pnpm run build:types && pnpm run build:expo:types && node scripts/generate-package-files.js",
         "build:esm": "tsc -p tsconfig.esm.json --outDir dist/esm",
         "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
         "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
+        "build:expo:check": "node -e \"try{require.resolve('expo-sqlite')}catch{process.exit(1)}\"",
+        "build:expo:esm": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --outDir dist/esm",
+        "build:expo:cjs": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --module commonjs --outDir dist/cjs",
+        "build:expo:types": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --outDir dist/types --declaration --emitDeclarationOnly",
         "build:browser": "node scripts/build-browser.js",
         "docs:build": "pnpm run build:types && pnpm typedoc",
         "docs:open": "open ./docs/index.html",
