@@ -1,0 +1,13 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "rootDir": "./src",
+        "declaration": false,
+        "declarationDir": null
+    },
+    "include": [
+        "src/adapters/expo-db.ts",
+        "src/repositories/indexedDB/websqlAdapter.ts"
+    ],
+    "exclude": []
+}

@@ -20,6 +20,8 @@
         "node_modules",
         "dist",
         "**/*.test.ts",
-        "examples"
+        "examples",
+        "src/adapters/expo-db.ts",
+        "src/repositories/indexedDB/websqlAdapter.ts"
     ]
 }
