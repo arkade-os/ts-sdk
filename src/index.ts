@@ -179,6 +179,8 @@ import {
     migrateWalletRepository,
     WalletRepositoryImpl,
     ContractRepositoryImpl,
+    WalletRepository,
+    ContractRepository,
 } from "./repositories";
 import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
@@ -477,4 +479,8 @@ export type {
     DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
+
+    // Repositories
+    WalletRepository,
+    ContractRepository,
 };
