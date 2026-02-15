@@ -1,4 +1,4 @@
-import { ArkTransaction, TxKey, TxType, VirtualCoin } from "../wallet";
+import { ArkTransaction, Asset, TxKey, TxType, VirtualCoin } from "../wallet";
 
 type ExtendedArkTransaction = ArkTransaction & {
     tag: "offchain" | "boarding" | "exit" | "batch";
@@ -8,6 +8,48 @@ const txKey: TxKey = {
     boardingTxid: "",
     arkTxid: "",
 };
+
+function collectAssets(vtxos: VirtualCoin[]): Asset[] | undefined {
+    const map = new Map<string, number>();
+    for (const vtxo of vtxos) {
+        if (vtxo.assets) {
+            for (const a of vtxo.assets) {
+                map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+            }
+        }
+    }
+    if (map.size === 0) return undefined;
+    return Array.from(map, ([assetId, amount]) => ({ assetId, amount }));
+}
+
+function subtractAssets(
+    spent: VirtualCoin[],
+    change: VirtualCoin[]
+): Asset[] | undefined {
+    const map = new Map<string, number>();
+    for (const vtxo of spent) {
+        if (vtxo.assets) {
+            for (const a of vtxo.assets) {
+                map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
+            }
+        }
+    }
+    for (const vtxo of change) {
+        if (vtxo.assets) {
+            for (const a of vtxo.assets) {
+                const current = map.get(a.assetId) ?? 0;
+                const remaining = current - a.amount;
+                if (remaining > 0) {
+                    map.set(a.assetId, remaining);
+                } else {
+                    map.delete(a.assetId);
+                }
+            }
+        }
+    }
+    if (map.size === 0) return undefined;
+    return Array.from(map, ([assetId, amount]) => ({ assetId, amount }));
+}
 
 /**
  * Builds the transaction history by analyzing virtual coins (VTXOs), boarding transactions, and ignored commitments.
@@ -54,6 +96,7 @@ export async function buildTransactionHistory(
                     amount: vtxo.value,
                     settled: vtxo.status.isLeaf || vtxo.isSpent!,
                     createdAt: vtxo.createdAt.getTime(),
+                    assets: collectAssets([vtxo]),
                 });
             }
         } else if (
@@ -68,6 +111,7 @@ export async function buildTransactionHistory(
                 amount: vtxo.value,
                 settled: vtxo.status.isLeaf || vtxo.isSpent!,
                 createdAt: vtxo.createdAt.getTime(),
+                assets: collectAssets([vtxo]),
             });
         }
 
@@ -118,6 +162,7 @@ export async function buildTransactionHistory(
                     amount: txAmount,
                     settled: true,
                     createdAt: txTime,
+                    assets: subtractAssets(allSpent, changes),
                 });
             }
 
@@ -160,6 +205,7 @@ export async function buildTransactionHistory(
                             amount: forfeitAmount - settledAmount,
                             settled: true,
                             createdAt: changes[0].createdAt.getTime(),
+                            assets: subtractAssets(forfeitVtxos, changes),
                         });
                     }
                 } else {
@@ -172,6 +218,7 @@ export async function buildTransactionHistory(
                         settled: true,
                         // TODO: fetch commitment tx with /v1/indexer/commitmentTx/<commitmentTxid> to know when the tx was made
                         createdAt: vtxo.createdAt.getTime() + 1,
+                        assets: collectAssets(forfeitVtxos),
                     });
                 }
             }
