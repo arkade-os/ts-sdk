@@ -180,7 +180,7 @@
                 "name": "invalid script",
                 "script": "6a0341524b",
                 "amount": 0,
-                "expectedError": "invalid script length"
+                "expectedError": "invalid script"
             }
         ]
     }

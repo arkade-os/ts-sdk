@@ -55,7 +55,7 @@ export class AssetGroup {
 
     static fromBytes(buf: Uint8Array): AssetGroup {
         if (!buf || buf.length === 0) {
-            throw new Error("missing asset");
+            throw new Error("missing asset group");
         }
         const reader = new BufferReader(buf);
         return AssetGroup.fromReader(reader);
