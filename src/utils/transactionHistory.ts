@@ -86,6 +86,7 @@ export async function buildTransactionHistory(
                         v.settledBy === vtxo.virtualStatus.commitmentTxIds![0]
                 ).length === 0
             ) {
+                const assets = collectAssets([vtxo]);
                 received.push({
                     key: {
                         ...txKey,
@@ -96,7 +97,7 @@ export async function buildTransactionHistory(
                     amount: vtxo.value,
                     settled: vtxo.status.isLeaf || vtxo.isSpent!,
                     createdAt: vtxo.createdAt.getTime(),
-                    assets: collectAssets([vtxo]),
+                    ...(assets && { assets }),
                 });
             }
         } else if (
@@ -104,6 +105,7 @@ export async function buildTransactionHistory(
         ) {
             // If this vtxo is preconfirmed and does not spend any other vtxos,
             // it's translated into a received offchain transaction
+            const assets = collectAssets([vtxo]);
             received.push({
                 key: { ...txKey, arkTxid: vtxo.txid! },
                 tag: "offchain",
@@ -111,7 +113,7 @@ export async function buildTransactionHistory(
                 amount: vtxo.value,
                 settled: vtxo.status.isLeaf || vtxo.isSpent!,
                 createdAt: vtxo.createdAt.getTime(),
-                assets: collectAssets([vtxo]),
+                ...(assets && { assets }),
             });
         }
 
@@ -155,6 +157,7 @@ export async function buildTransactionHistory(
                         : vtxo.createdAt.getTime() + 1;
                 }
 
+                const assets = subtractAssets(allSpent, changes);
                 sent.push({
                     key: { ...txKey, arkTxid: vtxo.arkTxId },
                     tag: "offchain",
@@ -162,7 +165,7 @@ export async function buildTransactionHistory(
                     amount: txAmount,
                     settled: true,
                     createdAt: txTime,
-                    assets: subtractAssets(allSpent, changes),
+                    ...(assets && { assets }),
                 });
             }
 
@@ -198,6 +201,7 @@ export async function buildTransactionHistory(
                     // forfeitAmount > settledAmount --> collaborative exit with offchain change
                     // TODO: make this support fees!
                     if (forfeitAmount > settledAmount) {
+                        const assets = subtractAssets(forfeitVtxos, changes);
                         sent.push({
                             key: { ...txKey, commitmentTxid: vtxo.settledBy },
                             tag: "exit",
@@ -205,11 +209,12 @@ export async function buildTransactionHistory(
                             amount: forfeitAmount - settledAmount,
                             settled: true,
                             createdAt: changes[0].createdAt.getTime(),
-                            assets: subtractAssets(forfeitVtxos, changes),
+                            ...(assets && { assets }),
                         });
                     }
                 } else {
                     // forfeitAmount > 0 && settledAmount == 0 --> collaborative exit without any offchain change
+                    const assets = collectAssets(forfeitVtxos);
                     sent.push({
                         key: { ...txKey, commitmentTxid: vtxo.settledBy },
                         tag: "exit",
@@ -218,7 +223,7 @@ export async function buildTransactionHistory(
                         settled: true,
                         // TODO: fetch commitment tx with /v1/indexer/commitmentTx/<commitmentTxid> to know when the tx was made
                         createdAt: vtxo.createdAt.getTime() + 1,
-                        assets: collectAssets(forfeitVtxos),
+                        ...(assets && { assets }),
                     });
                 }
             }
