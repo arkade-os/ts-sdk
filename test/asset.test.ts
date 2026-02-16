@@ -272,7 +272,7 @@ describe("AssetOutput", () => {
 
 describe("Metadata", () => {
     describe("valid", () => {
-        metadataFixtures.valid.forEach((v) => {
+        metadataFixtures.valid.newMetadata.forEach((v) => {
             it(v.name, () => {
                 const key = new TextEncoder().encode(v.key);
                 const value = new TextEncoder().encode(v.value);
@@ -494,7 +494,7 @@ describe("Packet", () => {
                     expect(serialized.length).toBeGreaterThan(0);
 
                     const txOut = packet.txOut();
-                    expect(txOut.amount).toBe(BigInt(v.expectedAmount));
+                    expect(txOut.amount).toBe(BigInt(v.expectedAmount ?? 0));
                     expect(hex.encode(txOut.script)).toBe(v.expectedScript);
 
                     const fromString = Packet.fromString(v.expectedScript);

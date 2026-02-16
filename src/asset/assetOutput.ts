@@ -9,6 +9,10 @@ import { BufferReader, BufferWriter } from "./utils";
  * @param amount - asset amount in satoshis
  */
 export class AssetOutput {
+    // 0x01 means local output, there is only 1 local output type currently
+    // however we serialize it for future upgrades
+    static readonly TYPE_LOCAL = 0x01;
+
     private constructor(
         readonly vout: number,
         readonly amount: bigint
@@ -38,7 +42,9 @@ export class AssetOutput {
             throw new Error("missing asset output");
         }
         const reader = new BufferReader(buf);
-        return AssetOutput.fromReader(reader);
+        const output = AssetOutput.fromReader(reader);
+        output.validate();
+        return output;
     }
 
     serialize(): Uint8Array {
@@ -70,14 +76,27 @@ export class AssetOutput {
         if (reader.remaining() < 2) {
             throw new Error("invalid asset output vout length");
         }
-        const vout = reader.readUint16LE();
+        const type = reader.readByte();
+        if (type !== AssetOutput.TYPE_LOCAL) {
+            if (type === 0x00) {
+                throw new Error("output type unspecified");
+            }
+            throw new Error("unknown asset output type");
+        }
+
+        let vout: number;
+        try {
+            vout = reader.readUint16LE();
+        } catch {
+            throw new Error("invalid asset output vout length");
+        }
+
         const amount = reader.readVarUint();
-        const output = new AssetOutput(vout, amount);
-        output.validate();
-        return output;
+        return new AssetOutput(vout, amount);
     }
 
     serializeTo(writer: BufferWriter): void {
+        writer.writeByte(0x01);
         writer.writeUint16LE(this.vout);
         writer.writeVarUint(this.amount);
     }
