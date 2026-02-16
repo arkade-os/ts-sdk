@@ -63,7 +63,11 @@ import {
     MultisigTapscript,
     RelativeTimelock,
 } from "../script/tapscript";
-import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
+import {
+    buildOffchainTx,
+    hasBoardingTxExpired,
+    isValidArkAddress,
+} from "../utils/arkTransaction";
 import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
@@ -1572,15 +1576,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         return { finalized, pending };
-    }
-}
-
-function isValidArkAddress(address: string): boolean {
-    try {
-        ArkAddress.decode(address);
-        return true;
-    } catch (e) {
-        return false;
     }
 }
 
