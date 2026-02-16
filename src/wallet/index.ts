@@ -242,6 +242,7 @@ export interface ArkTransaction {
     amount: number;
     settled: boolean;
     createdAt: number;
+    assets?: Asset[];
 }
 
 // ExtendedCoin and ExtendedVirtualCoin contains the utxo/vtxo data along with the vtxo script locking it
