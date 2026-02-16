@@ -89,6 +89,9 @@ export class AssetGroup {
     }
 
     validate(): void {
+        if (this.inputs.length === 0 && this.outputs.length === 0) {
+            throw new Error("empty asset group");
+        }
         if (this.isIssuance()) {
             if (this.inputs.length !== 0) {
                 throw new Error("issuance must have no inputs");

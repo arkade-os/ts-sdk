@@ -353,15 +353,21 @@ function parseAssetId(f: AssetIdFixture | undefined): AssetId | null {
     return AssetId.create(f.txid, f.index ?? 0);
 }
 
-function parseAssetRef(f: AssetRefFixture | undefined): AssetRef | null {
+function parseAssetRef(
+    f: (AssetRefFixture & AssetIdFixture) | undefined
+): AssetRef | null {
     if (!f) return null;
-    if (!f.assetId?.txid && f.groupIndex === undefined) return null;
-    if (f.assetId?.txid) {
-        const id = parseAssetId(f.assetId);
+    // support controlAsset as { txid, index } (asset ref by id at top level)
+    const idFixture = f.assetId ?? (f.txid ? (f as AssetIdFixture) : undefined);
+    if (idFixture?.txid) {
+        const id = parseAssetId(idFixture);
         if (!id) return null;
         return AssetRef.fromId(id);
     }
-    return AssetRef.fromGroupIndex(f.groupIndex ?? 0);
+    if (f.groupIndex !== undefined) {
+        return AssetRef.fromGroupIndex(f.groupIndex);
+    }
+    return null;
 }
 
 function parseAssetInput(f: AssetInputFixture): AssetInput {
@@ -435,6 +441,42 @@ describe("AssetGroup", () => {
     });
 
     describe("invalid", () => {
+        describe("newAssetGroup", () => {
+            assetGroupFixtures.invalid.newAssetGroup.forEach((v) => {
+                it(v.name, () => {
+                    const fixture = v as {
+                        name: string;
+                        expectedError: string;
+                        assetId?: AssetIdFixture;
+                        controlAsset?: AssetRefFixture;
+                        inputs?: AssetInputFixture[];
+                        outputs?: AssetOutputFixture[];
+                        metadata?: MetadataFixture[];
+                    };
+                    const assetId = parseAssetId(fixture.assetId);
+                    const controlAsset = parseAssetRef(fixture.controlAsset);
+                    const inputs = (fixture.inputs || []).map((i) =>
+                        parseAssetInput(i)
+                    );
+                    const outputs = (fixture.outputs || []).map((o) =>
+                        parseAssetOutput(o as AssetOutputFixture)
+                    );
+                    const metadata = (fixture.metadata || []).map((m) =>
+                        parseMetadata(m)
+                    );
+                    expect(() =>
+                        AssetGroup.create(
+                            assetId,
+                            controlAsset,
+                            inputs,
+                            outputs,
+                            metadata
+                        )
+                    ).toThrow(fixture.expectedError);
+                });
+            });
+        });
+
         describe("fromString", () => {
             assetGroupFixtures.invalid.newAssetGroupFromString.forEach((v) => {
                 it(v.name, () => {
