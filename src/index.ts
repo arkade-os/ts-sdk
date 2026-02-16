@@ -130,6 +130,7 @@ import {
     ArkTxInput,
     OffchainTx,
     combineTapscriptSigs,
+    isValidArkAddress,
 } from "./utils/arkTransaction";
 import {
     VtxoTaprootTree,
@@ -247,6 +248,7 @@ export {
     hasBoardingTxExpired,
     combineTapscriptSigs,
     isVtxoExpiringSoon,
+    isValidArkAddress,
 
     // Arknote
     ArkNote,

@@ -1,5 +1,4 @@
 import { base64, hex } from "@scure/base";
-import * as bip68 from "bip68";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
@@ -23,7 +22,7 @@ import {
     TreeNoncesEvent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
-import { buildForfeitTx, buildForfeitTxWithOutput } from "../forfeit";
+import { buildForfeitTx } from "../forfeit";
 import {
     validateConnectorsTxGraph,
     validateVtxoTxGraph,
@@ -33,7 +32,6 @@ import {
     ArkTransaction,
     Asset,
     Recipient,
-    BurnParams,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -59,13 +57,13 @@ import {
     selectedCoinsToAssetInputs,
     selectCoinsWithAsset,
 } from "./asset";
-import { TapLeafScript, VtxoScript } from "../script/base";
+import { getSequence, VtxoScript } from "../script/base";
+import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import {
-    CLTVMultisigTapscript,
-    CSVMultisigTapscript,
-    RelativeTimelock,
-} from "../script/tapscript";
-import { buildOffchainTx, hasBoardingTxExpired } from "../utils/arkTransaction";
+    buildOffchainTx,
+    hasBoardingTxExpired,
+    isValidArkAddress,
+} from "../utils/arkTransaction";
 import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
@@ -81,12 +79,7 @@ import {
     ContractRepository,
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
-import {
-    extendCoin,
-    extendVirtualCoin,
-    isValidArkAddress,
-    validateRecipients,
-} from "./utils";
+import { extendCoin, extendVirtualCoin, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -1944,31 +1937,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         return inputs;
     }
-}
-
-export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
-    let sequence: number | undefined = undefined;
-
-    try {
-        const scriptWithLeafVersion = tapLeafScript[1];
-        const script = scriptWithLeafVersion.subarray(
-            0,
-            scriptWithLeafVersion.length - 1
-        );
-        try {
-            const params = CSVMultisigTapscript.decode(script).params;
-            sequence = bip68.encode(
-                params.timelock.type === "blocks"
-                    ? { blocks: Number(params.timelock.value) }
-                    : { seconds: Number(params.timelock.value) }
-            );
-        } catch {
-            const params = CLTVMultisigTapscript.decode(script).params;
-            sequence = Number(params.absoluteTimelock);
-        }
-    } catch {}
-
-    return sequence;
 }
 
 /**
