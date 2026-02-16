@@ -914,7 +914,6 @@ namespace ProtoTypes {
         treeSignature?: TreeSignatureEvent;
         streamStarted?: StreamStartedEvent;
         heartbeat?: Heartbeat;
-        streamStarted?: any; // TODO: add type for streamStarted event
     }
 
     export interface GetTransactionsStreamResponse {
