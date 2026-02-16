@@ -155,7 +155,7 @@ function extractRawPacketFromScript(script: Uint8Array): Uint8Array {
     const payload = concatBytes(...dataPushes);
 
     if (payload.length < ARKADE_MAGIC.length + 1) {
-        throw new Error("invalid OP_RETURN data");
+        throw new Error("invalid script length");
     }
 
     const magicSlice = new Uint8Array(payload.slice(0, ARKADE_MAGIC.length));
