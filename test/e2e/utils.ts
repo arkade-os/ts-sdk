@@ -2,6 +2,8 @@ import { hex } from "@scure/base";
 import {
     Wallet,
     SingleKey,
+    MnemonicIdentity,
+    Identity,
     OnchainWallet,
     EsploraProvider,
     RestIndexerProvider,
@@ -9,13 +11,16 @@ import {
     IntentFeeConfig,
 } from "../../src";
 import { execSync } from "child_process";
+import { RestDelegatorProvider } from "../../src/providers/delegator";
+import { generateMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 export const arkdExec =
     process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
 
 export interface TestArkWallet {
     wallet: Wallet;
-    identity: SingleKey;
+    identity: Identity;
 }
 
 export interface TestOnchainWallet {
@@ -44,6 +49,46 @@ export async function createTestOnchainWallet(): Promise<TestOnchainWallet> {
 
 export async function createTestArkWallet(): Promise<TestArkWallet> {
     const identity = createTestIdentity();
+
+    const wallet = await Wallet.create({
+        identity,
+        arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000", {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+    });
+
+    return {
+        wallet,
+        identity,
+    };
+}
+
+export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> {
+    const identity = createTestIdentity();
+
+    const wallet = await Wallet.create({
+        identity,
+        arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000", {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7002"),
+    });
+
+    return {
+        wallet,
+        identity,
+    };
+}
+
+export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> {
+    const mnemonic = generateMnemonic(wordlist);
+    const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
+        isMainnet: false,
+    });
 
     const wallet = await Wallet.create({
         identity,

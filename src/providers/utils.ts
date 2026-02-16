@@ -17,7 +17,7 @@ export async function* eventSourceIterator(
 
     const errorHandler = () => {
         const error = new Error("EventSource error");
-
+        error.name = "EventSourceError";
         if (errorResolve) {
             errorResolve(error);
             errorResolve = null;

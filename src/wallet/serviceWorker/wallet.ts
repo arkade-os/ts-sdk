@@ -21,7 +21,7 @@ import { Request } from "./request";
 import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity, ReadonlySingleKey } from "../../identity";
+import { Identity, ReadonlyIdentity } from "../../identity";
 import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { WalletRepositoryImpl } from "../../repositories/walletRepository";
@@ -151,6 +151,7 @@ interface ServiceWorkerWalletOptions {
     dbName?: string;
     dbVersion?: number;
     identity: ReadonlyIdentity | Identity;
+    delegatorUrl?: string;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -222,6 +223,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             key: { publicKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
+            delegatorUrl: options.delegatorUrl,
         };
 
         // Initialize the service worker
@@ -503,6 +505,7 @@ export class ServiceWorkerWallet
             key: { privateKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
+            delegatorUrl: options.delegatorUrl,
         };
 
         // Initialize the service worker

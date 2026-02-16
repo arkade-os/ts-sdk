@@ -23,7 +23,7 @@ import {
     TreeNoncesEvent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
-import { buildForfeitTx } from "../forfeit";
+import { buildForfeitTx, buildForfeitTxWithOutput } from "../forfeit";
 import {
     validateConnectorsTxGraph,
     validateVtxoTxGraph,
@@ -90,8 +90,11 @@ import {
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
+import { DelegatorProvider } from "../providers/delegator";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
+import { DelegateVtxo } from "../script/delegate";
+import { DelegatorManager, DelegatorManagerImpl } from "./delegator";
 
 export type IncomingFunds =
     | {
@@ -136,11 +139,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly onchainProvider: OnchainProvider,
         readonly indexerProvider: IndexerProvider,
         readonly arkServerPublicKey: Bytes,
-        readonly offchainTapscript: DefaultVtxo.Script,
+        readonly offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
-        public readonly contractRepository: ContractRepository
+        public readonly contractRepository: ContractRepository,
+        readonly delegatorProvider?: DelegatorProvider
     ) {
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
     }
@@ -151,7 +155,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     protected static async setupWalletConfig(
         config: ReadonlyWalletConfig,
-        pubkey: Uint8Array
+        pubKey: Uint8Array
     ) {
         // Use provided arkProvider instance or create a new one from arkServerUrl
         const arkProvider =
@@ -227,19 +231,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // Generate tapscripts for offchain and boarding address
         const serverPubKey = hex.decode(info.signerPubkey).slice(1);
-        const bareVtxoTapscript = new DefaultVtxo.Script({
-            pubKey: pubkey,
+
+        const delegatePubKey = config.delegatorProvider
+            ? await config.delegatorProvider
+                  .getDelegateInfo()
+                  .then((info) => hex.decode(info.pubkey).slice(1))
+            : undefined;
+
+        const offchainOptions = {
+            pubKey,
             serverPubKey,
             csvTimelock: exitTimelock,
-        });
+        };
+        const offchainTapscript = !delegatePubKey
+            ? new DefaultVtxo.Script(offchainOptions)
+            : new DelegateVtxo.Script({ ...offchainOptions, delegatePubKey });
         const boardingTapscript = new DefaultVtxo.Script({
-            pubKey: pubkey,
-            serverPubKey,
+            ...offchainOptions,
             csvTimelock: boardingTimelock,
         });
-
-        // Save tapscripts
-        const offchainTapscript = bareVtxoTapscript;
 
         // Set up storage and repositories
         const storage = config.storage || new InMemoryStorageAdapter();
@@ -259,6 +269,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             walletRepository,
             contractRepository,
             info,
+            delegatorProvider: config.delegatorProvider,
         };
     }
 
@@ -280,7 +291,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.boardingTapscript,
             setup.dustAmount,
             setup.walletRepository,
-            setup.contractRepository
+            setup.contractRepository,
+            setup.delegatorProvider
         );
     }
 
@@ -671,6 +683,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
+    readonly delegatorManager?: DelegatorManager;
 
     private _walletAssetManager?: IAssetManager;
 
@@ -686,7 +699,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         readonly arkProvider: ArkProvider,
         indexerProvider: IndexerProvider,
         arkServerPublicKey: Bytes,
-        offchainTapscript: DefaultVtxo.Script,
+        offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         boardingTapscript: DefaultVtxo.Script,
         readonly serverUnrollScript: CSVMultisigTapscript.Type,
         readonly forfeitOutputScript: Bytes,
@@ -694,7 +707,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
-        renewalConfig?: WalletConfig["renewalConfig"]
+        renewalConfig?: WalletConfig["renewalConfig"],
+        delegatorProvider?: DelegatorProvider
     ) {
         super(
             identity,
@@ -706,7 +720,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boardingTapscript,
             dustAmount,
             walletRepository,
-            contractRepository
+            contractRepository,
+            delegatorProvider
         );
         this.identity = identity;
         this.renewalConfig = {
@@ -714,6 +729,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
+        this.delegatorManager = delegatorProvider
+            ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
+            : undefined;
     }
 
     override get assetManager(): IAssetManager {
@@ -763,7 +781,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            config.renewalConfig
+            config.renewalConfig,
+            config.delegatorProvider
         );
     }
 
@@ -1499,19 +1518,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         coins: ExtendedCoin[],
         outputs: TransactionOutput[],
         onchainOutputsIndexes: number[],
-        cosignerPubKeys: string[]
+        cosignerPubKeys: string[],
+        validAt?: number
     ): Promise<SignedIntent<Intent.RegisterMessage>> {
-        const inputs = this.prepareIntentProofInputs(coins);
-
         const message: Intent.RegisterMessage = {
             type: "register",
             onchain_output_indexes: onchainOutputsIndexes,
-            valid_at: 0,
+            valid_at: validAt ? Math.floor(validAt) : 0,
             expire_at: 0,
             cosigners_public_keys: cosignerPubKeys,
         };
 
-        const proof = Intent.create(message, inputs, outputs);
+        const proof = Intent.create(message, coins, outputs);
         const signedProof = await this.identity.sign(proof);
 
         return {
@@ -1523,14 +1541,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     async makeDeleteIntentSignature(
         coins: ExtendedCoin[]
     ): Promise<SignedIntent<Intent.DeleteMessage>> {
-        const inputs = this.prepareIntentProofInputs(coins);
-
         const message: Intent.DeleteMessage = {
             type: "delete",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, inputs, []);
+        const proof = Intent.create(message, coins, []);
         const signedProof = await this.identity.sign(proof);
 
         return {
@@ -1540,16 +1556,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     async makeGetPendingTxIntentSignature(
-        vtxos: ExtendedVirtualCoin[]
+        coins: ExtendedVirtualCoin[]
     ): Promise<SignedIntent<Intent.GetPendingTxMessage>> {
-        const inputs = this.prepareIntentProofInputs(vtxos);
-
         const message: Intent.GetPendingTxMessage = {
             type: "get-pending-tx",
             expire_at: 0,
         };
 
-        const proof = Intent.create(message, inputs, []);
+        const proof = Intent.create(message, coins, []);
         const signedProof = await this.identity.sign(proof);
 
         return {

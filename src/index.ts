@@ -1,5 +1,16 @@
 import { Transaction } from "./utils/transaction";
 import { SingleKey, ReadonlySingleKey } from "./identity/singleKey";
+import {
+    SeedIdentity,
+    MnemonicIdentity,
+    ReadonlyDescriptorIdentity,
+} from "./identity/seedIdentity";
+import type {
+    SeedIdentityOptions,
+    MnemonicOptions,
+    NetworkOptions,
+    DescriptorOptions,
+} from "./identity/seedIdentity";
 import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
@@ -9,6 +20,7 @@ import {
     EncodedVtxoScript,
     TapLeafScript,
     TapTreeCoder,
+    getSequence,
 } from "./script/base";
 import {
     TxType,
@@ -50,7 +62,6 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
-    getSequence,
 } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
@@ -95,6 +106,12 @@ import {
     ScheduledSession,
     FeeInfo,
 } from "./providers/ark";
+import {
+    DelegatorProvider,
+    DelegateInfo,
+    DelegateOptions,
+    RestDelegatorProvider,
+} from "./providers/delegator";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -158,6 +175,7 @@ import {
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
+import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
 export * as asset from "./asset";
@@ -168,9 +186,14 @@ export {
     ReadonlyWallet,
     SingleKey,
     ReadonlySingleKey,
+    SeedIdentity,
+    MnemonicIdentity,
+    ReadonlyDescriptorIdentity,
     OnchainWallet,
     Ramps,
     VtxoManager,
+    DelegatorManagerImpl,
+    RestDelegatorProvider,
 
     // Providers
     ESPLORA_URL,
@@ -290,6 +313,12 @@ export type {
     TapLeaves,
     IncomingFunds,
 
+    // Identity options
+    SeedIdentityOptions,
+    MnemonicOptions,
+    NetworkOptions,
+    DescriptorOptions,
+
     // Indexer types
     IndexerProvider,
     PageResponse,
@@ -363,4 +392,10 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Delegator types
+    DelegatorManager,
+    DelegatorProvider,
+    DelegateInfo,
+    DelegateOptions,
 };

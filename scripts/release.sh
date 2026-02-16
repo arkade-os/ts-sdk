@@ -178,23 +178,23 @@ if [[ "$NEW_VERSION" == *-* ]]; then
     echo ""
     echo "📋 Installation instructions:"
     if [[ "$NEW_VERSION" == *alpha* ]]; then
-        echo "   npm install your-package@alpha"
-        echo "   npm install your-package@$NEW_VERSION"
+        echo "   npm install @arkade-os/ts-sdk@alpha"
+        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
     elif [[ "$NEW_VERSION" == *beta* ]]; then
-        echo "   npm install your-package@beta"
-        echo "   npm install your-package@$NEW_VERSION"
+        echo "   npm install @arkade-os/ts-sdk@beta"
+        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
     elif [[ "$NEW_VERSION" == *rc* ]]; then
-        echo "   npm install your-package@rc"
-        echo "   npm install your-package@$NEW_VERSION"
+        echo "   npm install @arkade-os/ts-sdk@rc"
+        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
     else
-        echo "   npm install your-package@next"
-        echo "   npm install your-package@$NEW_VERSION"
+        echo "   npm install @arkade-os/ts-sdk@next"
+        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
     fi
 else
     echo ""
     echo "📋 Installation instructions:"
-    echo "   npm install your-package@latest"
-    echo "   npm install your-package@$NEW_VERSION"
+    echo "   npm install @arkade-os/ts-sdk@latest"
+    echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
 fi
 
 echo "✨ ${DRY_RUN:+[DRY RUN] }Version $NEW_VERSION processed" 

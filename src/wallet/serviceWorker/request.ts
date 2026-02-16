@@ -48,6 +48,7 @@ export namespace Request {
         key: { privateKey: string } | { publicKey: string };
         arkServerUrl: string;
         arkServerPublicKey?: string;
+        delegatorUrl?: string;
     }
 
     export function isInitWallet(message: Base): message is InitWallet {
