@@ -1,5 +1,4 @@
 import { base64, hex } from "@scure/base";
-import * as bip68 from "bip68";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
@@ -21,10 +20,9 @@ import {
     BatchStartedEvent,
     SignedIntent,
     TreeNoncesEvent,
-    PendingTx,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
-import { buildForfeitTx, buildForfeitTxWithOutput } from "../forfeit";
+import { buildForfeitTx } from "../forfeit";
 import {
     validateConnectorsTxGraph,
     validateVtxoTxGraph,
@@ -32,6 +30,8 @@ import {
 import { Identity, ReadonlyIdentity } from "../identity";
 import {
     ArkTransaction,
+    Asset,
+    Recipient,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -49,20 +49,16 @@ import {
     VirtualCoin,
     WalletBalance,
     WalletConfig,
+    IAssetManager,
+    IReadonlyAssetManager,
 } from ".";
 import {
-    scriptFromTapLeafScript,
-    TapLeafScript,
-    TapTreeCoder,
-    VtxoScript,
-} from "../script/base";
-import {
-    CLTVMultisigTapscript,
-    CSVMultisigTapscript,
-    decodeTapscript,
-    MultisigTapscript,
-    RelativeTimelock,
-} from "../script/tapscript";
+    createAssetPacket,
+    selectedCoinsToAssetInputs,
+    selectCoinsWithAsset,
+} from "./asset";
+import { getSequence, VtxoScript } from "../script/base";
+import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import {
     buildOffchainTx,
     hasBoardingTxExpired,
@@ -83,12 +79,13 @@ import {
     ContractRepository,
     ContractRepositoryImpl,
 } from "../repositories/contractRepository";
-import { extendCoin, extendVirtualCoin } from "./utils";
+import { extendCoin, extendVirtualCoin, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
 import { DelegatorProvider } from "../providers/delegator";
 import { buildTransactionHistory } from "../utils/transactionHistory";
+import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { DelegateVtxo } from "../script/delegate";
 import { DelegatorManager, DelegatorManagerImpl } from "./delegator";
 
@@ -123,6 +120,12 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 }
 
 export class ReadonlyWallet implements IReadonlyWallet {
+    private readonly _assetManager: IReadonlyAssetManager;
+
+    get assetManager(): IReadonlyAssetManager {
+        return this._assetManager;
+    }
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
@@ -135,7 +138,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         public readonly walletRepository: WalletRepository,
         public readonly contractRepository: ContractRepository,
         readonly delegatorProvider?: DelegatorProvider
-    ) {}
+    ) {
+        this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
+    }
 
     /**
      * Protected helper to set up shared wallet configuration.
@@ -336,6 +341,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const totalBoarding = confirmed + unconfirmed;
         const totalOffchain = settled + preconfirmed + recoverable;
 
+        // aggregate asset balances from spendable vtxos
+        const assetBalances = new Map<string, number>();
+        for (const vtxo of vtxos) {
+            if (!isSpendable(vtxo)) continue;
+            if (vtxo.assets) {
+                for (const a of vtxo.assets) {
+                    const current = assetBalances.get(a.assetId) ?? 0;
+                    assetBalances.set(a.assetId, current + a.amount);
+                }
+            }
+        }
+        const assets = Array.from(assetBalances.entries()).map(
+            ([assetId, amount]) => ({
+                assetId,
+                amount,
+            })
+        );
+
         return {
             boarding: {
                 confirmed,
@@ -347,6 +370,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             available: settled + preconfirmed,
             recoverable,
             total: totalBoarding + totalOffchain,
+            assets,
         };
     }
 
@@ -654,6 +678,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     override readonly identity: Identity;
     readonly delegatorManager?: DelegatorManager;
 
+    private _walletAssetManager?: IAssetManager;
+
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
@@ -699,6 +725,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         this.delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
+    }
+
+    override get assetManager(): IAssetManager {
+        this._walletAssetManager ??= new AssetManager(this);
+        return this._walletAssetManager;
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -817,11 +848,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             selected = selectVirtualCoins(virtualCoins, params.amount);
         }
 
-        const selectedLeaf = this.offchainTapscript.forfeit();
-        if (!selectedLeaf) {
-            throw new Error("Selected leaf not found");
-        }
-
         const outputAddress = ArkAddress.decode(params.address);
         const outputScript =
             BigInt(params.amount) < this.dustAmount
@@ -848,35 +874,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
         }
 
-        const tapTree = this.offchainTapscript.encode();
-        const offchainTx = buildOffchainTx(
-            selected.inputs.map((input) => ({
-                ...input,
-                tapLeafScript: selectedLeaf,
-                tapTree,
-            })),
-            outputs,
-            this.serverUnrollScript
-        );
-
-        const signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
-
         const { arkTxid, signedCheckpointTxs } =
-            await this.arkProvider.submitTx(
-                base64.encode(signedVirtualTx.toPSBT()),
-                offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
-            );
-
-        // sign the checkpoints
-        const finalCheckpoints = await Promise.all(
-            signedCheckpointTxs.map(async (c) => {
-                const tx = Transaction.fromPSBT(base64.decode(c));
-                const signedCheckpoint = await this.identity.sign(tx);
-                return base64.encode(signedCheckpoint.toPSBT());
-            })
-        );
-
-        await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+            await this.buildAndSubmitOffchainTx(selected.inputs, outputs);
 
         try {
             // mark VTXOs as spent and optionally add the change VTXO
@@ -1088,6 +1087,62 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 amount: output.amount,
                 script,
             });
+        }
+
+        // if some of the inputs hold assets, build the asset packet and append as output
+        // in the intent proof tx, there is a "fake" input at index 0
+        // so the real coin indices are offset by +1
+        const assetInputs = new Map<number, Asset[]>();
+        for (let i = 0; i < params.inputs.length; i++) {
+            if ("assets" in params.inputs[i]) {
+                const assets = (params.inputs[i] as unknown as VirtualCoin)
+                    .assets;
+                if (assets && assets.length > 0) {
+                    assetInputs.set(i + 1, assets);
+                }
+            }
+        }
+
+        if (assetInputs.size > 0) {
+            // collect all input assets and assign them to the first offchain output
+            const allAssets = new Map<string, bigint>();
+            for (const [, assets] of assetInputs) {
+                for (const asset of assets) {
+                    const existing = allAssets.get(asset.assetId) ?? 0n;
+                    allAssets.set(
+                        asset.assetId,
+                        existing + BigInt(asset.amount)
+                    );
+                }
+            }
+
+            const assetList: Asset[] = [];
+            for (const [assetId, amount] of allAssets) {
+                assetList.push({ assetId, amount: Number(amount) });
+            }
+
+            // TODO change this logic to allow mutiple outputs ?
+            const firstOffchainIndex = params.outputs.findIndex(
+                (_, i) => !onchainOutputIndexes.includes(i)
+            );
+            if (firstOffchainIndex === -1) {
+                throw new Error(
+                    "Cannot settle assets without an offchain output"
+                );
+            }
+
+            const receivers: Recipient[] = params.outputs.map((output, i) => ({
+                address: output.address,
+                amount: Number(output.amount),
+                assets: i === firstOffchainIndex ? assetList : undefined,
+            }));
+
+            const assetPacket = createAssetPacket(
+                assetInputs,
+                receivers,
+                undefined
+            );
+            outputs.push(assetPacket.txOut());
         }
 
         // session holds the state of the musig2 signing process of the vtxo tree
@@ -1577,6 +1632,311 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         return { finalized, pending };
     }
+
+    /**
+     * Send BTC and/or assets to one or more recipients.
+     *
+     * @param recipients - Array of recipients with their addresses, BTC amounts, and assets
+     * @returns Promise resolving to the ark transaction ID
+     *
+     * @example
+     * ```typescript
+     * const txid = await wallet.send({
+     *     address: 'ark1...',
+     *     amount: 1000, // (optional, default to dust) btc amount to send to the output
+     *     assets: [{ assetId: 'abc123...', amount: 50 }] // (optional) list of assets to send
+     * });
+     * ```
+     */
+    async send(...args: Recipient[]): Promise<string> {
+        if (args.length === 0) {
+            throw new Error("At least one receiver is required");
+        }
+
+        // validate recipients and populate undefined amount with dust amount
+        const recipients = validateRecipients(args, Number(this.dustAmount));
+
+        const address = await this.getAddress();
+        const outputAddress = ArkAddress.decode(address);
+
+        const virtualCoins = await this.getVirtualCoins({
+            withRecoverable: false,
+        });
+
+        // keep track of asset changes
+        const assetChanges = new Map<string, bigint>();
+
+        let selectedCoins: VirtualCoin[] = [];
+        let btcAmountToSelect = 0;
+
+        for (const recipient of recipients) {
+            btcAmountToSelect += Math.max(
+                recipient.amount,
+                Number(this.dustAmount)
+            );
+        }
+
+        // select assets
+        for (const recipient of recipients) {
+            if (!recipient.assets) {
+                continue;
+            }
+            for (const receiverAsset of recipient.assets) {
+                let amountToSelect = BigInt(receiverAsset.amount);
+
+                // check if existing change covers the needed amount
+                const existingChange =
+                    assetChanges.get(receiverAsset.assetId) ?? 0n;
+                if (existingChange >= amountToSelect) {
+                    assetChanges.set(
+                        receiverAsset.assetId,
+                        existingChange - amountToSelect
+                    );
+                    if (assetChanges.get(receiverAsset.assetId) === 0n) {
+                        assetChanges.delete(receiverAsset.assetId);
+                    }
+                    continue;
+                }
+                if (existingChange > 0n) {
+                    amountToSelect -= existingChange;
+                    assetChanges.delete(receiverAsset.assetId);
+                }
+
+                const availableCoins = virtualCoins.filter(
+                    (c) =>
+                        !selectedCoins.find(
+                            (sc) => sc.txid === c.txid && sc.vout === c.vout
+                        )
+                );
+
+                const { selected, totalAssetAmount } = selectCoinsWithAsset(
+                    availableCoins,
+                    receiverAsset.assetId,
+                    amountToSelect
+                );
+
+                for (const coin of selected) {
+                    selectedCoins.push(coin);
+                    // asset coins contain btc, subtract from total amount to select
+                    btcAmountToSelect -= coin.value;
+                    // coin may contain other assets, add them to asset changes
+                    if (coin.assets) {
+                        for (const a of coin.assets) {
+                            if (a.assetId === receiverAsset.assetId) {
+                                continue;
+                            }
+                            const existing = assetChanges.get(a.assetId) ?? 0n;
+                            assetChanges.set(
+                                a.assetId,
+                                existing + BigInt(a.amount)
+                            );
+                        }
+                    }
+                }
+
+                const assetChangeAmount = totalAssetAmount - amountToSelect;
+                if (assetChangeAmount > 0n) {
+                    const existing =
+                        assetChanges.get(receiverAsset.assetId) ?? 0n;
+                    assetChanges.set(
+                        receiverAsset.assetId,
+                        existing + assetChangeAmount
+                    );
+                }
+            }
+        }
+
+        // select remaining btc
+        if (btcAmountToSelect > 0) {
+            const availableCoins = virtualCoins.filter(
+                (c) =>
+                    !selectedCoins.find(
+                        (sc) => sc.txid === c.txid && sc.vout === c.vout
+                    )
+            );
+            const { inputs: btcCoins } = selectVirtualCoins(
+                availableCoins,
+                btcAmountToSelect
+            );
+
+            // some coins may contain assets, add them to asset changes
+            for (const coin of btcCoins) {
+                if (coin.assets) {
+                    for (const asset of coin.assets) {
+                        const existing = assetChanges.get(asset.assetId) ?? 0n;
+                        assetChanges.set(
+                            asset.assetId,
+                            existing + BigInt(asset.amount)
+                        );
+                    }
+                }
+            }
+
+            selectedCoins = [...selectedCoins, ...btcCoins];
+        }
+
+        let totalBtcSelected = selectedCoins.reduce(
+            (sum, c) => sum + c.value,
+            0
+        );
+
+        // build tx outputs
+        const outputs = recipients.map((recipient) => ({
+            script: recipient.script,
+            amount: BigInt(recipient.amount),
+        }));
+
+        const totalBtcOutput = outputs.reduce(
+            (sum, o) => sum + Number(o.amount),
+            0
+        );
+        let changeAmount = totalBtcSelected - totalBtcOutput;
+
+        // enforce minimum change amount when there are asset changes
+        if (assetChanges.size > 0 && changeAmount < Number(this.dustAmount)) {
+            const availableCoins = virtualCoins.filter(
+                (c) =>
+                    !selectedCoins.find(
+                        (sc) => sc.txid === c.txid && sc.vout === c.vout
+                    )
+            );
+            const { inputs: extraCoins } = selectVirtualCoins(
+                availableCoins,
+                Number(this.dustAmount) - changeAmount
+            );
+
+            for (const coin of extraCoins) {
+                if (coin.assets) {
+                    for (const asset of coin.assets) {
+                        const existing = assetChanges.get(asset.assetId) ?? 0n;
+                        assetChanges.set(
+                            asset.assetId,
+                            existing + BigInt(asset.amount)
+                        );
+                    }
+                }
+            }
+
+            selectedCoins = [...selectedCoins, ...extraCoins];
+            totalBtcSelected += extraCoins.reduce((sum, c) => sum + c.value, 0);
+            changeAmount = totalBtcSelected - totalBtcOutput;
+        }
+
+        // build change receiver with BTC change and all asset changes
+        let changeReceiver: Recipient | undefined;
+        if (changeAmount > 0) {
+            const changeAssets: Asset[] = [];
+            for (const [assetId, amount] of assetChanges) {
+                if (amount > 0n) {
+                    changeAssets.push({ assetId, amount: Number(amount) });
+                }
+            }
+
+            outputs.push({
+                script:
+                    BigInt(changeAmount) < this.dustAmount
+                        ? outputAddress.subdustPkScript
+                        : outputAddress.pkScript,
+                amount: BigInt(changeAmount),
+            });
+
+            changeReceiver = {
+                address: address,
+                amount: changeAmount,
+                assets: changeAssets.length > 0 ? changeAssets : undefined,
+            };
+        }
+
+        // create asset packet only if there are assets involved
+        const assetInputs = selectedCoinsToAssetInputs(selectedCoins);
+        const hasAssets =
+            assetInputs.size > 0 ||
+            recipients.some((r) => r.assets && r.assets.length > 0);
+        if (hasAssets) {
+            const assetPacket = createAssetPacket(
+                assetInputs,
+                recipients,
+                changeReceiver
+            );
+            outputs.push(assetPacket.txOut());
+        }
+
+        const { arkTxid } = await this.buildAndSubmitOffchainTx(
+            selectedCoins,
+            outputs
+        );
+        return arkTxid;
+    }
+
+    /**
+     * Build an offchain transaction from the given inputs and outputs,
+     * sign it, submit to the ark provider, and finalize.
+     * @returns The ark transaction id and server-signed checkpoint PSBTs (for bookkeeping)
+     */
+    async buildAndSubmitOffchainTx(
+        inputs: VirtualCoin[],
+        outputs: TransactionOutput[]
+    ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
+        const tapLeafScript = this.offchainTapscript.forfeit();
+        if (!tapLeafScript) {
+            throw new Error("Selected leaf not found");
+        }
+        const tapTree = this.offchainTapscript.encode();
+        const offchainTx = buildOffchainTx(
+            inputs.map((input) => ({
+                ...input,
+                tapLeafScript,
+                tapTree,
+            })),
+            outputs,
+            this.serverUnrollScript
+        );
+        const signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
+        const { arkTxid, signedCheckpointTxs } =
+            await this.arkProvider.submitTx(
+                base64.encode(signedVirtualTx.toPSBT()),
+                offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
+            );
+        const finalCheckpoints = await Promise.all(
+            signedCheckpointTxs.map(async (c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c));
+                const signedCheckpoint = await this.identity.sign(tx);
+                return base64.encode(signedCheckpoint.toPSBT());
+            })
+        );
+        await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+        return { arkTxid, signedCheckpointTxs };
+    }
+
+    private prepareIntentProofInputs(
+        coins: ExtendedCoin[]
+    ): TransactionInput[] {
+        const inputs: TransactionInput[] = [];
+
+        for (const input of coins) {
+            const vtxoScript = VtxoScript.decode(input.tapTree);
+            const sequence = getSequence(input.intentTapLeafScript);
+
+            const unknown = [VtxoTaprootTree.encode(input.tapTree)];
+            if (input.extraWitness) {
+                unknown.push(ConditionWitness.encode(input.extraWitness));
+            }
+
+            inputs.push({
+                txid: hex.decode(input.txid),
+                index: input.vout,
+                witnessUtxo: {
+                    amount: BigInt(input.value),
+                    script: vtxoScript.pkScript,
+                },
+                sequence,
+                tapLeafScript: [input.intentTapLeafScript],
+                unknown,
+            });
+        }
+
+        return inputs;
+    }
 }
 
 /**
@@ -1585,7 +1945,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
  * @param targetAmount Target amount to reach in satoshis
  * @returns Selected coins and change amount
  */
-function selectVirtualCoins(
+export function selectVirtualCoins(
     coins: VirtualCoin[],
     targetAmount: number
 ): {

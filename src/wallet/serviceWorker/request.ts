@@ -1,4 +1,12 @@
-import { SettleParams, SendBitcoinParams, GetVtxosFilter } from "..";
+import {
+    SettleParams,
+    SendBitcoinParams,
+    GetVtxosFilter,
+    IssuanceParams,
+    ReissuanceParams,
+    BurnParams,
+    Recipient,
+} from "..";
 
 /**
  * Request is the namespace that contains the request types for the service worker.
@@ -17,7 +25,12 @@ export namespace Request {
         | "SEND_BITCOIN"
         | "GET_TRANSACTION_HISTORY"
         | "GET_STATUS"
-        | "CLEAR";
+        | "CLEAR"
+        | "ISSUE"
+        | "REISSUE"
+        | "BURN"
+        | "SEND"
+        | "GET_ASSET_DETAILS";
 
     export interface Base {
         type: Type;
@@ -164,5 +177,52 @@ export namespace Request {
 
     export function isReloadWallet(message: Base): message is ReloadWallet {
         return message.type === "RELOAD_WALLET";
+    }
+
+    export interface Issue extends Base {
+        type: "ISSUE";
+        params: IssuanceParams;
+    }
+
+    export function isIssue(message: Base): message is Issue {
+        return message.type === "ISSUE" && "params" in message;
+    }
+
+    export interface Reissue extends Base {
+        type: "REISSUE";
+        params: ReissuanceParams;
+    }
+
+    export function isReissue(message: Base): message is Reissue {
+        return message.type === "REISSUE" && "params" in message;
+    }
+
+    export interface Burn extends Base {
+        type: "BURN";
+        params: BurnParams;
+    }
+
+    export function isBurn(message: Base): message is Burn {
+        return message.type === "BURN" && "params" in message;
+    }
+
+    export interface Send extends Base {
+        type: "SEND";
+        recipients: Recipient[];
+    }
+
+    export function isSend(message: Base): message is Send {
+        return message.type === "SEND" && "recipients" in message;
+    }
+
+    export interface GetAssetDetails extends Base {
+        type: "GET_ASSET_DETAILS";
+        assetId: string;
+    }
+
+    export function isGetAssetDetails(
+        message: Base
+    ): message is GetAssetDetails {
+        return message.type === "GET_ASSET_DETAILS" && "assetId" in message;
     }
 }

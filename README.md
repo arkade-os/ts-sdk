@@ -249,6 +249,42 @@ const txid = await wallet.sendBitcoin({
 })
 ```
 
+### Assets (Issue, Reissue, Burn, Send)
+
+The wallet's `assetManager` lets you create and manage assets on Ark. `send` method supports sending assets.
+
+```typescript
+// Issue a new asset (non-reissuable by default)
+const controlAssetIssuance = await wallet.assetManager.issue({
+  amount: 1000,
+  metadata: { name: 'My Token', ticker: 'MTK', decimals: 8 },
+})
+
+// Issue a new asset using the control asset as reference
+const assetIssuance = await wallet.assetManager.issue({
+  amount: 500,
+  controlAssetId: controlAssetIssuance.assetId,
+})
+
+// Reissue more supply of the asset, need ownership of the control asset
+const reissuanceTxid = await wallet.assetManager.reissue({
+  assetId: assetIssuance.assetId,
+  amount: 500,
+})
+
+// Burn some of the asset
+const burnTxid = await wallet.assetManager.burn({
+  assetId: assetIssuance.assetId,
+  amount: 200,
+})
+
+// Send asset to another Ark address
+const sendTxid = await wallet.send({
+  address: 'ark1qq4...',
+  assets: [{ assetId: assetIssuance.assetId, amount: 100 }],
+})
+```
+
 ### Batch Settlements
 
 This can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs and VTXOs.

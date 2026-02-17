@@ -67,6 +67,12 @@ class ReadonlyHandler {
         return this.wallet.getTransactionHistory();
     }
 
+    async handleGetAssetDetails(
+        ...args: Parameters<Wallet["assetManager"]["getAssetDetails"]>
+    ) {
+        return this.wallet.assetManager.getAssetDetails(...args);
+    }
+
     async handleReload(
         _: ExtendedVirtualCoin[]
     ): Promise<Awaited<ReturnType<Wallet["finalizePendingTxs"]>>> {
@@ -83,6 +89,36 @@ class ReadonlyHandler {
     async handleSendBitcoin(
         ..._: Parameters<Wallet["sendBitcoin"]>
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
+        return undefined;
+    }
+
+    async handleIssue(
+        ..._: Parameters<Wallet["assetManager"]["issue"]>
+    ): Promise<
+        Awaited<ReturnType<Wallet["assetManager"]["issue"]>> | undefined
+    > {
+        return undefined;
+    }
+
+    async handleReissue(
+        ..._: Parameters<Wallet["assetManager"]["reissue"]>
+    ): Promise<
+        Awaited<ReturnType<Wallet["assetManager"]["reissue"]>> | undefined
+    > {
+        return undefined;
+    }
+
+    async handleBurn(
+        ..._: Parameters<Wallet["assetManager"]["burn"]>
+    ): Promise<
+        Awaited<ReturnType<Wallet["assetManager"]["burn"]>> | undefined
+    > {
+        return undefined;
+    }
+
+    async handleSend(
+        ..._: Parameters<Wallet["send"]>
+    ): Promise<Awaited<ReturnType<Wallet["send"]>> | undefined> {
         return undefined;
     }
 
@@ -116,6 +152,30 @@ class Handler extends ReadonlyHandler {
         ...args: Parameters<Wallet["sendBitcoin"]>
     ): Promise<Awaited<ReturnType<Wallet["sendBitcoin"]>> | undefined> {
         return this.wallet.sendBitcoin(...args);
+    }
+
+    async handleIssue(...args: Parameters<Wallet["assetManager"]["issue"]>) {
+        return this.wallet.assetManager.issue(...args);
+    }
+
+    async handleReissue(
+        ...args: Parameters<Wallet["assetManager"]["reissue"]>
+    ) {
+        return this.wallet.assetManager.reissue(...args);
+    }
+
+    async handleBurn(...args: Parameters<Wallet["assetManager"]["burn"]>) {
+        return this.wallet.assetManager.burn(...args);
+    }
+
+    async handleSend(...args: Parameters<Wallet["send"]>) {
+        return this.wallet.send(...args);
+    }
+
+    async handleGetAssetDetails(
+        ...args: Parameters<Wallet["assetManager"]["getAssetDetails"]>
+    ) {
+        return this.wallet.assetManager.getAssetDetails(...args);
     }
 
     async handleDelegate(): Promise<
@@ -676,6 +736,21 @@ export class Worker {
             const totalBoarding = confirmed + unconfirmed;
             const totalOffchain = settled + preconfirmed + recoverable;
 
+            // aggregate asset balances from spendable vtxos
+            const assetBalances = new Map<string, number>();
+            for (const vtxo of [...spendableVtxos, ...sweptVtxos]) {
+                if (!isSpendable(vtxo)) continue;
+                if (vtxo.assets) {
+                    for (const a of vtxo.assets) {
+                        const current = assetBalances.get(a.assetId) ?? 0;
+                        assetBalances.set(a.assetId, current + a.amount);
+                    }
+                }
+            }
+            const assets = Array.from(assetBalances.entries()).map(
+                ([assetId, amount]) => ({ assetId, amount })
+            );
+
             event.source?.postMessage(
                 Response.balance(message.id, {
                     boarding: {
@@ -688,6 +763,7 @@ export class Worker {
                     available: settled + preconfirmed,
                     recoverable,
                     total: totalBoarding + totalOffchain,
+                    assets,
                 })
             );
         } catch (error: unknown) {
@@ -906,6 +982,26 @@ export class Worker {
                 await this.handleReloadWallet(event);
                 break;
             }
+            case "ISSUE": {
+                await this.handleIssueMessage(event);
+                break;
+            }
+            case "REISSUE": {
+                await this.handleReissueMessage(event);
+                break;
+            }
+            case "BURN": {
+                await this.handleBurnMessage(event);
+                break;
+            }
+            case "SEND": {
+                await this.handleSendMessage(event);
+                break;
+            }
+            case "GET_ASSET_DETAILS": {
+                await this.handleGetAssetDetails(event);
+                break;
+            }
             default:
                 event.source?.postMessage(
                     Response.error(message.id, "Unknown message type")
@@ -954,6 +1050,208 @@ export class Worker {
             event.source?.postMessage(
                 Response.walletReloaded(message.id, false)
             );
+        }
+    }
+
+    private async handleIssueMessage(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isIssue(message)) {
+            console.error("Invalid ISSUE message format", message);
+            event.source?.postMessage(
+                Response.error(message.id, "Invalid ISSUE message format")
+            );
+            return;
+        }
+
+        if (!this.handler) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const result = await this.handler.handleIssue(message.params);
+            if (result === undefined) {
+                event.source?.postMessage(
+                    Response.error(
+                        message.id,
+                        "Asset issuance not supported for readonly wallet"
+                    )
+                );
+                return;
+            }
+            event.source?.postMessage(
+                Response.issueSuccess(message.id, result)
+            );
+        } catch (error: unknown) {
+            console.error("Error issuing asset:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleReissueMessage(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isReissue(message)) {
+            console.error("Invalid REISSUE message format", message);
+            event.source?.postMessage(
+                Response.error(message.id, "Invalid REISSUE message format")
+            );
+            return;
+        }
+
+        if (!this.handler) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const txid = await this.handler.handleReissue(message.params);
+            if (txid === undefined) {
+                event.source?.postMessage(
+                    Response.error(
+                        message.id,
+                        "Asset reissuance not supported for readonly wallet"
+                    )
+                );
+                return;
+            }
+            event.source?.postMessage(
+                Response.reissueSuccess(message.id, txid)
+            );
+        } catch (error: unknown) {
+            console.error("Error reissuing asset:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleBurnMessage(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isBurn(message)) {
+            console.error("Invalid BURN message format", message);
+            event.source?.postMessage(
+                Response.error(message.id, "Invalid BURN message format")
+            );
+            return;
+        }
+
+        if (!this.handler) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const txid = await this.handler.handleBurn(message.params);
+            if (txid === undefined) {
+                event.source?.postMessage(
+                    Response.error(
+                        message.id,
+                        "Asset burning not supported for readonly wallet"
+                    )
+                );
+                return;
+            }
+            event.source?.postMessage(Response.burnSuccess(message.id, txid));
+        } catch (error: unknown) {
+            console.error("Error burning asset:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleSendMessage(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isSend(message)) {
+            console.error("Invalid SEND message format", message);
+            event.source?.postMessage(
+                Response.error(message.id, "Invalid SEND message format")
+            );
+            return;
+        }
+
+        if (!this.handler) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const txid = await this.handler.handleSend(...message.recipients);
+            if (txid === undefined) {
+                event.source?.postMessage(
+                    Response.error(
+                        message.id,
+                        "Asset sending not supported for readonly wallet"
+                    )
+                );
+                return;
+            }
+            event.source?.postMessage(Response.sendSuccess(message.id, txid));
+        } catch (error: unknown) {
+            console.error("Error sending asset:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
+        }
+    }
+
+    private async handleGetAssetDetails(event: ExtendableMessageEvent) {
+        const message = event.data;
+        if (!Request.isGetAssetDetails(message)) {
+            console.error("Invalid GET_ASSET_DETAILS message format", message);
+            event.source?.postMessage(
+                Response.error(
+                    message.id,
+                    "Invalid GET_ASSET_DETAILS message format"
+                )
+            );
+            return;
+        }
+
+        if (!this.handler) {
+            console.error("Wallet not initialized");
+            event.source?.postMessage(
+                Response.error(message.id, "Wallet not initialized")
+            );
+            return;
+        }
+
+        try {
+            const assetDetails = await this.handler.handleGetAssetDetails(
+                message.assetId
+            );
+            event.source?.postMessage(
+                Response.assetDetails(message.id, assetDetails)
+            );
+        } catch (error: unknown) {
+            console.error("Error getting asset details:", error);
+            const errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Unknown error occurred";
+            event.source?.postMessage(Response.error(message.id, errorMessage));
         }
     }
 }

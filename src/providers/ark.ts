@@ -741,6 +741,11 @@ export class RestArkProvider implements ArkProvider {
             return null;
         }
 
+        // Skip streamStarted event
+        if (data.streamStarted) {
+            return null;
+        }
+
         console.warn("Unknown event type:", data);
         return null;
     }
