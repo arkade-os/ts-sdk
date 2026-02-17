@@ -22,12 +22,15 @@ export interface TaskDependencies {
  *
  * Processors must not keep in-memory state across invocations —
  * all coordination lives in the {@link TaskQueue} and repositories.
+ *
+ * The `TDeps` parameter defaults to {@link TaskDependencies} but
+ * can be overridden for domain-specific processors (e.g. swap processing).
  */
-export interface TaskProcessor {
+export interface TaskProcessor<TDeps = TaskDependencies> {
     readonly taskType: string;
     execute(
         item: TaskItem,
-        deps: TaskDependencies
+        deps: TDeps
     ): Promise<Omit<TaskResult, "id" | "executedAt">>;
 }
 
@@ -42,10 +45,10 @@ export interface TaskProcessor {
  * Tasks with no matching processor produce a `"noop"` result.
  * Processor errors produce a `"failed"` result with the error message.
  */
-export async function runTasks(
+export async function runTasks<TDeps = TaskDependencies>(
     queue: TaskQueue,
-    processors: TaskProcessor[],
-    deps: TaskDependencies
+    processors: TaskProcessor<TDeps>[],
+    deps: TDeps
 ): Promise<TaskResult[]> {
     const tasks = await queue.getTasks();
     const processorMap = new Map(processors.map((p) => [p.taskType, p]));
