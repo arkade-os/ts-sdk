@@ -877,91 +877,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const { arkTxid, signedCheckpointTxs } =
             await this.buildAndSubmitOffchainTx(selected.inputs, outputs);
 
-        try {
-            // mark VTXOs as spent and optionally add the change VTXO
-            const spentVtxos: ExtendedVirtualCoin[] = [];
-            const commitmentTxIds = new Set<string>();
-            let batchExpiry: number = Number.MAX_SAFE_INTEGER;
+        await this.updateDbAfterOffchainTx(
+            selected.inputs,
+            arkTxid,
+            signedCheckpointTxs,
+            params.amount,
+            selected.changeAmount,
+            selected.changeAmount > 0n ? outputs.length - 1 : 0
+        );
 
-            for (const [inputIndex, input] of selected.inputs.entries()) {
-                const vtxo = extendVirtualCoin(this, input);
-
-                const checkpointB64 = signedCheckpointTxs[inputIndex];
-                const checkpoint = Transaction.fromPSBT(
-                    base64.decode(checkpointB64)
-                );
-
-                spentVtxos.push({
-                    ...vtxo,
-                    virtualStatus: { ...vtxo.virtualStatus, state: "spent" },
-                    spentBy: checkpoint.id,
-                    arkTxId: arkTxid,
-                    isSpent: true,
-                });
-
-                if (vtxo.virtualStatus.commitmentTxIds) {
-                    for (const commitmentTxId of vtxo.virtualStatus
-                        .commitmentTxIds) {
-                        commitmentTxIds.add(commitmentTxId);
-                    }
-                }
-                if (vtxo.virtualStatus.batchExpiry) {
-                    batchExpiry = Math.min(
-                        batchExpiry,
-                        vtxo.virtualStatus.batchExpiry
-                    );
-                }
-            }
-
-            const createdAt = Date.now();
-            const addr = this.arkAddress.encode();
-
-            if (
-                selected.changeAmount > 0n &&
-                batchExpiry !== Number.MAX_SAFE_INTEGER
-            ) {
-                const changeVtxo: ExtendedVirtualCoin = {
-                    txid: arkTxid,
-                    vout: outputs.length - 1,
-                    createdAt: new Date(createdAt),
-                    forfeitTapLeafScript: this.offchainTapscript.forfeit(),
-                    intentTapLeafScript: this.offchainTapscript.forfeit(),
-                    isUnrolled: false,
-                    isSpent: false,
-                    tapTree: this.offchainTapscript.encode(),
-                    value: Number(selected.changeAmount),
-                    virtualStatus: {
-                        state: "preconfirmed",
-                        commitmentTxIds: Array.from(commitmentTxIds),
-                        batchExpiry,
-                    },
-                    status: {
-                        confirmed: false,
-                    },
-                };
-
-                await this.walletRepository.saveVtxos(addr, [changeVtxo]);
-            }
-
-            await this.walletRepository.saveVtxos(addr, spentVtxos);
-            await this.walletRepository.saveTransactions(addr, [
-                {
-                    key: {
-                        boardingTxid: "",
-                        commitmentTxid: "",
-                        arkTxid: arkTxid,
-                    },
-                    amount: params.amount,
-                    type: TxType.TxSent,
-                    settled: false,
-                    createdAt: Date.now(),
-                },
-            ]);
-        } catch (e) {
-            console.warn("error saving offchain tx to repository", e);
-        } finally {
-            return arkTxid;
-        }
+        return arkTxid;
     }
 
     async settle(
@@ -1184,13 +1109,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 topics
             );
 
-            return await Batch.join(stream, handler, {
+            const commitmentTxid = await Batch.join(stream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
                 eventCallback: eventCallback
                     ? (event) => Promise.resolve(eventCallback(event))
                     : undefined,
             });
+
+            await this.updateDbAfterSettle(params.inputs, commitmentTxid);
+
+            return commitmentTxid;
         } catch (error) {
             // delete the intent to not be stuck in the queue
             await this.arkProvider.deleteIntent(deleteIntent).catch(() => {});
@@ -1824,6 +1753,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         // build change receiver with BTC change and all asset changes
         let changeReceiver: Recipient | undefined;
+        let changeIndex = 0;
         if (changeAmount > 0) {
             const changeAssets: Asset[] = [];
             for (const [assetId, amount] of assetChanges) {
@@ -1832,6 +1762,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 }
             }
 
+            changeIndex = outputs.length;
             outputs.push({
                 script:
                     BigInt(changeAmount) < this.dustAmount
@@ -1861,10 +1792,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             outputs.push(assetPacket.txOut());
         }
 
-        const { arkTxid } = await this.buildAndSubmitOffchainTx(
+        const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
+
+        const { arkTxid, signedCheckpointTxs } =
+            await this.buildAndSubmitOffchainTx(selectedCoins, outputs);
+
+        await this.updateDbAfterOffchainTx(
             selectedCoins,
-            outputs
+            arkTxid,
+            signedCheckpointTxs,
+            sentAmount,
+            BigInt(changeAmount),
+            changeReceiver ? changeIndex : 0,
+            changeReceiver?.assets
         );
+
         return arkTxid;
     }
 
@@ -1908,34 +1850,151 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return { arkTxid, signedCheckpointTxs };
     }
 
-    private prepareIntentProofInputs(
-        coins: ExtendedCoin[]
-    ): TransactionInput[] {
-        const inputs: TransactionInput[] = [];
+    // mark vtxo spent and save change vtxo if any
+    private async updateDbAfterOffchainTx(
+        inputs: VirtualCoin[],
+        arkTxid: string,
+        signedCheckpointTxs: string[],
+        sentAmount: number,
+        changeAmount: bigint,
+        changeVout: number,
+        changeAssets?: Asset[]
+    ): Promise<void> {
+        try {
+            const spentVtxos: ExtendedVirtualCoin[] = [];
+            const commitmentTxIds = new Set<string>();
+            let batchExpiry: number = Number.MAX_SAFE_INTEGER;
 
-        for (const input of coins) {
-            const vtxoScript = VtxoScript.decode(input.tapTree);
-            const sequence = getSequence(input.intentTapLeafScript);
+            for (const [inputIndex, input] of inputs.entries()) {
+                const vtxo = extendVirtualCoin(this, input);
 
-            const unknown = [VtxoTaprootTree.encode(input.tapTree)];
-            if (input.extraWitness) {
-                unknown.push(ConditionWitness.encode(input.extraWitness));
+                const checkpointB64 = signedCheckpointTxs[inputIndex];
+                const checkpoint = Transaction.fromPSBT(
+                    base64.decode(checkpointB64)
+                );
+
+                spentVtxos.push({
+                    ...vtxo,
+                    virtualStatus: { ...vtxo.virtualStatus, state: "spent" },
+                    spentBy: checkpoint.id,
+                    arkTxId: arkTxid,
+                    isSpent: true,
+                });
+
+                if (vtxo.virtualStatus.commitmentTxIds) {
+                    for (const id of vtxo.virtualStatus.commitmentTxIds) {
+                        commitmentTxIds.add(id);
+                    }
+                }
+                if (vtxo.virtualStatus.batchExpiry) {
+                    batchExpiry = Math.min(
+                        batchExpiry,
+                        vtxo.virtualStatus.batchExpiry
+                    );
+                }
             }
 
-            inputs.push({
-                txid: hex.decode(input.txid),
-                index: input.vout,
-                witnessUtxo: {
-                    amount: BigInt(input.value),
-                    script: vtxoScript.pkScript,
-                },
-                sequence,
-                tapLeafScript: [input.intentTapLeafScript],
-                unknown,
-            });
-        }
+            const createdAt = Date.now();
+            const addr = this.arkAddress.encode();
 
-        return inputs;
+            // Only save a change VTXO for preconfirmed coins (those with a batchExpiry).
+            // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
+            let changeVtxo: ExtendedVirtualCoin | undefined;
+            if (changeAmount > 0n && batchExpiry !== Number.MAX_SAFE_INTEGER) {
+                changeVtxo = {
+                    txid: arkTxid,
+                    vout: changeVout,
+                    createdAt: new Date(createdAt),
+                    forfeitTapLeafScript: this.offchainTapscript.forfeit(),
+                    intentTapLeafScript: this.offchainTapscript.forfeit(),
+                    isUnrolled: false,
+                    isSpent: false,
+                    tapTree: this.offchainTapscript.encode(),
+                    value: Number(changeAmount),
+                    virtualStatus: {
+                        state: "preconfirmed",
+                        commitmentTxIds: Array.from(commitmentTxIds),
+                        batchExpiry,
+                    },
+                    status: {
+                        confirmed: false,
+                    },
+                    assets: changeAssets,
+                };
+            }
+
+            await this.walletRepository.saveVtxos(
+                addr,
+                changeVtxo ? [...spentVtxos, changeVtxo] : spentVtxos
+            );
+
+            await this.walletRepository.saveTransactions(addr, [
+                {
+                    key: {
+                        boardingTxid: "",
+                        commitmentTxid: "",
+                        arkTxid: arkTxid,
+                    },
+                    amount: sentAmount,
+                    type: TxType.TxSent,
+                    settled: false,
+                    createdAt,
+                },
+            ]);
+        } catch (e) {
+            console.warn("error saving offchain tx to repository", e);
+        }
+    }
+
+    // mark vtxo spent & settled, remove boarding utxo
+    private async updateDbAfterSettle(
+        inputs: ExtendedCoin[],
+        commitmentTxid: string
+    ): Promise<void> {
+        try {
+            const addr = this.arkAddress.encode();
+            const boardingAddress = await this.getBoardingAddress();
+
+            const spentVtxos: ExtendedVirtualCoin[] = [];
+            const inputArkTxIds = new Set<string>();
+            const boardingUtxoToRemove = new Set<string>();
+
+            const isVtxo = (
+                input: ExtendedCoin
+            ): input is ExtendedVirtualCoin => "virtualStatus" in input;
+
+            for (const input of inputs) {
+                if (isVtxo(input)) {
+                    // vtxo = mark it settled
+                    const vtxo = extendVirtualCoin(this, input);
+                    if (vtxo.arkTxId) {
+                        inputArkTxIds.add(vtxo.arkTxId);
+                    }
+                    spentVtxos.push({
+                        ...vtxo,
+                        virtualStatus: {
+                            ...vtxo.virtualStatus,
+                            state: "settled",
+                        },
+                        settledBy: commitmentTxid,
+                        isSpent: true,
+                    });
+                } else {
+                    // boarding utxo = remove it
+                    boardingUtxoToRemove.add(`${input.txid}:${input.vout}`);
+                }
+            }
+
+            if (spentVtxos.length > 0) {
+                await this.walletRepository.saveVtxos(addr, spentVtxos);
+            }
+
+            for (const utxoId of boardingUtxoToRemove) {
+                await this.walletRepository.removeUtxo(boardingAddress, utxoId);
+            }
+        } catch (e) {
+            console.warn("error updating repository after settle", e);
+        }
     }
 }
 
