@@ -221,7 +221,10 @@ export class WalletRepositoryImpl implements WalletRepository {
         const storedTransactions = await this.getTransactionHistory(address);
         for (const tx of txs) {
             const existing = storedTransactions.findIndex(
-                (t) => t.key === tx.key
+                (t) =>
+                    t.key.arkTxid === tx.key.arkTxid &&
+                    t.key.commitmentTxid === tx.key.commitmentTxid &&
+                    t.key.boardingTxid === tx.key.boardingTxid
             );
             if (existing !== -1) {
                 storedTransactions[existing] = tx;
