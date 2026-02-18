@@ -1848,20 +1848,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return { arkTxid, signedCheckpointTxs };
     }
 
-    /**
-     * Updates the local DB after a successful offchain TX:
-     * - marks each input VTXO as spent
-     * - saves a preconfirmed change VTXO (if any)
-     * - saves a TxSent record to transaction history
-     * Non-critical: errors are logged as warnings.
-     * @param inputs - The input VTXOs consumed by the TX
-     * @param arkTxid - The ark transaction ID
-     * @param signedCheckpointTxs - One signed checkpoint PSBT (base64) per input, used to derive spentBy
-     * @param sentAmount - Total BTC sent (for the history record)
-     * @param changeAmount - Change amount in sats (0n if no change)
-     * @param changeVout - Output index of the change VTXO (unused when changeAmount is 0n)
-     * @param changeAssets - Optional asset change (lives at changeVout + 1 when present)
-     */
+    // mark vtxo spent and save change vtxo if any
     private async updateDbAfterOffchainTx(
         inputs: VirtualCoin[],
         arkTxid: string,
@@ -1957,6 +1944,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
     }
 
+    // mark vtxo spent & settled, remove boarding utxo
     private async updateDbAfterSettle(
         inputs: ExtendedCoin[],
         commitmentTxid: string
