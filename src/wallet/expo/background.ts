@@ -10,6 +10,7 @@ import {
     CONTRACT_POLL_TASK_TYPE,
 } from "../../worker/expo/processors";
 import { DefaultVtxo } from "../../script/default";
+import { DelegateVtxo } from "../../script/delegate";
 import { ExpoArkProvider } from "../../providers/expoArk";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
 import { extendVirtualCoin, getRandomId } from "../utils";
@@ -73,6 +74,8 @@ export interface PersistedBackgroundConfig {
     serverPubKeyHex: string;
     exitTimelockValue: string;
     exitTimelockType: "blocks" | "seconds";
+    /** Optional delegate public key (hex). Present when wallet uses delegate mode. */
+    delegatePubKeyHex?: string;
 }
 
 // ── Public API ───────────────────────────────────────────────────
@@ -145,14 +148,22 @@ export function defineExpoBackgroundTask(
             // Reconstruct offchainTapscript for extendVtxo
             const pubKey = hex.decode(config.pubkeyHex);
             const serverPubKey = hex.decode(config.serverPubKeyHex);
-            const offchainTapscript = new DefaultVtxo.Script({
-                pubKey,
-                serverPubKey,
-                csvTimelock: {
-                    value: BigInt(config.exitTimelockValue),
-                    type: config.exitTimelockType,
-                },
-            });
+            const csvTimelock = {
+                value: BigInt(config.exitTimelockValue),
+                type: config.exitTimelockType as "blocks" | "seconds",
+            };
+            const offchainTapscript = config.delegatePubKeyHex
+                ? new DelegateVtxo.Script({
+                      pubKey,
+                      serverPubKey,
+                      delegatePubKey: hex.decode(config.delegatePubKeyHex),
+                      csvTimelock,
+                  })
+                : new DefaultVtxo.Script({
+                      pubKey,
+                      serverPubKey,
+                      csvTimelock,
+                  });
 
             await runTasks(taskQueue, processors, {
                 walletRepository,

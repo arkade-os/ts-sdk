@@ -185,7 +185,7 @@ export interface ContractManagerConfig {
     walletRepository: WalletRepository;
 
     /** Function to extend VirtualCoin to ExtendedVirtualCoin */
-    extendVtxo: (vtxo: VirtualCoin) => ExtendedVirtualCoin;
+    extendVtxo: (vtxo: VirtualCoin, contract?: Contract) => ExtendedVirtualCoin;
 
     /** Function to get the wallet's default Ark address */
     getDefaultAddress: () => Promise<string>;
@@ -698,7 +698,7 @@ export class ContractManager implements IContractManager {
             });
 
             for (const vtxo of vtxos) {
-                const ext = this.config.extendVtxo(vtxo);
+                const ext = this.config.extendVtxo(vtxo, contract);
 
                 allVtxos.push({
                     ...ext,
