@@ -1921,11 +1921,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 };
             }
 
-            await this.walletRepository.saveVtxos(addr, spentVtxos);
+            await this.walletRepository.saveVtxos(
+                addr,
+                changeVtxo ? [...spentVtxos, changeVtxo] : spentVtxos
+            );
 
-            if (changeVtxo) {
-                await this.walletRepository.saveVtxos(addr, [changeVtxo]);
-            }
             await this.walletRepository.saveTransactions(addr, [
                 {
                     key: {
