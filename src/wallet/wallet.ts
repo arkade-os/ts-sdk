@@ -1753,6 +1753,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         // build change receiver with BTC change and all asset changes
         let changeReceiver: Recipient | undefined;
+        let changeIndex = 0;
         if (changeAmount > 0) {
             const changeAssets: Asset[] = [];
             for (const [assetId, amount] of assetChanges) {
@@ -1761,6 +1762,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 }
             }
 
+            changeIndex = outputs.length;
             outputs.push({
                 script:
                     BigInt(changeAmount) < this.dustAmount
@@ -1801,7 +1803,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             signedCheckpointTxs,
             sentAmount,
             BigInt(changeAmount),
-            changeReceiver ? outputs.length - 2 : 0,
+            changeReceiver ? changeIndex : 0,
             changeReceiver?.assets
         );
 
