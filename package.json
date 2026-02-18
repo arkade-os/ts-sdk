@@ -52,6 +52,18 @@
             "import": "./dist/esm/adapters/asyncStorage.js",
             "require": "./dist/cjs/adapters/asyncStorage.js",
             "default": "./dist/esm/adapters/asyncStorage.js"
+        },
+        "./worker/expo": {
+            "types": "./dist/types/worker/expo/index.d.ts",
+            "import": "./dist/esm/worker/expo/index.js",
+            "require": "./dist/cjs/worker/expo/index.js",
+            "default": "./dist/esm/worker/expo/index.js"
+        },
+        "./wallet/expo": {
+            "types": "./dist/types/wallet/expo/index.d.ts",
+            "import": "./dist/esm/wallet/expo/index.js",
+            "require": "./dist/cjs/wallet/expo/index.js",
+            "default": "./dist/esm/wallet/expo/index.js"
         }
     },
     "files": [
@@ -123,8 +135,11 @@
     },
     "peerDependencies": {
         "indexeddbshim": ">=16.0.0",
-        "expo": ">=52.0.0",
-        "expo-sqlite": "~15.1.4"
+        "expo": ">=54.0.0",
+        "expo-sqlite": "~16.0.10",
+        "expo-background-task": "~1.0.10",
+        "expo-task-manager": "~14.0.9",
+        "@react-native-async-storage/async-storage": ">=1.0.0"
     },
     "peerDependenciesMeta": {
         "indexeddbshim": {
@@ -134,6 +149,15 @@
             "optional": true
         },
         "expo-sqlite": {
+            "optional": true
+        },
+        "expo-background-task": {
+            "optional": true
+        },
+        "expo-task-manager": {
+            "optional": true
+        },
+        "@react-native-async-storage/async-storage": {
             "optional": true
         }
     },
