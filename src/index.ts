@@ -42,7 +42,6 @@ import {
     ExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
-    Recipient,
     SettleParams,
     Status,
     VirtualStatus,
@@ -56,6 +55,13 @@ import {
     isSubdust,
     isRecoverable,
     isExpired,
+    // Asset types
+    Asset,
+    Recipient,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
@@ -128,6 +134,7 @@ import {
     ArkTxInput,
     OffchainTx,
     combineTapscriptSigs,
+    isValidArkAddress,
 } from "./utils/arkTransaction";
 import {
     VtxoTaprootTree,
@@ -185,6 +192,7 @@ import {
 import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
+export * as asset from "./asset";
 
 // Contracts
 import {
@@ -287,6 +295,7 @@ export {
     hasBoardingTxExpired,
     combineTapscriptSigs,
     isVtxoExpiringSoon,
+    isValidArkAddress,
 
     // Arknote
     ArkNote,
@@ -362,7 +371,6 @@ export type {
     ExtendedVirtualCoin,
     WalletBalance,
     SendBitcoinParams,
-    Recipient,
     SettleParams,
     Status,
     VirtualStatus,
@@ -433,6 +441,14 @@ export type {
 
     // Wallet types
     GetVtxosFilter,
+
+    // Asset types
+    Asset,
+    Recipient,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
 
     // Musig2 types
     Nonces,
