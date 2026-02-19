@@ -121,10 +121,9 @@ export class MetadataList {
 
     static fromReader(reader: BufferReader): MetadataList {
         const count = Number(reader.readVarUint());
-        const items: Metadata[] = [];
-        for (let i = 0; i < count; i++) {
-            items.push(Metadata.fromReader(reader));
-        }
+        const items = Array.from({ length: count }, () =>
+            Metadata.fromReader(reader)
+        );
         return new MetadataList(items);
     }
 
