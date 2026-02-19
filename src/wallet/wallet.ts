@@ -391,14 +391,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
             }
 
-            // Both DefaultVtxo.Script and DelegateVtxo.Script have forfeit()
-            const typedScript = vtxoScript as DefaultVtxo.Script;
             for (const vtxo of vtxos) {
                 allExtended.push({
                     ...vtxo,
-                    forfeitTapLeafScript: typedScript.forfeit(),
-                    intentTapLeafScript: typedScript.forfeit(),
-                    tapTree: typedScript.encode(),
+                    forfeitTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.forfeit(),
+                    tapTree: vtxoScript.encode(),
                 });
             }
         }
@@ -601,7 +599,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 );
             };
 
-            // Handle subscription updates asynchronously without blocking
+            // Handle subscription updates asynchronously without blocking.
+            // Note: subscription covers all wallet scripts (default + delegate),
+            // but we can't determine which script each VTXO belongs to from the
+            // subscription event. VTXOs are extended with the current offchainTapscript;
+            // this is for notification/display only — not for spending.
+            // For correct extension metadata, use getVtxos() which queries per-script.
             (async () => {
                 try {
                     for await (const update of subscription) {
@@ -661,11 +664,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getWalletScripts(): Promise<string[]> {
         if (this._contractManager) {
-            const contracts = await this._contractManager.getContracts({
-                type: ["default", "delegate"],
-            });
-            if (contracts.length > 0) {
-                return contracts.map((c) => c.script);
+            try {
+                const contracts = await this._contractManager.getContracts({
+                    type: ["default", "delegate"],
+                });
+                if (contracts.length > 0) {
+                    return contracts.map((c) => c.script);
+                }
+            } catch {
+                // fall through to current script only
             }
         }
         return [hex.encode(this.offchainTapscript.pkScript)];
@@ -675,24 +682,32 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Build a map of scriptHex → VtxoScript for all wallet contracts,
      * so VTXOs can be extended with the correct tapscript per contract.
      */
-    async getScriptMap(): Promise<Map<string, VtxoScript>> {
-        const map = new Map<string, VtxoScript>();
+    async getScriptMap(): Promise<
+        Map<string, DefaultVtxo.Script | DelegateVtxo.Script>
+    > {
+        const map = new Map<string, DefaultVtxo.Script | DelegateVtxo.Script>();
 
         // Always include the current script
         const currentScriptHex = hex.encode(this.offchainTapscript.pkScript);
         map.set(currentScriptHex, this.offchainTapscript);
 
         if (this._contractManager) {
-            const contracts = await this._contractManager.getContracts({
-                type: ["default", "delegate"],
-            });
-            for (const contract of contracts) {
-                if (map.has(contract.script)) continue;
-                const handler = contractHandlers.get(contract.type);
-                if (handler) {
-                    const script = handler.createScript(contract.params);
-                    map.set(contract.script, script);
+            try {
+                const contracts = await this._contractManager.getContracts({
+                    type: ["default", "delegate"],
+                });
+                for (const contract of contracts) {
+                    if (map.has(contract.script)) continue;
+                    const handler = contractHandlers.get(contract.type);
+                    if (handler) {
+                        const script = handler.createScript(contract.params) as
+                            | DefaultVtxo.Script
+                            | DelegateVtxo.Script;
+                        map.set(contract.script, script);
+                    }
                 }
+            } catch {
+                // ContractManager error — only current script in map
             }
         }
 
@@ -767,9 +782,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 if (contract) {
                     const handler = contractHandlers.get(contract.type);
                     if (handler) {
-                        const script = handler.createScript(
-                            contract.params
-                        ) as DefaultVtxo.Script;
+                        const script = handler.createScript(contract.params) as
+                            | DefaultVtxo.Script
+                            | DelegateVtxo.Script;
                         return {
                             ...vtxo,
                             forfeitTapLeafScript: script.forfeit(),
@@ -1771,22 +1786,37 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const MAX_INPUTS_PER_INTENT = 20;
 
         if (!vtxos || vtxos.length === 0) {
-            // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
-            const scripts = await this.getWalletScripts();
-            let { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos({
-                scripts,
-            });
-            fetchedVtxos = fetchedVtxos.filter(
-                (vtxo) =>
-                    vtxo.virtualStatus.state !== "swept" &&
-                    vtxo.virtualStatus.state !== "settled"
-            );
+            // Query per-script so each VTXO is extended with the correct tapscript
+            const scriptMap = await this.getScriptMap();
+            const allExtended: ExtendedVirtualCoin[] = [];
 
-            if (fetchedVtxos.length === 0) {
+            for (const [scriptHex, vtxoScript] of scriptMap) {
+                const { vtxos: fetchedVtxos } =
+                    await this.indexerProvider.getVtxos({
+                        scripts: [scriptHex],
+                    });
+
+                const pending = fetchedVtxos.filter(
+                    (vtxo) =>
+                        vtxo.virtualStatus.state !== "swept" &&
+                        vtxo.virtualStatus.state !== "settled"
+                );
+
+                for (const vtxo of pending) {
+                    allExtended.push({
+                        ...vtxo,
+                        forfeitTapLeafScript: vtxoScript.forfeit(),
+                        intentTapLeafScript: vtxoScript.forfeit(),
+                        tapTree: vtxoScript.encode(),
+                    });
+                }
+            }
+
+            if (allExtended.length === 0) {
                 return { finalized: [], pending: [] };
             }
 
-            vtxos = fetchedVtxos.map((v) => extendVirtualCoin(this, v));
+            vtxos = allExtended;
         }
         const finalized: string[] = [];
         const pending: string[] = [];

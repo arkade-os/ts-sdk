@@ -679,8 +679,7 @@ export class ContractManager implements IContractManager {
 
     private async fetchContractVtxosPaginated(
         contract: Contract,
-        includeSpent: boolean,
-        extendVtxo?: (vtxo: VirtualCoin) => ExtendedVirtualCoin
+        includeSpent: boolean
     ): Promise<ContractVtxo[]> {
         const pageSize = 100;
         const allVtxos: ContractVtxo[] = [];
