@@ -681,11 +681,9 @@ export class WalletMessageHandler
             return;
         }
 
-        // Get public key script and set the initial vtxos state
-        const script = this.readonlyWallet.defaultContractScript;
-        const response = await this.indexerProvider.getVtxos({
-            scripts: [script],
-        });
+        // Get all wallet scripts (current + historical delegate/non-delegate)
+        const scripts = await this.readonlyWallet.getWalletScripts();
+        const response = await this.indexerProvider.getVtxos({ scripts });
         const vtxos = response.vtxos.map((vtxo) =>
             extendVirtualCoin(this.readonlyWallet!, vtxo)
         );
