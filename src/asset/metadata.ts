@@ -152,7 +152,7 @@ export class MetadataList {
 
 function sortMetadata(metadata: Metadata[]): Metadata[] {
     const decoder = new TextDecoder();
-    return metadata.sort((a, b) => {
+    return [...metadata].sort((a, b) => {
         const aKeyValue = decoder.decode(a.key) + decoder.decode(a.value);
         const bKeyValue = decoder.decode(b.key) + decoder.decode(b.value);
         return bKeyValue.localeCompare(aKeyValue);
