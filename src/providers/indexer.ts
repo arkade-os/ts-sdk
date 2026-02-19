@@ -2,6 +2,7 @@ import { hex } from "@scure/base";
 import { AssetDetails, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator } from "./utils";
+import { MetadataList } from "../asset";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -588,39 +589,31 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 }
 
-interface GetAssetMetadata {
-    key: string;
-    value: string;
-}
-
 interface GetAssetResponse {
     assetId: string;
     supply: string;
     controlAsset?: string;
-    metadata?: GetAssetMetadata[];
+    metadata?: string;
 }
 
-function decodeHexString(hexString: string): string {
-    try {
-        const bytes = hex.decode(hexString);
-        return new TextDecoder().decode(bytes);
-    } catch {
-        return hexString;
-    }
-}
-
-function parseAssetMetadata(
-    items: GetAssetMetadata[]
-): Record<string, unknown> {
+function parseAssetMetadata(metadata: string): Record<string, unknown> {
+    const metadataList = MetadataList.fromString(metadata);
     const out: Record<string, unknown> = {};
-    for (const { key, value } of items) {
-        const decodedKey = decodeHexString(key);
-        const decodedValue = decodeHexString(value);
-        if (decodedKey === "decimals") {
-            const n = Number(decodedValue);
-            out[decodedKey] = Number.isFinite(n) ? n : decodedValue;
-        } else {
-            out[decodedKey] = decodedValue;
+    for (const { key, value } of metadataList.items) {
+        const keyString = new TextDecoder().decode(key);
+        switch (keyString) {
+            case "decimals":
+                const n = Number(new TextDecoder().decode(value));
+                out[keyString] = Number.isFinite(n) ? n : hex.encode(value);
+                break;
+            case "name":
+            case "ticker":
+            case "icon":
+                out[keyString] = new TextDecoder().decode(value);
+                break;
+            default:
+                out[keyString] = hex.encode(value);
+                break;
         }
     }
     return out;
@@ -892,15 +885,7 @@ namespace Response {
             typeof data.supply === "string" &&
             (data.controlAsset === undefined ||
                 typeof data.controlAsset === "string") &&
-            (data.metadata === undefined ||
-                (Array.isArray(data.metadata) &&
-                    data.metadata.every(
-                        (m: any) =>
-                            typeof m === "object" &&
-                            m !== null &&
-                            typeof m.key === "string" &&
-                            typeof m.value === "string"
-                    )))
+            (data.metadata === undefined || typeof data.metadata === "string")
         );
     }
 }

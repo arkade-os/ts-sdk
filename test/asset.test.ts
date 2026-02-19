@@ -9,6 +9,7 @@ import {
     AssetOutput,
     AssetOutputs,
     Metadata,
+    MetadataList,
     AssetGroup,
     Packet,
 } from "../src/asset";
@@ -313,6 +314,16 @@ describe("Metadata", () => {
                     expect(() => Metadata.fromString(v.serializedHex)).toThrow(
                         v.expectedError
                     );
+                });
+            });
+        });
+
+        describe("metadata list from string", () => {
+            metadataFixtures.invalid.newMetadataListFromString.forEach((v) => {
+                it(v.name, () => {
+                    expect(() =>
+                        MetadataList.fromString(v.serializedHex)
+                    ).toThrow(v.expectedError);
                 });
             });
         });
