@@ -55,6 +55,9 @@ import {
     IssuanceResult,
     ReissuanceParams,
     BurnParams,
+    AssetDetails,
+    AssetMetadata,
+    KnownMetadata,
 } from "./wallet";
 import { Batch } from "./wallet/batch";
 import {
@@ -381,6 +384,9 @@ export type {
     IssuanceResult,
     ReissuanceParams,
     BurnParams,
+    AssetDetails,
+    AssetMetadata,
+    KnownMetadata,
 
     // Musig2 types
     Nonces,
