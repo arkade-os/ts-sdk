@@ -825,13 +825,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             throw new Error("Invalid Ark address " + params.address);
         }
 
-        // recoverable and subdust coins can't be spent in offchain tx
-        const virtualCoins = await this.getVirtualCoins({
-            withRecoverable: false,
-        });
-
-        let selected;
-        if (params.selectedVtxos) {
+        if (params.selectedVtxos && params.selectedVtxos.length > 0) {
             const selectedVtxoSum = params.selectedVtxos
                 .map((v) => v.value)
                 .reduce((a, b) => a + b, 0);
@@ -840,53 +834,56 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
             const changeAmount = selectedVtxoSum - params.amount;
 
-            selected = {
+            const selected = {
                 inputs: params.selectedVtxos,
                 changeAmount: BigInt(changeAmount),
             };
-        } else {
-            selected = selectVirtualCoins(virtualCoins, params.amount);
+
+            const outputAddress = ArkAddress.decode(params.address);
+            const outputScript =
+                BigInt(params.amount) < this.dustAmount
+                    ? outputAddress.subdustPkScript
+                    : outputAddress.pkScript;
+
+            const outputs: TransactionOutput[] = [
+                {
+                    script: outputScript,
+                    amount: BigInt(params.amount),
+                },
+            ];
+
+            // add change output if needed
+            if (selected.changeAmount > 0n) {
+                const changeOutputScript =
+                    selected.changeAmount < this.dustAmount
+                        ? this.arkAddress.subdustPkScript
+                        : this.arkAddress.pkScript;
+
+                outputs.push({
+                    script: changeOutputScript,
+                    amount: BigInt(selected.changeAmount),
+                });
+            }
+
+            const { arkTxid, signedCheckpointTxs } =
+                await this.buildAndSubmitOffchainTx(selected.inputs, outputs);
+
+            await this.updateDbAfterOffchainTx(
+                selected.inputs,
+                arkTxid,
+                signedCheckpointTxs,
+                params.amount,
+                selected.changeAmount,
+                selected.changeAmount > 0n ? outputs.length - 1 : 0
+            );
+
+            return arkTxid;
         }
 
-        const outputAddress = ArkAddress.decode(params.address);
-        const outputScript =
-            BigInt(params.amount) < this.dustAmount
-                ? outputAddress.subdustPkScript
-                : outputAddress.pkScript;
-
-        const outputs: TransactionOutput[] = [
-            {
-                script: outputScript,
-                amount: BigInt(params.amount),
-            },
-        ];
-
-        // add change output if needed
-        if (selected.changeAmount > 0n) {
-            const changeOutputScript =
-                selected.changeAmount < this.dustAmount
-                    ? this.arkAddress.subdustPkScript
-                    : this.arkAddress.pkScript;
-
-            outputs.push({
-                script: changeOutputScript,
-                amount: BigInt(selected.changeAmount),
-            });
-        }
-
-        const { arkTxid, signedCheckpointTxs } =
-            await this.buildAndSubmitOffchainTx(selected.inputs, outputs);
-
-        await this.updateDbAfterOffchainTx(
-            selected.inputs,
-            arkTxid,
-            signedCheckpointTxs,
-            params.amount,
-            selected.changeAmount,
-            selected.changeAmount > 0n ? outputs.length - 1 : 0
-        );
-
-        return arkTxid;
+        return this.send({
+            address: params.address,
+            amount: params.amount,
+        });
     }
 
     async settle(
