@@ -147,6 +147,7 @@ import {
     VtxoTreeExpiry,
 } from "./utils/unknownFields";
 import { Intent } from "./intent";
+import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
 import { networks, Network, NetworkName } from "./networks";
 import {
@@ -265,6 +266,9 @@ export {
 
     // Intent proof
     Intent,
+
+    // BIP-322 message signing
+    BIP322,
 
     // TxTree
     TxTree,
