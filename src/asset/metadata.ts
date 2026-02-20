@@ -1,5 +1,6 @@
+import { schnorr } from "@noble/curves/secp256k1";
 import { hex } from "@scure/base";
-import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, compareBytes } from "@scure/btc-signer/utils.js";
 import { BufferReader, BufferWriter } from "./utils";
 
 /**
@@ -35,13 +36,6 @@ export class Metadata {
         }
         const reader = new BufferReader(buf);
         return Metadata.fromReader(reader);
-    }
-
-    hash(): Uint8Array {
-        const combined = new Uint8Array(this.key.length + this.value.length);
-        combined.set(this.key);
-        combined.set(this.value, this.key.length);
-        return sha256(combined);
     }
 
     serialize(): Uint8Array {
@@ -99,6 +93,10 @@ export class Metadata {
 }
 
 export class MetadataList {
+    static readonly ARK_LEAF_TAG = "ArkadeAssetLeaf";
+    static readonly ARK_BRANCH_TAG = "ArkadeAssetBranch";
+    static readonly ARK_LEAF_VERSION = 0x00;
+
     constructor(readonly items: Metadata[]) {}
 
     static fromString(s: string): MetadataList {
@@ -129,7 +127,7 @@ export class MetadataList {
 
     serializeTo(writer: BufferWriter): void {
         writer.writeVarUint(this.items.length);
-        for (const item of sortMetadata(this.items)) {
+        for (const item of this) {
             item.serializeTo(writer);
         }
     }
@@ -147,13 +145,54 @@ export class MetadataList {
     get length(): number {
         return this.items.length;
     }
+
+    hash(): Uint8Array {
+        if (this.items.length === 0) throw new Error("missing metadata list");
+        const levels = buildMetadataMerkleTree(this.items);
+        return levels[levels.length - 1][0]; // the last level is the root
+    }
 }
 
-function sortMetadata(metadata: Metadata[]): Metadata[] {
-    const decoder = new TextDecoder();
-    return [...metadata].sort((a, b) => {
-        const aKeyValue = decoder.decode(a.key) + decoder.decode(a.value);
-        const bKeyValue = decoder.decode(b.key) + decoder.decode(b.value);
-        return bKeyValue.localeCompare(aKeyValue);
-    });
+function computeMetadataLeafHash(md: Metadata): Uint8Array {
+    const writer = new BufferWriter();
+    writer.writeByte(MetadataList.ARK_LEAF_VERSION);
+    writer.writeVarSlice(md.key);
+    writer.writeVarSlice(md.value);
+    return schnorr.utils.taggedHash(
+        MetadataList.ARK_LEAF_TAG,
+        writer.toBytes()
+    );
+}
+
+function computeMetadataBranchHash(a: Uint8Array, b: Uint8Array): Uint8Array {
+    const [smaller, larger] = compareBytes(a, b) === -1 ? [a, b] : [b, a];
+    return schnorr.utils.taggedHash(
+        MetadataList.ARK_BRANCH_TAG,
+        smaller,
+        larger
+    );
+}
+
+function buildMetadataMerkleTree(leaves: Metadata[]): Uint8Array[][] {
+    if (leaves.length === 0) return [];
+    const leafHashes = leaves.map(computeMetadataLeafHash);
+    const levels: Uint8Array[][] = [leafHashes];
+
+    let current = leafHashes;
+    while (current.length > 1) {
+        const next: Uint8Array[] = [];
+        for (let i = 0; i < current.length; i += 2) {
+            if (i + 1 < current.length) {
+                next.push(
+                    computeMetadataBranchHash(current[i], current[i + 1])
+                );
+            } else {
+                next.push(current[i]);
+            }
+        }
+        levels.push(next);
+        current = next;
+    }
+
+    return levels;
 }
