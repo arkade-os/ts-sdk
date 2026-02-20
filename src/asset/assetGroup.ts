@@ -9,20 +9,24 @@ import { AssetId } from "./assetId";
 import { AssetRef } from "./assetRef";
 import { AssetInput, AssetInputs } from "./assetInput";
 import { AssetOutput, AssetOutputs } from "./assetOutput";
-import { Metadata } from "./metadata";
+import { Metadata, MetadataList } from "./metadata";
 import { BufferReader, BufferWriter } from "./utils";
 
 /**
  * An asset group contains inputs/outputs and all data related to a given asset id.
  */
 export class AssetGroup {
+    private readonly metadataList: MetadataList;
+
     constructor(
         readonly assetId: AssetId | null,
         readonly controlAsset: AssetRef | null,
         readonly inputs: AssetInput[],
         readonly outputs: AssetOutput[],
-        readonly metadata: Metadata[]
-    ) {}
+        metadata: Metadata[]
+    ) {
+        this.metadataList = new MetadataList(metadata);
+    }
 
     static create(
         assetId: AssetId | null,
@@ -110,7 +114,7 @@ export class AssetGroup {
             this.controlAsset,
             [leafInput],
             this.outputs,
-            this.metadata
+            this.metadataList.items
         );
     }
 
@@ -134,7 +138,7 @@ export class AssetGroup {
         }
 
         if (presence & MASK_METADATA) {
-            metadata = deserializeMetadataList(reader);
+            metadata = MetadataList.fromReader(reader).items;
         }
 
         const inputs = AssetInputs.fromReader(reader);
@@ -159,7 +163,7 @@ export class AssetGroup {
         if (this.controlAsset !== null) {
             presence |= MASK_CONTROL_ASSET;
         }
-        if (this.metadata.length > 0) {
+        if (this.metadataList.length > 0) {
             presence |= MASK_METADATA;
         }
         writer.writeByte(presence);
@@ -173,7 +177,7 @@ export class AssetGroup {
         }
 
         if (presence & MASK_METADATA) {
-            serializeMetadataList(this.metadata, writer);
+            this.metadataList.serializeTo(writer);
         }
 
         writer.writeVarUint(this.inputs.length);
@@ -186,30 +190,4 @@ export class AssetGroup {
             output.serializeTo(writer);
         }
     }
-}
-
-function serializeMetadataList(
-    metadata: Metadata[],
-    writer: BufferWriter
-): void {
-    writer.writeVarUint(metadata.length);
-
-    const sorted = [...metadata].sort((a, b) => {
-        const keyA = new TextDecoder().decode(a.key);
-        const keyB = new TextDecoder().decode(b.key);
-        return keyB.localeCompare(keyA);
-    });
-
-    for (const m of sorted) {
-        m.serializeTo(writer);
-    }
-}
-
-function deserializeMetadataList(reader: BufferReader): Metadata[] {
-    const count = Number(reader.readVarUint());
-    const metadata: Metadata[] = [];
-    for (let i = 0; i < count; i++) {
-        metadata.push(Metadata.fromReader(reader));
-    }
-    return metadata;
 }

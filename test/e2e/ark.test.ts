@@ -1163,6 +1163,38 @@ describe("Asset integration tests", () => {
         }
     );
 
+    it("should issue an asset with metadata", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+
+        const fundAmount = 10_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const metadata = {
+            decimals: 2,
+            name: "Test Asset",
+            ticker: "TA",
+            icon: "https://example.com/icon.png",
+        };
+
+        const issueResult = await alice.wallet.assetManager.issue({
+            amount: 1000,
+            metadata,
+        });
+
+        expect(issueResult.arkTxId).toBeDefined();
+        expect(issueResult.assetId).toBeDefined();
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const assetDetails = await alice.wallet.assetManager.getAssetDetails(
+            issueResult.assetId
+        );
+        expect(assetDetails.metadata).toBeDefined();
+        expect(assetDetails.metadata).toEqual(metadata);
+    });
+
     it("should reissue an asset", { timeout: 60000 }, async () => {
         const alice = await createTestArkWallet();
         const aliceAddress = await alice.wallet.getAddress();

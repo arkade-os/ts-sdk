@@ -97,3 +97,63 @@ export class Metadata {
         writer.writeVarSlice(this.value);
     }
 }
+
+export class MetadataList {
+    constructor(readonly items: Metadata[]) {}
+
+    static fromString(s: string): MetadataList {
+        let buf: Uint8Array;
+        try {
+            buf = hex.decode(s);
+        } catch {
+            throw new Error("invalid metadata list format");
+        }
+        return MetadataList.fromBytes(buf);
+    }
+
+    static fromBytes(buf: Uint8Array): MetadataList {
+        if (!buf || buf.length === 0) {
+            throw new Error("missing metadata list");
+        }
+        const reader = new BufferReader(buf);
+        return MetadataList.fromReader(reader);
+    }
+
+    static fromReader(reader: BufferReader): MetadataList {
+        const count = Number(reader.readVarUint());
+        const items = Array.from({ length: count }, () =>
+            Metadata.fromReader(reader)
+        );
+        return new MetadataList(items);
+    }
+
+    serializeTo(writer: BufferWriter): void {
+        writer.writeVarUint(this.items.length);
+        for (const item of sortMetadata(this.items)) {
+            item.serializeTo(writer);
+        }
+    }
+
+    serialize(): Uint8Array {
+        const writer = new BufferWriter();
+        this.serializeTo(writer);
+        return writer.toBytes();
+    }
+
+    [Symbol.iterator](): Iterator<Metadata> {
+        return this.items[Symbol.iterator]();
+    }
+
+    get length(): number {
+        return this.items.length;
+    }
+}
+
+function sortMetadata(metadata: Metadata[]): Metadata[] {
+    const decoder = new TextDecoder();
+    return [...metadata].sort((a, b) => {
+        const aKeyValue = decoder.decode(a.key) + decoder.decode(a.value);
+        const bKeyValue = decoder.decode(b.key) + decoder.decode(b.value);
+        return bKeyValue.localeCompare(aKeyValue);
+    });
+}
