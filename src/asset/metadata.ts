@@ -1,4 +1,4 @@
-import { schnorr } from "@noble/curves/secp256k1";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 import { Bytes, compareBytes } from "@scure/btc-signer/utils.js";
 import { BufferReader, BufferWriter } from "./utils";
