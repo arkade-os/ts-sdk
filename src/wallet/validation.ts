@@ -32,14 +32,16 @@ export const ErrInvalidOffchainOutputAmount = (address: string) =>
     new Error(`invalid offchain output ${address}, missing amount`);
 
 /**
- * Validates that all recipients are present in the vtxo tree leaves with correct amounts and assets (offchain recipient)
- * And validate the onchain recipients are in the round transaction outputs with correct amounts and script.
+ * Validates both offchain and onchain recipients.
+ * Offchain recipients are checked against vtxo tree leaves for correct amounts and assets.
+ * Onchain recipients are validated against the round transaction outputs (amounts and scripts)
+ * via validateOnchainRecipient.
  *
  * @param commitmentTx - The commitment transaction to validate against
  * @param vtxoTreeLeaves - The vtxo tree leaves to validate against
- * @param recipients - The expected recipients (only offchain addresses are validated)
+ * @param recipients - The expected recipients to validate (both offchain and onchain)
  * @param network - Network for decoding onchain addresses (e.g. mainnet, testnet)
- * @throws {Error} if one of the recipient is not present or invalid in the vtxo tree or commitment tx
+ * @throws {Error} if a recipient is not present or invalid in the vtxo tree or commitment tx
  */
 export function validateBatchRecipients(
     commitmentTx: Transaction,
