@@ -329,7 +329,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(600);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 70 },
+                { assetId: assetA, amount: -70 },
             ]);
         });
 
@@ -402,8 +402,8 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(1000);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 40 },
-                { assetId: assetB, amount: 60 },
+                { assetId: assetA, amount: -40 },
+                { assetId: assetB, amount: -60 },
             ]);
         });
 
@@ -449,7 +449,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs[0].tag).toBe("exit");
             expect(sentTxs[0].amount).toBe(1500);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 60 },
+                { assetId: assetA, amount: -60 },
             ]);
         });
 
@@ -480,7 +480,7 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs[0].tag).toBe("exit");
             expect(sentTxs[0].amount).toBe(1000);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetB, amount: 75 },
+                { assetId: assetB, amount: -75 },
             ]);
         });
 
@@ -567,6 +567,103 @@ describe("buildTransactionHistory", () => {
             ]);
         });
 
+        it("should include negative assets on burn (self-send with fewer assets in change)", async () => {
+            const arkTxId = "burn-ark-tx";
+
+            // Spent VTXO has assets
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-burn",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [{ assetId: assetA, amount: 100 }],
+            };
+
+            // Change VTXO has all BTC back but no assets (fully burned)
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(0);
+            // Negative = assets lost/burned
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: -100 },
+            ]);
+        });
+
+        it("should handle mixed operation: burn + issuance + transfer in same tx", async () => {
+            const arkTxId = "mixed-ops-ark-tx";
+            const assetC = "asset-id-ccc";
+
+            // Spent VTXO has ASSET_A (will be burned) and ASSET_B (partially transferred)
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-mixed",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [
+                    { assetId: assetA, amount: 50 }, // will be fully burned
+                    { assetId: assetB, amount: 80 }, // 30 will be transferred
+                ],
+            };
+
+            // Change VTXO: no ASSET_A (burned), less ASSET_B (transferred), new ASSET_C (issued)
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 500,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+                assets: [
+                    { assetId: assetB, amount: 50 }, // kept 50 of 80
+                    { assetId: assetC, amount: 200 }, // newly issued
+                ],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(500);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetB, amount: -30 }, // transferred/lost
+                { assetId: assetC, amount: 200 }, // issued/gained
+                { assetId: assetA, amount: -50 }, // burned/lost
+            ]);
+        });
+
         it("should aggregate assets from multiple spent vtxos", async () => {
             const arkTxId = "multi-spent-ark-tx";
 
@@ -609,8 +706,8 @@ describe("buildTransactionHistory", () => {
             expect(sentTxs).toHaveLength(1);
             expect(sentTxs[0].amount).toBe(1000);
             expect(sentTxs[0].assets).toStrictEqual([
-                { assetId: assetA, amount: 50 },
-                { assetId: assetB, amount: 10 },
+                { assetId: assetA, amount: -50 },
+                { assetId: assetB, amount: -10 },
             ]);
         });
     });
