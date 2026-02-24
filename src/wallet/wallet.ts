@@ -26,6 +26,8 @@ import { buildForfeitTx } from "../forfeit";
 import {
     validateConnectorsTxGraph,
     validateVtxoTxGraph,
+    validateVtxoTreeOutputs,
+    VtxoTreeReceiver,
 } from "../tree/validation";
 import { Identity, ReadonlyIdentity } from "../identity";
 import {
@@ -1025,6 +1027,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         }
 
+        // Build receivers list for validation (offchain outputs with assets)
+        const receivers: VtxoTreeReceiver[] = [];
+
         if (assetInputs.size > 0) {
             // collect all input assets and assign them to the first offchain output
             const allAssets = new Map<string, bigint>();
@@ -1053,15 +1058,34 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 );
             }
 
-            const receivers: Recipient[] = params.outputs.map((output, i) => ({
-                address: output.address,
-                amount: Number(output.amount),
-                assets: i === firstOffchainIndex ? assetList : undefined,
-            }));
+            const recipientReceivers: Recipient[] = params.outputs.map(
+                (output, i) => ({
+                    address: output.address,
+                    amount: Number(output.amount),
+                    assets: i === firstOffchainIndex ? assetList : undefined,
+                })
+            );
+
+            // Build receivers for validation
+            for (const output of params.outputs) {
+                const isOnchain = onchainOutputIndexes.includes(
+                    params.outputs.indexOf(output)
+                );
+                if (!isOnchain && assetList.length > 0) {
+                    receivers.push({
+                        address: output.address,
+                        amount: Number(output.amount),
+                        assets:
+                            output === params.outputs[firstOffchainIndex]
+                                ? assetList
+                                : [],
+                    });
+                }
+            }
 
             const assetPacket = createAssetPacket(
                 assetInputs,
-                receivers,
+                recipientReceivers,
                 undefined
             );
             outputs.push(assetPacket.txOut());
@@ -1095,7 +1119,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const handler = this.createBatchHandler(
             intentId,
             params.inputs,
-            session
+            session,
+            receivers
         );
 
         const abortController = new AbortController();
@@ -1256,11 +1281,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @param intentId - The intent ID.
      * @param inputs - The inputs of the intent.
      * @param session - The musig2 signing session, if not provided, the signing will be skipped.
+     * @param receivers - The receivers with assets to validate in the vtxo tree.
      */
     createBatchHandler(
         intentId: string,
         inputs: ExtendedCoin[],
-        session?: SignerSession
+        session?: SignerSession,
+        receivers?: VtxoTreeReceiver[]
     ): Batch.Handler {
         let sweepTapTreeRoot: Uint8Array | undefined;
         return {
@@ -1330,7 +1357,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 );
                 validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
 
-                // TODO check if our registered outputs are in the vtxo tree
+                // Validate that receivers with assets have correct asset outputs in the tree
+                if (receivers && receivers.length > 0) {
+                    validateVtxoTreeOutputs(vtxoTree, receivers);
+                }
 
                 const sharedOutput = commitmentTx.getOutput(0);
                 if (!sharedOutput?.amount) {

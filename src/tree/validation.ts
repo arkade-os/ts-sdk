@@ -4,6 +4,9 @@ import { base64 } from "@scure/base";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
+import { ArkAddress } from "../script/address";
+import { Packet } from "../asset/packet";
+import { Asset } from "../wallet";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
     new Error(`invalid settlement transaction: ${tx}`);
@@ -148,5 +151,183 @@ export function validateVtxoTxGraph(
                 throw ErrInvalidTaprootScript;
             }
         }
+    }
+}
+
+export const ErrReceiverOutputNotFound = (address: string) =>
+    new Error(`receiver output not found in vtxo tree: ${address}`);
+export const ErrAssetGroupNotFound = (assetId: string) =>
+    new Error(`asset group not found in batch leaf: ${assetId}`);
+export const ErrAssetOutputNotFound = (assetId: string) =>
+    new Error(`asset output not found in asset group: ${assetId}`);
+export const ErrInvalidAssetAmount = (
+    assetId: string,
+    got: bigint,
+    expected: bigint
+) =>
+    new Error(
+        `invalid asset output amount for ${assetId}: got ${got}, want ${expected}`
+    );
+
+export interface VtxoTreeReceiver {
+    address: string;
+    amount: number;
+    assets: Asset[];
+}
+
+/**
+ * validateVtxoTreeOutputs validates that all receivers with assets have their
+ * expected asset outputs present in the vtxo tree leaf transactions.
+ *
+ * For each receiver with assets:
+ * 1. Find the leaf tx output matching the receiver's address and BTC amount
+ * 2. Parse the asset packet from the leaf tx's OP_RETURN output
+ * 3. Verify each expected asset is present with correct amount at correct output index
+ */
+export function validateVtxoTreeOutputs(
+    tree: TxTree,
+    receivers: VtxoTreeReceiver[]
+): void {
+    const leaves = tree.leaves();
+    if (leaves.length === 0) {
+        throw ErrNoLeaves;
+    }
+
+    for (const receiver of receivers) {
+        // Skip receivers without assets
+        if (!receiver.assets || receiver.assets.length === 0) {
+            continue;
+        }
+
+        // Decode the receiver address to get the vtxo taproot key
+        let rcvAddr: ArkAddress;
+        try {
+            rcvAddr = ArkAddress.decode(receiver.address);
+        } catch {
+            // Not an ark address, skip
+            continue;
+        }
+
+        const vtxoTapKey = rcvAddr.vtxoTaprootKey;
+
+        // Find the leaf tx output matching this receiver
+        let found = false;
+        for (const leafTx of leaves) {
+            for (
+                let outputIndex = 0;
+                outputIndex < leafTx.outputsLength;
+                outputIndex++
+            ) {
+                const output = leafTx.getOutput(outputIndex);
+                if (!output?.script) continue;
+
+                // Check if this is a P2TR output with matching taproot key
+                // P2TR script format: OP_1 <32-byte taproot key>
+                if (
+                    output.script.length !== 34 ||
+                    output.script[0] !== 0x51 || // OP_1
+                    output.script[1] !== 0x20 // 32 bytes push
+                ) {
+                    continue;
+                }
+
+                const outputTapKey = output.script.slice(2);
+                if (hex.encode(outputTapKey) !== hex.encode(vtxoTapKey)) {
+                    continue;
+                }
+
+                // Check amount matches
+                if (
+                    !output.amount ||
+                    output.amount !== BigInt(receiver.amount)
+                ) {
+                    continue;
+                }
+
+                // Found the matching output, validate asset packet
+                found = true;
+                validateAssetOutputs(leafTx, outputIndex, receiver);
+                break;
+            }
+            if (found) break;
+        }
+
+        if (!found) {
+            throw ErrReceiverOutputNotFound(receiver.address);
+        }
+    }
+}
+
+function validateAssetOutputs(
+    leafTx: Transaction,
+    outputIndex: number,
+    receiver: VtxoTreeReceiver
+): void {
+    // Find the OP_RETURN output containing the asset packet
+    let assetPacket: Packet | null = null;
+    for (let i = 0; i < leafTx.outputsLength; i++) {
+        const output = leafTx.getOutput(i);
+        if (!output?.script) continue;
+
+        if (Packet.isAssetPacket(output.script)) {
+            assetPacket = Packet.fromTxOut(output.script);
+            break;
+        }
+    }
+
+    if (!assetPacket) {
+        // No asset packet in leaf tx, but receiver expects assets
+        throw ErrAssetGroupNotFound(receiver.assets[0].assetId);
+    }
+
+    // Validate each expected asset
+    for (const expectedAsset of receiver.assets) {
+        // Find the asset group with matching asset ID
+        let foundGroup = false;
+        for (const group of assetPacket.groups) {
+            // Skip issuance groups (no asset ID)
+            if (!group.assetId) continue;
+
+            const groupAssetId = group.assetId.toString();
+            if (groupAssetId === expectedAsset.assetId) {
+                // Found the group, validate output exists with correct amount
+                validateAssetGroupOutput(
+                    group.outputs,
+                    outputIndex,
+                    expectedAsset
+                );
+                foundGroup = true;
+                break;
+            }
+        }
+
+        if (!foundGroup) {
+            throw ErrAssetGroupNotFound(expectedAsset.assetId);
+        }
+    }
+}
+
+function validateAssetGroupOutput(
+    outputs: { vout: number; amount: bigint }[],
+    expectedOutputIndex: number,
+    expectedAsset: Asset
+): void {
+    let found = false;
+    for (const output of outputs) {
+        if (output.vout !== expectedOutputIndex) continue;
+
+        if (output.amount !== BigInt(expectedAsset.amount)) {
+            throw ErrInvalidAssetAmount(
+                expectedAsset.assetId,
+                output.amount,
+                BigInt(expectedAsset.amount)
+            );
+        }
+        found = true;
+        break;
+    }
+
+    if (!found) {
+        throw ErrAssetOutputNotFound(expectedAsset.assetId);
     }
 }

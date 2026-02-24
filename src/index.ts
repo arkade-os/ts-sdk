@@ -177,6 +177,8 @@ import { ArkError, maybeArkError } from "./providers/errors";
 import {
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
+    validateVtxoTreeOutputs,
+    VtxoTreeReceiver,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
 import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
@@ -282,6 +284,7 @@ export {
     Batch,
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
+    validateVtxoTreeOutputs,
     buildForfeitTx,
     isRecoverable,
     isSpendable,
@@ -339,6 +342,9 @@ export type {
     OnchainProvider,
     ArkProvider,
     SettlementEvent,
+
+    // VTXO tree validation
+    VtxoTreeReceiver,
     FeeInfo,
     ArkInfo,
     SignedIntent,
