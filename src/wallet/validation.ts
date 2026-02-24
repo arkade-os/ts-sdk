@@ -47,6 +47,9 @@ export function validateBatchRecipients(
     recipients: Recipient[],
     network: Network
 ): void {
+    // usedOutputs is used to track which outputs are validated to handle
+    // duplicate recipients in the list
+    const usedOutputs = new Set<string>();
     for (const recipient of recipients) {
         let arkAddress: ArkAddress;
         try {
@@ -56,7 +59,12 @@ export function validateBatchRecipients(
             continue;
         }
 
-        validateOffchainRecipient(vtxoTreeLeaves, arkAddress, recipient);
+        validateOffchainRecipient(
+            vtxoTreeLeaves,
+            arkAddress,
+            recipient,
+            usedOutputs
+        );
     }
 }
 
@@ -101,7 +109,8 @@ function validateOnchainRecipient(
 function validateOffchainRecipient(
     leaves: Transaction[],
     arkAddress: ArkAddress,
-    recipient: Recipient
+    recipient: Recipient,
+    usedOutputs: Set<string> // leafIndex:outputIndex
 ): void {
     const expectedPkScript = arkAddress.pkScript;
     if (!recipient.amount) {
@@ -111,7 +120,8 @@ function validateOffchainRecipient(
 
     let found = false;
 
-    for (const leaf of leaves) {
+    for (let leafIdx = 0; leafIdx < leaves.length; leafIdx++) {
+        const leaf = leaves[leafIdx];
         for (
             let outputIndex = 0;
             outputIndex < leaf.outputsLength;
@@ -130,6 +140,12 @@ function validateOffchainRecipient(
                 continue;
             }
 
+            const key = `${leafIdx}:${outputIndex}`;
+            if (usedOutputs.has(key)) {
+                continue;
+            }
+
+            usedOutputs.add(key);
             found = true;
 
             // if assets, validate the asset packet
