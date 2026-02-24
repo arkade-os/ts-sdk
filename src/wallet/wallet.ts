@@ -26,9 +26,8 @@ import { buildForfeitTx } from "../forfeit";
 import {
     validateConnectorsTxGraph,
     validateVtxoTxGraph,
-    validateReceivers,
-    Receiver,
 } from "../tree/validation";
+import { validateBatchRecipients } from "./validation";
 import { Identity, ReadonlyIdentity } from "../identity";
 import {
     ArkTransaction,
@@ -1027,6 +1026,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         }
 
+        let outputAssets: Asset[] | undefined;
+        let assetOutputIndex: number | undefined; // where to send the assets
+
         if (assetInputs.size > 0) {
             // collect all input assets and assign them to the first offchain output
             const allAssets = new Map<string, bigint>();
@@ -1040,12 +1042,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 }
             }
 
-            const assetList: Asset[] = [];
+            outputAssets = [];
             for (const [assetId, amount] of allAssets) {
-                assetList.push({ assetId, amount: Number(amount) });
+                outputAssets.push({ assetId, amount: Number(amount) });
             }
 
-            // TODO change this logic to allow mutiple outputs ?
             const firstOffchainIndex = params.outputs.findIndex(
                 (_, i) => !onchainOutputIndexes.includes(i)
             );
@@ -1054,62 +1055,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     "Cannot settle assets without an offchain output"
                 );
             }
-
-            const receivers: Recipient[] = params.outputs.map((output, i) => ({
-                address: output.address,
-                amount: Number(output.amount),
-                assets: i === firstOffchainIndex ? assetList : undefined,
-            }));
-
-            const assetPacket = createAssetPacket(
-                assetInputs,
-                receivers,
-                undefined
-            );
-            outputs.push(assetPacket.txOut());
+            assetOutputIndex = firstOffchainIndex;
         }
 
-        // Build expected receivers for validation (offchain outputs only)
-        // We need to convert Asset (number amount) to Receiver (bigint amount)
-        const expectedReceivers: Receiver[] = [];
-        if (hasOffchainOutputs) {
-            // Collect all input assets and assign them to the first offchain output
-            const allAssetsMap = new Map<string, bigint>();
-            for (const [, assets] of assetInputs) {
-                for (const asset of assets) {
-                    const existing = allAssetsMap.get(asset.assetId) ?? 0n;
-                    allAssetsMap.set(
-                        asset.assetId,
-                        existing + BigInt(asset.amount)
-                    );
-                }
-            }
+        const recipients: Recipient[] = params.outputs.map((output, i) => ({
+            address: output.address,
+            amount: Number(output.amount),
+            assets: i === assetOutputIndex ? outputAssets : undefined,
+        }));
 
-            const firstOffchainIndex = params.outputs.findIndex(
-                (_, i) => !onchainOutputIndexes.includes(i)
-            );
-
-            for (const [index, output] of params.outputs.entries()) {
-                // Skip onchain outputs
-                if (onchainOutputIndexes.includes(index)) {
-                    continue;
-                }
-
-                // Build receiver with assets if this is the first offchain output
-                const receiverAssets =
-                    index === firstOffchainIndex && allAssetsMap.size > 0
-                        ? Array.from(allAssetsMap, ([assetId, amount]) => ({
-                              assetId,
-                              amount,
-                          }))
-                        : undefined;
-
-                expectedReceivers.push({
-                    address: output.address,
-                    amount: output.amount,
-                    assets: receiverAssets,
-                });
-            }
+        if (outputAssets && outputAssets.length > 0) {
+            const assetPacket = createAssetPacket(assetInputs, recipients);
+            outputs.push(assetPacket.txOut());
         }
 
         // session holds the state of the musig2 signing process of the vtxo tree
@@ -1141,7 +1098,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             intentId,
             params.inputs,
             session,
-            expectedReceivers
+            recipients
         );
 
         const abortController = new AbortController();
@@ -1302,13 +1259,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @param intentId - The intent ID.
      * @param inputs - The inputs of the intent.
      * @param session - The musig2 signing session, if not provided, the signing will be skipped.
-     * @param expectedReceivers - Expected receivers to validate in the vtxo tree.
+     * @param expectedRecipients - Expected recipients to validate in the vtxo tree.
      */
     createBatchHandler(
         intentId: string,
         inputs: ExtendedCoin[],
         session?: SignerSession,
-        expectedReceivers?: Receiver[]
+        expectedRecipients?: Recipient[]
     ): Batch.Handler {
         let sweepTapTreeRoot: Uint8Array | undefined;
         return {
@@ -1379,8 +1336,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
 
                 // validate that all expected receivers are in the vtxo tree with correct amounts and assets
-                if (expectedReceivers && expectedReceivers.length > 0) {
-                    validateReceivers(vtxoTree, expectedReceivers);
+                if (expectedRecipients && expectedRecipients.length > 0) {
+                    validateBatchRecipients(
+                        commitmentTx,
+                        vtxoTree.leaves(),
+                        expectedRecipients
+                    );
                 }
 
                 const sharedOutput = commitmentTx.getOutput(0);
