@@ -89,9 +89,8 @@ function validateOnchainRecipient(
     throw ErrOnchainOutputNotFound(recipient.address);
 }
 
-/**
- * Validates that an offchain receiver is present in a vtxo tree leaf with correct amount and assets.
- */
+// validate the offchain recipient is present in one of the leaf output
+// also verify the asset packet is here, and point the same output index
 function validateOffchainRecipient(
     leaves: Transaction[],
     arkAddress: ArkAddress,
@@ -159,9 +158,6 @@ function validateAssetOutputs(
     }
 }
 
-/**
- * Validates that an asset group contains the expected output at the correct index with correct amount.
- */
 function validateAssetGroupOutput(
     packet: Packet,
     outputIndex: number,
