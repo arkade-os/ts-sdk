@@ -39,8 +39,8 @@ function subtractAssets(
             for (const a of vtxo.assets) {
                 const current = map.get(a.assetId) ?? 0;
                 const remaining = current - a.amount;
-                if (remaining > 0) {
-                    map.set(a.assetId, remaining);
+                if (remaining !== 0) {
+                    map.set(a.assetId, Math.abs(remaining));
                 } else {
                     map.delete(a.assetId);
                 }
