@@ -27,19 +27,19 @@ function subtractAssets(
     change: VirtualCoin[]
 ): Asset[] | undefined {
     const map = new Map<string, number>();
-    for (const vtxo of spent) {
+    for (const vtxo of change) {
         if (vtxo.assets) {
             for (const a of vtxo.assets) {
                 map.set(a.assetId, (map.get(a.assetId) ?? 0) + a.amount);
             }
         }
     }
-    for (const vtxo of change) {
+    for (const vtxo of spent) {
         if (vtxo.assets) {
             for (const a of vtxo.assets) {
                 const current = map.get(a.assetId) ?? 0;
                 const remaining = current - a.amount;
-                if (remaining > 0) {
+                if (remaining !== 0) {
                     map.set(a.assetId, remaining);
                 } else {
                     map.delete(a.assetId);
@@ -214,7 +214,7 @@ export async function buildTransactionHistory(
                     }
                 } else {
                     // forfeitAmount > 0 && settledAmount == 0 --> collaborative exit without any offchain change
-                    const assets = collectAssets(forfeitVtxos);
+                    const assets = subtractAssets(forfeitVtxos, []);
                     sent.push({
                         key: { ...txKey, commitmentTxid: vtxo.settledBy },
                         tag: "exit",
