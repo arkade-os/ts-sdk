@@ -4,6 +4,7 @@ import { ArkAddress } from "../script/address";
 import { Transaction } from "../utils/transaction";
 import { Packet } from "../asset";
 import { Address, OutScript } from "@scure/btc-signer";
+import type { Network } from "../networks";
 
 export const ErrOffchainOutputNotFound = (address: string) =>
     new Error(`offchain send output not found: ${address}`);
@@ -37,18 +38,21 @@ export const ErrInvalidOffchainOutputAmount = (address: string) =>
  * @param commitmentTx - The commitment transaction to validate against
  * @param vtxoTreeLeaves - The vtxo tree leaves to validate against
  * @param recipients - The expected recipients (only offchain addresses are validated)
+ * @param network - Network for decoding onchain addresses (e.g. mainnet, testnet)
+ * @throws {Error} if one of the recipient is not present or invalid in the vtxo tree or commitment tx
  */
 export function validateBatchRecipients(
     commitmentTx: Transaction,
     vtxoTreeLeaves: Transaction[],
-    recipients: Recipient[]
+    recipients: Recipient[],
+    network: Network
 ): void {
     for (const recipient of recipients) {
         let arkAddress: ArkAddress;
         try {
             arkAddress = ArkAddress.decode(recipient.address);
         } catch {
-            validateOnchainRecipient(commitmentTx, recipient);
+            validateOnchainRecipient(commitmentTx, recipient, network);
             continue;
         }
 
@@ -59,9 +63,10 @@ export function validateBatchRecipients(
 // validateOnchainRecipients verifies the given recipient is present in the commitment tx outputs list
 function validateOnchainRecipient(
     commitmentTx: Transaction,
-    recipient: Recipient
+    recipient: Recipient,
+    network: Network
 ): void {
-    const addr = Address().decode(recipient.address);
+    const addr = Address(network).decode(recipient.address);
     const expectedPkScript = OutScript.encode(addr);
 
     if (!recipient.amount) {

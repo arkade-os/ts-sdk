@@ -1340,7 +1340,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     validateBatchRecipients(
                         commitmentTx,
                         vtxoTree.leaves(),
-                        expectedRecipients
+                        expectedRecipients,
+                        this.network
                     );
                 }
 
