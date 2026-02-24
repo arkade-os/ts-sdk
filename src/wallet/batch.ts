@@ -20,7 +20,7 @@ import { hex } from "@scure/base";
  * @example
  * ```typescript
  * // use wallet handler or create a custom one
- * const handler = wallet.createBatchHandler(intentId, inputs, musig2session);
+ * const handler = wallet.createBatchHandler(intentId, inputs, expectedRecipients, musig2session);
  *
  * const abortController = new AbortController();
  * // Get event stream from Ark provider
