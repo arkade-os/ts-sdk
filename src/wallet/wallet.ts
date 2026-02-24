@@ -1097,8 +1097,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const handler = this.createBatchHandler(
             intentId,
             params.inputs,
-            session,
-            recipients
+            recipients,
+            session
         );
 
         const abortController = new AbortController();
@@ -1264,8 +1264,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     createBatchHandler(
         intentId: string,
         inputs: ExtendedCoin[],
-        session?: SignerSession,
-        expectedRecipients?: Recipient[]
+        expectedRecipients: Recipient[],
+        session?: SignerSession
     ): Batch.Handler {
         let sweepTapTreeRoot: Uint8Array | undefined;
         return {

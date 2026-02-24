@@ -27,6 +27,8 @@ export const ErrInvalidOnchainOutputAssets = (address: string) =>
     new Error(`onchain output ${address} cannot have assets`);
 export const ErrOnchainOutputNotFound = (address: string) =>
     new Error(`onchain output not found: ${address}`);
+export const ErrInvalidOffchainOutputAmount = (address: string) =>
+    new Error(`invalid offchain output ${address}, missing amount`);
 
 /**
  * Validates that all recipients are present in the vtxo tree leaves with correct amounts and assets (offchain recipient)
@@ -96,7 +98,11 @@ function validateOffchainRecipient(
     arkAddress: ArkAddress,
     recipient: Recipient
 ): void {
-    const vtxoTapKey = arkAddress.vtxoTaprootKey;
+    const expectedPkScript = arkAddress.pkScript;
+    if (!recipient.amount) {
+        throw ErrInvalidOffchainOutputAmount(recipient.address);
+    }
+    const expectedAmount = BigInt(recipient.amount);
 
     let found = false;
 
@@ -111,25 +117,17 @@ function validateOffchainRecipient(
                 continue;
             }
 
-            // Extract the x-only pubkey from the script (skip OP_1 prefix for P2TR)
-            // P2TR script format: OP_1 (0x51) + 32-byte x-only pubkey
-            const scriptKey = output.script.slice(2);
-            if (scriptKey.length !== 32) {
+            if (!equalBytes(output.script, expectedPkScript)) {
                 continue;
             }
 
-            if (!equalBytes(scriptKey, vtxoTapKey)) {
-                continue;
-            }
-
-            // if amount does not match, continue
-            if (output.amount !== recipient.amount) {
+            if (output.amount !== expectedAmount) {
                 continue;
             }
 
             found = true;
 
-            // If recipient has assets, validate the asset packet
+            // if assets, validate the asset packet
             if (recipient.assets && recipient.assets.length > 0) {
                 validateAssetOutputs(leaf, outputIndex, recipient.assets);
             }
