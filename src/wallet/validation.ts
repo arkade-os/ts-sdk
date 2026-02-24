@@ -52,12 +52,18 @@ export function validateBatchRecipients(
     // usedOutputs is used to track which outputs are validated to handle
     // duplicate recipients in the list
     const usedOutputs = new Set<string>();
+    const usedOnchainOutputs = new Set<number>();
     for (const recipient of recipients) {
         let arkAddress: ArkAddress;
         try {
             arkAddress = ArkAddress.decode(recipient.address);
         } catch {
-            validateOnchainRecipient(commitmentTx, recipient, network);
+            validateOnchainRecipient(
+                commitmentTx,
+                recipient,
+                network,
+                usedOnchainOutputs
+            );
             continue;
         }
 
@@ -70,11 +76,12 @@ export function validateBatchRecipients(
     }
 }
 
-// validateOnchainRecipients verifies the given recipient is present in the commitment tx outputs list
+// validateOnchainRecipient verifies the given recipient is present in the commitment tx outputs list
 function validateOnchainRecipient(
     commitmentTx: Transaction,
     recipient: Recipient,
-    network: Network
+    network: Network,
+    usedOutputs: Set<number>
 ): void {
     const addr = Address(network).decode(recipient.address);
     const expectedPkScript = OutScript.encode(addr);
@@ -87,6 +94,10 @@ function validateOnchainRecipient(
     }
 
     for (let i = 0; i < commitmentTx.outputsLength; i++) {
+        if (usedOutputs.has(i)) {
+            continue;
+        }
+
         const output = commitmentTx.getOutput(i);
         if (!output?.script || output.script.length === 0) {
             continue;
@@ -98,6 +109,7 @@ function validateOnchainRecipient(
             }
 
             // we found the right output, recipient is valid, return
+            usedOutputs.add(i);
             return;
         }
     }
