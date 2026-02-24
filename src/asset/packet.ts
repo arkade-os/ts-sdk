@@ -50,19 +50,18 @@ export class Packet {
 
     static fromTx(tx: Transaction): Packet {
         for (let i = 0; i < tx.outputsLength; i++) {
-            const output = tx.getOutput(i);
-            if (!output?.script) {
-                continue;
-            }
-
             try {
+                const output = tx.getOutput(i);
+                if (!output?.script) {
+                    continue;
+                }
                 return Packet.fromScript(output.script);
-            } catch {
+            } catch (error) {
                 continue;
             }
         }
 
-        throw new Error("no asset packet found in transaction");
+        throw new AssetPacketNotFoundError(tx.id);
     }
 
     static isAssetPacket(script: Uint8Array): boolean {
