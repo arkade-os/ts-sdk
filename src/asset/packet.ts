@@ -5,6 +5,7 @@ import { ARKADE_MAGIC, MARKER_ASSET_PAYLOAD, AssetRefType } from "./types";
 import { AssetGroup } from "./assetGroup";
 import { BufferReader, BufferWriter } from "./utils";
 import { TransactionOutput } from "@scure/btc-signer/psbt";
+import { Transaction } from "../utils/transaction";
 
 export class AssetPacketNotFoundError extends Error {
     constructor(txid: string) {
@@ -45,6 +46,22 @@ export class Packet {
 
     static fromTxOut(pkScript: Uint8Array): Packet {
         return Packet.fromScript(pkScript);
+    }
+
+    static fromTx(tx: Transaction): Packet {
+        for (let i = 0; i < tx.outputsLength; i++) {
+            try {
+                const output = tx.getOutput(i);
+                if (!output?.script) {
+                    continue;
+                }
+                return Packet.fromScript(output.script);
+            } catch (error) {
+                continue;
+            }
+        }
+
+        throw new AssetPacketNotFoundError(tx.id);
     }
 
     static isAssetPacket(script: Uint8Array): boolean {

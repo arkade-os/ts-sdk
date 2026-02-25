@@ -27,6 +27,7 @@ import {
     validateConnectorsTxGraph,
     validateVtxoTxGraph,
 } from "../tree/validation";
+import { validateBatchRecipients } from "./validation";
 import { Identity, ReadonlyIdentity } from "../identity";
 import {
     ArkTransaction,
@@ -934,13 +935,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             throw new Error("Invalid Ark address " + params.address);
         }
 
-        // recoverable and subdust coins can't be spent in offchain tx
-        const virtualCoins = await this.getVirtualCoins({
-            withRecoverable: false,
-        });
-
-        let selected;
-        if (params.selectedVtxos) {
+        if (params.selectedVtxos && params.selectedVtxos.length > 0) {
             const selectedVtxoSum = params.selectedVtxos
                 .map((v) => v.value)
                 .reduce((a, b) => a + b, 0);
@@ -949,53 +944,56 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
             const changeAmount = selectedVtxoSum - params.amount;
 
-            selected = {
+            const selected = {
                 inputs: params.selectedVtxos,
                 changeAmount: BigInt(changeAmount),
             };
-        } else {
-            selected = selectVirtualCoins(virtualCoins, params.amount);
+
+            const outputAddress = ArkAddress.decode(params.address);
+            const outputScript =
+                BigInt(params.amount) < this.dustAmount
+                    ? outputAddress.subdustPkScript
+                    : outputAddress.pkScript;
+
+            const outputs: TransactionOutput[] = [
+                {
+                    script: outputScript,
+                    amount: BigInt(params.amount),
+                },
+            ];
+
+            // add change output if needed
+            if (selected.changeAmount > 0n) {
+                const changeOutputScript =
+                    selected.changeAmount < this.dustAmount
+                        ? this.arkAddress.subdustPkScript
+                        : this.arkAddress.pkScript;
+
+                outputs.push({
+                    script: changeOutputScript,
+                    amount: BigInt(selected.changeAmount),
+                });
+            }
+
+            const { arkTxid, signedCheckpointTxs } =
+                await this.buildAndSubmitOffchainTx(selected.inputs, outputs);
+
+            await this.updateDbAfterOffchainTx(
+                selected.inputs,
+                arkTxid,
+                signedCheckpointTxs,
+                params.amount,
+                selected.changeAmount,
+                selected.changeAmount > 0n ? outputs.length - 1 : 0
+            );
+
+            return arkTxid;
         }
 
-        const outputAddress = ArkAddress.decode(params.address);
-        const outputScript =
-            BigInt(params.amount) < this.dustAmount
-                ? outputAddress.subdustPkScript
-                : outputAddress.pkScript;
-
-        const outputs: TransactionOutput[] = [
-            {
-                script: outputScript,
-                amount: BigInt(params.amount),
-            },
-        ];
-
-        // add change output if needed
-        if (selected.changeAmount > 0n) {
-            const changeOutputScript =
-                selected.changeAmount < this.dustAmount
-                    ? this.arkAddress.subdustPkScript
-                    : this.arkAddress.pkScript;
-
-            outputs.push({
-                script: changeOutputScript,
-                amount: BigInt(selected.changeAmount),
-            });
-        }
-
-        const { arkTxid, signedCheckpointTxs } =
-            await this.buildAndSubmitOffchainTx(selected.inputs, outputs);
-
-        await this.updateDbAfterOffchainTx(
-            selected.inputs,
-            arkTxid,
-            signedCheckpointTxs,
-            params.amount,
-            selected.changeAmount,
-            selected.changeAmount > 0n ? outputs.length - 1 : 0
-        );
-
-        return arkTxid;
+        return this.send({
+            address: params.address,
+            amount: params.amount,
+        });
     }
 
     async settle(
@@ -1137,6 +1135,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         }
 
+        let outputAssets: Asset[] | undefined;
+        let assetOutputIndex: number | undefined; // where to send the assets
+
         if (assetInputs.size > 0) {
             // collect all input assets and assign them to the first offchain output
             const allAssets = new Map<string, bigint>();
@@ -1150,12 +1151,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 }
             }
 
-            const assetList: Asset[] = [];
+            outputAssets = [];
             for (const [assetId, amount] of allAssets) {
-                assetList.push({ assetId, amount: Number(amount) });
+                outputAssets.push({ assetId, amount: Number(amount) });
             }
 
-            // TODO change this logic to allow mutiple outputs ?
             const firstOffchainIndex = params.outputs.findIndex(
                 (_, i) => !onchainOutputIndexes.includes(i)
             );
@@ -1164,18 +1164,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     "Cannot settle assets without an offchain output"
                 );
             }
+            assetOutputIndex = firstOffchainIndex;
+        }
 
-            const receivers: Recipient[] = params.outputs.map((output, i) => ({
-                address: output.address,
-                amount: Number(output.amount),
-                assets: i === firstOffchainIndex ? assetList : undefined,
-            }));
+        const recipients: Recipient[] = params.outputs.map((output, i) => ({
+            address: output.address,
+            amount: Number(output.amount),
+            assets: i === assetOutputIndex ? outputAssets : undefined,
+        }));
 
-            const assetPacket = createAssetPacket(
-                assetInputs,
-                receivers,
-                undefined
-            );
+        if (outputAssets && outputAssets.length > 0) {
+            const assetPacket = createAssetPacket(assetInputs, recipients);
             outputs.push(assetPacket.txOut());
         }
 
@@ -1207,6 +1206,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const handler = this.createBatchHandler(
             intentId,
             params.inputs,
+            recipients,
             session
         );
 
@@ -1368,10 +1368,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @param intentId - The intent ID.
      * @param inputs - The inputs of the intent.
      * @param session - The musig2 signing session, if not provided, the signing will be skipped.
+     * @param expectedRecipients - Expected recipients to validate in the vtxo tree.
      */
     createBatchHandler(
         intentId: string,
         inputs: ExtendedCoin[],
+        expectedRecipients: Recipient[],
         session?: SignerSession
     ): Batch.Handler {
         let sweepTapTreeRoot: Uint8Array | undefined;
@@ -1442,7 +1444,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 );
                 validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
 
-                // TODO check if our registered outputs are in the vtxo tree
+                // validate that all expected receivers are in the vtxo tree with correct amounts and assets
+                if (expectedRecipients && expectedRecipients.length > 0) {
+                    validateBatchRecipients(
+                        commitmentTx,
+                        vtxoTree.leaves(),
+                        expectedRecipients,
+                        this.network
+                    );
+                }
 
                 const sharedOutput = commitmentTx.getOutput(0);
                 if (!sharedOutput?.amount) {

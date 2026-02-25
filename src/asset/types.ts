@@ -8,17 +8,6 @@ export enum AssetInputType {
     Intent = 2,
 }
 
-export function assetTypeToString(type: AssetInputType): string {
-    switch (type) {
-        case AssetInputType.Local:
-            return "local";
-        case AssetInputType.Intent:
-            return "intent";
-        default:
-            return "unspecified";
-    }
-}
-
 export enum AssetRefType {
     Unspecified = 0,
     ByID = 1,

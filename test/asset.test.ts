@@ -9,6 +9,7 @@ import {
     AssetOutput,
     AssetOutputs,
     Metadata,
+    MetadataList,
     AssetGroup,
     Packet,
 } from "../src/asset";
@@ -284,12 +285,25 @@ describe("Metadata", () => {
                 expect(serialized.length).toBeGreaterThan(0);
                 expect(metadata.toString()).toBe(v.serializedHex);
 
-                const hash = metadata.hash();
-                expect(hex.encode(hash)).toBe(v.hash);
-
                 const fromString = Metadata.fromString(v.serializedHex);
                 expect(fromString.keyString).toBe(v.key);
                 expect(fromString.valueString).toBe(v.value);
+            });
+        });
+    });
+
+    describe("hash", () => {
+        metadataFixtures.valid.hash.forEach((v) => {
+            it(v.name, () => {
+                const items = v.metadata.map(
+                    (m: { key: string; value: string }) => {
+                        const key = new TextEncoder().encode(m.key);
+                        const value = new TextEncoder().encode(m.value);
+                        return Metadata.create(key, value);
+                    }
+                );
+                const hash = new MetadataList(items).hash();
+                expect(hex.encode(hash)).toBe(v.expectedHash);
             });
         });
     });
@@ -313,6 +327,16 @@ describe("Metadata", () => {
                     expect(() => Metadata.fromString(v.serializedHex)).toThrow(
                         v.expectedError
                     );
+                });
+            });
+        });
+
+        describe("metadata list from string", () => {
+            metadataFixtures.invalid.newMetadataListFromString.forEach((v) => {
+                it(v.name, () => {
+                    expect(() =>
+                        MetadataList.fromString(v.serializedHex)
+                    ).toThrow(v.expectedError);
                 });
             });
         });
