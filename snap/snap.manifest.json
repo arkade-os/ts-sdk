@@ -1,0 +1,30 @@
+{
+  "version": "1.0.0",
+  "description": "MetaMask Snap for Bitcoin signing with Taproot support",
+  "proposedName": "Bitcoin Signing Snap",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/arkade-os/ts-sdk.git"
+  },
+  "source": {
+    "shasum": "CsfavDkx2q7iztiaS2oMbCmEqvE7qPzYwx4IPa3UpD8=",
+    "location": {
+      "npm": {
+        "filePath": "dist/bundle.js",
+        "iconPath": "images/icon.svg",
+        "packageName": "@arkade-os/bitcoin-snap",
+        "registry": "https://registry.npmjs.org/"
+      }
+    }
+  },
+  "initialPermissions": {
+    "snap_dialog": {},
+    "snap_manageState": {},
+    "snap_getEntropy": {},
+    "endowment:rpc": {
+      "dapps": true
+    }
+  },
+  "platformVersion": "6.24.0",
+  "manifestVersion": "0.1"
+}
