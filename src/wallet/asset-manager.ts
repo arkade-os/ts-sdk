@@ -272,7 +272,7 @@ export class AssetManager
         const reissueInputs: AssetInput[] = [];
         for (const [inputIndex, assets] of assetInputs) {
             for (const asset of assets) {
-                if (asset.assetId != params.assetId) continue;
+                if (asset.assetId !== params.assetId) continue;
                 reissueInputs.push(
                     AssetInput.create(inputIndex, BigInt(asset.amount))
                 );

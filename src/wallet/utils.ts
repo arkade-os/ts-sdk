@@ -1,4 +1,3 @@
-import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { Recipient } from ".";
 import {
     ArkAddress,

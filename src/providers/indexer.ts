@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { AssetDetails, Outpoint, VirtualCoin } from "../wallet";
+import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator } from "./utils";
 import { MetadataList } from "../asset";
@@ -601,20 +601,21 @@ interface GetAssetResponse {
     metadata?: string;
 }
 
-function parseAssetMetadata(metadata: string): Record<string, unknown> {
+function parseAssetMetadata(metadata: string): AssetMetadata {
     const metadataList = MetadataList.fromString(metadata);
     const out: Record<string, unknown> = {};
+    const decoder = new TextDecoder();
     for (const { key, value } of metadataList.items) {
-        const keyString = new TextDecoder().decode(key);
+        const keyString = decoder.decode(key);
         switch (keyString) {
             case "decimals":
-                const n = Number(new TextDecoder().decode(value));
+                const n = Number(decoder.decode(value));
                 out[keyString] = Number.isFinite(n) ? n : hex.encode(value);
                 break;
             case "name":
             case "ticker":
             case "icon":
-                out[keyString] = new TextDecoder().decode(value);
+                out[keyString] = decoder.decode(value);
                 break;
             default:
                 out[keyString] = hex.encode(value);
