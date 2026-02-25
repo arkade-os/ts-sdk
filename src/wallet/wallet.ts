@@ -1984,21 +1984,48 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const commitmentTxIds = new Set<string>();
             let batchExpiry: number = Number.MAX_SAFE_INTEGER;
 
+            if (inputs.length !== signedCheckpointTxs.length) {
+                console.warn(
+                    `updateDbAfterOffchainTx: inputs length (${inputs.length}) differs from signedCheckpointTxs length (${signedCheckpointTxs.length})`
+                );
+            }
+
+            const safeLength = Math.min(
+                inputs.length,
+                signedCheckpointTxs.length
+            );
             for (const [inputIndex, input] of inputs.entries()) {
                 const vtxo = extendVirtualCoin(this, input);
 
-                const checkpointB64 = signedCheckpointTxs[inputIndex];
-                const checkpoint = Transaction.fromPSBT(
-                    base64.decode(checkpointB64)
-                );
+                if (
+                    inputIndex < safeLength &&
+                    signedCheckpointTxs[inputIndex]
+                ) {
+                    const checkpoint = Transaction.fromPSBT(
+                        base64.decode(signedCheckpointTxs[inputIndex])
+                    );
 
-                spentVtxos.push({
-                    ...vtxo,
-                    virtualStatus: { ...vtxo.virtualStatus, state: "spent" },
-                    spentBy: checkpoint.id,
-                    arkTxId: arkTxid,
-                    isSpent: true,
-                });
+                    spentVtxos.push({
+                        ...vtxo,
+                        virtualStatus: {
+                            ...vtxo.virtualStatus,
+                            state: "spent",
+                        },
+                        spentBy: checkpoint.id,
+                        arkTxId: arkTxid,
+                        isSpent: true,
+                    });
+                } else {
+                    spentVtxos.push({
+                        ...vtxo,
+                        virtualStatus: {
+                            ...vtxo.virtualStatus,
+                            state: "spent",
+                        },
+                        arkTxId: arkTxid,
+                        isSpent: true,
+                    });
+                }
 
                 if (vtxo.virtualStatus.commitmentTxIds) {
                     for (const id of vtxo.virtualStatus.commitmentTxIds) {
