@@ -19,6 +19,7 @@ import { P2A } from "./anchor";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 import { Transaction } from "./transaction";
+import { ArkAddress } from "../script/address";
 
 export type ArkTxInput = {
     // the script used to spend the vtxo
@@ -348,4 +349,18 @@ export function combineTapscriptSigs(
         });
     }
     return originalTx;
+}
+
+/**
+ * Validates if a given string is a valid Ark address by attempting to decode it.
+ * @param address The Ark address to validate.
+ * @returns True if the address is valid, false otherwise.
+ */
+export function isValidArkAddress(address: string): boolean {
+    try {
+        ArkAddress.decode(address);
+        return true;
+    } catch (e) {
+        return false;
+    }
 }

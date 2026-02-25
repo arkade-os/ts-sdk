@@ -9,6 +9,14 @@ import {
     GetVtxosFilter,
     StorageConfig,
     IReadonlyWallet,
+    IReadonlyAssetManager,
+    IAssetManager,
+    AssetDetails,
+    IssuanceParams,
+    IssuanceResult,
+    ReissuanceParams,
+    BurnParams,
+    Recipient,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
@@ -60,6 +68,16 @@ import {
     WalletUpdaterResponse,
     RequestGetAllSpendingPaths,
     ResponseGetAllSpendingPaths,
+    RequestSend,
+    ResponseSend,
+    RequestGetAssetDetails,
+    ResponseGetAssetDetails,
+    RequestIssue,
+    ResponseIssue,
+    RequestReissue,
+    ResponseReissue,
+    RequestBurn,
+    ResponseBurn,
     DEFAULT_MESSAGE_TAG,
 } from "./wallet-message-handler";
 import type {
@@ -85,6 +103,64 @@ const isPrivateKeyIdentity = (
 ): identity is PrivateKeyIdentity => {
     return typeof (identity as any).toHex === "function";
 };
+
+class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
+    constructor(
+        protected readonly sendMessage: (
+            msg: WalletUpdaterRequest
+        ) => Promise<WalletUpdaterResponse>,
+        protected readonly messageTag: string
+    ) {}
+
+    async getAssetDetails(assetId: string): Promise<AssetDetails> {
+        const message: RequestGetAssetDetails = {
+            tag: this.messageTag,
+            type: "GET_ASSET_DETAILS",
+            id: getRandomId(),
+            payload: { assetId },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseGetAssetDetails).payload.assetDetails;
+    }
+}
+
+class ServiceWorkerAssetManager
+    extends ServiceWorkerReadonlyAssetManager
+    implements IAssetManager
+{
+    async issue(params: IssuanceParams): Promise<IssuanceResult> {
+        const message: RequestIssue = {
+            tag: this.messageTag,
+            type: "ISSUE",
+            id: getRandomId(),
+            payload: { params },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseIssue).payload.result;
+    }
+
+    async reissue(params: ReissuanceParams): Promise<string> {
+        const message: RequestReissue = {
+            tag: this.messageTag,
+            type: "REISSUE",
+            id: getRandomId(),
+            payload: { params },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseReissue).payload.txid;
+    }
+
+    async burn(params: BurnParams): Promise<string> {
+        const message: RequestBurn = {
+            tag: this.messageTag,
+            type: "BURN",
+            id: getRandomId(),
+            payload: { params },
+        };
+        const response = await this.sendMessage(message);
+        return (response as ResponseBurn).payload.txid;
+    }
+}
 
 /**
  * Service Worker-based wallet implementation for browser environments.
@@ -194,6 +270,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
+    private readonly _readonlyAssetManager: IReadonlyAssetManager;
+
+    get assetManager(): IReadonlyAssetManager {
+        return this._readonlyAssetManager;
+    }
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -205,6 +286,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
+        this._readonlyAssetManager = new ServiceWorkerReadonlyAssetManager(
+            (msg) => this.sendMessage(msg),
+            messageTag
+        );
     }
 
     static async create(
@@ -685,6 +770,7 @@ export class ServiceWorkerWallet
     public readonly walletRepository: WalletRepository;
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
+    private readonly _assetManager: IAssetManager;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
@@ -703,6 +789,14 @@ export class ServiceWorkerWallet
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
+        this._assetManager = new ServiceWorkerAssetManager(
+            (msg) => this.sendMessage(msg),
+            messageTag
+        );
+    }
+
+    get assetManager(): IAssetManager {
+        return this._assetManager;
     }
 
     static async create(
@@ -883,6 +977,22 @@ export class ServiceWorkerWallet
             });
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
+        }
+    }
+
+    async send(...recipients: Recipient[]): Promise<string> {
+        const message: RequestSend = {
+            tag: this.messageTag,
+            type: "SEND",
+            id: getRandomId(),
+            payload: { recipients },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseSend).payload.txid;
+        } catch (error) {
+            throw new Error(`Send failed: ${error}`);
         }
     }
 }
