@@ -10,10 +10,13 @@ import {
     CONTRACT_POLL_TASK_TYPE,
 } from "../../worker/expo/processors";
 import { DefaultVtxo } from "../../script/default";
-import { DelegateVtxo } from "../../script/delegate";
 import { ExpoArkProvider } from "../../providers/expoArk";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
-import { extendVirtualCoin, getRandomId } from "../utils";
+import {
+    extendVirtualCoin,
+    extendVtxoFromContract,
+    getRandomId,
+} from "../utils";
 
 // ── Inline type declarations for optional Expo packages ──────────
 // These avoid a hard build-time dependency on expo-background-task
@@ -74,8 +77,6 @@ export interface PersistedBackgroundConfig {
     serverPubKeyHex: string;
     exitTimelockValue: string;
     exitTimelockType: "blocks" | "seconds";
-    /** Optional delegate public key (hex). Present when wallet uses delegate mode. */
-    delegatePubKeyHex?: string;
 }
 
 // ── Public API ───────────────────────────────────────────────────
@@ -145,33 +146,31 @@ export function defineExpoBackgroundTask(
             );
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
 
-            // Reconstruct offchainTapscript for extendVtxo
-            const pubKey = hex.decode(config.pubkeyHex);
-            const serverPubKey = hex.decode(config.serverPubKeyHex);
-            const csvTimelock = {
-                value: BigInt(config.exitTimelockValue),
-                type: config.exitTimelockType as "blocks" | "seconds",
-            };
-            const offchainTapscript = config.delegatePubKeyHex
-                ? new DelegateVtxo.Script({
-                      pubKey,
-                      serverPubKey,
-                      delegatePubKey: hex.decode(config.delegatePubKeyHex),
-                      csvTimelock,
-                  })
-                : new DefaultVtxo.Script({
-                      pubKey,
-                      serverPubKey,
-                      csvTimelock,
-                  });
+            // Reconstruct default offchainTapscript as fallback
+            // for VTXOs not associated with a contract.
+            const defaultTapscript = new DefaultVtxo.Script({
+                pubKey: hex.decode(config.pubkeyHex),
+                serverPubKey: hex.decode(config.serverPubKeyHex),
+                csvTimelock: {
+                    value: BigInt(config.exitTimelockValue),
+                    type: config.exitTimelockType as "blocks" | "seconds",
+                },
+            });
 
             await runTasks(taskQueue, processors, {
                 walletRepository,
                 contractRepository,
                 indexerProvider,
                 arkProvider,
-                extendVtxo: (vtxo) =>
-                    extendVirtualCoin({ offchainTapscript }, vtxo),
+                extendVtxo: (vtxo, contract) => {
+                    if (contract) {
+                        return extendVtxoFromContract(vtxo, contract);
+                    }
+                    return extendVirtualCoin(
+                        { offchainTapscript: defaultTapscript },
+                        vtxo
+                    );
+                },
             });
 
             // Acknowledge outbox results (no foreground to consume them)

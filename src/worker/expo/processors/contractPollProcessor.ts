@@ -60,7 +60,7 @@ export const contractPollProcessor: TaskProcessor = {
                 });
 
                 for (const vtxo of vtxos) {
-                    allVtxos.push(extendVtxo(vtxo));
+                    allVtxos.push(extendVtxo(vtxo, contract));
                 }
 
                 hasMore = page ? vtxos.length === pageSize : false;

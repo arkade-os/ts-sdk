@@ -4,6 +4,7 @@ import type { ContractRepository } from "../../repositories/contractRepository";
 import type { IndexerProvider } from "../../providers/indexer";
 import type { ArkProvider } from "../../providers/ark";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../../wallet";
+import type { Contract } from "../../contracts/types";
 import { getRandomId } from "../../wallet/utils";
 
 /**
@@ -14,7 +15,7 @@ export interface TaskDependencies {
     contractRepository: ContractRepository;
     indexerProvider: IndexerProvider;
     arkProvider: ArkProvider;
-    extendVtxo: (vtxo: VirtualCoin) => ExtendedVirtualCoin;
+    extendVtxo: (vtxo: VirtualCoin, contract?: Contract) => ExtendedVirtualCoin;
 }
 
 /**

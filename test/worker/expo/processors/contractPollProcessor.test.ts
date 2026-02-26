@@ -60,7 +60,10 @@ describe("contractPollProcessor", () => {
                     page: undefined,
                 }),
         };
-        const extendVtxo = vi.fn((vtxo: any) => ({ ...vtxo, extended: true }));
+        const extendVtxo = vi.fn((vtxo: any, _contract?: any) => ({
+            ...vtxo,
+            extended: true,
+        }));
 
         const result = await contractPollProcessor.execute(
             {
@@ -122,6 +125,10 @@ describe("contractPollProcessor", () => {
         );
 
         expect(extendVtxo).toHaveBeenCalledTimes(101);
+        // Verify each call passes the owning contract as the second argument
+        for (const call of extendVtxo.mock.calls) {
+            expect(call[1]).toMatchObject({ id: "contract-a" });
+        }
         expect(result).toEqual({
             taskItemId: "task-1",
             type: CONTRACT_POLL_TASK_TYPE,

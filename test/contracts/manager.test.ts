@@ -13,7 +13,6 @@ import { ContractRepository } from "../../src/repositories";
 import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
-    createMockExtendedVtxo,
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
@@ -35,7 +34,6 @@ describe("ContractManager", () => {
         manager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
             getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: {
@@ -162,7 +160,6 @@ describe("ContractManager", () => {
         const newManager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
             getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
         });
@@ -174,7 +171,6 @@ describe("ContractManager", () => {
         await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
             getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
         });

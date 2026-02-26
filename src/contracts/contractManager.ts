@@ -14,7 +14,8 @@ import {
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
-import { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
+import { VirtualCoin } from "../wallet";
+import { extendVtxoFromContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 
 /**
@@ -36,7 +37,6 @@ import { ContractFilter, ContractRepository } from "../repositories";
  *   indexerProvider,
  *   contractRepository,
  *   walletRepository,
- *   extendVtxo,
  *   getDefaultAddress,
  * });
  *
@@ -184,9 +184,6 @@ export interface ContractManagerConfig {
     /** The wallet repository for VTXO storage (single source of truth) */
     walletRepository: WalletRepository;
 
-    /** Function to extend VirtualCoin to ExtendedVirtualCoin */
-    extendVtxo: (vtxo: VirtualCoin, contract?: Contract) => ExtendedVirtualCoin;
-
     /** Function to get the wallet's default Ark address */
     getDefaultAddress: () => Promise<string>;
 
@@ -215,7 +212,6 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
  * const manager = new ContractManager({
  *   indexerProvider: wallet.indexerProvider,
  *   contractRepository: wallet.contractRepository,
- *   extendVtxo: (vtxo) => extendVirtualCoin(wallet, vtxo),
  *   getDefaultAddress: () => wallet.getAddress(),
  * });
  *
@@ -697,10 +693,8 @@ export class ContractManager implements IContractManager {
             });
 
             for (const vtxo of vtxos) {
-                const ext = this.config.extendVtxo(vtxo, contract);
-
                 allVtxos.push({
-                    ...ext,
+                    ...extendVtxoFromContract(vtxo, contract),
                     contractScript: contract.script,
                 });
             }

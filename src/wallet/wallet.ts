@@ -87,7 +87,6 @@ import {
     IndexedDBWalletRepository,
 } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
-import { Contract } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 
@@ -806,23 +805,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
-            extendVtxo: (vtxo: VirtualCoin, contract?: Contract) => {
-                if (contract) {
-                    const handler = contractHandlers.get(contract.type);
-                    if (handler) {
-                        const script = handler.createScript(contract.params) as
-                            | DefaultVtxo.Script
-                            | DelegateVtxo.Script;
-                        return {
-                            ...vtxo,
-                            forfeitTapLeafScript: script.forfeit(),
-                            intentTapLeafScript: script.forfeit(),
-                            tapTree: script.encode(),
-                        };
-                    }
-                }
-                return extendVirtualCoin(this, vtxo);
-            },
             getDefaultAddress: () => this.getAddress(),
             watcherConfig: this.watcherConfig,
         });
