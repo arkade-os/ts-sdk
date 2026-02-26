@@ -15,13 +15,19 @@ import type {
 } from "../../contracts/contractManager";
 import {
     ArkTransaction,
+    AssetDetails,
+    BurnParams,
     ExtendedCoin,
     GetVtxosFilter,
+    IssuanceParams,
+    IssuanceResult,
     isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
     IWallet,
+    Recipient,
+    ReissuanceParams,
     SendBitcoinParams,
     SettleParams,
     WalletBalance,
@@ -239,6 +245,52 @@ export type ResponseContractEvent = ResponseEnvelope & {
     payload: { event: ContractEvent };
 };
 
+// Asset operations
+export type RequestSend = RequestEnvelope & {
+    type: "SEND";
+    payload: { recipients: Recipient[] };
+};
+export type ResponseSend = ResponseEnvelope & {
+    type: "SEND_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetAssetDetails = RequestEnvelope & {
+    type: "GET_ASSET_DETAILS";
+    payload: { assetId: string };
+};
+export type ResponseGetAssetDetails = ResponseEnvelope & {
+    type: "ASSET_DETAILS";
+    payload: { assetDetails: AssetDetails };
+};
+
+export type RequestIssue = RequestEnvelope & {
+    type: "ISSUE";
+    payload: { params: IssuanceParams };
+};
+export type ResponseIssue = ResponseEnvelope & {
+    type: "ISSUE_SUCCESS";
+    payload: { result: IssuanceResult };
+};
+
+export type RequestReissue = RequestEnvelope & {
+    type: "REISSUE";
+    payload: { params: ReissuanceParams };
+};
+export type ResponseReissue = ResponseEnvelope & {
+    type: "REISSUE_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestBurn = RequestEnvelope & {
+    type: "BURN";
+    payload: { params: BurnParams };
+};
+export type ResponseBurn = ResponseEnvelope & {
+    type: "BURN_SUCCESS";
+    payload: { txid: string };
+};
+
 // WalletUpdater
 export type WalletUpdaterRequest =
     | RequestInitWallet
@@ -261,7 +313,12 @@ export type WalletUpdaterRequest =
     | RequestDeleteContract
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
-    | RequestIsContractManagerWatching;
+    | RequestIsContractManagerWatching
+    | RequestSend
+    | RequestGetAssetDetails
+    | RequestIssue
+    | RequestReissue
+    | RequestBurn;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -290,6 +347,11 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetAllSpendingPaths
         | ResponseIsContractManagerWatching
         | ResponseContractEvent
+        | ResponseSend
+        | ResponseGetAssetDetails
+        | ResponseIssue
+        | ResponseReissue
+        | ResponseBurn
     );
 
 export class WalletMessageHandler
@@ -582,6 +644,63 @@ export class WalletMessageHandler
                         payload: { isWatching },
                     });
                 }
+                case "SEND": {
+                    const { recipients } = (message as RequestSend).payload;
+                    const txid = await (this.wallet as IWallet).send(
+                        ...recipients
+                    );
+                    return this.tagged({
+                        id,
+                        type: "SEND_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "GET_ASSET_DETAILS": {
+                    const { assetId } = (message as RequestGetAssetDetails)
+                        .payload;
+                    const assetDetails =
+                        await this.readonlyWallet.assetManager.getAssetDetails(
+                            assetId
+                        );
+                    return this.tagged({
+                        id,
+                        type: "ASSET_DETAILS",
+                        payload: { assetDetails },
+                    });
+                }
+                case "ISSUE": {
+                    const { params } = (message as RequestIssue).payload;
+                    const result = await (
+                        this.wallet as IWallet
+                    ).assetManager.issue(params);
+                    return this.tagged({
+                        id,
+                        type: "ISSUE_SUCCESS",
+                        payload: { result },
+                    });
+                }
+                case "REISSUE": {
+                    const { params } = (message as RequestReissue).payload;
+                    const txid = await (
+                        this.wallet as IWallet
+                    ).assetManager.reissue(params);
+                    return this.tagged({
+                        id,
+                        type: "REISSUE_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "BURN": {
+                    const { params } = (message as RequestBurn).payload;
+                    const txid = await (
+                        this.wallet as IWallet
+                    ).assetManager.burn(params);
+                    return this.tagged({
+                        id,
+                        type: "BURN_SUCCESS",
+                        payload: { txid },
+                    });
+                }
                 default:
                     console.error("Unknown message type", message);
                     throw new Error("Unknown message");
@@ -636,6 +755,20 @@ export class WalletMessageHandler
         const totalBoarding = confirmed + unconfirmed;
         const totalOffchain = settled + preconfirmed + recoverable;
 
+        // aggregate asset balances from spendable vtxos
+        const assetBalances = new Map<string, number>();
+        for (const vtxo of spendableVtxos) {
+            if (vtxo.assets) {
+                for (const a of vtxo.assets) {
+                    const current = assetBalances.get(a.assetId) ?? 0;
+                    assetBalances.set(a.assetId, current + a.amount);
+                }
+            }
+        }
+        const assets = Array.from(assetBalances.entries()).map(
+            ([assetId, amount]) => ({ assetId, amount })
+        );
+
         return {
             boarding: {
                 confirmed,
@@ -647,6 +780,7 @@ export class WalletMessageHandler
             available: settled + preconfirmed,
             recoverable,
             total: totalBoarding + totalOffchain,
+            assets,
         };
     }
     private async getAllBoardingUtxos(): Promise<ExtendedCoin[]> {

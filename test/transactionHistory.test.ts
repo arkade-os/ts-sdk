@@ -215,6 +215,503 @@ describe("buildTransactionHistory", () => {
         });
     });
 
+    describe("Asset history", () => {
+        const baseDate = new Date("2025-11-01T12:00:00Z");
+        const assetA = "asset-id-aaa";
+        const assetB = "asset-id-bbb";
+
+        it("should include assets on offchain received transaction", async () => {
+            const vtxo: VirtualCoin = {
+                txid: "offchain-rx-tx",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: false,
+                assets: [{ assetId: assetA, amount: 50 }],
+            };
+
+            const txs = await buildTransactionHistory([vtxo], [], new Set());
+
+            expect(txs).toHaveLength(1);
+            expect(txs[0].type).toBe(TxType.TxReceived);
+            expect(txs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: 50 },
+            ]);
+        });
+
+        it("should include assets on batch received transaction", async () => {
+            const commitmentTxId = "batch-commitment-tx";
+            const vtxo: VirtualCoin = {
+                txid: "batch-rx-vtxo",
+                vout: 0,
+                value: 2000,
+                status: { confirmed: true, isLeaf: true },
+                virtualStatus: {
+                    state: "settled",
+                    commitmentTxIds: [commitmentTxId],
+                },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: false,
+                assets: [
+                    { assetId: assetA, amount: 10 },
+                    { assetId: assetB, amount: 20 },
+                ],
+            };
+
+            const txs = await buildTransactionHistory([vtxo], [], new Set());
+
+            expect(txs).toHaveLength(1);
+            expect(txs[0].type).toBe(TxType.TxReceived);
+            expect(txs[0].tag).toBe("batch");
+            expect(txs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: 10 },
+                { assetId: assetB, amount: 20 },
+            ]);
+        });
+
+        it("should not include assets property when vtxos have no assets", async () => {
+            const vtxo: VirtualCoin = {
+                txid: "no-asset-tx",
+                vout: 0,
+                value: 500,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const txs = await buildTransactionHistory([vtxo], [], new Set());
+
+            expect(txs).toHaveLength(1);
+            expect(txs[0]).not.toHaveProperty("assets");
+        });
+
+        it("should subtract assets for offchain sent with change", async () => {
+            const arkTxId = "offchain-sent-ark-tx";
+
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-1",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [{ assetId: assetA, amount: 100 }],
+            };
+
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 400,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+                assets: [{ assetId: assetA, amount: 30 }],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(600);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: -70 },
+            ]);
+        });
+
+        it("should omit assets on sent tx when all assets go to change", async () => {
+            const arkTxId = "offchain-sent-all-change";
+
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-2",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [{ assetId: assetA, amount: 50 }],
+            };
+
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 400,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+                assets: [{ assetId: assetA, amount: 50 }],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(600);
+            expect(sentTxs[0]).not.toHaveProperty("assets");
+        });
+
+        it("should collect assets for offchain sent without change", async () => {
+            const arkTxId = "offchain-sent-no-change";
+
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-3",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [
+                    { assetId: assetA, amount: 40 },
+                    { assetId: assetB, amount: 60 },
+                ],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(1000);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: -40 },
+                { assetId: assetB, amount: -60 },
+            ]);
+        });
+
+        it("should include assets on exit sent with change", async () => {
+            const commitmentTxId = "exit-commitment-with-change";
+
+            const forfeitVtxo: VirtualCoin = {
+                txid: "forfeit-vtxo-1",
+                vout: 0,
+                value: 2000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                settledBy: commitmentTxId,
+                assets: [{ assetId: assetA, amount: 80 }],
+            };
+
+            const changeVtxo: VirtualCoin = {
+                txid: "change-leaf-vtxo",
+                vout: 0,
+                value: 500,
+                status: { confirmed: true, isLeaf: true },
+                virtualStatus: {
+                    state: "settled",
+                    commitmentTxIds: [commitmentTxId],
+                },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+                assets: [{ assetId: assetA, amount: 20 }],
+            };
+
+            const txs = await buildTransactionHistory(
+                [forfeitVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].tag).toBe("exit");
+            expect(sentTxs[0].amount).toBe(1500);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: -60 },
+            ]);
+        });
+
+        it("should include assets on exit sent without change", async () => {
+            const commitmentTxId = "exit-commitment-no-change";
+
+            const forfeitVtxo: VirtualCoin = {
+                txid: "forfeit-vtxo-2",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                settledBy: commitmentTxId,
+                assets: [{ assetId: assetB, amount: 75 }],
+            };
+
+            const txs = await buildTransactionHistory(
+                [forfeitVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].tag).toBe("exit");
+            expect(sentTxs[0].amount).toBe(1000);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetB, amount: -75 },
+            ]);
+        });
+
+        it("should include assets on issuance (self-send with new assets in change)", async () => {
+            const arkTxId = "issuance-ark-tx";
+
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-issuance",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+            };
+
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+                assets: [{ assetId: assetA, amount: 100 }],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(0);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: 100 },
+            ]);
+        });
+
+        it("should include assets on reissuance (change has more assets than spent)", async () => {
+            const arkTxId = "reissuance-ark-tx";
+
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-reissuance",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [{ assetId: assetA, amount: 50 }],
+            };
+
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+                assets: [{ assetId: assetA, amount: 150 }],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(0);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: 100 },
+            ]);
+        });
+
+        it("should include negative assets on burn (self-send with fewer assets in change)", async () => {
+            const arkTxId = "burn-ark-tx";
+
+            // Spent VTXO has assets
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-burn",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [{ assetId: assetA, amount: 100 }],
+            };
+
+            // Change VTXO has all BTC back but no assets (fully burned)
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(0);
+            // Negative = assets lost/burned
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: -100 },
+            ]);
+        });
+
+        it("should handle mixed operation: burn + issuance + transfer in same tx", async () => {
+            const arkTxId = "mixed-ops-ark-tx";
+            const assetC = "asset-id-ccc";
+
+            // Spent VTXO has ASSET_A (will be burned) and ASSET_B (partially transferred)
+            const spentVtxo: VirtualCoin = {
+                txid: "spent-vtxo-mixed",
+                vout: 0,
+                value: 1000,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [
+                    { assetId: assetA, amount: 50 }, // will be fully burned
+                    { assetId: assetB, amount: 80 }, // 30 will be transferred
+                ],
+            };
+
+            // Change VTXO: no ASSET_A (burned), less ASSET_B (transferred), new ASSET_C (issued)
+            const changeVtxo: VirtualCoin = {
+                txid: arkTxId,
+                vout: 0,
+                value: 500,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 1000),
+                isUnrolled: false,
+                isSpent: false,
+                assets: [
+                    { assetId: assetB, amount: 50 }, // kept 50 of 80
+                    { assetId: assetC, amount: 200 }, // newly issued
+                ],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo, changeVtxo],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(500);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetB, amount: -30 }, // transferred/lost
+                { assetId: assetC, amount: 200 }, // issued/gained
+                { assetId: assetA, amount: -50 }, // burned/lost
+            ]);
+        });
+
+        it("should aggregate assets from multiple spent vtxos", async () => {
+            const arkTxId = "multi-spent-ark-tx";
+
+            const spentVtxo1: VirtualCoin = {
+                txid: "multi-spent-1",
+                vout: 0,
+                value: 500,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: baseDate,
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [{ assetId: assetA, amount: 30 }],
+            };
+
+            const spentVtxo2: VirtualCoin = {
+                txid: "multi-spent-2",
+                vout: 0,
+                value: 500,
+                status: { confirmed: false },
+                virtualStatus: { state: "preconfirmed" },
+                createdAt: new Date(baseDate.getTime() + 100),
+                isUnrolled: false,
+                isSpent: true,
+                arkTxId,
+                assets: [
+                    { assetId: assetA, amount: 20 },
+                    { assetId: assetB, amount: 10 },
+                ],
+            };
+
+            const txs = await buildTransactionHistory(
+                [spentVtxo1, spentVtxo2],
+                [],
+                new Set()
+            );
+
+            const sentTxs = txs.filter((t) => t.type === TxType.TxSent);
+            expect(sentTxs).toHaveLength(1);
+            expect(sentTxs[0].amount).toBe(1000);
+            expect(sentTxs[0].assets).toStrictEqual([
+                { assetId: assetA, amount: -50 },
+                { assetId: assetB, amount: -10 },
+            ]);
+        });
+    });
+
     describe("Handles real-life histories correctly", () => {
         transactionHistory.forEach(
             ({

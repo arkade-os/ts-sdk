@@ -1,6 +1,8 @@
-import { Outpoint, VirtualCoin } from "../wallet";
+import { hex } from "@scure/base";
+import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator } from "./utils";
+import { MetadataList } from "../asset";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -71,6 +73,11 @@ export interface TxHistoryRecord {
     settledBy: string;
 }
 
+export interface VtxoAsset {
+    assetId: string;
+    amount: string;
+}
+
 export interface Vtxo {
     outpoint: Outpoint;
     createdAt: string;
@@ -85,6 +92,7 @@ export interface Vtxo {
     commitmentTxids: string[];
     settledBy?: string;
     arkTxid?: string;
+    assets?: VtxoAsset[];
 }
 
 export interface VtxoChain {
@@ -152,6 +160,7 @@ export interface IndexerProvider {
             recoverableOnly?: boolean;
         }
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }>;
+    getAssetDetails(assetId: string): Promise<AssetDetails>;
     subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -524,6 +533,27 @@ export class RestIndexerProvider implements IndexerProvider {
         };
     }
 
+    async getAssetDetails(assetId: string): Promise<AssetDetails> {
+        const url = `${this.serverUrl}/v1/indexer/asset/${encodeURIComponent(assetId)}`;
+        const res = await fetch(url);
+        if (!res.ok) {
+            throw new Error(`Failed to fetch asset details: ${res.statusText}`);
+        }
+        const data = await res.json();
+        if (!Response.isGetAssetResponse(data)) {
+            throw new Error("Invalid get asset response");
+        }
+        const metadata = data.metadata?.length
+            ? parseAssetMetadata(data.metadata)
+            : undefined;
+        return {
+            assetId: data.assetId ?? assetId,
+            supply: Number(data.supply ?? 0),
+            metadata,
+            controlAssetId: data.controlAsset || undefined,
+        };
+    }
+
     async subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
@@ -564,6 +594,37 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 }
 
+interface GetAssetResponse {
+    assetId: string;
+    supply: string;
+    controlAsset?: string;
+    metadata?: string;
+}
+
+function parseAssetMetadata(metadata: string): AssetMetadata {
+    const metadataList = MetadataList.fromString(metadata);
+    const out: Record<string, unknown> = {};
+    const decoder = new TextDecoder();
+    for (const { key, value } of metadataList.items) {
+        const keyString = decoder.decode(key);
+        switch (keyString) {
+            case "decimals":
+                const n = Number(decoder.decode(value));
+                out[keyString] = Number.isFinite(n) ? n : hex.encode(value);
+                break;
+            case "name":
+            case "ticker":
+            case "icon":
+                out[keyString] = decoder.decode(value);
+                break;
+            default:
+                out[keyString] = hex.encode(value);
+                break;
+        }
+    }
+    return out;
+}
+
 function convertVtxo(vtxo: Vtxo): VirtualCoin {
     return {
         txid: vtxo.outpoint.txid,
@@ -590,6 +651,10 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
         isUnrolled: vtxo.isUnrolled,
         isSpent: vtxo.isSpent,
+        assets: vtxo.assets?.map((a) => ({
+            assetId: a.assetId,
+            amount: Number(a.amount),
+        })),
     };
 }
 
@@ -683,6 +748,15 @@ namespace Response {
         return Array.isArray(data) && data.every(isTxid);
     }
 
+    function isVtxoAsset(data: any): data is VtxoAsset {
+        return (
+            typeof data === "object" &&
+            data !== null &&
+            typeof data.assetId === "string" &&
+            typeof data.amount === "string"
+        );
+    }
+
     function isVtxo(data: any): data is Vtxo {
         return (
             typeof data === "object" &&
@@ -699,7 +773,9 @@ namespace Response {
             (!data.settledBy || typeof data.settledBy === "string") &&
             (!data.arkTxid || typeof data.arkTxid === "string") &&
             Array.isArray(data.commitmentTxids) &&
-            data.commitmentTxids.every(isTxid)
+            data.commitmentTxids.every(isTxid) &&
+            (data.assets === undefined ||
+                (Array.isArray(data.assets) && data.assets.every(isVtxoAsset)))
         );
     }
 
@@ -804,6 +880,18 @@ namespace Response {
             Array.isArray(data.vtxos) &&
             data.vtxos.every(isVtxo) &&
             (!data.page || isPageResponse(data.page))
+        );
+    }
+
+    export function isGetAssetResponse(data: any): data is GetAssetResponse {
+        return (
+            typeof data === "object" &&
+            data !== null &&
+            typeof data.assetId === "string" &&
+            typeof data.supply === "string" &&
+            (data.controlAsset === undefined ||
+                typeof data.controlAsset === "string") &&
+            (data.metadata === undefined || typeof data.metadata === "string")
         );
     }
 }

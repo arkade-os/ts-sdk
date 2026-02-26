@@ -3,6 +3,7 @@ import { Wallet } from "../wallet";
 import { RestArkProvider } from "../../providers/ark";
 import type {
     IWallet,
+    IAssetManager,
     WalletBalance,
     WalletConfig,
     SendBitcoinParams,
@@ -11,6 +12,7 @@ import type {
     ArkTransaction,
     ExtendedCoin,
     ExtendedVirtualCoin,
+    Recipient,
 } from "..";
 import type { VirtualCoin } from "..";
 import type { SettlementEvent } from "../../providers/ark";
@@ -300,5 +302,13 @@ export class ExpoWallet implements IWallet {
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
         return this.wallet.settle(params, eventCallback);
+    }
+
+    send(...recipients: Recipient[]): Promise<string> {
+        return this.wallet.send(...recipients);
+    }
+
+    get assetManager(): IAssetManager {
+        return this.wallet.assetManager;
     }
 }
