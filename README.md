@@ -684,6 +684,40 @@ const wallet = await Wallet.create({
 })
 ```
 
+### Using with Node.js
+
+Node.js does not provide a global `EventSource` implementation. The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching. You must polyfill it before using the SDK:
+
+```bash
+npm install eventsource
+```
+
+```typescript
+import { EventSource } from "eventsource";
+(globalThis as any).EventSource = EventSource;
+
+// Now import and use the SDK
+import { Wallet, SingleKey, Ramps } from "@arkade-os/sdk";
+```
+
+If you also need IndexedDB persistence (e.g. for `WalletRepository`), set up the shim before any SDK import:
+
+```typescript
+// Must define `self` BEFORE calling setGlobalVars
+if (typeof self === "undefined") {
+    (globalThis as any).self = globalThis;
+}
+import setGlobalVars from "indexeddbshim/src/node-UnicodeIdentifiers";
+(globalThis as any).window = globalThis;
+setGlobalVars(null, { checkOrigin: false });
+```
+
+> **Note:** `eventsource` and `indexeddbshim` are optional peer dependencies.
+> Without the `EventSource` polyfill, settlement operations will fail with
+> `ReferenceError: EventSource is not defined`.
+
+See [`examples/node/multiple-wallets.ts`](examples/node/multiple-wallets.ts) for a complete working example.
+
 ### Using with Expo/React Native
 
 For React Native and Expo applications where standard EventSource and fetch streaming may not work properly, use the Expo-compatible providers:
