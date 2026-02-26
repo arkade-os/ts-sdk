@@ -15,7 +15,6 @@ import {
 } from "../src/repositories";
 import {
     createDefaultContractParams,
-    createMockExtendedVtxo,
     createMockIndexerProvider,
     TEST_DEFAULT_SCRIPT,
 } from "./contracts/helpers";
@@ -95,7 +94,6 @@ describe("Contracts", () => {
             manager = await ContractManager.create({
                 indexerProvider: mockIndexer,
                 contractRepository: repository,
-                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
                 getDefaultAddress: async () => "default-address",
                 walletRepository: new InMemoryWalletRepository(),
             });
@@ -148,7 +146,6 @@ describe("Contracts", () => {
             manager = await ContractManager.create({
                 indexerProvider: mockIndexer,
                 contractRepository: repository,
-                extendVtxo: (vtxo) => createMockExtendedVtxo(vtxo),
                 getDefaultAddress: async () => "default-address",
                 walletRepository: new InMemoryWalletRepository(),
             });

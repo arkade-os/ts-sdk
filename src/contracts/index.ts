@@ -5,6 +5,8 @@ export * from "./types";
 export { contractHandlers } from "./handlers";
 export { DefaultContractHandler } from "./handlers";
 export type { DefaultContractParams } from "./handlers";
+export { DelegateContractHandler } from "./handlers";
+export type { DelegateContractParams } from "./handlers";
 export { VHTLCContractHandler } from "./handlers";
 export type { VHTLCContractParams } from "./handlers";
 

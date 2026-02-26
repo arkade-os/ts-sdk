@@ -15,6 +15,7 @@ import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
+import { DelegateVtxo } from "./script/delegate";
 import {
     MessageHandler,
     RequestEnvelope,
@@ -203,6 +204,7 @@ import {
     ContractWatcher,
     contractHandlers,
     DefaultContractHandler,
+    DelegateContractHandler,
     VHTLCContractHandler,
     encodeArkContract,
     decodeArkContract,
@@ -226,6 +228,7 @@ import type {
     ContractWatcherConfig,
     ParsedArkContract,
     DefaultContractParams,
+    DelegateContractParams,
     VHTLCContractParams,
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
@@ -256,6 +259,7 @@ export {
     // Script-related
     ArkAddress,
     DefaultVtxo,
+    DelegateVtxo,
     VtxoScript,
     VHTLC,
 
@@ -350,6 +354,7 @@ export {
     ContractWatcher,
     contractHandlers,
     DefaultContractHandler,
+    DelegateContractHandler,
     VHTLCContractHandler,
     encodeArkContract,
     decodeArkContract,
@@ -489,6 +494,7 @@ export type {
     ContractWatcherConfig,
     ParsedArkContract,
     DefaultContractParams,
+    DelegateContractParams,
     VHTLCContractParams,
 
     // Service Worker types

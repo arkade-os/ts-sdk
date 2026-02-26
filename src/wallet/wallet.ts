@@ -87,6 +87,7 @@ import {
     IndexedDBWalletRepository,
 } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 
 export type IncomingFunds =
@@ -390,21 +391,47 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
     }
 
-    // TODO: use contract manager (and repo) will be offline-first
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const address = await this.getAddress();
+        const scriptMap = await this.getScriptMap();
+        const f = filter ?? { withRecoverable: true, withUnrolled: false };
+        const allExtended: ExtendedVirtualCoin[] = [];
 
-        // For now, always fetch fresh data from provider and update cache
-        // In future, we can add cache invalidation logic based on timestamps
-        const vtxos = await this.getVirtualCoins(filter);
-        const extendedVtxos = vtxos.map((vtxo) =>
-            extendVirtualCoin(this, vtxo)
-        );
+        // Query each script separately so we can extend VTXOs with the correct tapscript
+        for (const [scriptHex, vtxoScript] of scriptMap) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts: [scriptHex],
+            });
+
+            let vtxos: VirtualCoin[] = response.vtxos.filter(isSpendable);
+
+            if (!f.withRecoverable) {
+                vtxos = vtxos.filter(
+                    (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
+                );
+            }
+
+            if (f.withUnrolled) {
+                const spentVtxos = response.vtxos.filter(
+                    (vtxo) => !isSpendable(vtxo)
+                );
+                vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
+            }
+
+            for (const vtxo of vtxos) {
+                allExtended.push({
+                    ...vtxo,
+                    forfeitTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.forfeit(),
+                    tapTree: vtxoScript.encode(),
+                });
+            }
+        }
 
         // Update cache with fresh data
-        await this.walletRepository.saveVtxos(address, extendedVtxos);
+        await this.walletRepository.saveVtxos(address, allExtended);
 
-        return extendedVtxos;
+        return allExtended;
     }
 
     protected async getVirtualCoins(
@@ -432,9 +459,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const response = await this.indexerProvider.getVtxos({
-            scripts: [hex.encode(this.offchainTapscript.pkScript)],
-        });
+        const scripts = await this.getWalletScripts();
+        const response = await this.indexerProvider.getVtxos({ scripts });
 
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
@@ -582,12 +608,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         if (this.indexerProvider && arkAddress) {
-            const offchainScript = this.offchainTapscript;
+            const walletScripts = await this.getWalletScripts();
 
             const subscriptionId =
-                await this.indexerProvider.subscribeForScripts([
-                    hex.encode(offchainScript.pkScript),
-                ]);
+                await this.indexerProvider.subscribeForScripts(walletScripts);
 
             const abortController = new AbortController();
             const subscription = this.indexerProvider.getSubscription(
@@ -602,7 +626,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 );
             };
 
-            // Handle subscription updates asynchronously without blocking
+            // Handle subscription updates asynchronously without blocking.
+            // Note: subscription covers all wallet scripts (default + delegate),
+            // but we can't determine which script each VTXO belongs to from the
+            // subscription event. VTXOs are extended with the current offchainTapscript;
+            // this is for notification/display only — not for spending.
+            // For correct extension metadata, use getVtxos() which queries per-script.
             (async () => {
                 try {
                     for await (const update of subscription) {
@@ -637,7 +666,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     async fetchPendingTxs(): Promise<string[]> {
         // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
-        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+        const scripts = await this.getWalletScripts();
         let { vtxos } = await this.indexerProvider.getVtxos({
             scripts,
         });
@@ -649,6 +678,67 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     vtxo.arkTxId !== undefined
             )
             .map((_) => _.arkTxId!);
+    }
+
+    // ========================================================================
+    // Multi-script support (default + delegate addresses)
+    // ========================================================================
+
+    /**
+     * Get all pkScript hex strings for the wallet's own addresses
+     * (both delegate and non-delegate, current and historical).
+     * Falls back to only the current script if ContractManager is not yet initialized.
+     */
+    async getWalletScripts(): Promise<string[]> {
+        if (this._contractManager) {
+            try {
+                const contracts = await this._contractManager.getContracts({
+                    type: ["default", "delegate"],
+                });
+                if (contracts.length > 0) {
+                    return contracts.map((c) => c.script);
+                }
+            } catch {
+                // fall through to current script only
+            }
+        }
+        return [hex.encode(this.offchainTapscript.pkScript)];
+    }
+
+    /**
+     * Build a map of scriptHex → VtxoScript for all wallet contracts,
+     * so VTXOs can be extended with the correct tapscript per contract.
+     */
+    async getScriptMap(): Promise<
+        Map<string, DefaultVtxo.Script | DelegateVtxo.Script>
+    > {
+        const map = new Map<string, DefaultVtxo.Script | DelegateVtxo.Script>();
+
+        // Always include the current script
+        const currentScriptHex = hex.encode(this.offchainTapscript.pkScript);
+        map.set(currentScriptHex, this.offchainTapscript);
+
+        if (this._contractManager) {
+            try {
+                const contracts = await this._contractManager.getContracts({
+                    type: ["default", "delegate"],
+                });
+                for (const contract of contracts) {
+                    if (map.has(contract.script)) continue;
+                    const handler = contractHandlers.get(contract.type);
+                    if (handler) {
+                        const script = handler.createScript(contract.params) as
+                            | DefaultVtxo.Script
+                            | DelegateVtxo.Script;
+                        map.set(contract.script, script);
+                    }
+                }
+            } catch {
+                // ContractManager error — only current script in map
+            }
+        }
+
+        return map;
     }
 
     // ========================================================================
@@ -715,30 +805,81 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
-            extendVtxo: (vtxo: VirtualCoin) => extendVirtualCoin(this, vtxo),
             getDefaultAddress: () => this.getAddress(),
             watcherConfig: this.watcherConfig,
         });
 
-        // Register the wallet's default address as a contract
-        // This ensures it's watched alongside any external contracts
-        // Script is the unique contract identifier, so no need to specify it explicitly
+        // Register the wallet's current address as a contract
         const csvTimelock =
             this.offchainTapscript.options.csvTimelock ??
             DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        await manager.createContract({
-            type: "default",
-            params: {
-                pubKey: hex.encode(this.offchainTapscript.options.pubKey),
-                serverPubKey: hex.encode(
-                    this.offchainTapscript.options.serverPubKey
-                ),
-                csvTimelock: timelockToSequence(csvTimelock).toString(),
-            },
-            script: this.defaultContractScript,
-            address: await this.getAddress(),
-            state: "active",
-        });
+        const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+
+        const isDelegateScript =
+            this.offchainTapscript instanceof DelegateVtxo.Script;
+
+        if (isDelegateScript) {
+            const delegateScript = this
+                .offchainTapscript as DelegateVtxo.Script;
+
+            // Register the delegate contract (current address)
+            await manager.createContract({
+                type: "delegate",
+                params: {
+                    pubKey: hex.encode(delegateScript.options.pubKey),
+                    serverPubKey: hex.encode(
+                        delegateScript.options.serverPubKey
+                    ),
+                    delegatePubKey: hex.encode(
+                        delegateScript.options.delegatePubKey
+                    ),
+                    csvTimelock: csvTimelockStr,
+                },
+                script: this.defaultContractScript,
+                address: await this.getAddress(),
+                state: "active",
+            });
+
+            // Also register the non-delegate version so old VTXOs remain visible
+            const nonDelegateScript = new DefaultVtxo.Script({
+                pubKey: delegateScript.options.pubKey,
+                serverPubKey: delegateScript.options.serverPubKey,
+                csvTimelock,
+            });
+            await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(delegateScript.options.pubKey),
+                    serverPubKey: hex.encode(
+                        delegateScript.options.serverPubKey
+                    ),
+                    csvTimelock: csvTimelockStr,
+                },
+                script: hex.encode(nonDelegateScript.pkScript),
+                address: nonDelegateScript
+                    .address(this.network.hrp, this.arkServerPublicKey)
+                    .encode(),
+                state: "active",
+            });
+        } else {
+            // Register the default contract (current address)
+            await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(this.offchainTapscript.options.pubKey),
+                    serverPubKey: hex.encode(
+                        this.offchainTapscript.options.serverPubKey
+                    ),
+                    csvTimelock: csvTimelockStr,
+                },
+                script: this.defaultContractScript,
+                address: await this.getAddress(),
+                state: "active",
+            });
+
+            // Any old "delegate" contract from a prior wallet incarnation
+            // is already loaded by ContractManager.initialize() from ContractRepository
+        }
 
         return manager;
     }
@@ -1624,22 +1765,37 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const MAX_INPUTS_PER_INTENT = 20;
 
         if (!vtxos || vtxos.length === 0) {
-            // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
-            const scripts = [hex.encode(this.offchainTapscript.pkScript)];
-            let { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos({
-                scripts,
-            });
-            fetchedVtxos = fetchedVtxos.filter(
-                (vtxo) =>
-                    vtxo.virtualStatus.state !== "swept" &&
-                    vtxo.virtualStatus.state !== "settled"
-            );
+            // Query per-script so each VTXO is extended with the correct tapscript
+            const scriptMap = await this.getScriptMap();
+            const allExtended: ExtendedVirtualCoin[] = [];
 
-            if (fetchedVtxos.length === 0) {
+            for (const [scriptHex, vtxoScript] of scriptMap) {
+                const { vtxos: fetchedVtxos } =
+                    await this.indexerProvider.getVtxos({
+                        scripts: [scriptHex],
+                    });
+
+                const pending = fetchedVtxos.filter(
+                    (vtxo) =>
+                        vtxo.virtualStatus.state !== "swept" &&
+                        vtxo.virtualStatus.state !== "settled"
+                );
+
+                for (const vtxo of pending) {
+                    allExtended.push({
+                        ...vtxo,
+                        forfeitTapLeafScript: vtxoScript.forfeit(),
+                        intentTapLeafScript: vtxoScript.forfeit(),
+                        tapTree: vtxoScript.encode(),
+                    });
+                }
+            }
+
+            if (allExtended.length === 0) {
                 return { finalized: [], pending: [] };
             }
 
-            vtxos = fetchedVtxos.map((v) => extendVirtualCoin(this, v));
+            vtxos = allExtended;
         }
         const finalized: string[] = [];
         const pending: string[] = [];

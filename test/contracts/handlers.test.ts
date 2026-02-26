@@ -1,13 +1,21 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
 import { DefaultContractHandler } from "../../src/contracts/handlers/default";
+import { DelegateContractHandler } from "../../src/contracts/handlers/delegate";
 import { VHTLCContractHandler } from "../../src/contracts/handlers/vhtlc";
-import { Contract, contractHandlers, DefaultVtxo } from "../../src";
+import {
+    Contract,
+    contractHandlers,
+    DefaultVtxo,
+    DelegateVtxo,
+} from "../../src";
 import {
     createDefaultContractParams,
+    createDelegateContractParams,
     createMockVtxo,
     TEST_PUB_KEY,
     TEST_SERVER_PUB_KEY,
+    TEST_DELEGATE_PUB_KEY,
 } from "./helpers";
 import { timelockToSequence } from "../../src/contracts/handlers/helpers";
 
@@ -24,6 +32,13 @@ describe("Contract Registry", () => {
         const handler = contractHandlers.get("vhtlc");
         expect(handler).toBeDefined();
         expect(handler?.type).toBe("vhtlc");
+    });
+
+    it("should have delegate handler registered", () => {
+        expect(contractHandlers.has("delegate")).toBe(true);
+        const handler = contractHandlers.get("delegate");
+        expect(handler).toBeDefined();
+        expect(handler?.type).toBe("delegate");
     });
 
     it("should return undefined for unregistered handler", () => {
@@ -281,6 +296,331 @@ describe("DefaultContractHandler", () => {
         );
         expect(mature).toHaveLength(1);
         expect(mature[0].sequence).toBe(Number(params.csvTimelock));
+    });
+});
+
+describe("DelegateContractHandler", () => {
+    it("should create script from params", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+
+        expect(script).toBeDefined();
+        expect(script.pkScript).toBeDefined();
+        // Delegate script should have 3 leaves: forfeit, exit, delegate
+        expect(script.forfeit()).toBeDefined();
+        expect(script.exit()).toBeDefined();
+        expect(script.delegate()).toBeDefined();
+    });
+
+    it("should produce a different pkScript than default with same keys", () => {
+        const defaultParams = createDefaultContractParams();
+        const delegateParams = createDelegateContractParams();
+
+        const defaultScript =
+            DefaultContractHandler.createScript(defaultParams);
+        const delegateScript =
+            DelegateContractHandler.createScript(delegateParams);
+
+        // Same keys but delegate adds a third leaf, so pkScript must differ
+        expect(hex.encode(delegateScript.pkScript)).not.toEqual(
+            hex.encode(defaultScript.pkScript)
+        );
+    });
+
+    it("should serialize and deserialize params", () => {
+        const original = {
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            delegatePubKey: TEST_DELEGATE_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        };
+
+        const serialized = DelegateContractHandler.serializeParams(original);
+        const deserialized =
+            DelegateContractHandler.deserializeParams(serialized);
+
+        expect(deserialized.pubKey).toBeInstanceOf(Uint8Array);
+        expect(deserialized.serverPubKey).toBeInstanceOf(Uint8Array);
+        expect(deserialized.delegatePubKey).toBeInstanceOf(Uint8Array);
+        expect(Array.from(deserialized.pubKey)).toEqual(
+            Array.from(TEST_PUB_KEY)
+        );
+        expect(Array.from(deserialized.delegatePubKey)).toEqual(
+            Array.from(TEST_DELEGATE_PUB_KEY)
+        );
+    });
+
+    it("should produce identical pkScript after serialize roundtrip", () => {
+        const original = {
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            delegatePubKey: TEST_DELEGATE_PUB_KEY,
+            csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+        };
+
+        const serialized = DelegateContractHandler.serializeParams(original);
+        const script1 = DelegateContractHandler.createScript(serialized);
+
+        const deserialized =
+            DelegateContractHandler.deserializeParams(serialized);
+        const reserialized =
+            DelegateContractHandler.serializeParams(deserialized);
+        const script2 = DelegateContractHandler.createScript(reserialized);
+
+        expect(hex.encode(script2.pkScript)).toEqual(
+            hex.encode(script1.pkScript)
+        );
+    });
+
+    it("should select forfeit path when collaborative", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const path = DelegateContractHandler.selectPath(script, contract, {
+            collaborative: true,
+            currentTime: Date.now(),
+        });
+
+        expect(path).toBeDefined();
+        expect(path?.leaf).toBeDefined();
+    });
+
+    it("should select exit path when not collaborative and CSV satisfied", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const path = DelegateContractHandler.selectPath(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+            blockHeight: 300,
+        });
+
+        expect(path).toBeDefined();
+        expect(path?.leaf).toBeDefined();
+    });
+
+    it("should return null when not collaborative and CSV not satisfied", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const path = DelegateContractHandler.selectPath(script, contract, {
+            collaborative: false,
+            currentTime: Date.now(),
+            vtxo: createMockVtxo({
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_time: 1000,
+                },
+            }),
+            blockHeight: 150, // not mature enough
+        });
+
+        expect(path).toBeNull();
+    });
+
+    it("should return 3 paths when collaborative (forfeit + exit + delegate)", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const paths = DelegateContractHandler.getAllSpendingPaths(
+            script,
+            contract,
+            {
+                collaborative: true,
+                currentTime: Date.now(),
+            }
+        );
+
+        // forfeit + exit + delegate = 3
+        expect(paths).toHaveLength(3);
+    });
+
+    it("should return only exit when not collaborative in getAllSpendingPaths", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const paths = DelegateContractHandler.getAllSpendingPaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+            }
+        );
+
+        // only exit
+        expect(paths).toHaveLength(1);
+    });
+
+    it("should return 2 spendable paths when collaborative and CSV satisfied", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const paths = DelegateContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: 300,
+                vtxo: createMockVtxo({
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_time: 1000,
+                    },
+                }),
+            }
+        );
+
+        // forfeit + exit = 2 (delegate path requires manual intervention)
+        expect(paths).toHaveLength(2);
+    });
+
+    it("should enforce CSV for spendable paths", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const vtxo = createMockVtxo({
+            status: { confirmed: true, block_height: 100, block_time: 1000 },
+        });
+
+        // Not mature: only forfeit + delegate (no exit)
+        const notMature = DelegateContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: 150,
+                vtxo,
+            }
+        );
+        // forfeit only (exit not spendable yet, delegate requires manual intervention)
+        expect(notMature).toHaveLength(1);
+
+        // Non-collaborative not mature: no paths at all
+        const nonCollabNotMature = DelegateContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+                blockHeight: 150,
+                vtxo,
+            }
+        );
+        expect(nonCollabNotMature).toHaveLength(0);
+
+        // Mature: forfeit + exit
+        const mature = DelegateContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: 300,
+                vtxo,
+            }
+        );
+        expect(mature).toHaveLength(2);
+    });
+
+    it("should include sequence on exit path when csvTimelock is set", () => {
+        const params = createDelegateContractParams();
+        const script = DelegateContractHandler.createScript(params);
+        const contract: Contract = {
+            type: "delegate",
+            params,
+            script: hex.encode(script.pkScript),
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+
+        const paths = DelegateContractHandler.getSpendablePaths(
+            script,
+            contract,
+            {
+                collaborative: false,
+                currentTime: Date.now(),
+                blockHeight: 300,
+                vtxo: createMockVtxo({
+                    status: {
+                        confirmed: true,
+                        block_height: 100,
+                        block_time: 1000,
+                    },
+                }),
+            }
+        );
+
+        expect(paths).toHaveLength(1);
+        expect(paths[0].sequence).toBe(Number(params.csvTimelock));
     });
 });
 

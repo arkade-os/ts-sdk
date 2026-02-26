@@ -6,6 +6,10 @@ import {
     type ExtendedVirtualCoin,
     type VirtualCoin,
 } from "..";
+import type { Contract } from "../contracts/types";
+import { contractHandlers } from "../contracts/handlers";
+import { DefaultVtxo } from "../script/default";
+import { DelegateVtxo } from "../script/delegate";
 import { ReadonlyWallet } from "./wallet";
 import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils";
@@ -33,6 +37,25 @@ export function extendCoin(
         forfeitTapLeafScript: wallet.boardingTapscript.forfeit(),
         intentTapLeafScript: wallet.boardingTapscript.forfeit(),
         tapTree: wallet.boardingTapscript.encode(),
+    };
+}
+
+export function extendVtxoFromContract(
+    vtxo: VirtualCoin,
+    contract: Contract
+): ExtendedVirtualCoin {
+    const handler = contractHandlers.get(contract.type);
+    if (!handler) {
+        throw new Error(`No handler for contract type '${contract.type}'`);
+    }
+    const script = handler.createScript(contract.params) as
+        | DefaultVtxo.Script
+        | DelegateVtxo.Script;
+    return {
+        ...vtxo,
+        forfeitTapLeafScript: script.forfeit(),
+        intentTapLeafScript: script.forfeit(),
+        tapTree: script.encode(),
     };
 }
 

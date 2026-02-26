@@ -3,7 +3,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     ContractVtxo,
     DefaultContractHandler,
+    DelegateContractHandler,
     DefaultVtxo,
+    DelegateVtxo,
     ExtendedVirtualCoin,
     IndexerProvider,
     VirtualCoin,
@@ -29,6 +31,10 @@ export const createMockIndexerProvider = (): IndexerProvider => ({
 // Test keys for creating valid contracts
 export const TEST_PUB_KEY = new Uint8Array(32).fill(1);
 export const TEST_SERVER_PUB_KEY = new Uint8Array(32).fill(2);
+// Real-looking x-only pubkey (needed for 3-key multisig in DelegateVtxo)
+export const TEST_DELEGATE_PUB_KEY = hex.decode(
+    "f8352deebdf5658d95875d89656112b1dd150f176c702eea4f91a91527e48e26"
+);
 
 // Helper to create valid default contract params
 export const createDefaultContractParams = () =>
@@ -38,12 +44,29 @@ export const createDefaultContractParams = () =>
         csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
     });
 
+// Helper to create valid delegate contract params
+export const createDelegateContractParams = () =>
+    DelegateContractHandler.serializeParams({
+        pubKey: TEST_PUB_KEY,
+        serverPubKey: TEST_SERVER_PUB_KEY,
+        delegatePubKey: TEST_DELEGATE_PUB_KEY,
+        csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+    });
+
 // Create a valid default contract script
 export const testDefaultScript = new DefaultVtxo.Script({
     pubKey: TEST_PUB_KEY,
     serverPubKey: TEST_SERVER_PUB_KEY,
 });
 export const TEST_DEFAULT_SCRIPT = hex.encode(testDefaultScript.pkScript);
+
+// Create a valid delegate contract script
+export const testDelegateScript = new DelegateVtxo.Script({
+    pubKey: TEST_PUB_KEY,
+    serverPubKey: TEST_SERVER_PUB_KEY,
+    delegatePubKey: TEST_DELEGATE_PUB_KEY,
+});
+export const TEST_DELEGATE_SCRIPT = hex.encode(testDelegateScript.pkScript);
 
 // Helper to create a mock VTXO
 export const createMockVtxo = (
