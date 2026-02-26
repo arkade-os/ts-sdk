@@ -133,11 +133,6 @@ export const DelegateContractHandler: ContractHandler<
             paths.push(exitPath);
         }
 
-        // Delegate path is collaborative (requires all 3 parties)
-        if (context.collaborative) {
-            paths.push({ leaf: script.delegate() });
-        }
-
         return paths;
     },
 };

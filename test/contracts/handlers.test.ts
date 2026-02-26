@@ -500,7 +500,7 @@ describe("DelegateContractHandler", () => {
         expect(paths).toHaveLength(1);
     });
 
-    it("should return 3 spendable paths when collaborative and CSV satisfied", () => {
+    it("should return 2 spendable paths when collaborative and CSV satisfied", () => {
         const params = createDelegateContractParams();
         const script = DelegateContractHandler.createScript(params);
         const contract: Contract = {
@@ -529,8 +529,8 @@ describe("DelegateContractHandler", () => {
             }
         );
 
-        // forfeit + exit + delegate = 3
-        expect(paths).toHaveLength(3);
+        // forfeit + exit = 2 (delegate path requires manual intervention)
+        expect(paths).toHaveLength(2);
     });
 
     it("should enforce CSV for spendable paths", () => {
@@ -560,8 +560,8 @@ describe("DelegateContractHandler", () => {
                 vtxo,
             }
         );
-        // forfeit + delegate only (exit not spendable yet)
-        expect(notMature).toHaveLength(2);
+        // forfeit only (exit not spendable yet, delegate requires manual intervention)
+        expect(notMature).toHaveLength(1);
 
         // Non-collaborative not mature: no paths at all
         const nonCollabNotMature = DelegateContractHandler.getSpendablePaths(
@@ -576,7 +576,7 @@ describe("DelegateContractHandler", () => {
         );
         expect(nonCollabNotMature).toHaveLength(0);
 
-        // Mature: all 3
+        // Mature: forfeit + exit
         const mature = DelegateContractHandler.getSpendablePaths(
             script,
             contract,
@@ -587,7 +587,7 @@ describe("DelegateContractHandler", () => {
                 vtxo,
             }
         );
-        expect(mature).toHaveLength(3);
+        expect(mature).toHaveLength(2);
     });
 
     it("should include sequence on exit path when csvTimelock is set", () => {
