@@ -1087,19 +1087,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
-        const intentId = await this.safeRegisterIntent(intent);
-
         const topics = [
             ...signingPublicKeys,
             ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
         ];
-
-        const handler = this.createBatchHandler(
-            intentId,
-            params.inputs,
-            recipients,
-            session
-        );
 
         const abortController = new AbortController();
 
@@ -1107,6 +1098,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const stream = this.arkProvider.getEventStream(
                 abortController.signal,
                 topics
+            );
+
+            const intentId = await this.safeRegisterIntent(intent);
+
+            const handler = this.createBatchHandler(
+                intentId,
+                params.inputs,
+                recipients,
+                session
             );
 
             const commitmentTxid = await Batch.join(stream, handler, {
