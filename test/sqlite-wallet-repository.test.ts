@@ -133,6 +133,11 @@ function createMockSQLExecutor(): SQLExecutor {
                 return;
             }
 
+            if (/^CREATE\s+INDEX/i.test(trimmed)) {
+                // no-op for in-memory mock
+                return;
+            }
+
             throw new Error(`Unsupported SQL in run(): ${trimmed}`);
         },
 

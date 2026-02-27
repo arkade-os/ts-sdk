@@ -29,7 +29,7 @@ interface SQLiteWalletRepositoryOptions {
  */
 export class SQLiteWalletRepository implements WalletRepository {
     readonly version = 1 as const;
-    private initialized = false;
+    private initPromise: Promise<void> | null = null;
     private readonly prefix: string;
     private readonly tables: {
         vtxos: string;
@@ -53,10 +53,11 @@ export class SQLiteWalletRepository implements WalletRepository {
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
-    private async ensureInit(): Promise<void> {
-        if (this.initialized) return;
-        await this.init();
-        this.initialized = true;
+    private ensureInit(): Promise<void> {
+        if (!this.initPromise) {
+            this.initPromise = this.init();
+        }
+        return this.initPromise;
     }
 
     private async init(): Promise<void> {
@@ -124,6 +125,16 @@ export class SQLiteWalletRepository implements WalletRepository {
                 settings_json TEXT
             )
         `);
+
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address ON ${this.tables.vtxos} (address)`
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`
+        );
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
@@ -410,7 +421,7 @@ function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
         } as SerializedTapLeaf,
         status: JSON.parse(row.status_json),
         virtualStatus: JSON.parse(row.virtual_status_json),
-        createdAt: row.created_at,
+        createdAt: new Date(row.created_at),
         isUnrolled: row.is_unrolled === 1,
         isSpent: row.is_spent === null ? undefined : row.is_spent === 1,
         spentBy: row.spent_by ?? undefined,
