@@ -17,12 +17,7 @@ export async function getMigrationStatus(
         if (migration === "in-progress") return "in-progress";
         return "pending";
     } catch (e) {
-        if (
-            e instanceof Error &&
-            e.message.includes(
-                "One of the specified object stores was not found"
-            )
-        )
+        if (e instanceof DOMException && e.name === "NotFoundError")
             return "not-needed";
         throw e;
     }

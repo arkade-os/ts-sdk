@@ -151,8 +151,9 @@ describe("IndexedDB migrations", () => {
         // This is why we simulate exactly this case here.
         const oldStorage = {
             getItem: () => {
-                throw new Error(
-                    "Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found"
+                throw new DOMException(
+                    "One of the specified object stores was not found",
+                    "NotFoundError"
                 );
             },
         } as any;
@@ -176,8 +177,9 @@ describe("getMigrationStatus", () => {
     it("should return 'not-needed' when legacy DB doesn't exist", async () => {
         const oldStorage = {
             getItem: () => {
-                throw new Error(
-                    "Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found"
+                throw new DOMException(
+                    "One of the specified object stores was not found",
+                    "NotFoundError"
                 );
             },
         } as any;
@@ -266,8 +268,9 @@ describe("requiresMigration", () => {
     it("should return false for 'not-needed' status", async () => {
         const oldStorage = {
             getItem: () => {
-                throw new Error(
-                    "Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found"
+                throw new DOMException(
+                    "One of the specified object stores was not found",
+                    "NotFoundError"
                 );
             },
         } as any;
