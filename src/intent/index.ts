@@ -139,10 +139,10 @@ export namespace Intent {
     }
 }
 
-const OP_RETURN_EMPTY_PKSCRIPT = new Uint8Array([OP.RETURN]);
+export const OP_RETURN_EMPTY_PKSCRIPT = new Uint8Array([OP.RETURN]);
 const ZERO_32 = new Uint8Array(32).fill(0);
 const MAX_INDEX = 0xffffffff;
-const TAG_INTENT_PROOF = "ark-intent-proof-message";
+export const TAG_INTENT_PROOF = "ark-intent-proof-message";
 
 type ValidatedTxInput = TransactionInput & {
     witnessUtxo: { script: Uint8Array; amount: bigint };
@@ -189,9 +189,22 @@ function validateOutputs(
     return true;
 }
 
-// craftToSpendTx creates the initial transaction that will be spent in the proof
-function craftToSpendTx(message: string, pkScript: Uint8Array): Transaction {
-    const messageHash = hashMessage(message);
+/**
+ * Creates the "to_spend" transaction used by both intent proofs and BIP-322.
+ *
+ * The message is hashed with the given tagged-hash tag before being placed
+ * into the scriptSig as `OP_0 <hash>`.
+ *
+ * @param message - The message to embed
+ * @param pkScript - The scriptPubKey of the signer's address
+ * @param tag - Tagged-hash tag (defaults to the Ark intent proof tag)
+ */
+export function craftToSpendTx(
+    message: string,
+    pkScript: Uint8Array,
+    tag: string = TAG_INTENT_PROOF
+): Transaction {
+    const messageHash = hashMessage(message, tag);
     const tx = new Transaction({
         version: 0,
     });
@@ -279,11 +292,11 @@ function craftToSignTx(
     return tx;
 }
 
-function hashMessage(message: string): Uint8Array {
-    return schnorr.utils.taggedHash(
-        TAG_INTENT_PROOF,
-        new TextEncoder().encode(message)
-    );
+function hashMessage(
+    message: string,
+    tag: string = TAG_INTENT_PROOF
+): Uint8Array {
+    return schnorr.utils.taggedHash(tag, new TextEncoder().encode(message));
 }
 
 function prepareCoinAsIntentProofInput(
