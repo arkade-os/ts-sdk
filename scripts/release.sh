@@ -79,12 +79,12 @@ read VERSION_BUMP
 # Handle pre-release identifiers
 PRERELEASE_ID=""
 if [[ "$VERSION_BUMP" == pre* ]]; then
-    echo "What pre-release identifier? (alpha|beta|rc)"
+    echo "What pre-release identifier? (alpha|beta|rc|next)"
     read PRERELEASE_ID
     
     # Validate pre-release identifier
-    if [[ "$PRERELEASE_ID" != "alpha" && "$PRERELEASE_ID" != "beta" && "$PRERELEASE_ID" != "rc" ]]; then
-        echo "Error: Invalid pre-release identifier. Use alpha, beta, or rc."
+    if [[ "$PRERELEASE_ID" != "alpha" && "$PRERELEASE_ID" != "beta" && "$PRERELEASE_ID" != "rc" && "$PRERELEASE_ID" != "next" ]]; then
+        echo "Error: Invalid pre-release identifier. Use alpha, beta, rc, or next."
         exit 1
     fi
 fi
@@ -93,8 +93,20 @@ if [ "$DRY_RUN" = true ]; then
     # Simulate version bump without making changes
     CURRENT_VERSION=$(node -p "require('./package.json').version")
     echo "Current version: $CURRENT_VERSION"
-    
-    if [[ "$VERSION_BUMP" == pre* && -n "$PRERELEASE_ID" ]]; then
+
+    if [[ "$PRERELEASE_ID" == "next" ]]; then
+        # For next pre-releases, don't bump the base version
+        NEW_VERSION=$(node -e "
+            const v = '$CURRENT_VERSION';
+            const match = v.match(/^(.+)-next\.(\d+)$/);
+            if (match) {
+                console.log(match[1] + '-next.' + (parseInt(match[2]) + 1));
+            } else {
+                console.log(v.replace(/-.*$/, '') + '-next.0');
+            }
+        ")
+        echo "Would create pre-release version: $NEW_VERSION ($PRERELEASE_ID)"
+    elif [[ "$VERSION_BUMP" == pre* && -n "$PRERELEASE_ID" ]]; then
         # For pre-releases with identifier
         NEW_VERSION=$(npm version $VERSION_BUMP --preid=$PRERELEASE_ID --no-git-tag-version --dry-run 2>&1 | sed 's/v//')
         echo "Would create pre-release version: $NEW_VERSION ($PRERELEASE_ID)"
@@ -115,6 +127,8 @@ if [ "$DRY_RUN" = true ]; then
             echo "Would publish to npm with beta tag: pnpm publish --tag beta --dry-run"
         elif [[ "$NEW_VERSION" == *rc* ]]; then
             echo "Would publish to npm with rc tag: pnpm publish --tag rc --dry-run"
+        elif [[ "$NEW_VERSION" == *next* ]]; then
+            echo "Would publish to npm with next tag: pnpm publish --tag next --dry-run"
         else
             echo "Would publish to npm with next tag: pnpm publish --tag next --dry-run"
         fi
@@ -123,7 +137,20 @@ if [ "$DRY_RUN" = true ]; then
     fi
 else
     # Real version bump and publish
-    if [[ "$VERSION_BUMP" == pre* && -n "$PRERELEASE_ID" ]]; then
+    if [[ "$PRERELEASE_ID" == "next" ]]; then
+        # For next pre-releases, don't bump the base version
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        NEXT_VERSION=$(node -e "
+            const v = '$CURRENT_VERSION';
+            const match = v.match(/^(.+)-next\.(\d+)$/);
+            if (match) {
+                console.log(match[1] + '-next.' + (parseInt(match[2]) + 1));
+            } else {
+                console.log(v.replace(/-.*$/, '') + '-next.0');
+            }
+        ")
+        pnpm version $NEXT_VERSION --no-git-tag-version
+    elif [[ "$VERSION_BUMP" == pre* && -n "$PRERELEASE_ID" ]]; then
         # For pre-releases with identifier
         pnpm version $VERSION_BUMP --preid=$PRERELEASE_ID --no-git-tag-version
     else
@@ -163,8 +190,8 @@ else
         elif [[ "$NEW_VERSION" == *rc* ]]; then
             echo "📦 Publishing release candidate..."
             pnpm publish --tag rc
-        else
-            echo "📦 Publishing pre-release..."
+        elif [[ "$NEW_VERSION" == *next* ]]; then
+            echo "📦 Publishing next/nightly release..."
             pnpm publish --tag next
         fi
     else
@@ -185,6 +212,9 @@ if [[ "$NEW_VERSION" == *-* ]]; then
         echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
     elif [[ "$NEW_VERSION" == *rc* ]]; then
         echo "   npm install @arkade-os/ts-sdk@rc"
+        echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
+    elif [[ "$NEW_VERSION" == *next* ]]; then
+        echo "   npm install @arkade-os/ts-sdk@next"
         echo "   npm install @arkade-os/ts-sdk@$NEW_VERSION"
     else
         echo "   npm install @arkade-os/ts-sdk@next"
