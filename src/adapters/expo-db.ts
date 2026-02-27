@@ -1,3 +1,6 @@
+// @deprecated Use `@arkade-os/sdk/adapters/sqlite` with an expo-sqlite SQLExecutor instead.
+// This adapter routes through indexeddbshim which adds unnecessary overhead.
+//
 // Expo IndexedDB polyfill — requires expo-sqlite and indexeddbshim.
 //
 // Separated from ./expo so that consumers who only need the streaming
@@ -16,6 +19,10 @@ export interface SetupExpoDbOptions {
 
 let _initialized = false;
 
+/**
+ * @deprecated Use `@arkade-os/sdk/adapters/sqlite` with an expo-sqlite SQLExecutor instead.
+ * This adapter routes through indexeddbshim which adds unnecessary overhead.
+ */
 export function setupExpoDb(options?: SetupExpoDbOptions): void {
     if (_initialized) return;
 

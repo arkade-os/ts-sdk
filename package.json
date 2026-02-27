@@ -53,6 +53,18 @@
             "require": "./dist/cjs/adapters/asyncStorage.js",
             "default": "./dist/esm/adapters/asyncStorage.js"
         },
+        "./adapters/sqlite": {
+            "types": "./dist/types/adapters/sqlite.d.ts",
+            "import": "./dist/esm/adapters/sqlite.js",
+            "require": "./dist/cjs/adapters/sqlite.js",
+            "default": "./dist/esm/adapters/sqlite.js"
+        },
+        "./adapters/realm": {
+            "types": "./dist/types/adapters/realm.d.ts",
+            "import": "./dist/esm/adapters/realm.js",
+            "require": "./dist/cjs/adapters/realm.js",
+            "default": "./dist/esm/adapters/realm.js"
+        },
         "./worker/expo": {
             "types": "./dist/types/worker/expo/index.d.ts",
             "import": "./dist/esm/worker/expo/index.js",
