@@ -4,6 +4,9 @@ export * from "./inMemory/walletRepository";
 export * from "./inMemory/contractRepository";
 export * from "./indexedDB/contractRepository";
 export * from "./indexedDB/walletRepository";
+export * from "./realm/schemas";
+export * from "./realm/walletRepository";
+export * from "./realm/contractRepository";
 export {
     MIGRATION_KEY,
     migrateWalletRepository,
