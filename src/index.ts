@@ -187,12 +187,17 @@ import {
     IndexedDBContractRepository,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    MIGRATION_KEY,
     migrateWalletRepository,
+    requiresMigration,
+    getMigrationStatus,
+    rollbackMigration,
     WalletRepositoryImpl,
     ContractRepositoryImpl,
     WalletRepository,
     ContractRepository,
 } from "./repositories";
+import type { MigrationStatus } from "./repositories";
 import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
@@ -319,7 +324,11 @@ export {
     IndexedDBContractRepository,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    MIGRATION_KEY,
     migrateWalletRepository,
+    requiresMigration,
+    getMigrationStatus,
+    rollbackMigration,
     WalletRepositoryImpl,
     ContractRepositoryImpl,
 
@@ -511,4 +520,5 @@ export type {
     // Repositories
     WalletRepository,
     ContractRepository,
+    MigrationStatus,
 };

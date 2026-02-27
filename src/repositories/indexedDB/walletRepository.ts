@@ -24,6 +24,7 @@ import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
  * IndexedDB-based implementation of WalletRepository.
  */
 export class IndexedDBWalletRepository implements WalletRepository {
+    readonly version = 1 as const;
     private db: IDBDatabase | null = null;
 
     constructor(private readonly dbName: string = DEFAULT_DB_NAME) {}

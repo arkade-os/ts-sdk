@@ -2,28 +2,41 @@ import { StorageAdapter } from "../../storage";
 import { WalletRepository } from "../walletRepository";
 import { WalletRepositoryImpl } from "./walletRepositoryImpl";
 
-const MIGRATION_KEY = (repoType: "wallet" | "contract") =>
+export const MIGRATION_KEY = (repoType: "wallet" | "contract") =>
     `migration-from-storage-adapter-${repoType}`;
 
-const requiresMigration = async (
+export type MigrationStatus = "pending" | "in-progress" | "done" | "not-needed";
+
+export async function getMigrationStatus(
     repoType: "wallet" | "contract",
     storageAdapter: StorageAdapter
-): Promise<boolean> => {
+): Promise<MigrationStatus> {
     try {
         const migration = await storageAdapter.getItem(MIGRATION_KEY(repoType));
-        return migration !== "done";
+        if (migration === "done") return "done";
+        if (migration === "in-progress") return "in-progress";
+        return "pending";
     } catch (e) {
-        // failed because there is no legacy DB - no migation needed
-        if (
-            e instanceof Error &&
-            e.message.includes(
-                "One of the specified object stores was not found"
-            )
-        )
-            return false;
+        if (e instanceof DOMException && e.name === "NotFoundError")
+            return "not-needed";
         throw e;
     }
-};
+}
+
+export async function requiresMigration(
+    repoType: "wallet" | "contract",
+    storageAdapter: StorageAdapter
+): Promise<boolean> {
+    const status = await getMigrationStatus(repoType, storageAdapter);
+    return status === "pending" || status === "in-progress";
+}
+
+export async function rollbackMigration(
+    repoType: "wallet" | "contract",
+    storageAdapter: StorageAdapter
+): Promise<void> {
+    await storageAdapter.removeItem(MIGRATION_KEY(repoType));
+}
 
 /**
  * Migrate wallet data from the legacy storage adapter to the new one.
@@ -40,6 +53,8 @@ export async function migrateWalletRepository(
 ): Promise<void> {
     const migrate = await requiresMigration("wallet", storageAdapter);
     if (!migrate) return;
+
+    await storageAdapter.setItem(MIGRATION_KEY("wallet"), "in-progress");
 
     const old = new WalletRepositoryImpl(storageAdapter);
 
