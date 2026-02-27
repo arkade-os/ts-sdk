@@ -165,7 +165,7 @@ else
     git tag "v$NEW_VERSION"
 
     # Commit the package.json changes
-    git add package.json
+    git add package.json pnpm-lock.yaml
     
     # Use appropriate commit message
     if [[ "$NEW_VERSION" == *-* ]]; then
