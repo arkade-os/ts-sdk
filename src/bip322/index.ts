@@ -99,11 +99,18 @@ export namespace BIP322 {
         address: string,
         network?: BTC_NETWORK
     ): boolean {
-        const decoded = Address(network).decode(address);
-        const pkScript = OutScript.encode(decoded);
+        let decoded;
+        let pkScript;
+        let witnessItems;
 
-        // Decode the witness
-        const witnessItems = RawWitness.decode(base64.decode(signature));
+        try {
+            decoded = Address(network).decode(address);
+            pkScript = OutScript.encode(decoded);
+            witnessItems = RawWitness.decode(base64.decode(signature));
+        } catch {
+            return false;
+        }
+
         if (witnessItems.length === 0) {
             return false;
         }

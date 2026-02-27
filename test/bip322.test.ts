@@ -176,6 +176,24 @@ describe("BIP322", () => {
             const valid = BIP322.verify("Hello World", b64, P2TR_ADDRESS);
             expect(valid).toBe(false);
         });
+
+        it("should return false for malformed address", () => {
+            const valid = BIP322.verify(
+                "Hello World",
+                SIGHASH_ALL_SIGNATURE,
+                "not-a-valid-address"
+            );
+            expect(valid).toBe(false);
+        });
+
+        it("should return false for invalid base64 signature", () => {
+            const valid = BIP322.verify(
+                "Hello World",
+                "!!!not-base64!!!",
+                P2TR_ADDRESS
+            );
+            expect(valid).toBe(false);
+        });
     });
 
     describe("sign — address derivation consistency", () => {
