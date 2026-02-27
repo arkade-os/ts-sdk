@@ -8,6 +8,7 @@ import {
 } from "@scure/btc-signer";
 import type { BTC_NETWORK } from "@scure/btc-signer/utils.js";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
+import { equalBytes } from "@noble/curves/utils.js";
 import { base64 } from "@scure/base";
 import type { Identity } from "../identity";
 import { Transaction } from "../utils/transaction";
@@ -171,7 +172,7 @@ function verifyP2WPKH(
 
     // Verify the pubkey matches the address hash
     const derived = p2wpkh(pubkey);
-    if (!bytesEqual(derived.hash, addressHash)) {
+    if (!equalBytes(derived.hash, addressHash)) {
         return false;
     }
 
@@ -191,14 +192,6 @@ function verifyP2WPKH(
         prehash: false,
         format: "der",
     });
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-        if (a[i] !== b[i]) return false;
-    }
-    return true;
 }
 
 /**
