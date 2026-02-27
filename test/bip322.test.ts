@@ -112,20 +112,60 @@ describe("BIP322", () => {
         });
     });
 
-    describe("verify — edge cases", () => {
-        it("should throw for non-P2TR address", () => {
-            // P2WPKH address from the BIP-322 spec
-            const p2wpkhAddress = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
-            expect(() =>
-                BIP322.verify(
-                    "Hello World",
-                    SIGHASH_ALL_SIGNATURE,
-                    p2wpkhAddress
-                )
-            ).toThrow("only P2TR addresses are supported");
+    describe("verify — P2WPKH (BIP-322 spec vectors)", () => {
+        // P2WPKH address from the BIP-322 spec, same private key
+        const P2WPKH_ADDRESS = "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l";
+
+        // Deterministic ECDSA signatures from BIP-322 spec
+        const P2WPKH_SIG_EMPTY =
+            "AkcwRAIgM2gBAQqvZX15ZiysmKmQpDrG83avLIT492QBzLnQIxYCIBaTpOaD20qRlEylyxFSeEA2ba9YOixpX8z46TSDtS40ASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=";
+        const P2WPKH_SIG_HELLO =
+            "AkcwRAIgZRfIY3p7/DoVTty6YZbWS71bc5Vct9p9Fia83eRmw2QCICK/ENGfwLtptFluMGs2KsqoNSk89pO7F29zJLUx9a/sASECx/EgAxlkQpQ9hYjgGu6EBCPMVPwVIVJqO4XCsMvViHI=";
+
+        it("should verify P2WPKH signature for empty message", () => {
+            const valid = BIP322.verify("", P2WPKH_SIG_EMPTY, P2WPKH_ADDRESS);
+            expect(valid).toBe(true);
         });
 
-        it("should reject signature with invalid length", () => {
+        it("should verify P2WPKH signature for 'Hello World'", () => {
+            const valid = BIP322.verify(
+                "Hello World",
+                P2WPKH_SIG_HELLO,
+                P2WPKH_ADDRESS
+            );
+            expect(valid).toBe(true);
+        });
+
+        it("should reject P2WPKH signature against wrong message", () => {
+            const valid = BIP322.verify(
+                "Wrong message",
+                P2WPKH_SIG_HELLO,
+                P2WPKH_ADDRESS
+            );
+            expect(valid).toBe(false);
+        });
+
+        it("should reject P2WPKH signature against wrong address", () => {
+            const wrongP2WPKH = "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq";
+            const valid = BIP322.verify(
+                "Hello World",
+                P2WPKH_SIG_HELLO,
+                wrongP2WPKH
+            );
+            expect(valid).toBe(false);
+        });
+    });
+
+    describe("verify — edge cases", () => {
+        it("should throw for unsupported address type", () => {
+            // P2SH address — not supported by BIP-322 simple
+            const p2shAddress = "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy";
+            expect(() =>
+                BIP322.verify("Hello World", SIGHASH_ALL_SIGNATURE, p2shAddress)
+            ).toThrow("unsupported address type");
+        });
+
+        it("should reject P2TR signature with invalid length", () => {
             // Craft a witness with a 32-byte item (not 64 or 65)
             // RawWitness format: varint count, then for each: varint len + bytes
             const invalidSig = new Uint8Array(32).fill(0x42);
