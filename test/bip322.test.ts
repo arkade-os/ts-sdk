@@ -280,6 +280,15 @@ describe("BIP322", () => {
             expect(valid).toBe(false);
         });
 
+        it("should reject external P2PKH signature against wrong address", () => {
+            const valid = BIP322.verify(
+                "This is an example of a signed message.",
+                "H9L5yLFjti0QTHhPyFrZCT1V/MMnBtXKmoiKDZ78NDBjERki6ZTQZdSMCtkgoNmp17By9ItJr8o7ChX0XxY91nk=",
+                "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2"
+            );
+            expect(valid).toBe(false);
+        });
+
         // BIP-137 header 32 (compressed P2PKH, recovery=1) — signed by bip322-js
         // Pubkey: 02f7fb07050d858b3289c2a0305fbac1f5b18233798665c0cbfe133e018b57cafc
         it("should verify BIP-137 header 32 signature at P2PKH address", () => {
@@ -289,6 +298,15 @@ describe("BIP322", () => {
                 "1QDZfWJTVXqHFmJFRkyrnidvHyPyG5bynY"
             );
             expect(valid).toBe(true);
+        });
+
+        it("should reject BIP-137 header 32 signature against wrong message", () => {
+            const valid = BIP322.verify(
+                "Wrong message",
+                "IAtVrymJqo43BCt9f7Dhl6ET4Gg3SmhyvdlW6wn9iWc9PweD7tNM5+qw7xE9/bzlw/Et789AQ2F59YKEnSzQudo=",
+                "1QDZfWJTVXqHFmJFRkyrnidvHyPyG5bynY"
+            );
+            expect(valid).toBe(false);
         });
 
         it("should reject BIP-137 header 32 signature against wrong address", () => {
@@ -309,6 +327,15 @@ describe("BIP322", () => {
                 "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l"
             );
             expect(valid).toBe(true);
+        });
+
+        it("should reject alternative P2WPKH signature against wrong message", () => {
+            const valid = BIP322.verify(
+                "Wrong message",
+                "AkgwRQIhAOzyynlqt93lOKJr+wmmxIens//zPzl9tqIOua93wO6MAiBi5n5EyAcPScOjf1lAqIUIQtr3zKNeavYabHyR8eGhowEhAsfxIAMZZEKUPYWI4BruhAQjzFT8FSFSajuFwrDL1Yhy",
+                "bc1q9vza2e8x573nczrlzms0wvx3gsqjx7vavgkx0l"
+            );
+            expect(valid).toBe(false);
         });
 
         it("should reject alternative P2WPKH signature against wrong address", () => {
@@ -370,6 +397,55 @@ describe("BIP322", () => {
                 P2TR_ADDRESS
             );
             expect(valid).toBe(false);
+        });
+    });
+
+    describe("verify — SIGHASH validation (bip322-js Verifier)", () => {
+        // BIP-322 simple only allows SIGHASH_DEFAULT (64-byte) or SIGHASH_ALL (0x01).
+        // Craft a valid 65-byte schnorr sig with forbidden sighash bytes.
+        function craftP2TRWitnessWithSighash(sighashByte: number): string {
+            // Take the known valid SIGHASH_ALL sig, replace the sighash byte
+            const witness = RawWitness.decode(
+                base64.decode(SIGHASH_ALL_SIGNATURE)
+            );
+            const sig = new Uint8Array(witness[0]); // copy
+            sig[64] = sighashByte;
+            return base64.encode(RawWitness.encode([sig]));
+        }
+
+        it("should reject SIGHASH_NONE (0x02)", () => {
+            const tampered = craftP2TRWitnessWithSighash(0x02);
+            expect(BIP322.verify("Hello World", tampered, P2TR_ADDRESS)).toBe(
+                false
+            );
+        });
+
+        it("should reject SIGHASH_SINGLE (0x03)", () => {
+            const tampered = craftP2TRWitnessWithSighash(0x03);
+            expect(BIP322.verify("Hello World", tampered, P2TR_ADDRESS)).toBe(
+                false
+            );
+        });
+
+        it("should reject SIGHASH_ANYONECANPAY (0x80)", () => {
+            const tampered = craftP2TRWitnessWithSighash(0x80);
+            expect(BIP322.verify("Hello World", tampered, P2TR_ADDRESS)).toBe(
+                false
+            );
+        });
+
+        it("should reject SIGHASH_ANYONECANPAY|ALL (0x81)", () => {
+            const tampered = craftP2TRWitnessWithSighash(0x81);
+            expect(BIP322.verify("Hello World", tampered, P2TR_ADDRESS)).toBe(
+                false
+            );
+        });
+
+        it("should reject SIGHASH_ANYONECANPAY|NONE (0x82)", () => {
+            const tampered = craftP2TRWitnessWithSighash(0x82);
+            expect(BIP322.verify("Hello World", tampered, P2TR_ADDRESS)).toBe(
+                false
+            );
         });
     });
 

@@ -173,10 +173,15 @@ function verifyP2TR(
         return false;
     }
 
+    // BIP-322 simple only allows SIGHASH_DEFAULT (64-byte sig) or SIGHASH_ALL (0x01).
+    const sighashType = sig.length === 65 ? sig[64] : SigHash.DEFAULT;
+    if (sighashType !== SigHash.DEFAULT && sighashType !== SigHash.ALL) {
+        return false;
+    }
+
     const toSpend = craftToSpendTx(message, pkScript, TAG_BIP322);
     const toSign = craftBIP322ToSignP2TR(toSpend, pkScript, pubkey);
 
-    const sighashType = sig.length === 65 ? sig[64] : SigHash.DEFAULT;
     const sighash = toSign.preimageWitnessV1(0, [pkScript], sighashType, [0n]);
 
     const rawSig = sig.length === 65 ? sig.subarray(0, 64) : sig;
