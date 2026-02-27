@@ -434,6 +434,26 @@ console.log('Service fee (sats):', info.fee)
 console.log('Fee address:', info.delegatorAddress)
 ```
 
+### BIP-322 Message Signing
+
+Sign and verify messages using [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki). Supports P2TR (Taproot) signing, and verification for P2TR, P2WPKH, and legacy P2PKH addresses.
+
+```typescript
+import { BIP322, SingleKey } from '@arkade-os/sdk'
+
+const identity = SingleKey.fromHex('your_private_key_hex')
+
+// Sign a message (P2TR key-spend)
+const signature = await BIP322.sign('Hello Bitcoin!', identity)
+
+// Verify against a P2TR address
+const valid = BIP322.verify('Hello Bitcoin!', signature, 'bc1p...')
+
+// Also works with P2WPKH and legacy P2PKH addresses
+BIP322.verify('Hello Bitcoin!', sig, 'bc1q...')  // P2WPKH
+BIP322.verify('Hello Bitcoin!', sig, '1A1zP1...')  // legacy P2PKH
+```
+
 ### Transaction History
 
 ```typescript
