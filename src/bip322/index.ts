@@ -135,8 +135,11 @@ function verifyP2TR(
     pkScript: Uint8Array,
     pubkey: Uint8Array
 ): boolean {
-    // For P2TR key-spend, witness is [schnorr_signature]
-    // Signature can be 64 bytes (SIGHASH_DEFAULT) or 65 bytes (explicit sighash)
+    // P2TR key-spend witness is exactly [schnorr_signature].
+    // Multiple items indicates a script-path spend, which BIP-322 simple doesn't cover.
+    if (witnessItems.length !== 1) {
+        return false;
+    }
     const sig = witnessItems[0];
     if (sig.length !== 64 && sig.length !== 65) {
         return false;
