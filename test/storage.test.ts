@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { IndexedDBWalletRepository } from "../src/repositories/indexedDB/walletRepository";
-import { migrateWalletRepository } from "../src/repositories/migrations/fromStorageAdapter";
+import {
+    migrateWalletRepository,
+    getMigrationStatus,
+    requiresMigration,
+    rollbackMigration,
+    MIGRATION_KEY,
+} from "../src/repositories/migrations/fromStorageAdapter";
 import type {
     ExtendedVirtualCoin,
     ExtendedCoin,
@@ -163,6 +169,205 @@ describe("IndexedDB migrations", () => {
         });
         expect(walletRepoV2.getVtxos).not.toHaveBeenCalled();
         expect(walletRepoV2.saveVtxos).not.toHaveBeenCalled();
+    });
+});
+
+describe("getMigrationStatus", () => {
+    it("should return 'not-needed' when legacy DB doesn't exist", async () => {
+        const oldStorage = {
+            getItem: () => {
+                throw new Error(
+                    "Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found"
+                );
+            },
+        } as any;
+
+        const status = await getMigrationStatus("wallet", oldStorage);
+        expect(status).toBe("not-needed");
+    });
+
+    it("should return 'pending' on fresh legacy DB", async () => {
+        const oldDbName = getUniqueDbName("status-pending");
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        // Initialize the DB by writing something so the object store exists
+        const walletRepo = new WalletRepositoryImpl(oldStorage);
+        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+
+        const status = await getMigrationStatus("wallet", oldStorage);
+        expect(status).toBe("pending");
+    });
+
+    it("should return 'done' after successful migration", async () => {
+        const oldDbName = getUniqueDbName("status-done-old");
+        const newDbName = getUniqueDbName("status-done-new");
+
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        const walletRepo = new WalletRepositoryImpl(oldStorage);
+        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+
+        const fresh = new IndexedDBWalletRepository(newDbName);
+        await migrateWalletRepository(oldStorage, fresh, {
+            onchain: [],
+            offchain: [],
+        });
+
+        const status = await getMigrationStatus("wallet", oldStorage);
+        expect(status).toBe("done");
+    });
+
+    it("should return 'in-progress' when migration was interrupted", async () => {
+        const oldDbName = getUniqueDbName("status-in-progress");
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        // Initialize the DB
+        const walletRepo = new WalletRepositoryImpl(oldStorage);
+        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+
+        // Simulate interrupted migration by setting flag manually
+        await oldStorage.setItem(MIGRATION_KEY("wallet"), "in-progress");
+
+        const status = await getMigrationStatus("wallet", oldStorage);
+        expect(status).toBe("in-progress");
+    });
+});
+
+describe("requiresMigration", () => {
+    it("should return true for 'pending' status", async () => {
+        const oldDbName = getUniqueDbName("requires-pending");
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        const walletRepo = new WalletRepositoryImpl(oldStorage);
+        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+
+        const result = await requiresMigration("wallet", oldStorage);
+        expect(result).toBe(true);
+    });
+
+    it("should return true for 'in-progress' status", async () => {
+        const oldDbName = getUniqueDbName("requires-in-progress");
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        const walletRepo = new WalletRepositoryImpl(oldStorage);
+        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await oldStorage.setItem(MIGRATION_KEY("wallet"), "in-progress");
+
+        const result = await requiresMigration("wallet", oldStorage);
+        expect(result).toBe(true);
+    });
+
+    it("should return false for 'done' status", async () => {
+        const oldDbName = getUniqueDbName("requires-done");
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        const walletRepo = new WalletRepositoryImpl(oldStorage);
+        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await oldStorage.setItem(MIGRATION_KEY("wallet"), "done");
+
+        const result = await requiresMigration("wallet", oldStorage);
+        expect(result).toBe(false);
+    });
+
+    it("should return false for 'not-needed' status", async () => {
+        const oldStorage = {
+            getItem: () => {
+                throw new Error(
+                    "Failed to execute 'transaction' on 'IDBDatabase': One of the specified object stores was not found"
+                );
+            },
+        } as any;
+
+        const result = await requiresMigration("wallet", oldStorage);
+        expect(result).toBe(false);
+    });
+});
+
+describe("rollbackMigration", () => {
+    it("should reset the flag so migration re-runs", async () => {
+        const oldDbName = getUniqueDbName("rollback");
+        const newDbName = getUniqueDbName("rollback-new");
+        const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
+        const walletRepo = new WalletRepositoryImpl(oldStorage);
+        const testAddress = "test-address";
+
+        const vtxo = createMockVtxo("txrollback", 0, 5000);
+        await walletRepo.saveVtxos(testAddress, [vtxo]);
+
+        // First migration
+        const fresh = new IndexedDBWalletRepository(newDbName);
+        await migrateWalletRepository(oldStorage, fresh, {
+            onchain: [],
+            offchain: [testAddress],
+        });
+
+        const statusAfterMigration = await getMigrationStatus(
+            "wallet",
+            oldStorage
+        );
+        expect(statusAfterMigration).toBe("done");
+
+        // Rollback
+        await rollbackMigration("wallet", oldStorage);
+
+        const statusAfterRollback = await getMigrationStatus(
+            "wallet",
+            oldStorage
+        );
+        expect(statusAfterRollback).toBe("pending");
+
+        // Migration should re-run
+        const needsMigration = await requiresMigration("wallet", oldStorage);
+        expect(needsMigration).toBe(true);
+    });
+});
+
+describe("migrateWalletRepository in-progress flag", () => {
+    it("should set 'in-progress' before copying data", async () => {
+        const callOrder: string[] = [];
+
+        const mockStorage = {
+            getItem: vi.fn().mockImplementation(async () => {
+                // No migration flag set yet → pending
+                return null;
+            }),
+            setItem: vi
+                .fn()
+                .mockImplementation(async (key: string, value: string) => {
+                    callOrder.push(`setItem:${value}`);
+                }),
+            removeItem: vi.fn(),
+        } as any;
+
+        const mockOldRepo = {
+            getWalletState: vi.fn().mockImplementation(async () => {
+                callOrder.push("getWalletState");
+                return null;
+            }),
+            getVtxos: vi.fn().mockResolvedValue([]),
+            getUtxos: vi.fn().mockResolvedValue([]),
+            getTransactionHistory: vi.fn().mockResolvedValue([]),
+        };
+
+        // Patch the WalletRepositoryImpl constructor to return our mock
+        const origImpl = WalletRepositoryImpl;
+        vi.spyOn(
+            await import("../src/repositories/migrations/walletRepositoryImpl"),
+            "WalletRepositoryImpl"
+        ).mockImplementation(() => mockOldRepo as any);
+
+        const mockFresh = {
+            saveWalletState: vi.fn(),
+            saveVtxos: vi.fn(),
+            saveUtxos: vi.fn(),
+            saveTransactions: vi.fn(),
+        } as any;
+
+        await migrateWalletRepository(mockStorage, mockFresh, {
+            onchain: [],
+            offchain: [],
+        });
+
+        // Verify "in-progress" was set before data reads
+        expect(callOrder[0]).toBe("setItem:in-progress");
+        // Verify "done" was set at the end
+        expect(callOrder[callOrder.length - 1]).toBe("setItem:done");
+
+        vi.restoreAllMocks();
     });
 });
 
