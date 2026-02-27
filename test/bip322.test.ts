@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { BIP322 } from "../src/bip322";
 import { SingleKey } from "../src/identity/singleKey";
-import { p2tr } from "@scure/btc-signer";
+import { Address, p2tr } from "@scure/btc-signer";
+import { secp256k1 } from "@noble/curves/secp256k1.js";
+import { sha256x2, hash160, concatBytes } from "@scure/btc-signer/utils.js";
+import { base64 } from "@scure/base";
 
 /**
  * Test vectors sourced from:
@@ -151,6 +154,107 @@ describe("BIP322", () => {
                 "Hello World",
                 P2WPKH_SIG_HELLO,
                 wrongP2WPKH
+            );
+            expect(valid).toBe(false);
+        });
+    });
+
+    describe("verify — legacy P2PKH (Bitcoin Core signmessage format)", () => {
+        // Derive P2PKH address from the same test private key
+        const privKeyBytes = Uint8Array.from(
+            PRIVATE_KEY_HEX.match(/.{2}/g)!.map((b) => parseInt(b, 16))
+        );
+        const compressedPub = secp256k1.getPublicKey(privKeyBytes, true);
+        const pubHash = hash160(compressedPub);
+        const P2PKH_ADDRESS = Address().encode({ type: "pkh", hash: pubHash });
+
+        // Helper: create a legacy compact signature from raw crypto
+        function signLegacy(message: string): string {
+            const MAGIC = new TextEncoder().encode(
+                "\x18Bitcoin Signed Message:\n"
+            );
+            const msgBytes = new TextEncoder().encode(message);
+            const varint =
+                msgBytes.length < 253
+                    ? new Uint8Array([msgBytes.length])
+                    : new Uint8Array([
+                          253,
+                          msgBytes.length & 0xff,
+                          (msgBytes.length >> 8) & 0xff,
+                      ]);
+            const msgHash = sha256x2(concatBytes(MAGIC, varint, msgBytes));
+            const rawSig = secp256k1.sign(msgHash, privKeyBytes, {
+                prehash: false,
+            }); // 64 bytes compact
+
+            // Determine recovery ID by trial (sign returns raw bytes, no recovery info)
+            let recoveryId = -1;
+            for (let rid = 0; rid < 4; rid++) {
+                const sig65 = new Uint8Array(65);
+                sig65[0] = rid;
+                sig65.set(rawSig, 1);
+                try {
+                    const recovered = secp256k1.recoverPublicKey(
+                        sig65,
+                        msgHash,
+                        { prehash: false }
+                    );
+                    if (
+                        recovered.length === compressedPub.length &&
+                        recovered.every(
+                            (v: number, i: number) => v === compressedPub[i]
+                        )
+                    ) {
+                        recoveryId = rid;
+                        break;
+                    }
+                } catch {
+                    continue;
+                }
+            }
+            if (recoveryId < 0) throw new Error("could not find recovery id");
+
+            const flag = 31 + recoveryId; // 31 = 27 + 4 (compressed)
+            const compact = new Uint8Array(65);
+            compact[0] = flag;
+            compact.set(rawSig, 1);
+            return base64.encode(compact);
+        }
+
+        it("should verify legacy P2PKH signature for 'Hello World'", () => {
+            const sig = signLegacy("Hello World");
+            const valid = BIP322.verify("Hello World", sig, P2PKH_ADDRESS);
+            expect(valid).toBe(true);
+        });
+
+        it("should verify legacy P2PKH signature for empty message", () => {
+            const sig = signLegacy("");
+            const valid = BIP322.verify("", sig, P2PKH_ADDRESS);
+            expect(valid).toBe(true);
+        });
+
+        it("should reject legacy signature against wrong message", () => {
+            const sig = signLegacy("Hello World");
+            const valid = BIP322.verify("Wrong message", sig, P2PKH_ADDRESS);
+            expect(valid).toBe(false);
+        });
+
+        it("should reject legacy signature against wrong address", () => {
+            const sig = signLegacy("Hello World");
+            // Different P2PKH address
+            const wrongAddr = "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa";
+            const valid = BIP322.verify("Hello World", sig, wrongAddr);
+            expect(valid).toBe(false);
+        });
+
+        it("should reject legacy signature with invalid recovery flag", () => {
+            // Create a signature with an invalid flag byte (< 27)
+            const raw = base64.decode(signLegacy("test"));
+            raw[0] = 10; // invalid flag
+            const valid = BIP322.verify(
+                "test",
+                base64.encode(raw),
+                P2PKH_ADDRESS
             );
             expect(valid).toBe(false);
         });

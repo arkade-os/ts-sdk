@@ -6,7 +6,12 @@ import {
     RawWitness,
     SigHash,
 } from "@scure/btc-signer";
-import type { BTC_NETWORK } from "@scure/btc-signer/utils.js";
+import {
+    type BTC_NETWORK,
+    concatBytes,
+    hash160,
+    sha256x2,
+} from "@scure/btc-signer/utils.js";
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { equalBytes } from "@noble/curves/utils.js";
 import { base64 } from "@scure/base";
@@ -19,7 +24,8 @@ const TAG_BIP322 = "BIP0322-signed-message";
 /**
  * BIP-322 simple message signing and verification.
  *
- * Supports P2TR (Taproot) signing and verification, and P2WPKH verification.
+ * Supports P2TR (Taproot) signing and verification, P2WPKH verification,
+ * and legacy P2PKH verification (Bitcoin Core signmessage format).
  *
  * Reuses the same toSpend/toSign transaction construction as Intent proofs,
  * but with the standard BIP-322 tagged hash ("BIP0322-signed-message")
@@ -82,15 +88,17 @@ export namespace BIP322 {
     }
 
     /**
-     * Verify a BIP-322 simple signature for a P2TR or P2WPKH address.
+     * Verify a BIP-322 signature for a P2TR, P2WPKH, or legacy P2PKH address.
      *
-     * Reconstructs the toSpend and toSign transactions from the message
-     * and address, then verifies the signature from the witness against
-     * the computed sighash.
+     * For segwit addresses (P2TR, P2WPKH), reconstructs the BIP-322
+     * toSpend/toSign transactions and verifies the witness signature.
+     *
+     * For P2PKH addresses, verifies using the Bitcoin Core legacy
+     * `signmessage` format (compact recoverable ECDSA signature).
      *
      * @param message - The original message that was signed
-     * @param signature - Base64-encoded BIP-322 simple signature
-     * @param address - P2TR (bc1p...) or P2WPKH (bc1q...) address of the signer
+     * @param signature - Base64-encoded signature (BIP-322 witness or legacy compact)
+     * @param address - P2TR, P2WPKH, or P2PKH address of the signer
      * @param network - Optional Bitcoin network for address decoding
      * @returns true if the signature is valid
      */
@@ -101,11 +109,31 @@ export namespace BIP322 {
         network?: BTC_NETWORK
     ): boolean {
         let decoded;
+
+        try {
+            decoded = Address(network).decode(address);
+        } catch {
+            return false;
+        }
+
+        // Legacy P2PKH: signature is base64 of 65 raw bytes, not a witness
+        if (decoded.type === "pkh") {
+            try {
+                return verifyLegacy(
+                    message,
+                    base64.decode(signature),
+                    decoded.hash
+                );
+            } catch {
+                return false;
+            }
+        }
+
+        // BIP-322 simple: signature is base64 of RawWitness
         let pkScript;
         let witnessItems;
 
         try {
-            decoded = Address(network).decode(address);
             pkScript = OutScript.encode(decoded);
             witnessItems = RawWitness.decode(base64.decode(signature));
         } catch {
@@ -195,6 +223,76 @@ function verifyP2WPKH(
         prehash: false,
         format: "der",
     });
+}
+
+/**
+ * Verify a legacy Bitcoin Core signmessage signature for a P2PKH address.
+ *
+ * The signature is 65 bytes: [recovery_flag, r(32), s(32)].
+ * The recovery flag encodes both the recovery ID and whether the key is
+ * compressed: flag = 27 + recovery_id (+ 4 if compressed).
+ */
+function verifyLegacy(
+    message: string,
+    sigBytes: Uint8Array,
+    addressHash: Uint8Array
+): boolean {
+    if (sigBytes.length !== 65) {
+        return false;
+    }
+
+    const flag = sigBytes[0];
+    if (flag < 27 || flag > 34) {
+        return false;
+    }
+
+    const compressed = flag >= 31;
+    const recoveryId = compressed ? flag - 31 : flag - 27;
+
+    const compactSig = sigBytes.subarray(1, 65);
+    const msgHash = bitcoinMessageHash(message);
+
+    try {
+        const sig = secp256k1.Signature.fromBytes(
+            compactSig,
+            "compact"
+        ).addRecoveryBit(recoveryId);
+        const point = sig.recoverPublicKey(msgHash);
+        const pubkeyBytes = point.toBytes(compressed);
+
+        return equalBytes(hash160(pubkeyBytes), addressHash);
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Compute the Bitcoin message hash: SHA256d(magic_prefix + CompactSize(len) + message).
+ */
+function bitcoinMessageHash(message: string): Uint8Array {
+    const MAGIC = new TextEncoder().encode("\x18Bitcoin Signed Message:\n");
+    const msgBytes = new TextEncoder().encode(message);
+    return sha256x2(
+        concatBytes(MAGIC, encodeCompactSize(msgBytes.length), msgBytes)
+    );
+}
+
+function encodeCompactSize(n: number): Uint8Array {
+    if (n < 253) return new Uint8Array([n]);
+    if (n <= 0xffff) {
+        const buf = new Uint8Array(3);
+        buf[0] = 253;
+        buf[1] = n & 0xff;
+        buf[2] = (n >> 8) & 0xff;
+        return buf;
+    }
+    const buf = new Uint8Array(5);
+    buf[0] = 254;
+    buf[1] = n & 0xff;
+    buf[2] = (n >> 8) & 0xff;
+    buf[3] = (n >> 16) & 0xff;
+    buf[4] = (n >> 24) & 0xff;
+    return buf;
 }
 
 /**
