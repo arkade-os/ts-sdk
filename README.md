@@ -603,6 +603,8 @@ examples.
 The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 `storage`, the SDK uses IndexedDB repositories with the default database name.
 
+#### Migration from v1 StorageAdapter
+
 > [!WARNING]
 > If you previously used the v1 `StorageAdapter`-based repositories, migrate
 > data into the new IndexedDB repositories before use:
@@ -611,25 +613,53 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > import {
 >   IndexedDBWalletRepository,
 >   IndexedDBContractRepository,
->   migrateWalletRepository
+>   getMigrationStatus,
+>   migrateWalletRepository,
+>   rollbackMigration,
 > } from '@arkade-os/sdk'
 > import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
 >
 > const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
 > const newDbName = 'my-app-db'
->
 > const walletRepository = new IndexedDBWalletRepository(newDbName)
-> await migrateWalletRepository(oldStorage, walletRepository, {
->   onchain: [ 'address-1', 'address-2' ],
->   offchain: [ 'onboarding-address-1' ],
-> })
+>
+> // Check migration status before running
+> const status = await getMigrationStatus('wallet', oldStorage)
+> // status: "not-needed" | "pending" | "in-progress" | "done"
+>
+> if (status === 'pending' || status === 'in-progress') {
+>   try {
+>     await migrateWalletRepository(oldStorage, walletRepository, {
+>       onchain: [ 'address-1', 'address-2' ],
+>       offchain: [ 'onboarding-address-1' ],
+>     })
+>   } catch (err) {
+>     // Reset migration flag so the next attempt starts clean
+>     await rollbackMigration('wallet', oldStorage)
+>     throw err
+>   }
+> }
 > ```
 >
+> **Migration status helpers:**
+>
+> | Helper | Description |
+> |--------|-------------|
+> | `getMigrationStatus(repoType, adapter)` | Returns `"not-needed"` (no legacy DB), `"pending"`, `"in-progress"` (interrupted), or `"done"` |
+> | `requiresMigration(repoType, adapter)` | Returns `true` if status is `"pending"` or `"in-progress"` |
+> | `rollbackMigration(repoType, adapter)` | Removes the migration flag so migration can re-run from scratch |
+> | `MIGRATION_KEY(repoType)` | Returns the storage key used for the migration flag |
+>
+> `migrateWalletRepository` sets an `"in-progress"` flag before copying data.
+> If the process crashes mid-way, the flag remains as `"in-progress"` so the
+> next call to `getMigrationStatus` can detect the partial migration. Old data
+> is never deleted — re-running migration after a rollback is safe.
+>
 > Anything related to contract repository migration must be handled by the package which created them. The SDK doesn't manage contracts in V1. Data remains untouched and persisted in the same old location.
->  
-> If you persisted custom data in the ContractRepository via its `setContractData` method, 
+>
+> If you persisted custom data in the ContractRepository via its `setContractData` method,
 > or a custom collection via `saveToContractCollection`, you'll need to migrate it manually:
-> 
+>
 > ```typescript
 > // Custom data stored in the ContractRepository
 > const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
@@ -639,6 +669,23 @@ The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
 > const customCollection = await oldRepo.getContractCollection('swaps')
 > await contractRepository.saveToContractCollection('swaps', customCollection)
 > ```
+
+#### Repository Versioning
+
+`WalletRepository`, `ContractRepository`, and `SwapRepository` (in
+`@arkade-os/boltz-swap`) each declare a `readonly version` field with a literal
+type. All built-in implementations set this to the current version. If you
+maintain a custom repository implementation, TypeScript will produce a compile
+error when the version is bumped, signaling that a semantic update is required:
+
+```typescript
+import { WalletRepository } from '@arkade-os/sdk'
+
+class MyWalletRepository implements WalletRepository {
+  readonly version = 1 // must match the interface's literal type
+  // ...
+}
+```
 
 Note: `IndexedDB*Repository` requires [indexeddbshim](https://github.com/indexeddbshim/indexeddbshim) in Node or other
 **non-browser environments**. It is a dev dependency of the SDK, so you must
