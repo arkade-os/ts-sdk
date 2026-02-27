@@ -13,6 +13,8 @@ export interface ContractFilter {
 }
 
 export interface ContractRepository extends AsyncDisposable {
+    readonly version: 1;
+
     /**
      * Clear all data from storage.
      */

@@ -63,6 +63,7 @@ const deserializeTapLeaf = (t: { cb: string; s: string }): TapLeafScript => {
  * @deprecated This is only to be used in migration from storage V1
  */
 export class WalletRepositoryImpl implements WalletRepository {
+    readonly version = 1 as const;
     private storage: StorageAdapter;
 
     constructor(storage: StorageAdapter) {

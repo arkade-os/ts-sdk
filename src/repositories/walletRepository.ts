@@ -11,6 +11,8 @@ export type CommitmentTxRecord = {
 };
 
 export interface WalletRepository extends AsyncDisposable {
+    readonly version: 1;
+
     /**
      * Clear all data from storage.
      */

@@ -6,6 +6,7 @@ import { Contract } from "../../contracts";
  * Data is ephemeral and scoped to the instance.
  */
 export class InMemoryContractRepository implements ContractRepository {
+    readonly version = 1 as const;
     private readonly contractData = new Map<string, unknown>();
     private readonly collections = new Map<string, unknown[]>();
     private readonly contractsByScript = new Map<string, Contract>();

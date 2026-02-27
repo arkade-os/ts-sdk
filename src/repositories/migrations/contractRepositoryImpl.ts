@@ -10,6 +10,7 @@ export const getCollectionStorageKey = (type: string) => `collection:${type}`;
  * @deprecated This is only to be used in migration from storage V1
  */
 export class ContractRepositoryImpl implements ContractRepository {
+    readonly version = 1 as const;
     private storage: StorageAdapter;
 
     constructor(storage: StorageAdapter) {

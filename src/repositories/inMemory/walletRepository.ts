@@ -10,6 +10,7 @@ import { WalletRepository, WalletState } from "../walletRepository";
  * Data is ephemeral and scoped to the instance.
  */
 export class InMemoryWalletRepository implements WalletRepository {
+    readonly version = 1 as const;
     private readonly vtxosByAddress = new Map<string, ExtendedVirtualCoin[]>();
     private readonly utxosByAddress = new Map<string, ExtendedCoin[]>();
     private readonly txsByAddress = new Map<string, ArkTransaction[]>();
