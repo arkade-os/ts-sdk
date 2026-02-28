@@ -1087,19 +1087,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
-        const intentId = await this.safeRegisterIntent(intent);
-
         const topics = [
             ...signingPublicKeys,
             ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
         ];
-
-        const handler = this.createBatchHandler(
-            intentId,
-            params.inputs,
-            recipients,
-            session
-        );
 
         const abortController = new AbortController();
 
@@ -1109,7 +1100,36 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 topics
             );
 
-            const commitmentTxid = await Batch.join(stream, handler, {
+            // Prime the async generator to ensure the EventSource connection
+            // is established before registering the intent. Without this,
+            // the generator body (which creates the EventSource) doesn't
+            // execute until Batch.join starts iterating, creating a race
+            // where the server emits batch_started before we're listening.
+            //
+            // Calling .next() without awaiting starts the generator body
+            // (which creates the EventSource), but doesn't block since
+            // the generator will suspend at its first yield.
+            const firstNext = stream.next();
+
+            // Wrap the stream to replay the primed first result
+            const primedStream = (async function* () {
+                const first = await firstNext;
+                if (!first.done) {
+                    yield first.value;
+                }
+                yield* stream;
+            })();
+
+            const intentId = await this.safeRegisterIntent(intent);
+
+            const handler = this.createBatchHandler(
+                intentId,
+                params.inputs,
+                recipients,
+                session
+            );
+
+            const commitmentTxid = await Batch.join(primedStream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
                 eventCallback: eventCallback
