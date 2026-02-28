@@ -1100,6 +1100,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 topics
             );
 
+            // Prime the async generator to ensure the EventSource connection
+            // is established before registering the intent. Without this,
+            // the generator body (which creates the EventSource) doesn't
+            // execute until Batch.join starts iterating, creating a race
+            // where the server emits batch_started before we're listening.
+            //
+            // Calling .next() without awaiting starts the generator body
+            // (which creates the EventSource), but doesn't block since
+            // the generator will suspend at its first yield.
+            const firstNext = stream.next();
+
+            // Wrap the stream to replay the primed first result
+            const primedStream = (async function* () {
+                const first = await firstNext;
+                if (!first.done) {
+                    yield first.value;
+                }
+                yield* stream;
+            })();
+
             const intentId = await this.safeRegisterIntent(intent);
 
             const handler = this.createBatchHandler(
@@ -1109,7 +1129,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 session
             );
 
-            const commitmentTxid = await Batch.join(stream, handler, {
+            const commitmentTxid = await Batch.join(primedStream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
                 eventCallback: eventCallback
