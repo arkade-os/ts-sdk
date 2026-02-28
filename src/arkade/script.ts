@@ -111,10 +111,6 @@ export const ArkadeScript: P.CoderType<ArkadeScriptType> = P.wrap({
     },
 });
 
-// ============================================================================
-// ASM Conversion
-// ============================================================================
-
 /**
  * Convert script operations to ASM (assembly) format.
  * Supports both Bitcoin and Arkade opcodes.
