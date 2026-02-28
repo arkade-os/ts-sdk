@@ -108,9 +108,14 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
                 "Invalid introspector submitTx response: missing signedArkTx"
             );
         }
-        if (!Array.isArray(data.signedCheckpointTxs)) {
+        if (
+            !Array.isArray(data.signedCheckpointTxs) ||
+            !data.signedCheckpointTxs.every(
+                (item: unknown) => typeof item === "string"
+            )
+        ) {
             throw new Error(
-                "Invalid introspector submitTx response: missing signedCheckpointTxs"
+                "Invalid introspector submitTx response: signedCheckpointTxs must be an array of strings"
             );
         }
         return {
@@ -188,9 +193,14 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
         }
 
         const data = await response.json();
-        if (!Array.isArray(data.signedForfeits)) {
+        if (
+            !Array.isArray(data.signedForfeits) ||
+            !data.signedForfeits.every(
+                (item: unknown) => typeof item === "string"
+            )
+        ) {
             throw new Error(
-                "Invalid introspector submitFinalization response: missing signedForfeits"
+                "Invalid introspector submitFinalization response: signedForfeits must be an array of strings"
             );
         }
 

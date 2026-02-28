@@ -102,7 +102,7 @@ function processScripts(
  *
  * @example
  * ```typescript
- * import { ArkadeVtxoScript, ArkadeScript, computeArkadeScriptPublicKey } from "@anthropic/ts-sdk/arkade";
+ * import { ArkadeVtxoScript, ArkadeScript, computeArkadeScriptPublicKey } from "@arkade-os/sdk";
  *
  * // Build an arkade script that checks output 0 goes to a specific address
  * const arkadeScriptBytes = ArkadeScript.encode([
