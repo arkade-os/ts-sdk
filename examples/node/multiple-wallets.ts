@@ -16,6 +16,8 @@
  */
 
 import {
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
     InMemoryContractRepository,
     InMemoryWalletRepository,
     Ramps,
@@ -59,13 +61,14 @@ async function main() {
     console.log("[Bob]\tWallet created successfully!");
     console.log("[Bob]\tArk Address:", bobWallet.arkAddress.encode());
 
+    // IndexedDB-backed wallet (persisted)
     const aliceWallet = await Wallet.create({
         identity: alice,
         arkServerUrl: "http://localhost:7070",
         esploraUrl: "http://localhost:3000",
         storage: {
-            walletRepository: new InMemoryWalletRepository(),
-            contractRepository: new InMemoryContractRepository(),
+            walletRepository: new IndexedDBWalletRepository(),
+            contractRepository: new IndexedDBContractRepository(),
         },
     });
 
@@ -79,10 +82,14 @@ async function main() {
     console.log("[Alice]\tFunding boarding address via nigiri faucet...");
     execSync(`nigiri faucet ${boardingAddress} 0.001`);
 
-    // Wait for the boarding UTXOs to be available
+    // Wait for the boarding UTXOs to be available (timeout after 60s)
     console.log("[Alice]\tWaiting for boarding UTXOs...");
+    const deadline = Date.now() + 60_000;
     let utxos = await aliceWallet.getBoardingUtxos();
     while (utxos.length === 0) {
+        if (Date.now() > deadline) {
+            throw new Error("Timed out waiting for boarding UTXOs");
+        }
         await new Promise((resolve) => setTimeout(resolve, 2000));
         utxos = await aliceWallet.getBoardingUtxos();
     }
@@ -103,7 +110,7 @@ async function main() {
 
     console.log("[Alice]\tBalance:", await aliceWallet.getBalance());
     console.log("[Bob]\tBalance:", await bobWallet.getBalance());
-    console.log("Only Alice's data is persisted in the DB");
+    console.log("Only Alice's data is persisted in IndexedDB");
 }
 
 main().catch(console.error);
