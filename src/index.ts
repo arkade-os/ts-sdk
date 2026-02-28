@@ -145,6 +145,8 @@ import {
     ArkPsbtFieldKeyType,
     CosignerPublicKey,
     VtxoTreeExpiry,
+    ArkadeScriptField,
+    ArkadeScriptWitness,
 } from "./utils/unknownFields";
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
@@ -168,6 +170,14 @@ import {
     SubscriptionHeartbeat,
     SubscriptionEvent,
 } from "./providers/indexer";
+import {
+    RestIntrospectorProvider,
+    type IntrospectorProvider,
+    type IntrospectorInfo,
+    type ConnectorTreeNode,
+} from "./providers/introspector";
+import type { ArkadeExtendedCoin } from "./arkade/batch";
+import type { ArkadeLeaf, ArkadeVtxoInput } from "./arkade/vtxoScript";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -184,6 +194,7 @@ import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
 export * as asset from "./asset";
+export * as arkade from "./arkade";
 
 export {
     // Wallets
@@ -205,6 +216,7 @@ export {
     EsploraProvider,
     RestArkProvider,
     RestIndexerProvider,
+    RestIntrospectorProvider,
 
     // Script-related
     ArkAddress,
@@ -244,6 +256,8 @@ export {
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
+    ArkadeScriptField,
+    ArkadeScriptWitness,
 
     // Utils
     buildOffchainTx,
@@ -339,6 +353,11 @@ export type {
     VtxoChain,
     Tx,
 
+    // Introspector types
+    IntrospectorProvider,
+    IntrospectorInfo,
+    ConnectorTreeNode,
+
     // Provider types
     OnchainProvider,
     ArkProvider,
@@ -404,6 +423,11 @@ export type {
 
     // Anchor
     AnchorBumper,
+
+    // Arkade types
+    ArkadeExtendedCoin,
+    ArkadeLeaf,
+    ArkadeVtxoInput,
 
     // Delegator types
     DelegatorManager,

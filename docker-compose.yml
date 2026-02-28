@@ -95,6 +95,24 @@ services:
             - type: tmpfs
               target: /app/data
 
+    introspector:
+        build:
+            context: .
+            dockerfile: introspector.Dockerfile
+        container_name: introspector
+        depends_on:
+            - arkd
+        ports:
+            - "7073:7073"
+        environment:
+            - INTROSPECTOR_NO_TLS=true
+            - INTROSPECTOR_SECRET_KEY=b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c4
+            - INTROSPECTOR_PORT=7073
+            - INTROSPECTOR_LOG_LEVEL=5
+        volumes:
+            - type: tmpfs
+              target: /app/data
+
     fulmine:
         container_name: fulmine
         depends_on:
