@@ -1,7 +1,6 @@
 import * as bip68 from "bip68";
 import { RawWitness, ScriptNum, Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
-import { hex } from "@scure/base";
 
 /**
  * ArkPsbtFieldKey is the key values for ark psbt fields.
@@ -11,6 +10,8 @@ export enum ArkPsbtFieldKey {
     VtxoTreeExpiry = "expiry",
     Cosigner = "cosigner",
     ConditionWitness = "condition",
+    ArkadeScript = "arkadescript",
+    ArkadeScriptWitness = "arkadescriptwitness",
 }
 
 /**
@@ -75,7 +76,7 @@ export function getArkPsbtFields<T>(
     const fields: T[] = [];
     for (const u of unknown) {
         const v = coder.decode(u);
-        if (v) fields.push(v);
+        if (v !== null) fields.push(v);
     }
     return fields;
 }
@@ -98,7 +99,7 @@ export const VtxoTaprootTree: ArkPsbtFieldCoder<Uint8Array> = {
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.VtxoTaprootTree))
+            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.VtxoTaprootTree))
                 return null;
             return value[1];
         }),
@@ -122,7 +123,7 @@ export const ConditionWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
     ],
     decode: (value) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(value[0], ArkPsbtFieldKey.ConditionWitness))
+            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.ConditionWitness))
                 return null;
             return RawWitness.decode(value[1]);
         }),
@@ -152,7 +153,7 @@ export const CosignerPublicKey: ArkPsbtFieldCoder<{
     ],
     decode: (unknown) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.Cosigner))
+            if (!checkKeyMatch(unknown[0], ArkPsbtFieldKey.Cosigner, true))
                 return null;
             return {
                 index: unknown[0].key[unknown[0].key.length - 1],
@@ -182,7 +183,7 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
     ],
     decode: (unknown) =>
         nullIfCatch(() => {
-            if (!checkKeyIncludes(unknown[0], ArkPsbtFieldKey.VtxoTreeExpiry))
+            if (!checkKeyMatch(unknown[0], ArkPsbtFieldKey.VtxoTreeExpiry))
                 return null;
             const v = ScriptNum(6, true).decode(unknown[1]);
             if (!v) return null;
@@ -191,6 +192,46 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
                 type: blocks ? "blocks" : "seconds",
                 value: BigInt(blocks ?? seconds ?? 0),
             };
+        }),
+};
+
+/**
+ * ArkadeScriptField is set to pass Arkade script data in PSBT
+ */
+export const ArkadeScriptField: ArkPsbtFieldCoder<Uint8Array> = {
+    key: ArkPsbtFieldKey.ArkadeScript,
+    encode: (value) => [
+        {
+            type: ArkPsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkPsbtFieldKey.ArkadeScript],
+        },
+        value,
+    ],
+    decode: (value) =>
+        nullIfCatch(() => {
+            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.ArkadeScript))
+                return null;
+            return value[1];
+        }),
+};
+
+/**
+ * ArkadeScriptWitness is set to pass Arkade script witness data in PSBT
+ */
+export const ArkadeScriptWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
+    key: ArkPsbtFieldKey.ArkadeScriptWitness,
+    encode: (value) => [
+        {
+            type: ArkPsbtFieldKeyType,
+            key: encodedPsbtFieldKey[ArkPsbtFieldKey.ArkadeScriptWitness],
+        },
+        RawWitness.encode(value),
+    ],
+    decode: (value) =>
+        nullIfCatch(() => {
+            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.ArkadeScriptWitness))
+                return null;
+            return RawWitness.decode(value[1]);
         }),
 };
 
@@ -204,17 +245,22 @@ const encodedPsbtFieldKey: Record<string, Uint8Array> = Object.fromEntries(
 const nullIfCatch = <T>(fn: () => T): T | null => {
     try {
         return fn();
-    } catch (err) {
+    } catch {
         return null;
     }
 };
 
-function checkKeyIncludes(
+function checkKeyMatch(
     key: { type: number; key: Uint8Array },
-    arkPsbtFieldKey: ArkPsbtFieldKey
+    arkPsbtFieldKey: ArkPsbtFieldKey,
+    prefixOnly: boolean = false
 ): boolean {
-    const expected = hex.encode(encodedPsbtFieldKey[arkPsbtFieldKey]);
-    return hex
-        .encode(new Uint8Array([key.type, ...key.key]))
-        .includes(expected);
+    if (key.type !== ArkPsbtFieldKeyType) return false;
+    const expected = encodedPsbtFieldKey[arkPsbtFieldKey];
+    if (key.key.length < expected.length) return false;
+    if (!prefixOnly && key.key.length !== expected.length) return false;
+    for (let i = 0; i < expected.length; i++) {
+        if (key.key[i] !== expected[i]) return false;
+    }
+    return true;
 }
