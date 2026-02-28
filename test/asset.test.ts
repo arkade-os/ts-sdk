@@ -619,6 +619,42 @@ describe("Packet", () => {
                 });
             });
         });
+
+        describe("trailing TLV bytes", () => {
+            it("should tolerate trailing bytes after asset groups", () => {
+                // Take a valid packet script (self-controlled asset issuance)
+                // and append trailing TLV bytes to the raw packet data.
+                // The original valid script is:
+                //   6a 12 41524b00 01 020200000001010000c0de810a
+                //   ^  ^  ^        ^  ^
+                //   |  |  |        |  group data (14 bytes)
+                //   |  |  |        varuint count = 1
+                //   |  |  ARK magic + marker
+                //   |  push 18 bytes
+                //   OP_RETURN
+                //
+                // We append 4 trailing bytes (deadbeef) to simulate extra TLV
+                // data that a newer protocol version might include.
+                const scriptWithTrailingBytes =
+                    "6a1641524b0001020200000001010000c0de810adeadbeef";
+
+                const packet = Packet.fromString(scriptWithTrailingBytes);
+                expect(packet).toBeDefined();
+                expect(packet.groups).toHaveLength(1);
+            });
+
+            it("should tolerate trailing bytes when parsing from TxOut", () => {
+                const scriptWithTrailingBytes =
+                    "6a1641524b0001020200000001010000c0de810adeadbeef";
+                const script = hex.decode(scriptWithTrailingBytes);
+
+                expect(Packet.isAssetPacket(script)).toBe(true);
+
+                const packet = Packet.fromTxOut(script);
+                expect(packet).toBeDefined();
+                expect(packet.groups).toHaveLength(1);
+            });
+        });
     });
 
     describe("invalid", () => {

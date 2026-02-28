@@ -133,12 +133,6 @@ export class Packet {
             groups.push(AssetGroup.fromReader(reader));
         }
 
-        if (reader.remaining() > 0) {
-            throw new Error(
-                `invalid packet length, left ${reader.remaining()} unknown bytes to read`
-            );
-        }
-
         const packet = new Packet(groups);
         packet.validate();
         return packet;
