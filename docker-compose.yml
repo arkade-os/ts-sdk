@@ -96,9 +96,7 @@ services:
               target: /app/data
 
     introspector:
-        build:
-            context: .
-            dockerfile: introspector.Dockerfile
+        image: ghcr.io/arklabshq/introspector:v0.0.1-rc.0
         container_name: introspector
         depends_on:
             - arkd
