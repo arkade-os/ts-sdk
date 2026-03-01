@@ -619,6 +619,69 @@ describe("Packet", () => {
                 });
             });
         });
+
+        describe("trailing TLV bytes", () => {
+            it("should tolerate trailing bytes after asset groups", () => {
+                // Take a valid packet script (self-controlled asset issuance)
+                // and append trailing TLV bytes to the raw packet data.
+                // The original valid script is:
+                //   6a 12 41524b00 01 020200000001010000c0de810a
+                //   ^  ^  ^        ^  ^
+                //   |  |  |        |  group data (14 bytes)
+                //   |  |  |        varuint count = 1
+                //   |  |  ARK magic + marker
+                //   |  push 18 bytes
+                //   OP_RETURN
+                //
+                // We append 4 trailing bytes (deadbeef) to simulate extra TLV
+                // data that a newer protocol version might include.
+                const scriptWithTrailingBytes =
+                    "6a1641524b0001020200000001010000c0de810adeadbeef";
+
+                const packet = Packet.fromString(scriptWithTrailingBytes);
+                expect(packet).toBeDefined();
+                expect(packet.groups).toHaveLength(1);
+            });
+
+            it("should tolerate trailing bytes when parsing from TxOut", () => {
+                const scriptWithTrailingBytes =
+                    "6a1641524b0001020200000001010000c0de810adeadbeef";
+                const script = hex.decode(scriptWithTrailingBytes);
+
+                expect(Packet.isAssetPacket(script)).toBe(true);
+
+                const packet = Packet.fromTxOut(script);
+                expect(packet).toBeDefined();
+                expect(packet.groups).toHaveLength(1);
+            });
+        });
+
+        describe("arbitrary TLV record order", () => {
+            it("should find asset record when another record precedes it", () => {
+                // Original: 6a 12 41524b 00 01020200000001010000c0de810a
+                // Reorder to: ARK + [0x01 cafe] + [0x00 asset_data]
+                // The 0x01 0xca 0xfe bytes simulate an unknown/introspector
+                // record placed before the asset record.
+                const reordered =
+                    "6a1541524b" +       // OP_RETURN + push + "ARK"
+                    "01cafe" +           // fake TLV record (type 0x01)
+                    "0001020200000001010000c0de810a"; // asset record
+
+                const packet = Packet.fromString(reordered);
+                expect(packet).toBeDefined();
+                expect(packet.groups).toHaveLength(1);
+            });
+
+            it("should recognize reordered script as asset packet", () => {
+                const reordered =
+                    "6a1541524b" +
+                    "01cafe" +
+                    "0001020200000001010000c0de810a";
+                const script = hex.decode(reordered);
+
+                expect(Packet.isAssetPacket(script)).toBe(true);
+            });
+        });
     });
 
     describe("invalid", () => {
