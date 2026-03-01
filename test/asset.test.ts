@@ -655,6 +655,33 @@ describe("Packet", () => {
                 expect(packet.groups).toHaveLength(1);
             });
         });
+
+        describe("arbitrary TLV record order", () => {
+            it("should find asset record when another record precedes it", () => {
+                // Original: 6a 12 41524b 00 01020200000001010000c0de810a
+                // Reorder to: ARK + [0x01 cafe] + [0x00 asset_data]
+                // The 0x01 0xca 0xfe bytes simulate an unknown/introspector
+                // record placed before the asset record.
+                const reordered =
+                    "6a1541524b" +       // OP_RETURN + push + "ARK"
+                    "01cafe" +           // fake TLV record (type 0x01)
+                    "0001020200000001010000c0de810a"; // asset record
+
+                const packet = Packet.fromString(reordered);
+                expect(packet).toBeDefined();
+                expect(packet.groups).toHaveLength(1);
+            });
+
+            it("should recognize reordered script as asset packet", () => {
+                const reordered =
+                    "6a1541524b" +
+                    "01cafe" +
+                    "0001020200000001010000c0de810a";
+                const script = hex.decode(reordered);
+
+                expect(Packet.isAssetPacket(script)).toBe(true);
+            });
+        });
     });
 
     describe("invalid", () => {

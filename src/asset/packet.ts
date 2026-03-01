@@ -126,19 +126,36 @@ export class Packet {
     }
 
     private static fromReader(reader: BufferReader): Packet {
-        const count = Number(reader.readVarUint());
-        const groups: AssetGroup[] = [];
-
-        for (let i = 0; i < count; i++) {
-            groups.push(AssetGroup.fromReader(reader));
-        }
-
+        const groups = parseAssetGroups(reader);
         const packet = new Packet(groups);
         packet.validate();
         return packet;
     }
 }
 
+/**
+ * Structurally parse asset groups from a BufferReader without logical
+ * validation (e.g. group index bounds).  Used by the trial-parse scanner
+ * to distinguish real asset markers from identical byte values inside
+ * other records.
+ */
+function parseAssetGroups(reader: BufferReader): AssetGroup[] {
+    const count = Number(reader.readVarUint());
+    const groups: AssetGroup[] = [];
+    for (let i = 0; i < count; i++) {
+        groups.push(AssetGroup.fromReader(reader));
+    }
+    return groups;
+}
+
+/**
+ * Extract asset packet bytes from an OP_RETURN script.
+ *
+ * The TLV stream after the ARK magic may contain records in any order.
+ * The asset record is identified by the MarkerAssetPayload (0x00) type
+ * byte. The function scans for the marker and trial-parses to distinguish
+ * real markers from identical byte values embedded inside other records.
+ */
 function extractRawPacketFromScript(script: Uint8Array): Uint8Array {
     if (!script || script.length === 0) {
         throw new Error("missing output script");
@@ -176,19 +193,25 @@ function extractRawPacketFromScript(script: Uint8Array): Uint8Array {
         );
     }
 
-    const marker = payload[ARKADE_MAGIC.length];
-    if (marker !== MARKER_ASSET_PAYLOAD) {
-        throw new Error(
-            `invalid asset marker, got ${marker} want ${MARKER_ASSET_PAYLOAD}`
-        );
+    const tlvData = payload.slice(ARKADE_MAGIC.length);
+
+    // Scan for the asset marker byte — it may not be the first record.
+    for (let i = 0; i < tlvData.length; i++) {
+        if (tlvData[i] !== MARKER_ASSET_PAYLOAD) continue;
+
+        const candidate = tlvData.slice(i + 1);
+        if (candidate.length === 0) continue;
+
+        try {
+            parseAssetGroups(new BufferReader(candidate));
+            return candidate;
+        } catch {
+            // False positive — 0x00 byte is part of another record.
+            continue;
+        }
     }
 
-    const packetData = new Uint8Array(payload.slice(ARKADE_MAGIC.length + 1));
-    if (packetData.length === 0) {
-        throw new Error("missing packet data");
-    }
-
-    return packetData;
+    throw new Error("asset marker not found in TLV stream");
 }
 
 function buildOpReturnScript(data: Uint8Array): Uint8Array {
