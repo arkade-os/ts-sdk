@@ -656,6 +656,36 @@ describe("Packet", () => {
             });
         });
 
+        describe("false marker embedded in preceding TLV record", () => {
+            it("should prefer non-empty candidate over false empty match", () => {
+                // A preceding TLV record with value 0x00 creates a false
+                // "0x00 0x00" sequence. The scanner must prefer the non-empty
+                // candidate (real asset data) over the empty count=0 parse.
+                //
+                // Layout: ARK + [0x02 0x00] + [0x00 asset_data]
+                //   0x02 = fake type, 0x00 = its value (false marker)
+                //   0x00 = real asset marker, then real groups
+                const injected =
+                    "6a1741524b" +       // OP_RETURN + push + "ARK"
+                    "0200" +             // fake TLV record (type 0x02, value 0x00)
+                    "0001020200000001010000c0de810a"; // real asset record
+
+                const packet = Packet.fromString(injected);
+                expect(packet).toBeDefined();
+                expect(packet.groups).toHaveLength(1);
+            });
+
+            it("should recognize false-marker script as asset packet", () => {
+                const injected =
+                    "6a1741524b" +
+                    "0200" +
+                    "0001020200000001010000c0de810a";
+                const script = hex.decode(injected);
+
+                expect(Packet.isAssetPacket(script)).toBe(true);
+            });
+        });
+
         describe("arbitrary TLV record order", () => {
             it("should find asset record when another record precedes it", () => {
                 // Original: 6a 12 41524b 00 01020200000001010000c0de810a

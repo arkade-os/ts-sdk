@@ -196,6 +196,10 @@ function extractRawPacketFromScript(script: Uint8Array): Uint8Array {
     const tlvData = payload.slice(ARKADE_MAGIC.length);
 
     // Scan for the asset marker byte — it may not be the first record.
+    // Prefer non-empty candidates: a 0x00 byte embedded in another record's
+    // value may accidentally parse as count=0 (empty packet). If that happens
+    // we save it as a fallback and keep scanning for a non-empty match.
+    let emptyFallback: Uint8Array | null = null;
     for (let i = 0; i < tlvData.length; i++) {
         if (tlvData[i] !== MARKER_ASSET_PAYLOAD) continue;
 
@@ -203,14 +207,26 @@ function extractRawPacketFromScript(script: Uint8Array): Uint8Array {
         if (candidate.length === 0) continue;
 
         try {
-            parseAssetGroups(new BufferReader(candidate));
-            return candidate;
+            const groups = parseAssetGroups(new BufferReader(candidate));
+            if (groups.length > 0) {
+                // Non-empty: this is definitely the real asset marker.
+                return candidate;
+            }
+            // count=0: could be a genuine empty asset record, or a false
+            // positive from a 0x00 byte inside a preceding TLV record's value.
+            // Save as fallback and keep scanning for a non-empty record.
+            if (emptyFallback === null) {
+                emptyFallback = candidate;
+            }
         } catch {
             // False positive — 0x00 byte is part of another record.
             continue;
         }
     }
 
+    if (emptyFallback !== null) {
+        return emptyFallback;
+    }
     throw new Error("asset marker not found in TLV stream");
 }
 
