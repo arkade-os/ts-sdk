@@ -12,14 +12,26 @@ import {
     sequenceToTimelock,
     timelockToSequence,
 } from "./helpers";
+import {
+    normalizeToDescriptor,
+    extractPubKey,
+} from "../../identity/descriptor";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
+ * pubKey and serverPubKey are descriptor strings (e.g. "tr(hex)" or "tr([fp/path']xpub/0/{index})").
  */
 export interface DefaultContractParams {
-    pubKey: Uint8Array;
-    serverPubKey: Uint8Array;
+    pubKey: string;
+    serverPubKey: string;
     csvTimelock: RelativeTimelock;
+}
+
+/**
+ * Extract pubkey bytes from a descriptor or hex string.
+ */
+function extractPubKeyBytes(value: string): Uint8Array {
+    return hex.decode(extractPubKey(value));
 }
 
 /**
@@ -37,13 +49,17 @@ export const DefaultContractHandler: ContractHandler<
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {
         const typed = this.deserializeParams(params);
-        return new DefaultVtxo.Script(typed);
+        return new DefaultVtxo.Script({
+            pubKey: extractPubKeyBytes(typed.pubKey),
+            serverPubKey: extractPubKeyBytes(typed.serverPubKey),
+            csvTimelock: typed.csvTimelock,
+        });
     },
 
     serializeParams(params: DefaultContractParams): Record<string, string> {
         return {
-            pubKey: hex.encode(params.pubKey),
-            serverPubKey: hex.encode(params.serverPubKey),
+            pubKey: params.pubKey,
+            serverPubKey: params.serverPubKey,
             csvTimelock: timelockToSequence(params.csvTimelock).toString(),
         };
     },
@@ -53,8 +69,8 @@ export const DefaultContractHandler: ContractHandler<
             ? sequenceToTimelock(Number(params.csvTimelock))
             : DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return {
-            pubKey: hex.decode(params.pubKey),
-            serverPubKey: hex.decode(params.serverPubKey),
+            pubKey: normalizeToDescriptor(params.pubKey),
+            serverPubKey: normalizeToDescriptor(params.serverPubKey),
             csvTimelock,
         };
     },
