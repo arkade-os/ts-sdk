@@ -1,12 +1,12 @@
 import { Contract, ContractState } from "../../contracts/types";
 import { ContractFilter, ContractRepository } from "../contractRepository";
+import { RealmLike } from "./types";
 
 /**
  * Realm-based implementation of ContractRepository.
  *
- * Since `realm` is a peer dependency and not installed in this package,
- * the Realm instance is typed as `any`. Consumers must open Realm with
- * the schemas from `./schemas.ts` and pass the instance to the constructor.
+ * Consumers must open Realm with the schemas from `./schemas.ts` and pass
+ * the instance to the constructor.
  *
  * Realm handles schema creation on open, so `ensureInit()` is a no-op.
  * The consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
@@ -14,8 +14,7 @@ import { ContractFilter, ContractRepository } from "../contractRepository";
 export class RealmContractRepository implements ContractRepository {
     readonly version = 1 as const;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    constructor(private readonly realm: any) {}
+    constructor(private readonly realm: RealmLike) {}
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -45,8 +44,7 @@ export class RealmContractRepository implements ContractRepository {
 
         if (filter) {
             const filterParts: string[] = [];
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const filterArgs: any[] = [];
+            const filterArgs: unknown[] = [];
 
             let argIndex = 0;
             argIndex = this.addFilterCondition(
@@ -117,8 +115,7 @@ export class RealmContractRepository implements ContractRepository {
 
     private addFilterCondition(
         parts: string[],
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        args: any[],
+        args: unknown[],
         column: string,
         value: string | string[] | undefined,
         argIndex: number

@@ -11,13 +11,13 @@ import {
     deserializeUtxo,
     SerializedTapLeaf,
 } from "../serialization";
+import { RealmLike } from "./types";
 
 /**
  * Realm-based implementation of WalletRepository.
  *
- * Since `realm` is a peer dependency and not installed in this package,
- * the Realm instance is typed as `any`. Consumers must open Realm with
- * the schemas from `./schemas.ts` and pass the instance to the constructor.
+ * Consumers must open Realm with the schemas from `./schemas.ts` and pass
+ * the instance to the constructor.
  *
  * Realm handles schema creation on open, so `ensureInit()` is a no-op.
  * The consumer owns the Realm lifecycle — `[Symbol.asyncDispose]` is a no-op.
@@ -25,8 +25,7 @@ import {
 export class RealmWalletRepository implements WalletRepository {
     readonly version = 1 as const;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    constructor(private readonly realm: any) {}
+    constructor(private readonly realm: RealmLike) {}
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
@@ -220,7 +219,7 @@ export class RealmWalletRepository implements WalletRepository {
     async getWalletState(): Promise<WalletState | null> {
         await this.ensureInit();
         const results = this.realm
-            .objects("ArkWalletState")
+            .objects<WalletStateObject>("ArkWalletState")
             .filtered("key == $0", "state");
         const items = [...results];
         if (items.length === 0) return null;
@@ -252,6 +251,12 @@ export class RealmWalletRepository implements WalletRepository {
             );
         });
     }
+}
+
+interface WalletStateObject {
+    key: string;
+    lastSyncTime: number | null;
+    settingsJson: string | null;
 }
 
 // ── Realm object → Domain converters ─────────────────────────────────────
