@@ -4,12 +4,15 @@ import {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
+    ReadonlySeedIdentity,
 } from "./identity/seedIdentity";
 import type {
     SeedIdentityOptions,
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
+    SigningRequest,
+    SeedIdentityJSON,
 } from "./identity/seedIdentity";
 import {
     Identity,
@@ -270,6 +273,7 @@ export {
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
     isBatchSignable,
+    ReadonlySeedIdentity,
     OnchainWallet,
     Ramps,
     VtxoManager,
@@ -438,6 +442,8 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
+    SigningRequest,
+    SeedIdentityJSON,
 
     // Indexer types
     IndexerProvider,
