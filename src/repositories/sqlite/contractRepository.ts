@@ -26,7 +26,7 @@ export class SQLiteContractRepository implements ContractRepository {
         private readonly db: SQLExecutor,
         options?: SQLiteContractRepositoryOptions
     ) {
-        this.prefix = options?.prefix ?? "ark_";
+        this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
         this.table = `${this.prefix}contracts`;
     }
 
@@ -167,6 +167,17 @@ interface ContractRow {
 }
 
 // ── Row → Domain converter ──────────────────────────────────────────────
+
+const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
+
+function sanitizePrefix(prefix: string): string {
+    if (!SAFE_PREFIX.test(prefix)) {
+        throw new Error(
+            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`
+        );
+    }
+    return prefix;
+}
 
 function contractRowToDomain(row: ContractRow): Contract {
     const contract: Contract = {

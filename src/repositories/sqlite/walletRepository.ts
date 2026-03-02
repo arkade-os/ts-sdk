@@ -42,7 +42,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         private readonly db: SQLExecutor,
         options?: SQLiteWalletRepositoryOptions
     ) {
-        this.prefix = options?.prefix ?? "ark_";
+        this.prefix = sanitizePrefix(options?.prefix ?? "ark_");
         this.tables = {
             vtxos: `${this.prefix}vtxos`,
             utxos: `${this.prefix}utxos`,
@@ -401,6 +401,17 @@ interface WalletStateRow {
     key: string;
     last_sync_time: number | null;
     settings_json: string | null;
+}
+
+const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
+
+function sanitizePrefix(prefix: string): string {
+    if (!SAFE_PREFIX.test(prefix)) {
+        throw new Error(
+            `Invalid table prefix "${prefix}": only letters, digits, and underscores are allowed`
+        );
+    }
+    return prefix;
 }
 
 // ── Row → Domain converters ────────────────────────────────────────────

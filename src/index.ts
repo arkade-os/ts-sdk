@@ -237,7 +237,7 @@ import type {
     VHTLCContractParams,
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
-import { closeDatabase, openDatabase } from "./db/manager";
+import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import { WalletMessageHandler } from "./wallet/serviceWorker/wallet-message-handler";
 
 export {
