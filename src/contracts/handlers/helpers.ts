@@ -1,6 +1,17 @@
 import { RelativeTimelock } from "../../script/tapscript";
 import * as bip68 from "bip68";
 import { Contract, PathContext } from "../types";
+import { isDescriptor, extractPubKey } from "../../identity/descriptor";
+
+/**
+ * Extract raw hex pubkey from a value that may be a descriptor or raw hex.
+ */
+function extractRawPubKey(value: string): string {
+    if (isDescriptor(value)) {
+        return extractPubKey(value);
+    }
+    return value;
+}
 
 /**
  * Convert RelativeTimelock to BIP68 sequence number.
@@ -39,12 +50,21 @@ export function resolveRole(
         return context.role;
     }
 
-    // Try to match wallet pubkey against contract params
-    if (context.walletPubKey) {
-        if (context.walletPubKey === contract.params.sender) {
+    // Try to match wallet descriptor/pubkey against contract params
+    const walletKey = context.walletDescriptor ?? context.walletPubKey;
+    if (walletKey) {
+        const rawWalletKey = extractRawPubKey(walletKey);
+        const senderKey = contract.params.sender
+            ? extractRawPubKey(contract.params.sender)
+            : undefined;
+        const receiverKey = contract.params.receiver
+            ? extractRawPubKey(contract.params.receiver)
+            : undefined;
+
+        if (senderKey && rawWalletKey === senderKey) {
             return "sender";
         }
-        if (context.walletPubKey === contract.params.receiver) {
+        if (receiverKey && rawWalletKey === receiverKey) {
             return "receiver";
         }
     }
