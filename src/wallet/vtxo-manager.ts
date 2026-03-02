@@ -155,6 +155,13 @@ export function isVtxoExpiringSoon(
 
     if (!batchExpiry) return false; // it doesn't expire
 
+    // we use this as a workaround to avoid issue on regtest where expiry date is
+    // expressed in blockheight instead of timestamp. If expiry, as Date, is before 2025,
+    // then we admit it's too small to be a timestamp
+    // TODO: API should return the expiry unit
+    const expireAt = new Date(batchExpiry);
+    if (expireAt.getFullYear() < 2025) return false;
+
     const now = Date.now();
 
     if (batchExpiry <= now) return false; // already expired
