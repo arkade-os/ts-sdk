@@ -23,12 +23,6 @@
             "require": "./dist/cjs/adapters/expo.js",
             "default": "./dist/esm/adapters/expo.js"
         },
-        "./adapters/expo-db": {
-            "types": "./dist/types/adapters/expo-db.d.ts",
-            "import": "./dist/esm/adapters/expo-db.js",
-            "require": "./dist/cjs/adapters/expo-db.js",
-            "default": "./dist/esm/adapters/expo-db.js"
-        },
         "./adapters/localStorage": {
             "types": "./dist/types/adapters/localStorage.d.ts",
             "import": "./dist/esm/adapters/localStorage.js",
@@ -53,17 +47,17 @@
             "require": "./dist/cjs/adapters/asyncStorage.js",
             "default": "./dist/esm/adapters/asyncStorage.js"
         },
-        "./adapters/sqlite": {
-            "types": "./dist/types/adapters/sqlite.d.ts",
-            "import": "./dist/esm/adapters/sqlite.js",
-            "require": "./dist/cjs/adapters/sqlite.js",
-            "default": "./dist/esm/adapters/sqlite.js"
+        "./repositories/sqlite": {
+            "types": "./dist/types/repositories/sqlite/index.d.ts",
+            "import": "./dist/esm/repositories/sqlite/index.js",
+            "require": "./dist/cjs/repositories/sqlite/index.js",
+            "default": "./dist/esm/repositories/sqlite/index.js"
         },
-        "./adapters/realm": {
-            "types": "./dist/types/adapters/realm.d.ts",
-            "import": "./dist/esm/adapters/realm.js",
-            "require": "./dist/cjs/adapters/realm.js",
-            "default": "./dist/esm/adapters/realm.js"
+        "./repositories/realm": {
+            "types": "./dist/types/repositories/realm/index.d.ts",
+            "import": "./dist/esm/repositories/realm/index.js",
+            "require": "./dist/cjs/repositories/realm/index.js",
+            "default": "./dist/esm/repositories/realm/index.js"
         },
         "./worker/expo": {
             "types": "./dist/types/worker/expo/index.d.ts",
@@ -146,7 +140,6 @@
         "vitest": "3.2.4"
     },
     "peerDependencies": {
-        "indexeddbshim": ">=16.0.0",
         "expo": ">=54.0.0",
         "expo-sqlite": "~16.0.10",
         "expo-background-task": "~1.0.10",
@@ -154,9 +147,6 @@
         "@react-native-async-storage/async-storage": ">=1.0.0"
     },
     "peerDependenciesMeta": {
-        "indexeddbshim": {
-            "optional": true
-        },
         "expo": {
             "optional": true
         },

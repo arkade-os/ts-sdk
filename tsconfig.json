@@ -21,9 +21,6 @@
         "dist",
         "**/*.test.ts",
         "examples",
-        "src/adapters/expo-db.ts",
-        "src/adapters/realm.ts",
-        "src/repositories/realm",
         "src/repositories/indexedDB/websqlAdapter.ts"
     ]
 }
