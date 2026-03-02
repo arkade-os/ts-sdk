@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { SQLiteSwapRepository } from "../src/repositories/sqlite/swap-repository";
-import type { SQLExecutor } from "@arkade-os/sdk/adapters/sqlite";
+import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
 import type {
     PendingReverseSwap,
     PendingSubmarineSwap,

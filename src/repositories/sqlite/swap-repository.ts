@@ -1,4 +1,4 @@
-import type { SQLExecutor } from "@arkade-os/sdk/adapters/sqlite";
+import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
 import type {
     GetSwapsFilter,
     PendingSwap,
