@@ -1,6 +1,10 @@
 import { GetSwapStatusResponse, BoltzSwapStatus } from "../boltz-swap-provider";
 import {
+    ArkToBtcResponse,
     ArkadeSwapsConfig,
+    BtcToArkResponse,
+    Chain,
+    ChainFeesResponse,
     CreateLightningInvoiceRequest,
     CreateLightningInvoiceResponse,
     FeesResponse,
@@ -20,21 +24,31 @@ import {
     RequestInitArkLn,
 } from "./arkade-lightning-message-handler";
 import type {
+    ResponseArkToBtc,
+    ResponseBtcToArk,
+    ResponseCreateChainSwap,
     ResponseCreateLightningInvoice,
     ResponseCreateReverseSwap,
     ResponseCreateSubmarineSwap,
     ResponseGetFees,
+    ResponseGetPendingChainSwaps,
     ResponseGetLimits,
     ResponseGetPendingReverseSwaps,
     ResponseGetPendingSubmarineSwaps,
+    ResponseQuoteSwap,
     ResponseGetSwapHistory,
     ResponseGetSwapStatus,
     ResponseRestoreSwaps,
     ResponseSendLightningPayment,
+    ResponseVerifyChainSwap,
+    ResponseWaitAndClaimArk,
+    ResponseWaitAndClaimBtc,
+    ResponseWaitAndClaimChain,
     ResponseWaitAndClaim,
     ResponseWaitForSwapSettlement,
 } from "./arkade-lightning-message-handler";
-import type { VHTLC } from "@arkade-os/sdk";
+import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
+import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { IArkadeLightning } from "../arkade-swaps";
 import { IndexedDbSwapRepository } from "../repositories/IndexedDb/swap-repository";
 import type { Actions, SwapManagerClient } from "../swap-manager";
@@ -524,6 +538,197 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
         }
     }
 
+    async arkToBtc(args: {
+        btcAddress: string;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+        feeSatsPerByte?: number;
+    }): Promise<ArkToBtcResponse> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "ARK_TO_BTC",
+                payload: args,
+            });
+            return (res as ResponseArkToBtc).payload;
+        } catch (e) {
+            throw new Error("Cannot create ARK -> BTC chain swap", {
+                cause: e,
+            });
+        }
+    }
+
+    async btcToArk(args: {
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<BtcToArkResponse> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "BTC_TO_ARK",
+                payload: args,
+            });
+            return (res as ResponseBtcToArk).payload;
+        } catch (e) {
+            throw new Error("Cannot create BTC -> ARK chain swap", {
+                cause: e,
+            });
+        }
+    }
+
+    async createChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        toAddress: string;
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<PendingChainSwap> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "CREATE_CHAIN_SWAP",
+                payload: args,
+            });
+            return (res as ResponseCreateChainSwap).payload;
+        } catch (e) {
+            throw new Error("Cannot create chain swap", { cause: e });
+        }
+    }
+
+    async waitAndClaimChain(
+        pendingSwap: PendingChainSwap
+    ): Promise<{ txid: string }> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "WAIT_AND_CLAIM_CHAIN",
+                payload: pendingSwap,
+            });
+            return (res as ResponseWaitAndClaimChain).payload;
+        } catch (e) {
+            throw new Error("Cannot wait and claim chain swap", {
+                cause: e,
+            });
+        }
+    }
+
+    async waitAndClaimArk(
+        pendingSwap: PendingChainSwap
+    ): Promise<{ txid: string }> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "WAIT_AND_CLAIM_ARK",
+                payload: pendingSwap,
+            });
+            return (res as ResponseWaitAndClaimArk).payload;
+        } catch (e) {
+            throw new Error("Cannot wait and claim ARK", {
+                cause: e,
+            });
+        }
+    }
+
+    async waitAndClaimBtc(
+        pendingSwap: PendingChainSwap
+    ): Promise<{ txid: string }> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "WAIT_AND_CLAIM_BTC",
+                payload: pendingSwap,
+            });
+            return (res as ResponseWaitAndClaimBtc).payload;
+        } catch (e) {
+            throw new Error("Cannot wait and claim BTC", {
+                cause: e,
+            });
+        }
+    }
+
+    async claimArk(pendingSwap: PendingChainSwap): Promise<void> {
+        await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "CLAIM_ARK",
+            payload: pendingSwap,
+        });
+    }
+
+    async claimBtc(pendingSwap: PendingChainSwap): Promise<void> {
+        await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "CLAIM_BTC",
+            payload: pendingSwap,
+        });
+    }
+
+    async refundArk(pendingSwap: PendingChainSwap): Promise<void> {
+        await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "REFUND_ARK",
+            payload: pendingSwap,
+        });
+    }
+
+    async signCooperativeClaimForServer(
+        pendingSwap: PendingChainSwap
+    ): Promise<void> {
+        await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "SIGN_SERVER_CLAIM",
+            payload: pendingSwap,
+        });
+    }
+
+    async verifyChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        swap: PendingChainSwap;
+        arkInfo: ArkInfo;
+    }): Promise<boolean> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "VERIFY_CHAIN_SWAP",
+                payload: {
+                    to: args.to,
+                    from: args.from,
+                    swap: args.swap,
+                },
+            });
+            return (res as ResponseVerifyChainSwap).payload.verified;
+        } catch (e) {
+            throw new Error("Cannot verify chain swap", { cause: e });
+        }
+    }
+
+    async quoteSwap(swapId: string): Promise<number> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "QUOTE_SWAP",
+                payload: { swapId },
+            });
+            return (res as ResponseQuoteSwap).payload.amount;
+        } catch (e) {
+            throw new Error("Cannot quote swap", { cause: e });
+        }
+    }
+
     enrichReverseSwapPreimage(
         _swap: PendingReverseSwap,
         _preimage: string
@@ -560,12 +765,28 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
         );
     }
 
-    async getFees(): Promise<FeesResponse> {
+    async joinBatch(
+        _identity: Identity,
+        _input: ArkTxInput,
+        _output: TransactionOutput,
+        _arkInfo: ArkInfo,
+        _isRecoverable = true
+    ): Promise<string> {
+        throw new Error("joinBatch is not supported via service worker");
+    }
+
+    async getFees(): Promise<FeesResponse>;
+    async getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;
+    async getFees(
+        from?: Chain,
+        to?: Chain
+    ): Promise<FeesResponse | ChainFeesResponse> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "GET_FEES",
+                ...(from && to ? { payload: { from, to } } : {}),
             });
             return (res as ResponseGetFees).payload;
         } catch (e) {
@@ -573,12 +794,15 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
         }
     }
 
-    async getLimits(): Promise<LimitsResponse> {
+    async getLimits(): Promise<LimitsResponse>;
+    async getLimits(from: Chain, to: Chain): Promise<LimitsResponse>;
+    async getLimits(from?: Chain, to?: Chain): Promise<LimitsResponse> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "GET_LIMITS",
+                ...(from && to ? { payload: { from, to } } : {}),
             });
             return (res as ResponseGetLimits).payload;
         } catch (e) {
@@ -625,6 +849,19 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
             return (res as ResponseGetPendingReverseSwaps).payload;
         } catch (e) {
             throw new Error("Cannot get pending reverse swaps", { cause: e });
+        }
+    }
+
+    async getPendingChainSwaps(): Promise<PendingChainSwap[]> {
+        try {
+            const res = await this.sendMessage({
+                id: getRandomId(),
+                tag: this.messageTag,
+                type: "GET_PENDING_CHAIN_SWAPS",
+            });
+            return (res as ResponseGetPendingChainSwaps).payload;
+        } catch (e) {
+            throw new Error("Cannot get pending chain swaps", { cause: e });
         }
     }
 
