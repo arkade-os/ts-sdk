@@ -229,7 +229,23 @@ export class MessageBus {
     }
 
     private async waitForInit(config: Initialize["config"]) {
-        if (this.initialized) return;
+        if (this.initialized) {
+            // Stop existing handlers before re-initializing.
+            // This handles the case where CLEAR was called, which nullifies
+            // handler state (readonlyWallet, etc.) without resetting the
+            // initialized flag. Without this, handlers never get start()
+            // called again and all messages fail with "not initialized".
+            //
+            // Clear the flag first so onMessage() rejects incoming messages
+            // during the stop/start window instead of routing them to
+            // half-reset handlers. Restored to true after start() completes.
+            this.initialized = false;
+            await Promise.all(
+                Array.from(this.handlers.values()).map((h) =>
+                    h.stop().catch(() => {})
+                )
+            );
+        }
         const services = await this.buildServicesFn(config);
         // Start all handlers
         for (const updater of this.handlers.values()) {
@@ -303,6 +319,15 @@ export class MessageBus {
                     "Event received before initialization, dropping",
                     event.data
                 );
+            // Send error response so the caller's promise rejects instead of
+            // hanging forever. This happens when the browser kills and restarts
+            // the service worker — the new instance has initialized=false and
+            // messages arrive before INITIALIZE_MESSAGE_BUS is re-sent.
+            event.source?.postMessage({
+                id,
+                tag: tag ?? "unknown",
+                error: new Error("MessageBus not initialized"),
+            });
             return;
         }
 
