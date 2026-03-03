@@ -710,6 +710,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                     to: args.to,
                     from: args.from,
                     swap: args.swap,
+                    arkInfo: args.arkInfo,
                 },
             });
             return (res as ResponseVerifyChainSwap).payload.verified;

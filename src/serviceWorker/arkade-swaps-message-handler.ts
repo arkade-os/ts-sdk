@@ -4,6 +4,7 @@ import {
     RequestEnvelope,
     ResponseEnvelope,
     MessageHandler,
+    type ArkInfo,
 } from "@arkade-os/sdk";
 import {
     BoltzSwapProvider,
@@ -331,6 +332,7 @@ export type RequestVerifyChainSwap = RequestEnvelope & {
         to: Chain;
         from: Chain;
         swap: PendingChainSwap;
+        arkInfo: ArkInfo;
     };
 };
 export type ResponseVerifyChainSwap = ResponseEnvelope & {
@@ -924,10 +926,8 @@ export class ArkadeSwapsMessageHandler
                     return this.tagged({ id, type: "SERVER_CLAIM_SIGNED" });
 
                 case "VERIFY_CHAIN_SWAP": {
-                    const arkInfo = await this.arkProvider!.getInfo();
                     const verified = await this.handler.verifyChainSwap({
                         ...message.payload,
-                        arkInfo,
                     });
                     return this.tagged({
                         id,
