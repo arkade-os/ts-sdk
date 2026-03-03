@@ -707,25 +707,69 @@ class MyWalletRepository implements WalletRepository {
 }
 ```
 
-Note: `IndexedDB*Repository` requires [indexeddbshim](https://github.com/indexeddbshim/indexeddbshim) in Node or other
-**non-browser environments**. It is a dev dependency of the SDK, so you must
-install and initialize it in your app before using the repositories. This
-also applies when you rely on the default storage behavior (no `storage`).
+#### SQLite Repository (Node.js / React Native)
 
-Please see the working example in [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts).
+For Node.js or React Native environments, use the SQLite repository with any
+SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
+driver, the SDK handles the schema.
+
+See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
+a full working example using `better-sqlite3`.
 
 ```typescript
 import { SingleKey, Wallet } from '@arkade-os/sdk'
-import setGlobalVars from 'indexeddbshim'
+import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
+import Database from 'better-sqlite3'
 
-setGlobalVars()
+const db = new Database('my-wallet.sqlite')
+db.pragma('journal_mode = WAL')
 
-const identity = SingleKey.fromHex('your_private_key_hex')
+const executor: SQLExecutor = {
+  run: async (sql, params) => { db.prepare(sql).run(...(params ?? [])) },
+  get: async (sql, params) => db.prepare(sql).get(...(params ?? [])) as any,
+  all: async (sql, params) => db.prepare(sql).all(...(params ?? [])) as any,
+}
 
-// Create wallet with default IndexedDB storage
+const wallet = await Wallet.create({
+  identity: SingleKey.fromHex('your_private_key_hex'),
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  storage: {
+    walletRepository: new SQLiteWalletRepository(executor),
+    contractRepository: new SQLiteContractRepository(executor),
+  },
+})
+```
+
+#### Realm Repository (React Native)
+
+For React Native apps using Realm, pass your Realm instance directly:
+
+```typescript
+import { RealmWalletRepository, RealmContractRepository, ArkRealmSchemas } from '@arkade-os/sdk/repositories/realm'
+
+const realm = await Realm.open({ schema: [...ArkRealmSchemas, ...yourSchemas] })
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
+  storage: {
+    walletRepository: new RealmWalletRepository(realm),
+    contractRepository: new RealmContractRepository(realm),
+  },
+})
+```
+
+#### IndexedDB Repository (Browser)
+
+In the browser, the SDK defaults to IndexedDB repositories when no `storage`
+is provided:
+
+```typescript
+import { SingleKey, Wallet } from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity: SingleKey.fromHex('your_private_key_hex'),
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  // Uses IndexedDB by default in the browser
 })
 ```
 
@@ -813,25 +857,30 @@ Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
 
-To use IndexedDB repositories in Expo/React Native, call `setupExpoDb()` before any SDK import.
-This sets up `indexeddbshim` backed by expo-sqlite under the hood:
+For persistence in Expo/React Native, use the SQLite repository with `expo-sqlite`:
 
 ```typescript
-import { setupExpoDb } from '@arkade-os/sdk/adapters/expo-db';
+import { SQLiteWalletRepository, SQLiteContractRepository } from '@arkade-os/sdk/repositories/sqlite'
+import * as SQLite from 'expo-sqlite'
 
-setupExpoDb();
+const db = SQLite.openDatabaseSync('my-wallet.db')
+const executor = {
+  run: (sql, params) => db.runAsync(sql, params ?? []),
+  get: (sql, params) => db.getFirstAsync(sql, params ?? []),
+  all: (sql, params) => db.getAllAsync(sql, params ?? []),
+}
+
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'),
+  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'),
+  storage: {
+    walletRepository: new SQLiteWalletRepository(executor),
+    contractRepository: new SQLiteContractRepository(executor),
+  },
+})
 ```
-
-> **Note:** `setupExpoDb` accepts an optional `SetupExpoDbOptions` object to
-> customise `origin`, `checkOrigin`, and `cacheDatabaseInstances`.
-
-> **Note:** `expo-sqlite` and `indexeddbshim` are optional peer dependencies,
-> only required when importing from `@arkade-os/sdk/adapters/expo-db`. The
-> streaming providers (`@arkade-os/sdk/adapters/expo`) have no expo-sqlite
-> dependency. Install them with:
-> ```bash
-> npx expo install expo-sqlite && npm install indexeddbshim
-> ```
 
 #### Crypto Polyfill Requirement
 
