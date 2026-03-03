@@ -188,6 +188,7 @@
         },
         "onlyBuiltDependencies": [
             "canvas",
+            "sqlite3",
             "better-sqlite3"
         ]
     }
