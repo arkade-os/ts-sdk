@@ -33,16 +33,22 @@ function createMockRealm() {
         const arr = [...items];
 
         const resultSet = Object.assign(arr, {
-            filtered(query: string, ...args: unknown[]): Record<string, unknown>[] & { filtered: typeof resultSet.filtered; sorted: typeof resultSet.sorted } {
+            filtered(
+                query: string,
+                ...args: unknown[]
+            ): Record<string, unknown>[] & {
+                filtered: typeof resultSet.filtered;
+                sorted: typeof resultSet.sorted;
+            } {
                 // Parse conditions separated by AND
-                const conditions = query.split(/\s+AND\s+/i).map((c) => c.trim());
+                const conditions = query
+                    .split(/\s+AND\s+/i)
+                    .map((c) => c.trim());
                 let filtered = [...arr];
 
                 for (const cond of conditions) {
                     // field IN {$0, $1, ...}
-                    const inMatch = cond.match(
-                        /(\w+)\s+IN\s+\{([^}]+)\}/i
-                    );
+                    const inMatch = cond.match(/(\w+)\s+IN\s+\{([^}]+)\}/i);
                     if (inMatch) {
                         const col = inMatch[1];
                         const placeholders = inMatch[2]
@@ -72,7 +78,13 @@ function createMockRealm() {
                 return makeResultSet(filtered);
             },
 
-            sorted(field: string, reverse?: boolean): Record<string, unknown>[] & { filtered: typeof resultSet.filtered; sorted: typeof resultSet.sorted } {
+            sorted(
+                field: string,
+                reverse?: boolean
+            ): Record<string, unknown>[] & {
+                filtered: typeof resultSet.filtered;
+                sorted: typeof resultSet.sorted;
+            } {
                 const sorted = [...arr].sort((a, b) => {
                     const aVal = a[field] as number;
                     const bVal = b[field] as number;
@@ -106,11 +118,7 @@ function createMockRealm() {
             return makeResultSet(Array.from(table.values()));
         },
 
-        delete(
-            obj:
-                | Record<string, unknown>
-                | Record<string, unknown>[]
-        ): void {
+        delete(obj: Record<string, unknown> | Record<string, unknown>[]): void {
             // Handle both single objects and collections (arrays)
             const items = Array.isArray(obj) ? obj : [obj];
             for (const [schemaName, table] of store.entries()) {
@@ -454,9 +462,7 @@ describe("RealmSwapRepository", () => {
     it("clears all swaps", async () => {
         await repo.saveSwap(createReverseSwap("a", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("b", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c", "transaction.server.mempool"));
 
         await repo.clear();
 
@@ -475,9 +481,7 @@ describe("RealmSwapRepository", () => {
     it("returns all swaps when no filter provided", async () => {
         await repo.saveSwap(createReverseSwap("a", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("b", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c", "transaction.server.mempool"));
 
         const result = await repo.getAllSwaps();
 
@@ -485,14 +489,10 @@ describe("RealmSwapRepository", () => {
     });
 
     it("handles chain swaps with optional fields", async () => {
-        const chain = createChainSwap(
-            "c1",
-            "transaction.server.confirmed",
-            {
-                toAddress: "bc1qrecipient",
-                btcTxHex: "0200000001abcdef...",
-            }
-        );
+        const chain = createChainSwap("c1", "transaction.server.confirmed", {
+            toAddress: "bc1qrecipient",
+            btcTxHex: "0200000001abcdef...",
+        });
         await repo.saveSwap(chain);
 
         const [result] = await repo.getAllSwaps<PendingChainSwap>({

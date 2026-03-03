@@ -69,16 +69,19 @@ export class SQLiteSwapRepository implements SwapRepository {
         await this.executor.run(
             `INSERT OR REPLACE INTO boltz_swaps (id, type, status, created_at, data)
              VALUES (?, ?, ?, ?, ?)`,
-            [swap.id, swap.type, swap.status, swap.createdAt, JSON.stringify(swap)]
+            [
+                swap.id,
+                swap.type,
+                swap.status,
+                swap.createdAt,
+                JSON.stringify(swap),
+            ]
         );
     }
 
     async deleteSwap(id: string): Promise<void> {
         await this.ensureInit();
-        await this.executor.run(
-            `DELETE FROM boltz_swaps WHERE id = ?`,
-            [id]
-        );
+        await this.executor.run(`DELETE FROM boltz_swaps WHERE id = ?`, [id]);
     }
 
     async getAllSwaps<T extends PendingSwap>(
@@ -146,7 +149,10 @@ export class SQLiteSwapRepository implements SwapRepository {
             sql += ` ORDER BY created_at ${direction}`;
         }
 
-        const rows = await this.executor.all<Pick<SwapRow, "data">>(sql, params);
+        const rows = await this.executor.all<Pick<SwapRow, "data">>(
+            sql,
+            params
+        );
         return rows.map((row) => JSON.parse(row.data) as T);
     }
 

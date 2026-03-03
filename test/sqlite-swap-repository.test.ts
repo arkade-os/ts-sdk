@@ -152,9 +152,7 @@ function createMockExecutor(): SQLExecutor {
             }
 
             // Parse ORDER BY
-            const orderMatch = rest.match(
-                /ORDER\s+BY\s+(\w+)\s+(ASC|DESC)/i
-            );
+            const orderMatch = rest.match(/ORDER\s+BY\s+(\w+)\s+(ASC|DESC)/i);
             if (orderMatch) {
                 const col = orderMatch[1];
                 const dir = orderMatch[2].toUpperCase();
@@ -512,9 +510,7 @@ describe("SQLiteSwapRepository", () => {
     it("clears all swaps", async () => {
         await repo.saveSwap(createReverseSwap("a", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("b", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c", "transaction.server.mempool"));
 
         await repo.clear();
 
@@ -533,9 +529,7 @@ describe("SQLiteSwapRepository", () => {
     it("returns all swaps when no filter provided", async () => {
         await repo.saveSwap(createReverseSwap("a", "swap.created"));
         await repo.saveSwap(createSubmarineSwap("b", "invoice.set"));
-        await repo.saveSwap(
-            createChainSwap("c", "transaction.server.mempool")
-        );
+        await repo.saveSwap(createChainSwap("c", "transaction.server.mempool"));
 
         const result = await repo.getAllSwaps();
 
@@ -543,14 +537,10 @@ describe("SQLiteSwapRepository", () => {
     });
 
     it("handles chain swaps with optional fields", async () => {
-        const chain = createChainSwap(
-            "c1",
-            "transaction.server.confirmed",
-            {
-                toAddress: "bc1qrecipient",
-                btcTxHex: "0200000001abcdef...",
-            }
-        );
+        const chain = createChainSwap("c1", "transaction.server.confirmed", {
+            toAddress: "bc1qrecipient",
+            btcTxHex: "0200000001abcdef...",
+        });
         await repo.saveSwap(chain);
 
         const [result] = await repo.getAllSwaps<PendingChainSwap>({
