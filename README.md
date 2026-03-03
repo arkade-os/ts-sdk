@@ -56,6 +56,16 @@ const swaps = new ArkadeSwaps({
 
 **SwapRepository**: Swap storage is pluggable via `SwapRepository`. By default, `ArkadeSwaps` uses an IndexedDB-backed repository in browser contexts. You can inject your own repository (for tests, Node.js, or custom storage) via the `swapRepository` option. Custom implementations must set `readonly version = 1` to match the interface — TypeScript will error when the version is bumped, signaling a required update.
 
+Platform-specific repositories are available as subpath exports:
+
+```typescript
+// SQLite (React Native / Node.js)
+import { SQLiteSwapRepository } from '@arkade-os/boltz-swap/repositories/sqlite';
+
+// Realm (React Native)
+import { RealmSwapRepository, BoltzRealmSchemas } from '@arkade-os/boltz-swap/repositories/realm';
+```
+
 > [!WARNING]
 > If you previously used the v1 `StorageAdapter`-based repositories, migrate
 > data into the new IndexedDB repositories before use. You can use

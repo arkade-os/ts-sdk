@@ -26,24 +26,24 @@
                 "default": "./dist/expo/index.cjs"
             }
         },
-        "./adapters/sqlite": {
+        "./repositories/sqlite": {
             "import": {
-                "types": "./dist/adapters/sqlite.d.ts",
-                "default": "./dist/adapters/sqlite.js"
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.js"
             },
             "require": {
-                "types": "./dist/adapters/sqlite.d.ts",
-                "default": "./dist/adapters/sqlite.cjs"
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.cjs"
             }
         },
-        "./adapters/realm": {
+        "./repositories/realm": {
             "import": {
-                "types": "./dist/adapters/realm.d.ts",
-                "default": "./dist/adapters/realm.js"
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.js"
             },
             "require": {
-                "types": "./dist/adapters/realm.d.ts",
-                "default": "./dist/adapters/realm.cjs"
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.cjs"
             }
         }
     },
@@ -51,7 +51,7 @@
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts src/expo/index.ts src/adapters/sqlite.ts src/adapters/realm.ts --format esm,cjs --dts --clean",
+        "build": "tsup src/index.ts src/expo/index.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
         "prepack": "pnpm run build",

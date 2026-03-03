@@ -18,5 +18,5 @@
         "noFallthroughCasesInSwitch": true
     },
     "include": ["src/**/*.ts"],
-    "exclude": ["node_modules", "dist", "test", "src/adapters/realm.ts", "src/repositories/realm"]
+    "exclude": ["node_modules", "dist", "test", "src/repositories/realm"]
 }
