@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { AssetDetails, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator } from "./utils";
-import { MetadataList } from "../asset";
+import { MetadataList } from "../extension/asset";
 
 export type PaginationOptions = {
     pageIndex?: number;

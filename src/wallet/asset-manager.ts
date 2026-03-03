@@ -16,10 +16,11 @@ import {
     AssetRef,
     Metadata,
     Packet,
-} from "../asset";
+} from "../extension/asset";
 import { IndexerProvider } from "../providers/indexer";
 import { ArkAddress } from "../script/address";
 import { selectedCoinsToAssetInputs, selectCoinsWithAsset } from "./asset";
+import { Extension } from "../extension";
 import { selectVirtualCoins, Wallet } from "./wallet";
 
 export class ReadonlyAssetManager implements IReadonlyAssetManager {
@@ -158,7 +159,7 @@ export class AssetManager
                 script: outputAddress.pkScript,
                 amount: BigInt(totalBtcSelected),
             },
-            Packet.create(groups).txOut(),
+            Extension.create([Packet.create(groups)]).txOut(),
         ];
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
@@ -324,7 +325,7 @@ export class AssetManager
                 script: outputAddress.pkScript,
                 amount: BigInt(totalBtcSelected),
             },
-            Packet.create(groups).txOut(),
+            Extension.create([Packet.create(groups)]).txOut(),
         ];
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
@@ -449,7 +450,7 @@ export class AssetManager
                 script: outputAddress.pkScript,
                 amount: BigInt(totalBtcSelected),
             },
-            Packet.create(groups).txOut(),
+            Extension.create([Packet.create(groups)]).txOut(),
         ];
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(

@@ -87,6 +87,7 @@ import { Estimator } from "../arkfee";
 import { DelegatorProvider } from "../providers/delegator";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
+import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
 import { DelegatorManager, DelegatorManagerImpl } from "./delegator";
 
@@ -1066,7 +1067,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         if (outputAssets && outputAssets.length > 0) {
             const assetPacket = createAssetPacket(assetInputs, recipients);
-            outputs.push(assetPacket.txOut());
+            outputs.push(Extension.create([assetPacket]).txOut());
         }
 
         // session holds the state of the musig2 signing process of the vtxo tree
@@ -1799,7 +1800,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 recipients,
                 changeReceiver
             );
-            outputs.push(assetPacket.txOut());
+            outputs.push(Extension.create([assetPacket]).txOut());
         }
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
