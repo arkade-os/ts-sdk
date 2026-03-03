@@ -5,7 +5,7 @@ import {
     AssetInput,
     AssetOutput,
     Packet,
-} from "../asset";
+} from "../extension/asset";
 import { Asset, Recipient, VirtualCoin } from "./index";
 
 /**

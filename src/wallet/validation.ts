@@ -2,7 +2,8 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 import { Recipient, Asset } from ".";
 import { ArkAddress } from "../script/address";
 import { Transaction } from "../utils/transaction";
-import { Packet } from "../asset";
+import { Packet } from "../extension/asset";
+import { Extension } from "../extension";
 import { Address, OutScript } from "@scure/btc-signer";
 import type { Network } from "../networks";
 
@@ -184,7 +185,11 @@ function validateAssetOutputs(
     outputIndex: number,
     expectedAssets: Asset[]
 ): void {
-    const assetPacket = Packet.fromTx(leafTx);
+    const ext = Extension.fromTx(leafTx);
+    const assetPacket = ext.getAssetPacket();
+    if (!assetPacket) {
+        throw new Error("no asset packet found in extension");
+    }
 
     for (const { assetId, amount } of expectedAssets) {
         validateAssetGroupOutput(assetPacket, outputIndex, assetId, amount);

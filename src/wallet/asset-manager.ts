@@ -16,10 +16,11 @@ import {
     AssetRef,
     Metadata,
     Packet,
-} from "../asset";
+} from "../extension/asset";
 import { IndexerProvider } from "../providers/indexer";
 import { ArkAddress } from "../script/address";
 import { selectedCoinsToAssetInputs, selectCoinsWithAsset } from "./asset";
+import { Extension } from "../extension";
 import { selectVirtualCoins, Wallet } from "./wallet";
 
 export class ReadonlyAssetManager implements IReadonlyAssetManager {
@@ -43,30 +44,21 @@ export class AssetManager
      * Issue a new asset.
      * @param params - Parameters for asset issuance
      * @param params.amount - Amount of asset units to issue
-     * @param params.controlAsset - Optional control asset (for reissuable assets)
+     * @param params.controlAssetId - Optional control asset ID (for reissuable assets)
      * @param params.metadata - Optional metadata to attach to the asset
      * @returns Promise resolving to the ark transaction ID and asset ID
      *
      * @example
      * ```typescript
      * // Issue a simple non-reissuable asset
-     * const result = await wallet.issueAsset({ amount: 1000 });
-     * console.log('Asset ID:', result.assetId);
-     *
-     * // Issue a reissuable asset with a new control asset
-     * const result = await wallet.issueAsset({
-     *   amount: 1000,
-     *   controlAsset: 1 // creates new control asset with amount 1
-     * });
-     * console.log('Control Asset ID:', result.controlAssetId);
+     * const result = await wallet.assetManager.issue({ amount: 1000 });
      * console.log('Asset ID:', result.assetId);
      *
      * // Issue a reissuable asset with an existing control asset
-     * const result = await wallet.issueAsset({
+     * const result = await wallet.assetManager.issue({
      *   amount: 1000,
-     *   controlAsset: 'controlAssetId'
+     *   controlAssetId: 'existingControlAssetId'
      * });
-     * console.log('Control Asset ID:', result.controlAssetId);
      * console.log('Asset ID:', result.assetId);
      * ```
      */
@@ -158,7 +150,7 @@ export class AssetManager
                 script: outputAddress.pkScript,
                 amount: BigInt(totalBtcSelected),
             },
-            Packet.create(groups).txOut(),
+            Extension.create([Packet.create(groups)]).txOut(),
         ];
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
@@ -324,7 +316,7 @@ export class AssetManager
                 script: outputAddress.pkScript,
                 amount: BigInt(totalBtcSelected),
             },
-            Packet.create(groups).txOut(),
+            Extension.create([Packet.create(groups)]).txOut(),
         ];
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
@@ -449,7 +441,7 @@ export class AssetManager
                 script: outputAddress.pkScript,
                 amount: BigInt(totalBtcSelected),
             },
-            Packet.create(groups).txOut(),
+            Extension.create([Packet.create(groups)]).txOut(),
         ];
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(

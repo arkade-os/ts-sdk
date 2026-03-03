@@ -202,7 +202,7 @@ import type { MigrationStatus } from "./repositories";
 import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
-export * as asset from "./asset";
+export * as asset from "./extension/asset";
 
 // Contracts
 import {

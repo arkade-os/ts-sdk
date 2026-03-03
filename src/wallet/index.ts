@@ -163,7 +163,7 @@ export interface Recipient {
 export type KnownMetadata = Partial<{
     name: string;
     ticker: string;
-    decimals: number; // default to 8
+    decimals: number;
     icon: string; // source that can be passed as src attribute to an <img> element
 }>;
 
