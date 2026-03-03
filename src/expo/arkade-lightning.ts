@@ -1,6 +1,6 @@
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
 import type { IArkadeLightning } from "../arkade-swaps";
-import { ArkadeLightning } from "../arkade-swaps";
+import { ArkadeSwaps } from "../arkade-swaps";
 import type { SwapManagerClient } from "../swap-manager";
 import type {
     CreateLightningInvoiceRequest,
@@ -27,7 +27,7 @@ function getRandomId(): string {
 /**
  * Expo/React Native wrapper for ArkadeLightning with background task support.
  *
- * In the foreground, delegates to a full {@link ArkadeLightning} instance
+ * In the foreground, delegates to a full {@link ArkadeSwaps} instance
  * with SwapManager (WebSocket) for real-time swap monitoring and auto
  * claim/refund.
  *
@@ -58,13 +58,13 @@ function getRandomId(): string {
  * ```
  */
 export class ExpoArkadeLightning implements IArkadeLightning {
-    readonly swapRepository: ArkadeLightning["swapRepository"];
+    readonly swapRepository: ArkadeSwaps["swapRepository"];
 
     private foregroundIntervalId?: ReturnType<typeof setInterval>;
     private readonly taskName: string;
 
     private constructor(
-        private readonly inner: ArkadeLightning,
+        private readonly inner: ArkadeSwaps,
         private readonly config: ExpoArkadeLightningConfig
     ) {
         this.taskName = config.background.taskName;
@@ -74,7 +74,7 @@ export class ExpoArkadeLightning implements IArkadeLightning {
     /**
      * Create an ExpoArkadeLightning with background task support.
      *
-     * 1. Creates the inner {@link ArkadeLightning} with SwapManager enabled.
+     * 1. Creates the inner {@link ArkadeSwaps} with SwapManager enabled.
      * 2. Persists {@link PersistedSwapBackgroundConfig} for background rehydration.
      * 3. Seeds the task queue with a swap-poll task.
      * 4. Registers the background task with the OS scheduler (if configured).
@@ -83,8 +83,8 @@ export class ExpoArkadeLightning implements IArkadeLightning {
     static async setup(
         config: ExpoArkadeLightningConfig
     ): Promise<ExpoArkadeLightning> {
-        // Create inner ArkadeLightning with swapManager enabled for foreground
-        const inner = new ArkadeLightning({
+        // Create inner ArkadeSwaps with swapManager enabled for foreground
+        const inner = new ArkadeSwaps({
             ...config,
             swapManager: config.swapManager ?? true,
         });
