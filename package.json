@@ -126,8 +126,10 @@
         "bip68": "1.0.4"
     },
     "devDependencies": {
+        "@types/better-sqlite3": "7.6.13",
         "@types/node": "24.3.1",
         "@vitest/coverage-v8": "3.2.4",
+        "better-sqlite3": "12.6.2",
         "esbuild": "^0.27.3",
         "eventsource": "4.0.0",
         "glob": "11.1.0",
@@ -140,11 +142,11 @@
         "vitest": "3.2.4"
     },
     "peerDependencies": {
+        "@react-native-async-storage/async-storage": ">=1.0.0",
         "expo": ">=54.0.0",
-        "expo-sqlite": "~16.0.10",
         "expo-background-task": "~1.0.10",
-        "expo-task-manager": "~14.0.9",
-        "@react-native-async-storage/async-storage": ">=1.0.0"
+        "expo-sqlite": "~16.0.10",
+        "expo-task-manager": "~14.0.9"
     },
     "peerDependenciesMeta": {
         "expo": {
@@ -186,7 +188,8 @@
         },
         "onlyBuiltDependencies": [
             "canvas",
-            "sqlite3"
+            "sqlite3",
+            "better-sqlite3"
         ]
     }
 }
