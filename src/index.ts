@@ -183,7 +183,7 @@ import { buildForfeitTx } from "./forfeit";
 import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
-export * as asset from "./asset";
+export * as asset from "./extension/asset";
 
 export {
     // Wallets

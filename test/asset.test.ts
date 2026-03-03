@@ -12,8 +12,7 @@ import {
     MetadataList,
     AssetGroup,
     Packet,
-} from "../src/asset";
-
+} from "../src/extension/asset";
 import assetIdFixtures from "./fixtures/asset_id_fixtures.json";
 import assetRefFixtures from "./fixtures/asset_ref_fixtures.json";
 import assetInputFixtures from "./fixtures/asset_input_fixtures.json";
@@ -558,12 +557,9 @@ describe("Packet", () => {
                     const serialized = packet.serialize();
                     expect(serialized).toBeDefined();
                     expect(serialized.length).toBeGreaterThan(0);
+                    expect(hex.encode(serialized)).toBe(v.expected);
 
-                    const txOut = packet.txOut();
-                    expect(txOut.amount).toBe(BigInt(v.expectedAmount ?? 0));
-                    expect(hex.encode(txOut.script)).toBe(v.expectedScript);
-
-                    const fromString = Packet.fromString(v.expectedScript);
+                    const fromString = Packet.fromString(v.expected);
                     expect(fromString.groups.length).toBe(assets.length);
                 });
             });
@@ -579,26 +575,6 @@ describe("Packet", () => {
                     expect(serialized).toBeDefined();
                     expect(serialized.length).toBeGreaterThan(0);
                     expect(packet.toString()).toBe(v.script);
-                });
-            });
-        });
-
-        describe("newPacketFromTxOut", () => {
-            packetFixtures.valid.newPacketFromTxOut.forEach((v) => {
-                it(v.name, () => {
-                    const script = hex.decode(v.script);
-                    expect(Packet.isAssetPacket(script)).toBe(true);
-
-                    const packet = Packet.fromTxOut(script);
-                    expect(packet).toBeDefined();
-
-                    const serialized = packet.serialize();
-                    expect(serialized).toBeDefined();
-                    expect(serialized.length).toBeGreaterThan(0);
-                    expect(packet.toString()).toBe(v.script);
-
-                    const fromString = Packet.fromString(v.script);
-                    expect(fromString.groups.length).toBe(packet.groups.length);
                 });
             });
         });
@@ -645,20 +621,6 @@ describe("Packet", () => {
             packetFixtures.invalid.newPacketFromString.forEach((v) => {
                 it(v.name, () => {
                     expect(() => Packet.fromString(v.script)).toThrow(
-                        v.expectedError
-                    );
-                });
-            });
-        });
-
-        describe("newPacketFromTxOut", () => {
-            packetFixtures.invalid.newPacketFromTxOut.forEach((v) => {
-                it(v.name, () => {
-                    const script = v.script
-                        ? hex.decode(v.script)
-                        : new Uint8Array(0);
-                    expect(Packet.isAssetPacket(script)).toBe(false);
-                    expect(() => Packet.fromTxOut(script)).toThrow(
                         v.expectedError
                     );
                 });
