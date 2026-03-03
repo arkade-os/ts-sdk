@@ -2123,54 +2123,6 @@ export class ArkadeSwaps {
     }
 }
 
-/**
- * Interface for Lightning swap operations.
- * Used by ServiceWorkerArkadeLightning to implement the Lightning-only subset.
- */
-export interface IArkadeLightning extends AsyncDisposable {
-    startSwapManager(): Promise<void>;
-    stopSwapManager(): Promise<void>;
-    getSwapManager(): SwapManagerClient | null;
-    createLightningInvoice(
-        args: CreateLightningInvoiceRequest
-    ): Promise<CreateLightningInvoiceResponse>;
-    sendLightningPayment(
-        args: SendLightningPaymentRequest
-    ): Promise<SendLightningPaymentResponse>;
-    createSubmarineSwap(
-        args: SendLightningPaymentRequest
-    ): Promise<PendingSubmarineSwap>;
-    createReverseSwap(
-        args: CreateLightningInvoiceRequest
-    ): Promise<PendingReverseSwap>;
-    claimVHTLC(pendingSwap: PendingReverseSwap): Promise<void>;
-    refundVHTLC(pendingSwap: PendingSubmarineSwap): Promise<void>;
-    waitAndClaim(pendingSwap: PendingReverseSwap): Promise<{ txid: string }>;
-    waitForSwapSettlement(
-        pendingSwap: PendingSubmarineSwap
-    ): Promise<{ preimage: string }>;
-    restoreSwaps(boltzFees?: FeesResponse): Promise<{
-        reverseSwaps: PendingReverseSwap[];
-        submarineSwaps: PendingSubmarineSwap[];
-    }>;
-    getFees(): Promise<FeesResponse>;
-    getLimits(): Promise<LimitsResponse>;
-    getPendingSubmarineSwaps(): Promise<PendingSubmarineSwap[]>;
-    getPendingReverseSwaps(): Promise<PendingReverseSwap[]>;
-    getSwapHistory(): Promise<PendingSwap[]>;
-    refreshSwapsStatus(): Promise<void>;
-    getSwapStatus(swapId: string): Promise<GetSwapStatusResponse>;
-    enrichReverseSwapPreimage(
-        swap: PendingReverseSwap,
-        preimage: string
-    ): PendingReverseSwap;
-    enrichSubmarineSwapInvoice(
-        swap: PendingSubmarineSwap,
-        invoice: string
-    ): PendingSubmarineSwap;
-    dispose(): Promise<void>;
-}
-
 /** @deprecated Use ArkadeSwapsConfig instead */
 export type ArkadeLightningConfig = ArkadeSwapsConfig;
 

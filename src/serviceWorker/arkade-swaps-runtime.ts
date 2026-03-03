@@ -810,12 +810,17 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         from?: Chain,
         to?: Chain
     ): Promise<FeesResponse | ChainFeesResponse> {
+        if ((from === undefined) !== (to === undefined)) {
+            throw new Error("Both 'from' and 'to' must be provided together");
+        }
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "GET_FEES",
-                ...(from && to ? { payload: { from, to } } : {}),
+                ...(from !== undefined && to !== undefined
+                    ? { payload: { from, to } }
+                    : {}),
             });
             return (res as ResponseGetFees).payload;
         } catch (e) {
@@ -826,12 +831,17 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     async getLimits(): Promise<LimitsResponse>;
     async getLimits(from: Chain, to: Chain): Promise<LimitsResponse>;
     async getLimits(from?: Chain, to?: Chain): Promise<LimitsResponse> {
+        if ((from === undefined) !== (to === undefined)) {
+            throw new Error("Both 'from' and 'to' must be provided together");
+        }
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
                 tag: this.messageTag,
                 type: "GET_LIMITS",
-                ...(from && to ? { payload: { from, to } } : {}),
+                ...(from !== undefined && to !== undefined
+                    ? { payload: { from, to } }
+                    : {}),
             });
             return (res as ResponseGetLimits).payload;
         } catch (e) {
@@ -931,22 +941,45 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         request: ArkadeSwapsUpdaterRequest
     ): Promise<ArkadeSwapsUpdaterResponse> {
         return new Promise((resolve, reject) => {
-            const messageHandler = (event: MessageEvent) => {
-                const response = event.data;
-                if (request.id !== response.id) {
-                    return;
-                }
+            const timeoutMs = 30_000;
+            let timeout: ReturnType<typeof setTimeout> | undefined;
 
+            const cleanup = () => {
+                if (timeout) clearTimeout(timeout);
                 navigator.serviceWorker.removeEventListener(
                     "message",
                     messageHandler
                 );
+            };
+
+            const messageHandler = (event: MessageEvent) => {
+                const response = event.data as
+                    | Partial<ArkadeSwapsUpdaterResponse>
+                    | undefined;
+                if (
+                    !response ||
+                    response.tag !== this.messageTag ||
+                    response.id !== request.id
+                ) {
+                    return;
+                }
+
+                cleanup();
                 if (response.error) {
                     reject(response.error);
                 } else {
-                    resolve(response);
+                    resolve(response as ArkadeSwapsUpdaterResponse);
                 }
             };
+
+            timeout = setTimeout(() => {
+                cleanup();
+                reject(
+                    new Error(
+                        `Timed out waiting for service worker response: ${request.type}`
+                    )
+                );
+            }, timeoutMs);
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
             this.serviceWorker.postMessage(request);
