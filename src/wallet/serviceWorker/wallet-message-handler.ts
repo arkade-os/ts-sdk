@@ -1013,7 +1013,7 @@ export class WalletMessageHandler
         const result = await wallet.delegatorManager.delegate(
             filtered,
             destination,
-            delegateAt ? new Date(delegateAt) : undefined
+            delegateAt !== undefined ? new Date(delegateAt) : undefined
         );
 
         return {
