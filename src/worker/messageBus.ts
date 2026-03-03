@@ -235,6 +235,11 @@ export class MessageBus {
             // handler state (readonlyWallet, etc.) without resetting the
             // initialized flag. Without this, handlers never get start()
             // called again and all messages fail with "not initialized".
+            //
+            // Clear the flag first so onMessage() rejects incoming messages
+            // during the stop/start window instead of routing them to
+            // half-reset handlers. Restored to true after start() completes.
+            this.initialized = false;
             await Promise.all(
                 Array.from(this.handlers.values()).map((h) =>
                     h.stop().catch(() => {})
