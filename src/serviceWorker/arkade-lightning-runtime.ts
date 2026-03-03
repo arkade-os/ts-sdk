@@ -49,9 +49,12 @@ import type {
 } from "./arkade-lightning-message-handler";
 import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { hex } from "@scure/base";
 import { IArkadeLightning } from "../arkade-swaps";
 import { IndexedDbSwapRepository } from "../repositories/IndexedDb/swap-repository";
 import type { Actions, SwapManagerClient } from "../swap-manager";
+import { decodeInvoice } from "../utils/decoding";
 
 export type SvcWrkArkadeLightningConfig = Pick<
     ArkadeSwapsConfig,
@@ -730,21 +733,46 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
     }
 
     enrichReverseSwapPreimage(
-        _swap: PendingReverseSwap,
-        _preimage: string
+        swap: PendingReverseSwap,
+        preimage: string
     ): PendingReverseSwap {
-        throw new Error(
-            "enrichReverseSwapPreimage is not supported via service worker"
-        );
+        const computedHash = hex.encode(sha256(hex.decode(preimage)));
+        if (computedHash !== swap.request.preimageHash) {
+            throw new Error(
+                `Preimage does not match swap: expected hash ${swap.request.preimageHash}, got ${computedHash}`
+            );
+        }
+
+        swap.preimage = preimage;
+        return swap;
     }
 
     enrichSubmarineSwapInvoice(
-        _swap: PendingSubmarineSwap,
-        _invoice: string
+        swap: PendingSubmarineSwap,
+        invoice: string
     ): PendingSubmarineSwap {
-        throw new Error(
-            "enrichSubmarineSwapInvoice is not supported via service worker"
-        );
+        let paymentHash: string;
+        try {
+            const decoded = decodeInvoice(invoice);
+            if (!decoded.paymentHash) {
+                throw new Error("Invoice missing payment hash");
+            }
+            paymentHash = decoded.paymentHash;
+        } catch (error) {
+            if (error instanceof Error) {
+                throw new Error(`Invalid Lightning invoice: ${error.message}`);
+            }
+            throw new Error(`Invalid Lightning invoice format`);
+        }
+
+        if (swap.preimageHash && paymentHash !== swap.preimageHash) {
+            throw new Error(
+                `Invoice payment hash does not match swap: expected ${swap.preimageHash}, got ${paymentHash}`
+            );
+        }
+
+        swap.request.invoice = invoice;
+        return swap;
     }
 
     createVHTLCScript(_args: {

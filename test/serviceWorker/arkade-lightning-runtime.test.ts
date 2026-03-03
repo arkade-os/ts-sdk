@@ -3,6 +3,9 @@ import { ServiceWorkerArkadeLightning } from "../../src/serviceWorker/arkade-lig
 import { DEFAULT_MESSAGE_TAG } from "../../src/serviceWorker/arkade-lightning-message-handler";
 import type { PendingReverseSwap, PendingSubmarineSwap } from "../../src/types";
 import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { hex } from "@scure/base";
+import { decodeInvoice } from "../../src/utils/decoding";
 
 class FakeServiceWorker {
     listeners: ((e: MessageEvent) => void)[] = [];
@@ -184,5 +187,89 @@ describe("SwArkadeLightningRuntime events", () => {
             },
         });
         expect(spy).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("SwArkadeLightningRuntime enrich methods", () => {
+    let fakeSw: FakeServiceWorker;
+    let sendMessageSpy: ReturnType<typeof vi.spyOn>;
+
+    const invoice =
+        "lntb30m1pw2f2yspp5s59w4a0kjecw3zyexm7zur8l8n4scw674w" +
+        "8sftjhwec33km882gsdpa2pshjmt9de6zqun9w96k2um5ypmkjar" +
+        "gypkh2mr5d9cxzun5ypeh2ursdae8gxqruyqvzddp68gup69uhnz" +
+        "wfj9cejuvf3xshrwde68qcrswf0d46kcarfwpshyaplw3skw0tdw" +
+        "4k8g6tsv9e8glzddp68gup69uhnzwfj9cejuvf3xshrwde68qcrs" +
+        "wf0d46kcarfwpshyaplw3skw0tdw4k8g6tsv9e8gcqpfmy8keu46" +
+        "zsrgtz8sxdym7yedew6v2jyfswg9zeqetpj2yw3f52ny77c5xsrg" +
+        "53q9273vvmwhc6p0gucz2av5gtk3esevk0cfhyvzgxgpgyyavt";
+
+    beforeEach(() => {
+        fakeSw = new FakeServiceWorker();
+        sendMessageSpy = vi.spyOn(
+            ServiceWorkerArkadeLightning.prototype as any,
+            "sendMessage"
+        );
+        sendMessageSpy.mockResolvedValue({
+            id: "init",
+            tag: TAG,
+            type: "ARKADE_LIGHTNING_INITIALIZED",
+        } as any);
+    });
+
+    afterEach(() => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (globalThis as any).navigator;
+        sendMessageSpy.mockRestore();
+    });
+
+    it("enrichReverseSwapPreimage sets preimage when hash matches", async () => {
+        const runtime = await createRuntime(fakeSw);
+        const preimage = "11".repeat(32);
+        const preimageHash = hex.encode(sha256(hex.decode(preimage)));
+        const swap = {
+            request: { preimageHash },
+            preimage: "",
+        } as PendingReverseSwap;
+
+        const enriched = runtime.enrichReverseSwapPreimage(swap, preimage);
+
+        expect(enriched.preimage).toBe(preimage);
+    });
+
+    it("enrichReverseSwapPreimage throws on hash mismatch", async () => {
+        const runtime = await createRuntime(fakeSw);
+        const swap = {
+            request: { preimageHash: "00".repeat(32) },
+            preimage: "",
+        } as PendingReverseSwap;
+
+        expect(() =>
+            runtime.enrichReverseSwapPreimage(swap, "11".repeat(32))
+        ).toThrow(/Preimage does not match swap/);
+    });
+
+    it("enrichSubmarineSwapInvoice sets invoice when payment hash matches", async () => {
+        const runtime = await createRuntime(fakeSw);
+        const paymentHash = decodeInvoice(invoice).paymentHash;
+        const swap = {
+            preimageHash: paymentHash,
+            request: { invoice: "" },
+        } as PendingSubmarineSwap;
+
+        const enriched = runtime.enrichSubmarineSwapInvoice(swap, invoice);
+
+        expect(enriched.request.invoice).toBe(invoice);
+    });
+
+    it("enrichSubmarineSwapInvoice throws for invalid invoice", async () => {
+        const runtime = await createRuntime(fakeSw);
+        const swap = {
+            request: { invoice: "" },
+        } as PendingSubmarineSwap;
+
+        expect(() =>
+            runtime.enrichSubmarineSwapInvoice(swap, "not-a-lightning-invoice")
+        ).toThrow(/Invalid Lightning invoice/);
     });
 });
