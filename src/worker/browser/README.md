@@ -18,6 +18,8 @@ scheduler.
     `MessageBus.getServiceWorker()` for client-side registration.
 - `service-worker-manager.ts`
   - Browser-side helper for registering a service worker once per path.
+  - Attaches an update handshake: detect `waiting`, send `SKIP_WAITING`, listen for
+    `controllerchange`, and optionally reload (or call callbacks).
   - Caches registration promises so subsequent calls reuse the same worker.
   - Provides `setupServiceWorkerOnce()` and `getActiveServiceWorker()`.
 - `utils.ts`
@@ -138,3 +140,39 @@ Notes:
 - Set `broadcast: true` on a request to fan it out to all handlers.
 - The `MessageBus` must receive `INITIALIZE_MESSAGE_BUS` before handlers process
   messages; earlier messages are dropped with a warning.
+
+## Registering with the built-in update handshake
+
+`setupServiceWorkerOnce` now handles stale workers by:
+- forcing an update check,
+- sending `{ type: "SKIP_WAITING" }` to a waiting worker,
+- retrying once after a timeout if it’s still waiting,
+- reloading the page on `controllerchange` (or invoking callbacks).
+
+Quick usage (defaults to auto-reload and `updateViaCache: "none"`):
+
+```ts
+await setupServiceWorkerOnce("/service-worker.js");
+```
+
+With prompts/callbacks:
+
+```ts
+await setupServiceWorkerOnce({
+  path: "/service-worker.js",
+  autoReload: false,          // don't reload automatically
+  onNeedRefresh: () => showUpdateBanner(), // called when a new SW is waiting
+  onUpdated: () => console.log("SW activated; reload if desired"),
+  activationTimeoutMs: 10_000,
+  debug: true,
+});
+```
+
+Worker requirement: your service worker entry must listen for the activation
+message and call `skipWaiting()`:
+
+```ts
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SKIP_WAITING") self.skipWaiting();
+});
+```
