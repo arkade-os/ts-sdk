@@ -1,4 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { mnemonicToSeedSync } from "@scure/bip39";
+import {
+    scureBIP32 as BIP32,
+    networks,
+    scriptExpressions,
+} from "@kukks/bitcoin-descriptors";
+import { hex } from "@scure/base";
 import {
     isDescriptor,
     normalizeToDescriptor,
@@ -6,17 +13,49 @@ import {
     parseHDDescriptor,
 } from "../src/identity/descriptor";
 
+const TEST_MNEMONIC =
+    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+
+/** Generate a real HD descriptor from the test mnemonic. */
+function makeDescriptor(opts: {
+    isMainnet?: boolean;
+    change?: number;
+    index?: number;
+}): string {
+    const { isMainnet = true, change = 0, index = 0 } = opts;
+    const network = isMainnet ? networks.bitcoin : networks.testnet;
+    const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+    const masterNode = BIP32.fromSeed(seed, network);
+    return scriptExpressions.trBIP32({
+        masterNode,
+        network,
+        account: 0,
+        change,
+        index,
+    });
+}
+
+/** Get x-only pubkey hex for a derived key. */
+function getXOnlyPubKey(isMainnet = true): string {
+    const network = isMainnet ? networks.bitcoin : networks.testnet;
+    const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+    const root = BIP32.fromSeed(seed, network);
+    const account = root.derivePath(isMainnet ? "m/86'/0'/0'" : "m/86'/1'/0'");
+    const child = account.derive(0).derive(0);
+    return hex.encode(child.publicKey.slice(1));
+}
+
 describe("isDescriptor", () => {
     it("should return true for simple descriptor", () => {
-        expect(isDescriptor("tr(abc123def456)")).toBe(true);
+        const pubkey = getXOnlyPubKey();
+        expect(isDescriptor(`tr(${pubkey})`)).toBe(true);
     });
     it("should return true for HD descriptor", () => {
-        expect(
-            isDescriptor("tr([12345678/86'/0'/0']xpubABCDEF123456/0/5)")
-        ).toBe(true);
+        const desc = makeDescriptor({ index: 5 });
+        expect(isDescriptor(desc)).toBe(true);
     });
     it("should return false for hex pubkey", () => {
-        expect(isDescriptor("abc123def456")).toBe(false);
+        expect(isDescriptor(getXOnlyPubKey())).toBe(false);
     });
     it("should return false for empty string", () => {
         expect(isDescriptor("")).toBe(false);
@@ -25,81 +64,79 @@ describe("isDescriptor", () => {
 
 describe("normalizeToDescriptor", () => {
     it("should return descriptor unchanged", () => {
-        expect(normalizeToDescriptor("tr(abc123)")).toBe("tr(abc123)");
+        const pubkey = getXOnlyPubKey();
+        const desc = `tr(${pubkey})`;
+        expect(normalizeToDescriptor(desc)).toBe(desc);
     });
     it("should wrap hex pubkey as tr(pubkey)", () => {
-        expect(normalizeToDescriptor("abc123")).toBe("tr(abc123)");
-    });
-    it("should wrap 64-char hex pubkey", () => {
-        const pubkey = "a".repeat(64);
+        const pubkey = getXOnlyPubKey();
         expect(normalizeToDescriptor(pubkey)).toBe(`tr(${pubkey})`);
     });
     it("should not double-wrap descriptors", () => {
-        expect(normalizeToDescriptor("tr(abc123)")).toBe("tr(abc123)");
+        const desc = makeDescriptor({ index: 0 });
+        expect(normalizeToDescriptor(desc)).toBe(desc);
     });
 });
 
 describe("extractPubKey", () => {
     it("should extract pubkey from simple descriptor", () => {
-        const pubkey = "a".repeat(64);
+        const pubkey = getXOnlyPubKey();
         expect(extractPubKey(`tr(${pubkey})`)).toBe(pubkey);
     });
     it("should return hex pubkey unchanged", () => {
-        const pubkey = "a".repeat(64);
+        const pubkey = getXOnlyPubKey();
         expect(extractPubKey(pubkey)).toBe(pubkey);
     });
     it("should throw for HD descriptor", () => {
-        expect(() =>
-            extractPubKey("tr([12345678/86'/0'/0']xpubABCDEF/0/5)")
-        ).toThrow("Cannot extract pubkey from HD descriptor");
-    });
-    it("should handle uppercase hex", () => {
-        const pubkey = "A".repeat(64);
-        expect(extractPubKey(`tr(${pubkey})`)).toBe(pubkey);
-    });
-    it("should throw for short pubkey in descriptor", () => {
-        expect(() => extractPubKey("tr(abc123)")).toThrow(
+        const desc = makeDescriptor({ index: 5 });
+        expect(() => extractPubKey(desc)).toThrow(
             "Cannot extract pubkey from HD descriptor"
         );
+    });
+    it("should handle uppercase hex", () => {
+        const pubkey = getXOnlyPubKey().toUpperCase();
+        expect(extractPubKey(`tr(${pubkey})`)).toBe(pubkey.toLowerCase());
+    });
+    it("should throw for invalid descriptor content", () => {
+        expect(() => extractPubKey("tr(abc123)")).toThrow();
     });
 });
 
 describe("parseHDDescriptor", () => {
     it("should parse valid HD descriptor with mainnet path", () => {
-        const result = parseHDDescriptor(
-            "tr([12345678/86'/0'/0']xpubDCtest123/0/5)"
-        );
+        const desc = makeDescriptor({ index: 5 });
+        const result = parseHDDescriptor(desc);
         expect(result).not.toBeNull();
-        expect(result!.fingerprint).toBe("12345678");
+        expect(result!.fingerprint).toBe("73c5da0a");
         expect(result!.basePath).toBe("86'/0'/0'");
-        expect(result!.xpub).toBe("xpubDCtest123");
         expect(result!.derivationPath).toBe("0/5");
+        expect(result!.xpub).toMatch(/^xpub/);
     });
     it("should parse valid HD descriptor with testnet path", () => {
-        const result = parseHDDescriptor(
-            "tr([abcdef12/86'/1'/0']tpubDCtest456/0/10)"
-        );
+        const desc = makeDescriptor({ isMainnet: false, index: 10 });
+        const result = parseHDDescriptor(desc);
         expect(result).not.toBeNull();
-        expect(result!.fingerprint).toBe("abcdef12");
+        expect(result!.fingerprint).toBe("73c5da0a");
         expect(result!.basePath).toBe("86'/1'/0'");
-        expect(result!.xpub).toBe("tpubDCtest456");
         expect(result!.derivationPath).toBe("0/10");
+        expect(result!.xpub).toMatch(/^tpub/);
     });
     it("should return null for simple descriptor", () => {
-        expect(parseHDDescriptor(`tr(${"a".repeat(64)})`)).toBeNull();
+        const pubkey = getXOnlyPubKey();
+        expect(parseHDDescriptor(`tr(${pubkey})`)).toBeNull();
     });
     it("should return null for invalid format", () => {
         expect(parseHDDescriptor("invalid")).toBeNull();
     });
     it("should return null for raw hex", () => {
-        expect(parseHDDescriptor("a".repeat(64))).toBeNull();
+        expect(parseHDDescriptor(getXOnlyPubKey())).toBeNull();
     });
-    it("should handle real-world xpub format", () => {
-        const result = parseHDDescriptor(
-            "tr([73c5da0a/86'/0'/0']xpub6CUGRUonZSQ4TWtTMmzXdrXDtyPWm/0/0)"
-        );
+    it("should extract correct xpub from mainnet descriptor", () => {
+        const desc = makeDescriptor({ index: 0 });
+        const result = parseHDDescriptor(desc);
         expect(result).not.toBeNull();
-        expect(result!.fingerprint).toBe("73c5da0a");
-        expect(result!.xpub).toBe("xpub6CUGRUonZSQ4TWtTMmzXdrXDtyPWm");
+        expect(result!.xpub).toBe(
+            "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
+        );
     });
 });
