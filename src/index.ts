@@ -53,8 +53,13 @@ export {
 } from "./utils/swap-helpers";
 export type { SwapSaver } from "./utils/swap-helpers";
 export { SwapManager } from "./swap-manager";
+export { SwapManager } from "./swap-manager";
 export { ArkadeSwapsMessageHandler } from "./serviceWorker/arkade-swaps-message-handler";
 export { ServiceWorkerArkadeSwaps } from "./serviceWorker/arkade-swaps-runtime";
+/** `@deprecated` Use ArkadeSwapsMessageHandler */
+export { ArkadeSwapsMessageHandler as ArkadeLightningMessageHandler } from "./serviceWorker/arkade-swaps-message-handler";
+/** `@deprecated` Use ServiceWorkerArkadeSwaps */
+export { ServiceWorkerArkadeSwaps as ServiceWorkerArkadeLightning } from "./serviceWorker/arkade-swaps-runtime";
 export { migrateToSwapRepository } from "./repositories/migrationFromContracts";
 export type {
     CreateLightningInvoiceResponse,
