@@ -6,8 +6,24 @@
  * - Simple descriptors: tr(pubkey) — for static/external keys
  * - HD descriptors: tr([fingerprint/path']xpub/derivation) — for HD wallets
  *
+ * Uses @kukks/bitcoin-descriptors for parsing — no manual regex.
+ *
  * @module
  */
+
+import { defaultFactory, networks } from "@kukks/bitcoin-descriptors";
+import type { Network } from "@kukks/bitcoin-descriptors";
+import { hex } from "@scure/base";
+
+const { expand } = defaultFactory;
+
+/**
+ * Infer the network from a descriptor string.
+ * tpub → testnet, xpub or raw hex → mainnet (default).
+ */
+function inferNetwork(descriptor: string): Network {
+    return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
+}
 
 /**
  * Check if a string is a descriptor (starts with "tr(").
@@ -29,7 +45,7 @@ export function normalizeToDescriptor(value: string): string {
 
 /**
  * Extract the public key from a simple descriptor.
- * For simple descriptors (tr(64-hex-chars)), extracts the pubkey directly.
+ * For simple descriptors (tr(pubkey)), extracts the pubkey using the library.
  * For HD descriptors, throws — use DescriptorProvider to derive the key.
  */
 export function extractPubKey(descriptor: string): string {
@@ -37,15 +53,30 @@ export function extractPubKey(descriptor: string): string {
         return descriptor;
     }
 
-    const simpleMatch = descriptor.match(/^tr\(([0-9a-fA-F]{64})\)$/);
-    if (simpleMatch) {
-        return simpleMatch[1];
+    const network = inferNetwork(descriptor);
+    const expansion = expand({ descriptor, network });
+
+    if (!expansion.expansionMap) {
+        throw new Error(
+            "Cannot extract pubkey from descriptor: expansion failed."
+        );
     }
 
-    throw new Error(
-        "Cannot extract pubkey from HD descriptor without derivation. " +
-            "Use DescriptorProvider to derive the key from the xpub."
-    );
+    const key = expansion.expansionMap["@0"];
+
+    // HD descriptors (have a bip32 key) require DescriptorProvider for derivation
+    if (key?.bip32) {
+        throw new Error(
+            "Cannot extract pubkey from HD descriptor without derivation. " +
+                "Use DescriptorProvider to derive the key from the xpub."
+        );
+    }
+
+    if (!key?.pubkey) {
+        throw new Error("Cannot extract pubkey from descriptor: no key found.");
+    }
+
+    return hex.encode(key.pubkey);
 }
 
 /** Parsed HD descriptor components. */
@@ -64,18 +95,51 @@ export interface ParsedHDDescriptor {
 export function parseHDDescriptor(
     descriptor: string
 ): ParsedHDDescriptor | null {
-    const match = descriptor.match(
-        /^tr\(\[([0-9a-fA-F]{8})\/([^\]]+)\]([a-zA-Z0-9]+)\/(.+)\)$/
-    );
-
-    if (!match) {
+    if (!isDescriptor(descriptor)) {
         return null;
     }
 
+    let expansion;
+    try {
+        const network = inferNetwork(descriptor);
+        expansion = expand({ descriptor, network });
+    } catch {
+        return null;
+    }
+
+    if (!expansion.expansionMap) {
+        return null;
+    }
+
+    const key = expansion.expansionMap["@0"];
+    if (!key) {
+        return null;
+    }
+
+    // HD descriptors have originPath and keyPath; simple pubkey descriptors do not
+    if (!key.masterFingerprint || !key.originPath || !key.keyPath) {
+        return null;
+    }
+
+    // Extract xpub from the key expression: strip origin prefix and key path suffix
+    const keyExpr = key.keyExpression;
+    const originEnd = keyExpr.indexOf("]");
+    const afterOrigin = originEnd >= 0 ? keyExpr.slice(originEnd + 1) : keyExpr;
+    const keyPathStart = afterOrigin.indexOf(key.keyPath);
+    const xpub =
+        keyPathStart > 0 ? afterOrigin.slice(0, keyPathStart) : afterOrigin;
+
+    // keyPath comes back as "/0/5" — strip leading slash for our format
+    const derivationPath = key.keyPath.startsWith("/")
+        ? key.keyPath.slice(1)
+        : key.keyPath;
+
     return {
-        fingerprint: match[1],
-        basePath: match[2],
-        xpub: match[3],
-        derivationPath: match[4],
+        fingerprint: hex.encode(key.masterFingerprint),
+        basePath: key.originPath.startsWith("/")
+            ? key.originPath.slice(1)
+            : key.originPath,
+        xpub,
+        derivationPath,
     };
 }
