@@ -53,7 +53,6 @@ export {
 } from "./utils/swap-helpers";
 export type { SwapSaver } from "./utils/swap-helpers";
 export { SwapManager } from "./swap-manager";
-export { SwapManager } from "./swap-manager";
 export { ArkadeSwapsMessageHandler } from "./serviceWorker/arkade-swaps-message-handler";
 export { ServiceWorkerArkadeSwaps } from "./serviceWorker/arkade-swaps-runtime";
 /** `@deprecated` Use ArkadeSwapsMessageHandler */
