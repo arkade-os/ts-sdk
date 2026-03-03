@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
-import { openDatabase, closeDatabase } from "../src/db/manager";
+import {
+    openDatabase,
+    closeDatabase,
+} from "../src/repositories/indexedDB/manager";
 
 let dbCounter = 0;
 function getUniqueDbName(prefix: string): string {

@@ -16,7 +16,7 @@ import {
     SerializedVtxo,
     DB_VERSION,
 } from "./db";
-import { closeDatabase, openDatabase } from "../../db/manager";
+import { closeDatabase, openDatabase } from "./manager";
 import { initDatabase } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 

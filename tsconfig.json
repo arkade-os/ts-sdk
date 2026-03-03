@@ -21,7 +21,6 @@
         "dist",
         "**/*.test.ts",
         "examples",
-        "src/adapters/expo-db.ts",
         "src/repositories/indexedDB/websqlAdapter.ts"
     ]
 }

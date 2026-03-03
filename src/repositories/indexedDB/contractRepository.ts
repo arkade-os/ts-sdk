@@ -1,7 +1,7 @@
 import { DB_VERSION, STORE_CONTRACTS } from "./db";
 import { Contract } from "../../contracts";
 import { ContractFilter, ContractRepository } from "../contractRepository";
-import { closeDatabase, openDatabase } from "../../db/manager";
+import { closeDatabase, openDatabase } from "./manager";
 import { initDatabase } from "./schema";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
