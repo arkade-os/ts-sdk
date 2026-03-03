@@ -2257,7 +2257,9 @@ export interface IArkadeSwaps extends AsyncDisposable {
         };
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string };
     getFees(): Promise<FeesResponse>;
+    getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;
     getLimits(): Promise<LimitsResponse>;
+    getLimits(from: Chain, to: Chain): Promise<LimitsResponse>;
     getPendingSubmarineSwaps(): Promise<PendingSubmarineSwap[]>;
     getPendingReverseSwaps(): Promise<PendingReverseSwap[]>;
     getPendingChainSwaps(): Promise<PendingChainSwap[]>;
