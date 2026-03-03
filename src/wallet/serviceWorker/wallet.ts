@@ -393,6 +393,23 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         request: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                navigator.serviceWorker.removeEventListener(
+                    "message",
+                    messageHandler
+                );
+            };
+
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(
+                    new Error(
+                        `Service worker message timed out (${request.type})`
+                    )
+                );
+            }, 30_000);
+
             const messageHandler = (
                 event: MessageEvent<WalletUpdaterResponse>
             ) => {
@@ -401,10 +418,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     return;
                 }
 
-                navigator.serviceWorker.removeEventListener(
-                    "message",
-                    messageHandler
-                );
+                cleanup();
                 if (response.error) {
                     reject(response.error);
                 } else {
