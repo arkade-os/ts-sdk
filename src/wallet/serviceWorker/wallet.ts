@@ -78,6 +78,8 @@ import {
     ResponseReissue,
     RequestBurn,
     ResponseBurn,
+    RequestDelegate,
+    ResponseDelegate,
     DEFAULT_MESSAGE_TAG,
 } from "./wallet-message-handler";
 import type {
@@ -225,6 +227,7 @@ type MessageBusInitConfig = {
         url: string;
         publicKey?: string;
     };
+    delegatorUrl?: string;
     timeoutMs?: number;
 };
 
@@ -334,6 +337,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     url: initConfig.arkServerUrl,
                     publicKey: initConfig.arkServerPublicKey,
                 },
+                delegatorUrl: initConfig.delegatorUrl,
                 timeoutMs: options.messageBusTimeoutMs,
             },
             options.messageBusTimeoutMs
@@ -863,6 +867,7 @@ export class ServiceWorkerWallet
                     url: initConfig.arkServerUrl,
                     publicKey: initConfig.arkServerPublicKey,
                 },
+                delegatorUrl: initConfig.delegatorUrl,
                 timeoutMs: options.messageBusTimeoutMs,
             },
             options.messageBusTimeoutMs
@@ -1007,6 +1012,30 @@ export class ServiceWorkerWallet
             return (response as ResponseSend).payload.txid;
         } catch (error) {
             throw new Error(`Send failed: ${error}`);
+        }
+    }
+
+    async delegate(
+        vtxoOutpoints: { txid: string; vout: number }[],
+        destination: string,
+        delegateAt?: Date
+    ): Promise<ResponseDelegate["payload"]> {
+        const message: RequestDelegate = {
+            tag: this.messageTag,
+            type: "DELEGATE",
+            id: getRandomId(),
+            payload: {
+                vtxoOutpoints,
+                destination,
+                delegateAt: delegateAt?.getTime(),
+            },
+        };
+
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseDelegate).payload;
+        } catch (error) {
+            throw new Error(`Delegation failed: ${error}`);
         }
     }
 }

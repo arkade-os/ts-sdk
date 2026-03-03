@@ -291,6 +291,25 @@ export type ResponseBurn = ResponseEnvelope & {
     payload: { txid: string };
 };
 
+export type RequestDelegate = RequestEnvelope & {
+    type: "DELEGATE";
+    payload: {
+        vtxoOutpoints: { txid: string; vout: number }[];
+        destination: string;
+        delegateAt?: number;
+    };
+};
+export type ResponseDelegate = ResponseEnvelope & {
+    type: "DELEGATE_SUCCESS";
+    payload: {
+        delegated: { txid: string; vout: number }[];
+        failed: {
+            outpoints: { txid: string; vout: number }[];
+            error: string;
+        }[];
+    };
+};
+
 // WalletUpdater
 export type WalletUpdaterRequest =
     | RequestInitWallet
@@ -318,7 +337,8 @@ export type WalletUpdaterRequest =
     | RequestGetAssetDetails
     | RequestIssue
     | RequestReissue
-    | RequestBurn;
+    | RequestBurn
+    | RequestDelegate;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -352,6 +372,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseIssue
         | ResponseReissue
         | ResponseBurn
+        | ResponseDelegate
     );
 
 export class WalletMessageHandler
@@ -701,6 +722,12 @@ export class WalletMessageHandler
                         payload: { txid },
                     });
                 }
+                case "DELEGATE": {
+                    const response = await this.handleDelegate(
+                        message as RequestDelegate
+                    );
+                    return this.tagged({ id, ...response });
+                }
                 default:
                     console.error("Unknown message type", message);
                     throw new Error("Unknown message");
@@ -964,6 +991,48 @@ export class WalletMessageHandler
             type: "SIGN_TRANSACTION",
             payload: { tx: signature },
         } as ResponseSignTransaction;
+    }
+
+    private async handleDelegate(
+        message: RequestDelegate
+    ): Promise<ResponseDelegate> {
+        const wallet = this.requireWallet();
+        if (!wallet.delegatorManager) {
+            throw new Error("Delegator not configured");
+        }
+
+        const { vtxoOutpoints, destination, delegateAt } = message.payload;
+        const allVtxos = await wallet.getVtxos();
+        const outpointSet = new Set(
+            vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`)
+        );
+        const filtered = allVtxos.filter((v) =>
+            outpointSet.has(`${v.txid}:${v.vout}`)
+        );
+
+        const result = await wallet.delegatorManager.delegate(
+            filtered,
+            destination,
+            delegateAt ? new Date(delegateAt) : undefined
+        );
+
+        return {
+            tag: this.messageTag,
+            type: "DELEGATE_SUCCESS",
+            payload: {
+                delegated: result.delegated.map((o) => ({
+                    txid: o.txid,
+                    vout: o.vout,
+                })),
+                failed: result.failed.map((f) => ({
+                    outpoints: f.outpoints.map((o) => ({
+                        txid: o.txid,
+                        vout: o.vout,
+                    })),
+                    error: String(f.error),
+                })),
+            },
+        };
     }
 
     private async handleGetVtxos(message: RequestGetVtxos) {
