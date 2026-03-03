@@ -25,13 +25,33 @@
                 "types": "./dist/expo/index.d.ts",
                 "default": "./dist/expo/index.cjs"
             }
+        },
+        "./repositories/sqlite": {
+            "import": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.cjs"
+            }
+        },
+        "./repositories/realm": {
+            "import": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.cjs"
+            }
         }
     },
     "files": [
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts src/expo/index.ts --format esm,cjs --dts --clean",
+        "build": "tsup src/index.ts src/expo/index.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
         "prepack": "pnpm run build",
@@ -64,7 +84,7 @@
     "author": "Arkade-OS",
     "license": "MIT",
     "dependencies": {
-        "@arkade-os/sdk": "0.4.0-next.0",
+        "@arkade-os/sdk": "0.4.0-next.2",
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1",
