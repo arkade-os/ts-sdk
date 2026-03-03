@@ -482,7 +482,7 @@ export class RestArkProvider implements ArkProvider {
         }
     }
 
-    async *getEventStream(
+    getEventStream(
         signal: AbortSignal,
         topics: string[]
     ): AsyncIterableIterator<SettlementEvent> {
@@ -492,53 +492,67 @@ export class RestArkProvider implements ArkProvider {
                 ? `?${topics.map((topic) => `topics=${encodeURIComponent(topic)}`).join("&")}`
                 : "";
 
-        while (!signal?.aborted) {
-            try {
-                const eventSource = new EventSource(url + queryParams);
+        // Create first EventSource eagerly so events are buffered
+        // before the caller starts iterating, preventing race conditions
+        // where the server emits events before iteration begins.
+        const eagerEventSource = new EventSource(url + queryParams);
+        const eagerIterator = eventSourceIterator(eagerEventSource);
 
-                // Set up abort handling
-                const abortHandler = () => {
-                    eventSource.close();
-                };
-                signal?.addEventListener("abort", abortHandler);
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        const self = this;
+        return (async function* () {
+            let firstIteration = true;
+            while (!signal?.aborted) {
+                const eventSource = firstIteration
+                    ? eagerEventSource
+                    : new EventSource(url + queryParams);
+                const iterator = firstIteration
+                    ? eagerIterator
+                    : eventSourceIterator(eventSource);
+                firstIteration = false;
 
                 try {
-                    for await (const event of eventSourceIterator(
-                        eventSource
-                    )) {
-                        if (signal?.aborted) break;
+                    const abortHandler = () => {
+                        eventSource.close();
+                    };
+                    signal?.addEventListener("abort", abortHandler);
 
-                        try {
-                            const data = JSON.parse(event.data);
-                            const settlementEvent =
-                                this.parseSettlementEvent(data);
-                            if (settlementEvent) {
-                                yield settlementEvent;
+                    try {
+                        for await (const event of iterator) {
+                            if (signal?.aborted) break;
+
+                            try {
+                                const data = JSON.parse(event.data);
+                                const settlementEvent =
+                                    self.parseSettlementEvent(data);
+                                if (settlementEvent) {
+                                    yield settlementEvent;
+                                }
+                            } catch (err) {
+                                console.error("Failed to parse event:", err);
+                                throw err;
                             }
-                        } catch (err) {
-                            console.error("Failed to parse event:", err);
-                            throw err;
                         }
+                    } finally {
+                        signal?.removeEventListener("abort", abortHandler);
+                        eventSource.close();
                     }
-                } finally {
-                    signal?.removeEventListener("abort", abortHandler);
-                    eventSource.close();
-                }
-            } catch (error) {
-                if (error instanceof Error && error.name === "AbortError") {
-                    break;
-                }
+                } catch (error) {
+                    if (error instanceof Error && error.name === "AbortError") {
+                        break;
+                    }
 
-                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                if (isFetchTimeoutError(error)) {
-                    console.debug("Timeout error ignored");
-                    continue;
-                }
+                    // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                    if (isFetchTimeoutError(error)) {
+                        console.debug("Timeout error ignored");
+                        continue;
+                    }
 
-                console.error("Event stream error:", error);
-                throw error;
+                    console.error("Event stream error:", error);
+                    throw error;
+                }
             }
-        }
+        })();
     }
 
     async *getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
