@@ -2175,4 +2175,102 @@ export interface IArkadeLightning extends AsyncDisposable {
 export type ArkadeLightningConfig = ArkadeSwapsConfig;
 
 /** @deprecated Use ArkadeSwaps instead */
-export { ArkadeSwaps as ArkadeLightning };
+export const ArkadeLightning = ArkadeSwaps;
+
+export interface IArkadeSwaps extends AsyncDisposable {
+    startSwapManager(): Promise<void>;
+    stopSwapManager(): Promise<void>;
+    getSwapManager(): SwapManagerClient | null;
+    createLightningInvoice(
+        args: CreateLightningInvoiceRequest
+    ): Promise<CreateLightningInvoiceResponse>;
+    sendLightningPayment(
+        args: SendLightningPaymentRequest
+    ): Promise<SendLightningPaymentResponse>;
+    createSubmarineSwap(
+        args: SendLightningPaymentRequest
+    ): Promise<PendingSubmarineSwap>;
+    createReverseSwap(
+        args: CreateLightningInvoiceRequest
+    ): Promise<PendingReverseSwap>;
+    claimVHTLC(pendingSwap: PendingReverseSwap): Promise<void>;
+    refundVHTLC(pendingSwap: PendingSubmarineSwap): Promise<void>;
+    waitAndClaim(pendingSwap: PendingReverseSwap): Promise<{ txid: string }>;
+    waitForSwapSettlement(
+        pendingSwap: PendingSubmarineSwap
+    ): Promise<{ preimage: string }>;
+    restoreSwaps(boltzFees?: FeesResponse): Promise<{
+        reverseSwaps: PendingReverseSwap[];
+        submarineSwaps: PendingSubmarineSwap[];
+    }>;
+    arkToBtc(args: {
+        btcAddress: string;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+        feeSatsPerByte?: number;
+    }): Promise<ArkToBtcResponse>;
+    waitAndClaimBtc(pendingSwap: PendingChainSwap): Promise<{ txid: string }>;
+    claimBtc(pendingSwap: PendingChainSwap): Promise<void>;
+    refundArk(pendingSwap: PendingChainSwap): Promise<void>;
+    btcToArk(args: {
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<BtcToArkResponse>;
+    waitAndClaimArk(pendingSwap: PendingChainSwap): Promise<{ txid: string }>;
+    claimArk(pendingSwap: PendingChainSwap): Promise<void>;
+    signCooperativeClaimForServer(pendingSwap: PendingChainSwap): Promise<void>;
+    waitAndClaimChain(pendingSwap: PendingChainSwap): Promise<{ txid: string }>;
+    createChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        toAddress: string;
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<PendingChainSwap>;
+    verifyChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        swap: PendingChainSwap;
+        arkInfo: ArkInfo;
+    }): Promise<boolean>;
+    quoteSwap(swapId: string): Promise<number>;
+    joinBatch(
+        identity: Identity,
+        input: ArkTxInput,
+        output: TransactionOutput,
+        arkInfo: ArkInfo,
+        isRecoverable?: boolean
+    ): Promise<string>;
+    createVHTLCScript(args: {
+        network: string;
+        preimageHash: Uint8Array;
+        receiverPubkey: string;
+        senderPubkey: string;
+        serverPubkey: string;
+        timeoutBlockHeights: {
+            refund: number;
+            unilateralClaim: number;
+            unilateralRefund: number;
+            unilateralRefundWithoutReceiver: number;
+        };
+    }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string };
+    getFees(): Promise<FeesResponse>;
+    getLimits(): Promise<LimitsResponse>;
+    getPendingSubmarineSwaps(): Promise<PendingSubmarineSwap[]>;
+    getPendingReverseSwaps(): Promise<PendingReverseSwap[]>;
+    getPendingChainSwaps(): Promise<PendingChainSwap[]>;
+    getSwapHistory(): Promise<PendingSwap[]>;
+    refreshSwapsStatus(): Promise<void>;
+    getSwapStatus(swapId: string): Promise<GetSwapStatusResponse>;
+    enrichReverseSwapPreimage(
+        swap: PendingReverseSwap,
+        preimage: string
+    ): PendingReverseSwap;
+    enrichSubmarineSwapInvoice(
+        swap: PendingSubmarineSwap,
+        invoice: string
+    ): PendingSubmarineSwap;
+    dispose(): Promise<void>;
+}

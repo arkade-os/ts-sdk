@@ -18,11 +18,11 @@ import {
 } from "../types";
 import { SwapRepository } from "../repositories/swap-repository";
 import {
-    ArkadeLightningUpdaterRequest,
-    ArkadeLightningUpdaterResponse,
+    ArkadeSwapsUpdaterRequest,
+    ArkadeSwapsUpdaterResponse,
     DEFAULT_MESSAGE_TAG,
     RequestInitArkLn,
-} from "./arkade-lightning-message-handler";
+} from "./arkade-swaps-message-handler";
 import type {
     ResponseArkToBtc,
     ResponseBtcToArk,
@@ -46,17 +46,17 @@ import type {
     ResponseWaitAndClaimChain,
     ResponseWaitAndClaim,
     ResponseWaitForSwapSettlement,
-} from "./arkade-lightning-message-handler";
+} from "./arkade-swaps-message-handler";
 import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
-import { IArkadeLightning } from "../arkade-swaps";
+import { IArkadeSwaps } from "../arkade-swaps";
 import { IndexedDbSwapRepository } from "../repositories/IndexedDb/swap-repository";
 import type { Actions, SwapManagerClient } from "../swap-manager";
 import { decodeInvoice } from "../utils/decoding";
 
-export type SvcWrkArkadeLightningConfig = Pick<
+export type SvcWrkArkadeSwapsConfig = Pick<
     ArkadeSwapsConfig,
     "swapManager" | "swapProvider" | "swapRepository"
 > & {
@@ -66,7 +66,7 @@ export type SvcWrkArkadeLightningConfig = Pick<
     arkServerUrl: string;
 };
 
-export class ServiceWorkerArkadeLightning implements IArkadeLightning {
+export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     private eventListenerInitialized = false;
     private swapUpdateListeners = new Set<
         (
@@ -101,13 +101,13 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
         private readonly withSwapManager: boolean
     ) {}
 
-    static async create(config: SvcWrkArkadeLightningConfig) {
+    static async create(config: SvcWrkArkadeSwapsConfig) {
         const messageTag = config.messageTag ?? DEFAULT_MESSAGE_TAG;
 
         const swapRepository =
             config.swapRepository ?? new IndexedDbSwapRepository();
 
-        const svcArkadeLightning = new ServiceWorkerArkadeLightning(
+        const svcArkadeSwaps = new ServiceWorkerArkadeSwaps(
             messageTag,
             config.serviceWorker,
             swapRepository,
@@ -126,9 +126,9 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
             },
         };
 
-        await svcArkadeLightning.sendMessage(initMessage);
+        await svcArkadeSwaps.sendMessage(initMessage);
 
-        return svcArkadeLightning;
+        return svcArkadeSwaps;
     }
 
     async startSwapManager(): Promise<void> {
@@ -206,7 +206,7 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
                     type: "SM-GET_PENDING_SWAPS",
                 });
                 return (
-                    res as ArkadeLightningUpdaterResponse & {
+                    res as ArkadeSwapsUpdaterResponse & {
                         payload: (
                             | PendingReverseSwap
                             | PendingSubmarineSwap
@@ -223,7 +223,7 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
                     payload: { swapId },
                 });
                 return (
-                    res as ArkadeLightningUpdaterResponse & {
+                    res as ArkadeSwapsUpdaterResponse & {
                         payload: { has: boolean };
                     }
                 ).payload.has;
@@ -236,7 +236,7 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
                     payload: { swapId },
                 });
                 return (
-                    res as ArkadeLightningUpdaterResponse & {
+                    res as ArkadeSwapsUpdaterResponse & {
                         payload: { processing: boolean };
                     }
                 ).payload.processing;
@@ -248,7 +248,7 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
                     type: "SM-GET_STATS",
                 });
                 return (
-                    res as ArkadeLightningUpdaterResponse & {
+                    res as ArkadeSwapsUpdaterResponse & {
                         payload: {
                             isRunning: boolean;
                             monitoredSwaps: number;
@@ -268,7 +268,7 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
                     payload: { swapId },
                 });
                 return (
-                    res as ArkadeLightningUpdaterResponse & {
+                    res as ArkadeSwapsUpdaterResponse & {
                         payload: { txid: string };
                     }
                 ).payload;
@@ -927,8 +927,8 @@ export class ServiceWorkerArkadeLightning implements IArkadeLightning {
     }
 
     private async sendMessage(
-        request: ArkadeLightningUpdaterRequest
-    ): Promise<ArkadeLightningUpdaterResponse> {
+        request: ArkadeSwapsUpdaterRequest
+    ): Promise<ArkadeSwapsUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const messageHandler = (event: MessageEvent) => {
                 const response = event.data;

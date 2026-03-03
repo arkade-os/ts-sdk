@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ServiceWorkerArkadeLightning } from "../../src/serviceWorker/arkade-lightning-runtime";
-import { DEFAULT_MESSAGE_TAG } from "../../src/serviceWorker/arkade-lightning-message-handler";
+import { ServiceWorkerArkadeSwaps } from "../../src/serviceWorker/arkade-swaps-runtime";
+import { DEFAULT_MESSAGE_TAG } from "../../src/serviceWorker/arkade-swaps-message-handler";
 import type { PendingReverseSwap, PendingSubmarineSwap } from "../../src/types";
 import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
 import { sha256 } from "@noble/hashes/sha2.js";
@@ -34,23 +34,25 @@ function createRuntime(fakeSw: FakeServiceWorker) {
         },
     });
 
-    return ServiceWorkerArkadeLightning.create({
+    return ServiceWorkerArkadeSwaps.create({
         serviceWorker: fakeSw as any,
         swapProvider: {
             getApiUrl: () => "http://example.com",
         } as any,
         swapManager: true,
+        network: "regtest",
+        arkServerUrl: "http://ark.example.com",
     });
 }
 
-describe("SwArkadeLightningRuntime events", () => {
+describe("SwArkadeSwapsRuntime events", () => {
     let fakeSw: FakeServiceWorker;
     let sendMessageSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(() => {
         fakeSw = new FakeServiceWorker();
         sendMessageSpy = vi.spyOn(
-            ServiceWorkerArkadeLightning.prototype as any,
+            ServiceWorkerArkadeSwaps.prototype as any,
             "sendMessage"
         );
         sendMessageSpy.mockResolvedValue({
@@ -190,7 +192,7 @@ describe("SwArkadeLightningRuntime events", () => {
     });
 });
 
-describe("SwArkadeLightningRuntime enrich methods", () => {
+describe("SwArkadeSwapsRuntime enrich methods", () => {
     let fakeSw: FakeServiceWorker;
     let sendMessageSpy: ReturnType<typeof vi.spyOn>;
 
@@ -207,7 +209,7 @@ describe("SwArkadeLightningRuntime enrich methods", () => {
     beforeEach(() => {
         fakeSw = new FakeServiceWorker();
         sendMessageSpy = vi.spyOn(
-            ServiceWorkerArkadeLightning.prototype as any,
+            ServiceWorkerArkadeSwaps.prototype as any,
             "sendMessage"
         );
         sendMessageSpy.mockResolvedValue({

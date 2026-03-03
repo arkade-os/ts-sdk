@@ -34,7 +34,7 @@ import {
     IndexerProvider,
     RestIndexerProvider,
 } from "@arkade-os/sdk";
-import { ArkadeLightning } from "../arkade-swaps";
+import { ArkadeSwaps } from "../arkade-swaps";
 import type { SwapManagerClient } from "../swap-manager";
 
 export const DEFAULT_MESSAGE_TAG = "ARKADE_LIGHTNING_UPDATER";
@@ -429,7 +429,7 @@ export type ResponseSwapManagerWaitForCompletion = ResponseEnvelope & {
     payload: { txid: string };
 };
 
-export type ArkadeLightningUpdaterRequest =
+export type ArkadeSwapsUpdaterRequest =
     | RequestInitArkLn
     | RequestCreateLightningInvoice
     | RequestSendLightningPayment
@@ -472,7 +472,7 @@ export type ArkadeLightningUpdaterRequest =
     | RequestSwapManagerGetStats
     | RequestSwapManagerWaitForCompletion;
 
-export type ArkadeLightningUpdaterResponse =
+export type ArkadeSwapsUpdaterResponse =
     | ResponseInitArkLn
     | ResponseCreateLightningInvoice
     | ResponseSendLightningPayment
@@ -557,22 +557,19 @@ export type SwapManagerEventMessage =
           payload?: { errorMessage?: string };
       };
 
-export class ArkadeLightningMessageHandler
+export class ArkadeSwapsMessageHandler
     implements
-        MessageHandler<
-            ArkadeLightningUpdaterRequest,
-            ArkadeLightningUpdaterResponse
-        >
+        MessageHandler<ArkadeSwapsUpdaterRequest, ArkadeSwapsUpdaterResponse>
 {
     static messageTag = DEFAULT_MESSAGE_TAG;
-    readonly messageTag = ArkadeLightningMessageHandler.messageTag;
+    readonly messageTag = ArkadeSwapsMessageHandler.messageTag;
 
     private arkProvider: ArkProvider | undefined;
     private indexerProvider: IndexerProvider | undefined;
     private swapProvider: BoltzSwapProvider | undefined;
     private wallet: IWallet | undefined;
 
-    private handler: ArkadeLightning | undefined;
+    private handler: ArkadeSwaps | undefined;
     private swapManager: SwapManagerClient | null | undefined;
 
     constructor(private readonly swapRepository: SwapRepository) {}
@@ -618,12 +615,12 @@ export class ArkadeLightningMessageHandler
     }
 
     private tagged(
-        res: Partial<ArkadeLightningUpdaterResponse>
-    ): ArkadeLightningUpdaterResponse {
+        res: Partial<ArkadeSwapsUpdaterResponse>
+    ): ArkadeSwapsUpdaterResponse {
         return {
             ...res,
             tag: this.messageTag,
-        } as ArkadeLightningUpdaterResponse;
+        } as ArkadeSwapsUpdaterResponse;
     }
 
     private async broadcastEvent(
@@ -642,8 +639,8 @@ export class ArkadeLightningMessageHandler
     }
 
     async handleMessage(
-        message: ArkadeLightningUpdaterRequest
-    ): Promise<ArkadeLightningUpdaterResponse> {
+        message: ArkadeSwapsUpdaterRequest
+    ): Promise<ArkadeSwapsUpdaterResponse> {
         const id = message.id;
         if (message.type === "INIT_ARKADE_LIGHTNING") {
             try {
@@ -1048,7 +1045,7 @@ export class ArkadeLightningMessageHandler
             network: payload.network,
         });
 
-        const handler = new ArkadeLightning({
+        const handler = new ArkadeSwaps({
             wallet: this.wallet,
             arkProvider: this.arkProvider,
             swapProvider: this.swapProvider,
