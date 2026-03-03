@@ -127,7 +127,7 @@ services:
     boltz:
         container_name: boltz
         restart: unless-stopped
-        image: boltz/boltz:latest
+        image: boltz/boltz:ark
         ports:
             - "9000:9000"
             - "9001:9001"
