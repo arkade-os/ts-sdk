@@ -691,16 +691,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Falls back to only the current script if ContractManager is not yet initialized.
      */
     async getWalletScripts(): Promise<string[]> {
-        try {
-            const manager = await this.getContractManager();
-            const contracts = await manager.getContracts({
-                type: ["default", "delegate"],
-            });
-            if (contracts.length > 0) {
-                return contracts.map((c) => c.script);
+        // Only use the contract manager if it's already initialized or
+        // currently initializing — never trigger initialization here to
+        // avoid blocking callers that don't need it.
+        if (this._contractManager || this._contractManagerInitializing) {
+            try {
+                const manager = await this.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+                if (contracts.length > 0) {
+                    return contracts.map((c) => c.script);
+                }
+            } catch {
+                // fall through to current script only
             }
-        } catch {
-            // fall through to current script only
         }
         return [hex.encode(this.offchainTapscript.pkScript)];
     }
