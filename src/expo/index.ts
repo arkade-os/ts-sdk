@@ -1,10 +1,10 @@
 /**
  * Expo/React Native entrypoint for `@arkade-os/boltz-swap`.
  *
- * Provides an {@link ExpoArkadeLightning} wrapper plus helpers to register
+ * Provides an {@link ExpoArkadeSwaps} wrapper plus helpers to register
  * an Expo background task for best-effort swap polling and claim/refund.
  */
-export { ExpoArkadeLightning } from "./arkade-lightning";
+export { ExpoArkadeSwaps, ExpoArkadeLightning } from "./arkade-lightning";
 export {
     defineExpoSwapBackgroundTask,
     registerExpoSwapBackgroundTask,
@@ -16,5 +16,6 @@ export type {
     PersistedSwapBackgroundConfig,
     ExpoSwapBackgroundConfig,
     DefineSwapBackgroundTaskOptions,
+    ExpoArkadeSwapsConfig,
     ExpoArkadeLightningConfig,
 } from "./types";

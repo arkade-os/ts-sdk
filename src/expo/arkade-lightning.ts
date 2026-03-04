@@ -1,12 +1,17 @@
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
-import type { IArkadeLightning } from "../arkade-swaps";
-import { ArkadeLightning } from "../arkade-swaps";
+import type { IArkadeSwaps } from "../arkade-swaps";
+import { ArkadeSwaps } from "../arkade-swaps";
 import type { SwapManagerClient } from "../swap-manager";
 import type {
+    ArkToBtcResponse,
+    BtcToArkResponse,
+    Chain,
+    ChainFeesResponse,
     CreateLightningInvoiceRequest,
     CreateLightningInvoiceResponse,
     FeesResponse,
     LimitsResponse,
+    PendingChainSwap,
     PendingReverseSwap,
     PendingSubmarineSwap,
     PendingSwap,
@@ -15,19 +20,21 @@ import type {
 } from "../types";
 import type { GetSwapStatusResponse } from "../boltz-swap-provider";
 import type {
-    ExpoArkadeLightningConfig,
+    ExpoArkadeSwapsConfig,
     PersistedSwapBackgroundConfig,
 } from "./types";
 import { SWAP_POLL_TASK_TYPE } from "./swapsPollProcessor";
+import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
+import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 
 function getRandomId(): string {
     return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 /**
- * Expo/React Native wrapper for ArkadeLightning with background task support.
+ * Expo/React Native wrapper for ArkadeSwaps with background task support.
  *
- * In the foreground, delegates to a full {@link ArkadeLightning} instance
+ * In the foreground, delegates to a full {@link ArkadeSwaps} instance
  * with SwapManager (WebSocket) for real-time swap monitoring and auto
  * claim/refund.
  *
@@ -41,7 +48,7 @@ function getRandomId(): string {
  *
  * @example
  * ```ts
- * const arkLn = await ExpoArkadeLightning.setup({
+ * const arkSwaps = await ExpoArkadeSwaps.setup({
  *     wallet,
  *     arkServerUrl: "https://ark.example.com",
  *     swapProvider,
@@ -54,37 +61,37 @@ function getRandomId(): string {
  *     },
  * });
  *
- * await arkLn.createLightningInvoice({ amount: 1000 });
+ * await arkSwaps.createLightningInvoice({ amount: 1000 });
  * ```
  */
-export class ExpoArkadeLightning implements IArkadeLightning {
-    readonly swapRepository: ArkadeLightning["swapRepository"];
+export class ExpoArkadeSwaps implements IArkadeSwaps {
+    readonly swapRepository: ArkadeSwaps["swapRepository"];
 
     private foregroundIntervalId?: ReturnType<typeof setInterval>;
     private readonly taskName: string;
 
     private constructor(
-        private readonly inner: ArkadeLightning,
-        private readonly config: ExpoArkadeLightningConfig
+        private readonly inner: ArkadeSwaps,
+        private readonly config: ExpoArkadeSwapsConfig
     ) {
         this.taskName = config.background.taskName;
         this.swapRepository = inner.swapRepository;
     }
 
     /**
-     * Create an ExpoArkadeLightning with background task support.
+     * Create an ExpoArkadeSwaps with background task support.
      *
-     * 1. Creates the inner {@link ArkadeLightning} with SwapManager enabled.
+     * 1. Creates the inner {@link ArkadeSwaps} with SwapManager enabled.
      * 2. Persists {@link PersistedSwapBackgroundConfig} for background rehydration.
      * 3. Seeds the task queue with a swap-poll task.
      * 4. Registers the background task with the OS scheduler (if configured).
      * 5. Starts foreground interval (if configured).
      */
     static async setup(
-        config: ExpoArkadeLightningConfig
-    ): Promise<ExpoArkadeLightning> {
-        // Create inner ArkadeLightning with swapManager enabled for foreground
-        const inner = new ArkadeLightning({
+        config: ExpoArkadeSwapsConfig
+    ): Promise<ExpoArkadeSwaps> {
+        // Create inner ArkadeSwaps with swapManager enabled for foreground
+        const inner = new ArkadeSwaps({
             ...config,
             swapManager: config.swapManager ?? true,
         });
@@ -98,7 +105,7 @@ export class ExpoArkadeLightning implements IArkadeLightning {
         if (!arkServerUrl) {
             throw new Error(
                 "Ark server URL is required for Expo background rehydration. " +
-                    "Pass `arkServerUrl` to ExpoArkadeLightning.setup()."
+                    "Pass `arkServerUrl` to ExpoArkadeSwaps.setup()."
             );
         }
 
@@ -110,7 +117,7 @@ export class ExpoArkadeLightning implements IArkadeLightning {
         };
         await taskQueue.persistConfig(bgConfig);
 
-        const instance = new ExpoArkadeLightning(inner, config);
+        const instance = new ExpoArkadeSwaps(inner, config);
 
         // Seed the queue so the first background wake has work
         await instance.seedSwapPollTask();
@@ -242,7 +249,7 @@ export class ExpoArkadeLightning implements IArkadeLightning {
         await this.dispose();
     }
 
-    // ── IArkadeLightning delegation ──────────────────────────────────
+    // ── IArkadeSwaps delegation ──────────────────────────────────────
 
     startSwapManager(): Promise<void> {
         return this.inner.startSwapManager();
@@ -319,6 +326,97 @@ export class ExpoArkadeLightning implements IArkadeLightning {
         return this.inner.enrichSubmarineSwapInvoice(swap, invoice);
     }
 
+    // ── Chain swap delegation ────────────────────────────────────────
+
+    arkToBtc(args: {
+        btcAddress: string;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+        feeSatsPerByte?: number;
+    }): Promise<ArkToBtcResponse> {
+        return this.inner.arkToBtc(args);
+    }
+
+    waitAndClaimBtc(pendingSwap: PendingChainSwap): Promise<{ txid: string }> {
+        return this.inner.waitAndClaimBtc(pendingSwap);
+    }
+
+    claimBtc(pendingSwap: PendingChainSwap): Promise<void> {
+        return this.inner.claimBtc(pendingSwap);
+    }
+
+    refundArk(pendingSwap: PendingChainSwap): Promise<void> {
+        return this.inner.refundArk(pendingSwap);
+    }
+
+    btcToArk(args: {
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<BtcToArkResponse> {
+        return this.inner.btcToArk(args);
+    }
+
+    waitAndClaimArk(pendingSwap: PendingChainSwap): Promise<{ txid: string }> {
+        return this.inner.waitAndClaimArk(pendingSwap);
+    }
+
+    claimArk(pendingSwap: PendingChainSwap): Promise<void> {
+        return this.inner.claimArk(pendingSwap);
+    }
+
+    signCooperativeClaimForServer(
+        pendingSwap: PendingChainSwap
+    ): Promise<void> {
+        return this.inner.signCooperativeClaimForServer(pendingSwap);
+    }
+
+    waitAndClaimChain(
+        pendingSwap: PendingChainSwap
+    ): Promise<{ txid: string }> {
+        return this.inner.waitAndClaimChain(pendingSwap);
+    }
+
+    createChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        toAddress: string;
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<PendingChainSwap> {
+        return this.inner.createChainSwap(args);
+    }
+
+    verifyChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        swap: PendingChainSwap;
+        arkInfo: ArkInfo;
+    }): Promise<boolean> {
+        return this.inner.verifyChainSwap(args);
+    }
+
+    quoteSwap(swapId: string): Promise<number> {
+        return this.inner.quoteSwap(swapId);
+    }
+
+    joinBatch(
+        identity: Identity,
+        input: ArkTxInput,
+        output: TransactionOutput,
+        arkInfo: ArkInfo,
+        isRecoverable?: boolean
+    ): Promise<string> {
+        return this.inner.joinBatch(
+            identity,
+            input,
+            output,
+            arkInfo,
+            isRecoverable
+        );
+    }
+
     createVHTLCScript(params: {
         network: string;
         preimageHash: Uint8Array;
@@ -331,15 +429,28 @@ export class ExpoArkadeLightning implements IArkadeLightning {
             unilateralRefund: number;
             unilateralRefundWithoutReceiver: number;
         };
-    }): { vhtlcScript: any; vhtlcAddress: string } {
+    }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
         return this.inner.createVHTLCScript(params);
     }
 
-    getFees(): Promise<FeesResponse> {
+    getFees(): Promise<FeesResponse>;
+    getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;
+    getFees(
+        from?: Chain,
+        to?: Chain
+    ): Promise<FeesResponse | ChainFeesResponse> {
+        if (from !== undefined && to !== undefined) {
+            return this.inner.getFees(from, to);
+        }
         return this.inner.getFees();
     }
 
-    getLimits(): Promise<LimitsResponse> {
+    getLimits(): Promise<LimitsResponse>;
+    getLimits(from: Chain, to: Chain): Promise<LimitsResponse>;
+    getLimits(from?: Chain, to?: Chain): Promise<LimitsResponse> {
+        if (from !== undefined && to !== undefined) {
+            return this.inner.getLimits(from, to);
+        }
         return this.inner.getLimits();
     }
 
@@ -355,6 +466,10 @@ export class ExpoArkadeLightning implements IArkadeLightning {
         return this.inner.getPendingReverseSwaps();
     }
 
+    getPendingChainSwaps(): Promise<PendingChainSwap[]> {
+        return this.inner.getPendingChainSwaps();
+    }
+
     getSwapHistory(): Promise<PendingSwap[]> {
         return this.inner.getSwapHistory();
     }
@@ -363,3 +478,6 @@ export class ExpoArkadeLightning implements IArkadeLightning {
         return this.inner.refreshSwapsStatus();
     }
 }
+
+/** @deprecated Use ExpoArkadeSwaps instead */
+export const ExpoArkadeLightning = ExpoArkadeSwaps;

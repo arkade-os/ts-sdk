@@ -75,6 +75,8 @@ import {
     saveSwap,
     updateReverseSwapStatus,
     updateSubmarineSwapStatus,
+    enrichReverseSwapPreimage,
+    enrichSubmarineSwapInvoice,
 } from "./utils/swap-helpers";
 import { logger } from "./logger";
 import { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
@@ -2081,14 +2083,7 @@ export class ArkadeSwaps {
         swap: PendingReverseSwap,
         preimage: string
     ): PendingReverseSwap {
-        const computedHash = hex.encode(sha256(hex.decode(preimage)));
-        if (computedHash !== swap.request.preimageHash) {
-            throw new Error(
-                `Preimage does not match swap: expected hash ${swap.request.preimageHash}, got ${computedHash}`
-            );
-        }
-        swap.preimage = preimage;
-        return swap;
+        return enrichReverseSwapPreimage(swap, preimage);
     }
 
     /**
@@ -2098,36 +2093,17 @@ export class ArkadeSwaps {
         swap: PendingSubmarineSwap,
         invoice: string
     ): PendingSubmarineSwap {
-        let paymentHash: string;
-        try {
-            const decoded = decodeInvoice(invoice);
-            if (!decoded.paymentHash) {
-                throw new Error("Invoice missing payment hash");
-            }
-            paymentHash = decoded.paymentHash;
-        } catch (error) {
-            if (error instanceof Error) {
-                throw new Error(`Invalid Lightning invoice: ${error.message}`);
-            }
-            throw new Error(`Invalid Lightning invoice format`);
-        }
-
-        if (swap.preimageHash && paymentHash !== swap.preimageHash) {
-            throw new Error(
-                `Invoice payment hash does not match swap: expected ${swap.preimageHash}, got ${paymentHash}`
-            );
-        }
-
-        swap.request.invoice = invoice;
-        return swap;
+        return enrichSubmarineSwapInvoice(swap, invoice);
     }
 }
 
-/**
- * Interface for Lightning swap operations.
- * Used by ServiceWorkerArkadeLightning to implement the Lightning-only subset.
- */
-export interface IArkadeLightning extends AsyncDisposable {
+/** @deprecated Use ArkadeSwapsConfig instead */
+export type ArkadeLightningConfig = ArkadeSwapsConfig;
+
+/** @deprecated Use ArkadeSwaps instead */
+export const ArkadeLightning = ArkadeSwaps;
+
+export interface IArkadeSwaps extends AsyncDisposable {
     startSwapManager(): Promise<void>;
     stopSwapManager(): Promise<void>;
     getSwapManager(): SwapManagerClient | null;
@@ -2153,10 +2129,66 @@ export interface IArkadeLightning extends AsyncDisposable {
         reverseSwaps: PendingReverseSwap[];
         submarineSwaps: PendingSubmarineSwap[];
     }>;
+    arkToBtc(args: {
+        btcAddress: string;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+        feeSatsPerByte?: number;
+    }): Promise<ArkToBtcResponse>;
+    waitAndClaimBtc(pendingSwap: PendingChainSwap): Promise<{ txid: string }>;
+    claimBtc(pendingSwap: PendingChainSwap): Promise<void>;
+    refundArk(pendingSwap: PendingChainSwap): Promise<void>;
+    btcToArk(args: {
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<BtcToArkResponse>;
+    waitAndClaimArk(pendingSwap: PendingChainSwap): Promise<{ txid: string }>;
+    claimArk(pendingSwap: PendingChainSwap): Promise<void>;
+    signCooperativeClaimForServer(pendingSwap: PendingChainSwap): Promise<void>;
+    waitAndClaimChain(pendingSwap: PendingChainSwap): Promise<{ txid: string }>;
+    createChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        toAddress: string;
+        feeSatsPerByte?: number;
+        senderLockAmount?: number;
+        receiverLockAmount?: number;
+    }): Promise<PendingChainSwap>;
+    verifyChainSwap(args: {
+        to: Chain;
+        from: Chain;
+        swap: PendingChainSwap;
+        arkInfo: ArkInfo;
+    }): Promise<boolean>;
+    quoteSwap(swapId: string): Promise<number>;
+    joinBatch(
+        identity: Identity,
+        input: ArkTxInput,
+        output: TransactionOutput,
+        arkInfo: ArkInfo,
+        isRecoverable?: boolean
+    ): Promise<string>;
+    createVHTLCScript(args: {
+        network: string;
+        preimageHash: Uint8Array;
+        receiverPubkey: string;
+        senderPubkey: string;
+        serverPubkey: string;
+        timeoutBlockHeights: {
+            refund: number;
+            unilateralClaim: number;
+            unilateralRefund: number;
+            unilateralRefundWithoutReceiver: number;
+        };
+    }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string };
     getFees(): Promise<FeesResponse>;
+    getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;
     getLimits(): Promise<LimitsResponse>;
+    getLimits(from: Chain, to: Chain): Promise<LimitsResponse>;
     getPendingSubmarineSwaps(): Promise<PendingSubmarineSwap[]>;
     getPendingReverseSwaps(): Promise<PendingReverseSwap[]>;
+    getPendingChainSwaps(): Promise<PendingChainSwap[]>;
     getSwapHistory(): Promise<PendingSwap[]>;
     refreshSwapsStatus(): Promise<void>;
     getSwapStatus(swapId: string): Promise<GetSwapStatusResponse>;
@@ -2170,9 +2202,3 @@ export interface IArkadeLightning extends AsyncDisposable {
     ): PendingSubmarineSwap;
     dispose(): Promise<void>;
 }
-
-/** @deprecated Use ArkadeSwapsConfig instead */
-export type ArkadeLightningConfig = ArkadeSwapsConfig;
-
-/** @deprecated Use ArkadeSwaps instead */
-export { ArkadeSwaps as ArkadeLightning };

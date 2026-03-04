@@ -1,5 +1,4 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { InMemoryTaskQueue } from "@arkade-os/sdk/worker/expo";
 import { InMemorySwapRepository } from "../../src/repositories/inMemory/swap-repository";
 import {
     swapsPollProcessor,
@@ -9,6 +8,7 @@ import type { SwapTaskDependencies } from "../../src/expo/types";
 import type { PendingReverseSwap, PendingSubmarineSwap } from "../../src/types";
 import type { BoltzSwapProvider } from "../../src/boltz-swap-provider";
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
+import { ArkadeSwaps } from "../../src/arkade-swaps";
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -78,11 +78,11 @@ const createTaskItem = (): TaskItem => ({
     createdAt: Date.now(),
 });
 
-// ── Mock ArkadeLightning to avoid import side effects ────────────────
+// ── Mock ArkadeSwaps to avoid import side effects ────────────────
 
 vi.mock("../../src/arkade-swaps", () => {
     return {
-        ArkadeLightning: vi.fn().mockImplementation(() => ({
+        ArkadeSwaps: vi.fn().mockImplementation(() => ({
             claimVHTLC: vi.fn().mockResolvedValue(undefined),
             refundVHTLC: vi.fn().mockResolvedValue(undefined),
             dispose: vi.fn().mockResolvedValue(undefined),
@@ -311,8 +311,7 @@ describe("swapsPollProcessor", () => {
     });
 
     it("should handle claim error gracefully", async () => {
-        const { ArkadeLightning } = await import("../../src/arkade-swaps");
-        (ArkadeLightning as any).mockImplementation(() => ({
+        (ArkadeSwaps as any).mockImplementation(() => ({
             claimVHTLC: vi.fn().mockRejectedValue(new Error("Claim failed")),
             refundVHTLC: vi.fn().mockResolvedValue(undefined),
             dispose: vi.fn().mockResolvedValue(undefined),

@@ -40,7 +40,7 @@ export interface PersistedSwapBackgroundConfig {
 }
 
 /**
- * Background scheduling configuration for {@link ExpoArkadeLightning}.
+ * Background scheduling configuration for {@link ExpoArkadeSwaps}.
  */
 export interface ExpoSwapBackgroundConfig {
     /** Identifier registered with expo-background-task. */
@@ -57,7 +57,7 @@ export interface ExpoSwapBackgroundConfig {
  * Options for {@link defineExpoSwapBackgroundTask}.
  */
 export interface DefineSwapBackgroundTaskOptions {
-    /** AsyncStorage-backed queue (must match the one passed to ExpoArkadeLightning.setup). */
+    /** AsyncStorage-backed queue (must match the one passed to ExpoArkadeSwaps.setup). */
     taskQueue: AsyncStorageTaskQueue;
     /** Swap repository (fresh instance is fine — connects to the same DB). */
     swapRepository: SwapRepository;
@@ -66,15 +66,18 @@ export interface DefineSwapBackgroundTaskOptions {
 }
 
 /**
- * Configuration for {@link ExpoArkadeLightning.setup}.
+ * Configuration for {@link ExpoArkadeSwaps.setup}.
  */
-export interface ExpoArkadeLightningConfig extends ArkadeSwapsConfig {
+export interface ExpoArkadeSwapsConfig extends ArkadeSwapsConfig {
     /**
      * Ark server base URL (e.g. "https://ark.example.com").
      *
      * Recommended for type-safe background rehydration. If omitted,
-     * ExpoArkadeLightning will attempt to derive it from the ArkProvider.
+     * ExpoArkadeSwaps will attempt to derive it from the ArkProvider.
      */
     arkServerUrl?: string;
     background: ExpoSwapBackgroundConfig;
 }
+
+/** @deprecated Use ExpoArkadeSwapsConfig instead */
+export type ExpoArkadeLightningConfig = ExpoArkadeSwapsConfig;

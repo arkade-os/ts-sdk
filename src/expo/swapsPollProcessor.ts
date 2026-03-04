@@ -9,7 +9,7 @@ import {
     isSubmarineFinalStatus,
     isSubmarineSwapRefundable,
 } from "../boltz-swap-provider";
-import { ArkadeLightning } from "../arkade-swaps";
+import { ArkadeSwaps } from "../arkade-swaps";
 import { logger } from "../logger";
 
 /**
@@ -63,8 +63,8 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
         let refunded = 0;
         let errors = 0;
 
-        // Create a temporary ArkadeLightning without SwapManager for claim/refund logic
-        const tempLightning = new ArkadeLightning({
+        // Create a temporary ArkadeSwaps without SwapManager for claim/refund logic
+        const tempSwaps = new ArkadeSwaps({
             wallet,
             arkProvider,
             indexerProvider,
@@ -103,7 +103,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
                         }
 
                         try {
-                            await tempLightning.claimVHTLC(swap);
+                            await tempSwaps.claimVHTLC(swap);
                             claimed++;
                         } catch (claimError) {
                             logger.error(
@@ -131,7 +131,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
                         }
 
                         try {
-                            await tempLightning.refundVHTLC(swapWithStatus!);
+                            await tempSwaps.refundVHTLC(swapWithStatus!);
                             refunded++;
                         } catch (refundError) {
                             logger.error(
@@ -150,7 +150,7 @@ export const swapsPollProcessor: TaskProcessor<SwapTaskDependencies> = {
                 }
             }
         } finally {
-            await tempLightning.dispose();
+            await tempSwaps.dispose();
         }
 
         return {

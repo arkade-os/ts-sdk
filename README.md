@@ -140,7 +140,7 @@ const invoice = await swaps.createLightningInvoice({ amount: 50000 });
 - **Auto-claim/refund** executes when status allows
 - **Resumes on app reopen** - loads pending swaps, polls latest status, executes refunds if expired
 - **Default `ArkadeSwaps` requires the app running** - monitoring stops when the app/tab closes
-  - For browser background monitoring, use `ServiceWorkerArkadeLightning`
+  - For browser background monitoring, use `ServiceWorkerArkadeSwaps`
   - If swaps expire while closed, refunds execute automatically on next app launch (unless claimed/refunded by your background runtime)
 
 ### Configuration Options

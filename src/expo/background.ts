@@ -138,7 +138,7 @@ export function defineExpoSwapBackgroundTask(
             const config =
                 await taskQueue.loadConfig<PersistedSwapBackgroundConfig>();
             if (!config) {
-                // No config persisted yet — ExpoArkadeLightning.setup() hasn't run.
+                // No config persisted yet — ExpoArkadeSwaps.setup() hasn't run.
                 return BackgroundTask.BackgroundTaskResult.Success;
             }
 
@@ -222,7 +222,7 @@ export function defineExpoSwapBackgroundTask(
  * Activate the OS-level background task scheduler.
  *
  * Call this after {@link defineExpoSwapBackgroundTask} (typically inside
- * {@link ExpoArkadeLightning.setup}).
+ * {@link ExpoArkadeSwaps.setup}).
  *
  * @param taskName - The task name registered with defineExpoSwapBackgroundTask.
  * @param options - Optional configuration.
