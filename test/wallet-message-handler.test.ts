@@ -647,6 +647,46 @@ describe("WalletMessageHandler handleMessage", () => {
         );
     });
 
+    it("GET_DELEGATE_INFO returns delegate info", async () => {
+        const info = {
+            pubkey: "02abc",
+            fee: "100",
+            delegatorAddress: "tark1addr",
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            delegatorManager: {
+                getDelegateInfo: vi.fn().mockResolvedValue(info),
+            },
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_DELEGATE_INFO",
+        } as any);
+
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "DELEGATE_INFO",
+            payload: { info },
+        });
+    });
+
+    it("GET_DELEGATE_INFO fails when delegatorManager is not configured", async () => {
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            delegatorManager: undefined,
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_DELEGATE_INFO",
+        } as any);
+
+        expect(response.error).toBeInstanceOf(Error);
+        expect(response.error?.message).toBe("Delegator not configured");
+    });
+
     it("signing operations fail with readonly wallet only", async () => {
         (updater as any).readonlyWallet = {};
         // wallet is NOT set — readonly only
