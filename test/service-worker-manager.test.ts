@@ -12,17 +12,32 @@ const stubNavigator = (serviceWorker: Partial<ServiceWorkerContainer>) => {
 const createServiceWorkerContainer = (
     registration: Partial<ServiceWorkerRegistration> = {}
 ) => {
-    const listeners = new Map<string, (evt?: Event) => void>();
+    const listeners = new Map<string, Array<(evt?: Event) => void>>();
     return {
         register: vi.fn().mockResolvedValue(registration),
         ready: Promise.resolve(registration as ServiceWorkerRegistration),
         controller: null,
         addEventListener: (event: string, cb: (evt?: Event) => void) => {
-            listeners.set(event, cb);
+            const cbs = listeners.get(event);
+            if (cbs) {
+                cbs.push(cb);
+            } else {
+                listeners.set(event, [cb]);
+            }
         },
-        removeEventListener: (event: string) => listeners.delete(event),
+        removeEventListener: (event: string, cb?: (evt?: Event) => void) => {
+            if (!cb) {
+                listeners.delete(event);
+                return;
+            }
+            const cbs = listeners.get(event);
+            if (!cbs) return;
+            const idx = cbs.indexOf(cb);
+            if (idx !== -1) cbs.splice(idx, 1);
+            if (cbs.length === 0) listeners.delete(event);
+        },
         dispatch: (event: string, evt: Event = new Event(event)) => {
-            listeners.get(event)?.(evt);
+            listeners.get(event)?.forEach((cb) => cb(evt));
         },
     };
 };

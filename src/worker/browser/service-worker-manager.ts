@@ -66,6 +66,8 @@ function attachUpdateHandlers(
     registration: ServiceWorkerRegistration,
     options: ReturnType<typeof normalizeOptions>
 ) {
+    // Guard: only the first caller per registration attaches handlers.
+    // Subsequent calls with different options are silently ignored.
     if (handshakes.has(registration)) return;
     handshakes.add(registration);
 
@@ -196,10 +198,8 @@ export async function getActiveServiceWorker(
     path?: string
 ): Promise<ServiceWorker> {
     ensureServiceWorkerSupport();
-    // Avoid mixing registrations when a specific script path is provided.
-    const options = normalizeOptions(path ?? "");
     const registration: ServiceWorkerRegistration = path
-        ? await registerOnce(options)
+        ? await registerOnce(normalizeOptions(path))
         : await navigator.serviceWorker.ready;
     let serviceWorker =
         registration.active ||
