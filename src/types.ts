@@ -102,7 +102,6 @@ export interface PendingChainSwap {
     request: CreateChainSwapRequest;
     response: CreateChainSwapResponse;
     toAddress?: string;
-    btcTxHex?: string;
     amount: number;
 }
 

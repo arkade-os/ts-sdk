@@ -916,25 +916,22 @@ export class ArkadeSwaps {
         return new Promise<{ txid: string }>((resolve, reject) => {
             let claimStarted = false;
             // Local mutable copy — accumulates fields across status
-            // callbacks (e.g. btcTxHex) without mutating the caller's
-            // object. Spreading from the original on every callback
+            // callbacks without mutating the caller's object.
+            // Spreading from the original on every callback
             // would silently discard previously saved data.
             const swap = { ...pendingSwap };
             const onStatusUpdate = async (
                 status: BoltzSwapStatus,
                 data: {
                     failureReason?: string;
-                    transaction: { id: string; hex: string };
                 }
             ) => {
-                const updateSwapStatus = async (
-                    btcTxHex?: string
-                ): Promise<PendingChainSwap> => {
-                    swap.status = status;
-                    if (btcTxHex) swap.btcTxHex = btcTxHex;
-                    await this.savePendingChainSwap(swap);
-                    return swap;
-                };
+                const updateSwapStatus =
+                    async (): Promise<PendingChainSwap> => {
+                        swap.status = status;
+                        await this.savePendingChainSwap(swap);
+                        return swap;
+                    };
                 switch (status) {
                     case "transaction.mempool":
                     case "transaction.confirmed":
@@ -942,13 +939,7 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.server.mempool":
                     case "transaction.server.confirmed": {
-                        if (!data.transaction?.hex) {
-                            await updateSwapStatus();
-                            break;
-                        }
-                        const updatedSwap = await updateSwapStatus(
-                            data.transaction.hex
-                        );
+                        const updatedSwap = await updateSwapStatus();
                         if (claimStarted) return;
                         claimStarted = true;
                         this.claimBtc(updatedSwap).catch(reject);
@@ -956,8 +947,11 @@ export class ArkadeSwaps {
                     }
                     case "transaction.claimed":
                         await updateSwapStatus();
+                        const claimedStatus = await this.getSwapStatus(
+                            pendingSwap.id
+                        );
                         resolve({
-                            txid: data?.transaction?.id ?? swap.response.id,
+                            txid: claimedStatus.transaction?.id ?? "",
                         });
                         break;
                     case "transaction.lockupFailed":
@@ -1011,9 +1005,6 @@ export class ArkadeSwaps {
      * @param pendingSwap - The pending chain swap with BTC transaction hex.
      */
     async claimBtc(pendingSwap: PendingChainSwap): Promise<void> {
-        if (!pendingSwap.btcTxHex)
-            throw new Error("BTC transaction hex is required");
-
         if (!pendingSwap.toAddress)
             throw new Error("Destination address is required");
 
@@ -1023,7 +1014,13 @@ export class ArkadeSwaps {
         if (!pendingSwap.response.claimDetails.serverPublicKey)
             throw new Error("Missing server public key in claim details");
 
-        const lockupTx = Transaction.fromRaw(hex.decode(pendingSwap.btcTxHex));
+        const swapStatus = await this.getSwapStatus(pendingSwap.id);
+        if (!swapStatus.transaction?.hex)
+            throw new Error("BTC transaction hex is required");
+
+        const lockupTx = Transaction.fromRaw(
+            hex.decode(swapStatus.transaction.hex)
+        );
 
         const arkInfo = await this.arkProvider.getInfo();
 
@@ -1295,7 +1292,6 @@ export class ArkadeSwaps {
                 status: BoltzSwapStatus,
                 data: {
                     failureReason?: string;
-                    transaction: { id: string; hex: string };
                 }
             ) => {
                 const updateSwapStatus = () => {
@@ -1312,8 +1308,11 @@ export class ArkadeSwaps {
                         break;
                     case "transaction.claimed":
                         await updateSwapStatus();
+                        const claimedStatus = await this.getSwapStatus(
+                            pendingSwap.id
+                        );
                         resolve({
-                            txid: data?.transaction?.id ?? swap.response.id,
+                            txid: claimedStatus.transaction?.id ?? "",
                         });
                         break;
                     case "transaction.claim.pending":
@@ -1333,7 +1332,7 @@ export class ArkadeSwaps {
                             reject(
                                 new SwapError({
                                     message: `Failed to renegotiate quote: ${err.message}`,
-                                    isRefundable: true,
+                                    isRefundable: false, // TODO btc refund not implemented yet
                                     pendingSwap: swap,
                                 })
                             );
@@ -1343,7 +1342,7 @@ export class ArkadeSwaps {
                         await updateSwapStatus();
                         reject(
                             new SwapExpiredError({
-                                isRefundable: true,
+                                isRefundable: false, // TODO btc refund not implemented yet
                                 pendingSwap: swap,
                             })
                         );
@@ -1353,7 +1352,7 @@ export class ArkadeSwaps {
                         reject(
                             new TransactionFailedError({
                                 message: data.failureReason,
-                                isRefundable: true,
+                                isRefundable: false, // TODO btc refund not implemented yet
                             })
                         );
                         break;
