@@ -199,7 +199,7 @@ import {
     ContractRepository,
 } from "./repositories";
 import type { MigrationStatus } from "./repositories";
-import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
+import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
 export * as asset from "./extension/asset";
@@ -516,7 +516,7 @@ export type {
     ResponseEnvelope,
 
     // Delegator types
-    DelegatorManager,
+    IDelegatorManager,
     DelegatorProvider,
     DelegateInfo,
     DelegateOptions,

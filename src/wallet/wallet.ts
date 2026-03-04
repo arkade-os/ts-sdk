@@ -82,7 +82,7 @@ import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
-import { DelegatorManager, DelegatorManagerImpl } from "./delegator";
+import { IDelegatorManager, DelegatorManagerImpl } from "./delegator";
 import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
@@ -923,7 +923,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
-    readonly delegatorManager?: DelegatorManager;
+    readonly delegatorManager?: IDelegatorManager;
 
     private _walletAssetManager?: IAssetManager;
 
@@ -1066,6 +1066,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.delegatorProvider,
             this.watcherConfig
         );
+    }
+
+    async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
+        return this.delegatorManager;
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
