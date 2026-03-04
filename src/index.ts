@@ -50,6 +50,8 @@ export {
     updateReverseSwapStatus,
     updateSubmarineSwapStatus,
     updateChainSwapStatus,
+    enrichReverseSwapPreimage,
+    enrichSubmarineSwapInvoice,
 } from "./utils/swap-helpers";
 export type { SwapSaver } from "./utils/swap-helpers";
 export { SwapManager } from "./swap-manager";

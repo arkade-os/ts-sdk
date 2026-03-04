@@ -49,12 +49,13 @@ import type {
 } from "./arkade-swaps-message-handler";
 import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { sha256 } from "@noble/hashes/sha2.js";
-import { hex } from "@scure/base";
 import { IArkadeSwaps } from "../arkade-swaps";
 import { IndexedDbSwapRepository } from "../repositories/IndexedDb/swap-repository";
+import {
+    enrichReverseSwapPreimage as _enrichReverseSwapPreimage,
+    enrichSubmarineSwapInvoice as _enrichSubmarineSwapInvoice,
+} from "../utils/swap-helpers";
 import type { Actions, SwapManagerClient } from "../swap-manager";
-import { decodeInvoice } from "../utils/decoding";
 
 export type SvcWrkArkadeSwapsConfig = Pick<
     ArkadeSwapsConfig,
@@ -737,43 +738,14 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         swap: PendingReverseSwap,
         preimage: string
     ): PendingReverseSwap {
-        const computedHash = hex.encode(sha256(hex.decode(preimage)));
-        if (computedHash !== swap.request.preimageHash) {
-            throw new Error(
-                `Preimage does not match swap: expected hash ${swap.request.preimageHash}, got ${computedHash}`
-            );
-        }
-
-        swap.preimage = preimage;
-        return swap;
+        return _enrichReverseSwapPreimage(swap, preimage);
     }
 
     enrichSubmarineSwapInvoice(
         swap: PendingSubmarineSwap,
         invoice: string
     ): PendingSubmarineSwap {
-        let paymentHash: string;
-        try {
-            const decoded = decodeInvoice(invoice);
-            if (!decoded.paymentHash) {
-                throw new Error("Invoice missing payment hash");
-            }
-            paymentHash = decoded.paymentHash;
-        } catch (error) {
-            if (error instanceof Error) {
-                throw new Error(`Invalid Lightning invoice: ${error.message}`);
-            }
-            throw new Error(`Invalid Lightning invoice format`);
-        }
-
-        if (swap.preimageHash && paymentHash !== swap.preimageHash) {
-            throw new Error(
-                `Invoice payment hash does not match swap: expected ${swap.preimageHash}, got ${paymentHash}`
-            );
-        }
-
-        swap.request.invoice = invoice;
-        return swap;
+        return _enrichSubmarineSwapInvoice(swap, invoice);
     }
 
     createVHTLCScript(_args: {
