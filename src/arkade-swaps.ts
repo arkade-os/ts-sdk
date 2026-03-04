@@ -63,6 +63,7 @@ import {
     constructClaimTransaction,
     targetFee,
     REGTEST_NETWORK,
+    MUTINYNET_NETWORK,
 } from "./utils/boltz-swap-tx";
 import { decodeInvoice, getInvoicePaymentHash } from "./utils/decoding";
 import { normalizeToXOnlyKey } from "./utils/signatures";
@@ -1025,7 +1026,11 @@ export class ArkadeSwaps {
         const arkInfo = await this.arkProvider.getInfo();
 
         const network =
-            arkInfo.network === "bitcoin" ? NETWORK : REGTEST_NETWORK;
+            arkInfo.network === "bitcoin"
+                ? NETWORK
+                : arkInfo.network === "mutinynet"
+                  ? MUTINYNET_NETWORK
+                  : REGTEST_NETWORK;
 
         const swapTree = deserializeSwapTree(
             pendingSwap.response.claimDetails.swapTree

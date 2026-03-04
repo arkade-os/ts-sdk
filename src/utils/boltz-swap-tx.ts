@@ -41,6 +41,13 @@ export const REGTEST_NETWORK = {
     wif: 0xef,
 };
 
+export const MUTINYNET_NETWORK = {
+    bech32: "tb",
+    pubKeyHash: 0x6f,
+    scriptHash: 0xc4,
+    wif: 0xef,
+};
+
 // ---------------------------------------------------------------------------
 // Swap tree serialization
 // ---------------------------------------------------------------------------
