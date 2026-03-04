@@ -58,7 +58,7 @@ describe("SwArkadeSwapsRuntime events", () => {
         sendMessageSpy.mockResolvedValue({
             id: "init",
             tag: TAG,
-            type: "ARKADE_LIGHTNING_INITIALIZED",
+            type: "ARKADE_SWAPS_INITIALIZED",
         } as any);
     });
 
@@ -215,7 +215,7 @@ describe("SwArkadeSwapsRuntime enrich methods", () => {
         sendMessageSpy.mockResolvedValue({
             id: "init",
             tag: TAG,
-            type: "ARKADE_LIGHTNING_INITIALIZED",
+            type: "ARKADE_SWAPS_INITIALIZED",
         } as any);
     });
 
