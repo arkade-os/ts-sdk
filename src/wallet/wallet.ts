@@ -922,7 +922,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
-    readonly delegatorManager?: IDelegatorManager;
+    private readonly _delegatorManager?: IDelegatorManager;
 
     private _walletAssetManager?: IAssetManager;
 
@@ -970,7 +970,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
-        this.delegatorManager = delegatorProvider
+        this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
     }
@@ -1068,7 +1068,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
-        return this.delegatorManager;
+        return this._delegatorManager;
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {

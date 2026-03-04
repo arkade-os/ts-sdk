@@ -741,11 +741,11 @@ export class WalletMessageHandler
                 }
                 case "GET_DELEGATE_INFO": {
                     const wallet = this.requireWallet();
-                    if (!wallet.delegatorManager) {
+                    const delegatorManager = await wallet.getDelegatorManager();
+                    if (!delegatorManager) {
                         throw new Error("Delegator not configured");
                     }
-                    const info =
-                        await wallet.delegatorManager.getDelegateInfo();
+                    const info = await delegatorManager.getDelegateInfo();
                     return this.tagged({
                         id,
                         type: "DELEGATE_INFO",
@@ -1021,7 +1021,8 @@ export class WalletMessageHandler
         message: RequestDelegate
     ): Promise<ResponseDelegate> {
         const wallet = this.requireWallet();
-        if (!wallet.delegatorManager) {
+        const delegatorManager = await wallet.getDelegatorManager();
+        if (!delegatorManager) {
             throw new Error("Delegator not configured");
         }
 
@@ -1034,7 +1035,7 @@ export class WalletMessageHandler
             outpointSet.has(`${v.txid}:${v.vout}`)
         );
 
-        const result = await wallet.delegatorManager.delegate(
+        const result = await delegatorManager.delegate(
             filtered,
             destination,
             delegateAt !== undefined ? new Date(delegateAt) : undefined

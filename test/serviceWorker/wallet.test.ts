@@ -5,6 +5,7 @@ import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
 } from "../../src";
+import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
 import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
@@ -253,5 +254,104 @@ describe("ServiceWorkerReadonlyWallet", () => {
 
         expect(callback).toHaveBeenCalledTimes(1);
         expect(listeners.size).toBe(0);
+    });
+});
+
+const createSWWallet = (
+    serviceWorker: ServiceWorker,
+    messageTag: string = DEFAULT_MESSAGE_TAG,
+    hasDelegator: boolean = false
+) =>
+    new (ServiceWorkerWallet as any)(
+        serviceWorker,
+        { toHex: () => "deadbeef" } as any,
+        new InMemoryWalletRepository(),
+        new InMemoryContractRepository(),
+        messageTag,
+        hasDelegator
+    ) as ServiceWorkerWallet;
+
+describe("ServiceWorkerWallet", () => {
+    const handler = new WalletMessageHandler();
+    const messageTag = handler.messageTag;
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("getDelegatorManager returns undefined when no delegator configured", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness();
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag, false);
+        await expect(wallet.getDelegatorManager()).resolves.toBeUndefined();
+    });
+
+    it("getDelegatorManager returns a manager that proxies messages", async () => {
+        const delegateInfo = {
+            pubkey: "02abc",
+            fee: "100",
+            delegatorAddress: "tark1addr",
+        };
+
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                switch (message.type) {
+                    case "GET_DELEGATE_INFO":
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "DELEGATE_INFO",
+                            payload: { info: delegateInfo },
+                        };
+                    case "DELEGATE":
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "DELEGATE_SUCCESS",
+                            payload: {
+                                delegated: [{ txid: "abc", vout: 0 }],
+                                failed: [],
+                            },
+                        };
+                    default:
+                        return null;
+                }
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag, true);
+        const manager = await wallet.getDelegatorManager();
+        expect(manager).toBeDefined();
+
+        await expect(manager!.getDelegateInfo()).resolves.toEqual(delegateInfo);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: messageTag,
+                type: "GET_DELEGATE_INFO",
+            })
+        );
+
+        const result = await manager!.delegate(
+            [{ txid: "abc", vout: 0 }] as any,
+            "dest-addr"
+        );
+        expect(result).toEqual({
+            delegated: [{ txid: "abc", vout: 0 }],
+            failed: [],
+        });
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: messageTag,
+                type: "DELEGATE",
+            })
+        );
     });
 });

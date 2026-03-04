@@ -511,9 +511,9 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
-            delegatorManager: {
+            getDelegatorManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
-            },
+            }),
         };
 
         const response = await updater.handleMessage({
@@ -554,9 +554,9 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
-            delegatorManager: {
+            getDelegatorManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
-            },
+            }),
         };
 
         await updater.handleMessage({
@@ -588,7 +588,9 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(allVtxos),
-            delegatorManager: { delegate: delegateSpy },
+            getDelegatorManager: vi
+                .fn()
+                .mockResolvedValue({ delegate: delegateSpy }),
         };
 
         await updater.handleMessage({
@@ -612,7 +614,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue([]),
-            delegatorManager: undefined,
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
         };
 
         const response = await updater.handleMessage({
@@ -655,9 +657,9 @@ describe("WalletMessageHandler handleMessage", () => {
         };
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
-            delegatorManager: {
+            getDelegatorManager: vi.fn().mockResolvedValue({
                 getDelegateInfo: vi.fn().mockResolvedValue(info),
-            },
+            }),
         };
 
         const response = await updater.handleMessage({
@@ -675,7 +677,7 @@ describe("WalletMessageHandler handleMessage", () => {
     it("GET_DELEGATE_INFO fails when delegatorManager is not configured", async () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
-            delegatorManager: undefined,
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
         };
 
         const response = await updater.handleMessage({
