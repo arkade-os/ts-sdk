@@ -32,6 +32,7 @@ import {
     SettleParams,
     WalletBalance,
 } from "../index";
+import { DelegateInfo } from "../../providers/delegator";
 import { ReadonlyWallet, Wallet } from "../wallet";
 import { extendCoin, extendVirtualCoin } from "../utils";
 import {
@@ -310,6 +311,14 @@ export type ResponseDelegate = ResponseEnvelope & {
     };
 };
 
+export type RequestGetDelegateInfo = RequestEnvelope & {
+    type: "GET_DELEGATE_INFO";
+};
+export type ResponseGetDelegateInfo = ResponseEnvelope & {
+    type: "DELEGATE_INFO";
+    payload: { info: DelegateInfo };
+};
+
 // WalletUpdater
 export type WalletUpdaterRequest =
     | RequestInitWallet
@@ -338,7 +347,8 @@ export type WalletUpdaterRequest =
     | RequestIssue
     | RequestReissue
     | RequestBurn
-    | RequestDelegate;
+    | RequestDelegate
+    | RequestGetDelegateInfo;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -373,6 +383,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseReissue
         | ResponseBurn
         | ResponseDelegate
+        | ResponseGetDelegateInfo
     );
 
 export class WalletMessageHandler
@@ -728,6 +739,19 @@ export class WalletMessageHandler
                     );
                     return this.tagged({ id, ...response });
                 }
+                case "GET_DELEGATE_INFO": {
+                    const wallet = this.requireWallet();
+                    const delegatorManager = await wallet.getDelegatorManager();
+                    if (!delegatorManager) {
+                        throw new Error("Delegator not configured");
+                    }
+                    const info = await delegatorManager.getDelegateInfo();
+                    return this.tagged({
+                        id,
+                        type: "DELEGATE_INFO",
+                        payload: { info },
+                    });
+                }
                 default:
                     console.error("Unknown message type", message);
                     throw new Error("Unknown message");
@@ -997,7 +1021,8 @@ export class WalletMessageHandler
         message: RequestDelegate
     ): Promise<ResponseDelegate> {
         const wallet = this.requireWallet();
-        if (!wallet.delegatorManager) {
+        const delegatorManager = await wallet.getDelegatorManager();
+        if (!delegatorManager) {
             throw new Error("Delegator not configured");
         }
 
@@ -1010,7 +1035,7 @@ export class WalletMessageHandler
             outpointSet.has(`${v.txid}:${v.vout}`)
         );
 
-        const result = await wallet.delegatorManager.delegate(
+        const result = await delegatorManager.delegate(
             filtered,
             destination,
             delegateAt !== undefined ? new Date(delegateAt) : undefined

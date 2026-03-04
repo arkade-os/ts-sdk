@@ -9,6 +9,7 @@ import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
+import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
 
 /**
@@ -334,7 +335,11 @@ export interface IWallet extends IReadonlyWallet {
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
     send(...recipients: Recipient[]): Promise<string>;
+
+    // TODO: this needs to be async or find a workaround
     assetManager: IAssetManager;
+
+    getDelegatorManager(): Promise<IDelegatorManager | undefined>;
 }
 
 /**

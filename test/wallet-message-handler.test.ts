@@ -511,9 +511,9 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
-            delegatorManager: {
+            getDelegatorManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
-            },
+            }),
         };
 
         const response = await updater.handleMessage({
@@ -554,9 +554,9 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
-            delegatorManager: {
+            getDelegatorManager: vi.fn().mockResolvedValue({
                 delegate: delegateSpy,
-            },
+            }),
         };
 
         await updater.handleMessage({
@@ -588,7 +588,9 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue(allVtxos),
-            delegatorManager: { delegate: delegateSpy },
+            getDelegatorManager: vi
+                .fn()
+                .mockResolvedValue({ delegate: delegateSpy }),
         };
 
         await updater.handleMessage({
@@ -612,7 +614,7 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {};
         (updater as any).wallet = {
             getVtxos: vi.fn().mockResolvedValue([]),
-            delegatorManager: undefined,
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
         };
 
         const response = await updater.handleMessage({
@@ -645,6 +647,46 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(response.error?.message).toBe(
             "Read-only wallet: operation requires signing"
         );
+    });
+
+    it("GET_DELEGATE_INFO returns delegate info", async () => {
+        const info = {
+            pubkey: "02abc",
+            fee: "100",
+            delegatorAddress: "tark1addr",
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getDelegatorManager: vi.fn().mockResolvedValue({
+                getDelegateInfo: vi.fn().mockResolvedValue(info),
+            }),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_DELEGATE_INFO",
+        } as any);
+
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "DELEGATE_INFO",
+            payload: { info },
+        });
+    });
+
+    it("GET_DELEGATE_INFO fails when delegatorManager is not configured", async () => {
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_DELEGATE_INFO",
+        } as any);
+
+        expect(response.error).toBeInstanceOf(Error);
+        expect(response.error?.message).toBe("Delegator not configured");
     });
 
     it("signing operations fail with readonly wallet only", async () => {

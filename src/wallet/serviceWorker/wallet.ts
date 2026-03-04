@@ -80,6 +80,8 @@ import {
     ResponseBurn,
     RequestDelegate,
     ResponseDelegate,
+    RequestGetDelegateInfo,
+    ResponseGetDelegateInfo,
     DEFAULT_MESSAGE_TAG,
 } from "./wallet-message-handler";
 import type {
@@ -96,6 +98,8 @@ import type {
     IContractManager,
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
+import type { IDelegatorManager } from "../delegator";
+import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
@@ -789,13 +793,15 @@ export class ServiceWorkerWallet
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
+    private readonly hasDelegator: boolean;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
         identity: PrivateKeyIdentity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
-        messageTag: string
+        messageTag: string,
+        hasDelegator: boolean
     ) {
         super(
             serviceWorker,
@@ -811,6 +817,7 @@ export class ServiceWorkerWallet
             (msg) => this.sendMessage(msg),
             messageTag
         );
+        this.hasDelegator = hasDelegator;
     }
 
     get assetManager(): IAssetManager {
@@ -849,7 +856,8 @@ export class ServiceWorkerWallet
             identity,
             walletRepository,
             contractRepository,
-            messageTag
+            messageTag,
+            !!options.delegatorUrl
         );
 
         const initConfig = {
@@ -1015,27 +1023,60 @@ export class ServiceWorkerWallet
         }
     }
 
-    async delegate(
-        vtxoOutpoints: { txid: string; vout: number }[],
-        destination: string,
-        delegateAt?: Date
-    ): Promise<ResponseDelegate["payload"]> {
-        const message: RequestDelegate = {
-            tag: this.messageTag,
-            type: "DELEGATE",
-            id: getRandomId(),
-            payload: {
-                vtxoOutpoints,
-                destination,
-                delegateAt: delegateAt?.getTime(),
+    async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
+        if (!this.hasDelegator) {
+            return undefined;
+        }
+
+        const wallet = this;
+        const messageTag = this.messageTag;
+
+        const manager: IDelegatorManager = {
+            async delegate(vtxos, destination, delegateAt?) {
+                const message: RequestDelegate = {
+                    tag: messageTag,
+                    type: "DELEGATE",
+                    id: getRandomId(),
+                    payload: {
+                        vtxoOutpoints: vtxos.map((v) => ({
+                            txid: v.txid,
+                            vout: v.vout,
+                        })),
+                        destination,
+                        delegateAt: delegateAt?.getTime(),
+                    },
+                };
+
+                try {
+                    const response = await wallet.sendMessage(message);
+                    const payload = (response as ResponseDelegate).payload;
+                    return {
+                        delegated: payload.delegated,
+                        failed: payload.failed.map((f) => ({
+                            outpoints: f.outpoints,
+                            error: f.error,
+                        })),
+                    };
+                } catch (error) {
+                    throw new Error(`Delegation failed: ${error}`);
+                }
+            },
+
+            async getDelegateInfo(): Promise<DelegateInfo> {
+                const message: RequestGetDelegateInfo = {
+                    type: "GET_DELEGATE_INFO",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetDelegateInfo).payload.info;
+                } catch (e) {
+                    throw new Error("Failed to get delegate info");
+                }
             },
         };
 
-        try {
-            const response = await this.sendMessage(message);
-            return (response as ResponseDelegate).payload;
-        } catch (error) {
-            throw new Error(`Delegation failed: ${error}`);
-        }
+        return manager;
     }
 }

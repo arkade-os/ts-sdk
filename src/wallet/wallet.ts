@@ -82,7 +82,7 @@ import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
-import { DelegatorManager, DelegatorManagerImpl } from "./delegator";
+import { IDelegatorManager, DelegatorManagerImpl } from "./delegator";
 import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
@@ -691,9 +691,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Falls back to only the current script if ContractManager is not yet initialized.
      */
     async getWalletScripts(): Promise<string[]> {
-        if (this._contractManager) {
+        // Only use the contract manager if it's already initialized or
+        // currently initializing — never trigger initialization here to
+        // avoid blocking callers that don't need it.
+        if (this._contractManager || this._contractManagerInitializing) {
             try {
-                const contracts = await this._contractManager.getContracts({
+                const manager = await this.getContractManager();
+                const contracts = await manager.getContracts({
                     type: ["default", "delegate"],
                 });
                 if (contracts.length > 0) {
@@ -923,7 +927,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
-    readonly delegatorManager?: DelegatorManager;
+    private readonly _delegatorManager?: IDelegatorManager;
 
     private _walletAssetManager?: IAssetManager;
 
@@ -971,7 +975,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
-        this.delegatorManager = delegatorProvider
+        this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
     }
@@ -1066,6 +1070,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.delegatorProvider,
             this.watcherConfig
         );
+    }
+
+    async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
+        return this._delegatorManager;
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
