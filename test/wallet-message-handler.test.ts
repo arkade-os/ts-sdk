@@ -493,6 +493,160 @@ describe("WalletMessageHandler handleMessage", () => {
         });
     });
 
+    it("handles DELEGATE messages successfully", async () => {
+        const vtxos = [
+            { txid: "abc", vout: 0, value: 1000 },
+            { txid: "def", vout: 1, value: 2000 },
+        ];
+        const delegateResult = {
+            delegated: [{ txid: "abc", vout: 0 }],
+            failed: [
+                {
+                    outpoints: [{ txid: "def", vout: 1 }],
+                    error: "some error",
+                },
+            ],
+        };
+        const delegateSpy = vi.fn().mockResolvedValue(delegateResult);
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxos: vi.fn().mockResolvedValue(vtxos),
+            delegatorManager: {
+                delegate: delegateSpy,
+            },
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "DELEGATE",
+            payload: {
+                vtxoOutpoints: [
+                    { txid: "abc", vout: 0 },
+                    { txid: "def", vout: 1 },
+                ],
+                destination: "dest-addr",
+            },
+        } as any);
+
+        expect(delegateSpy).toHaveBeenCalledWith(vtxos, "dest-addr", undefined);
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "DELEGATE_SUCCESS",
+            payload: {
+                delegated: [{ txid: "abc", vout: 0 }],
+                failed: [
+                    {
+                        outpoints: [{ txid: "def", vout: 1 }],
+                        error: "some error",
+                    },
+                ],
+            },
+        });
+    });
+
+    it("handles DELEGATE with delegateAt timestamp", async () => {
+        const vtxos = [{ txid: "abc", vout: 0, value: 1000 }];
+        const delegateAt = 1700000000000;
+        const delegateSpy = vi.fn().mockResolvedValue({
+            delegated: [{ txid: "abc", vout: 0 }],
+            failed: [],
+        });
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxos: vi.fn().mockResolvedValue(vtxos),
+            delegatorManager: {
+                delegate: delegateSpy,
+            },
+        };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "DELEGATE",
+            payload: {
+                vtxoOutpoints: [{ txid: "abc", vout: 0 }],
+                destination: "dest-addr",
+                delegateAt,
+            },
+        } as any);
+
+        expect(delegateSpy).toHaveBeenCalledWith(
+            vtxos,
+            "dest-addr",
+            new Date(delegateAt)
+        );
+    });
+
+    it("DELEGATE filters vtxos by requested outpoints", async () => {
+        const allVtxos = [
+            { txid: "abc", vout: 0, value: 1000 },
+            { txid: "xyz", vout: 2, value: 3000 },
+        ];
+        const delegateSpy = vi.fn().mockResolvedValue({
+            delegated: [{ txid: "abc", vout: 0 }],
+            failed: [],
+        });
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxos: vi.fn().mockResolvedValue(allVtxos),
+            delegatorManager: { delegate: delegateSpy },
+        };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "DELEGATE",
+            payload: {
+                vtxoOutpoints: [{ txid: "abc", vout: 0 }],
+                destination: "dest-addr",
+            },
+        } as any);
+
+        // only the matching vtxo should be passed
+        expect(delegateSpy).toHaveBeenCalledWith(
+            [allVtxos[0]],
+            "dest-addr",
+            undefined
+        );
+    });
+
+    it("DELEGATE fails when delegatorManager is not configured", async () => {
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxos: vi.fn().mockResolvedValue([]),
+            delegatorManager: undefined,
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "DELEGATE",
+            payload: {
+                vtxoOutpoints: [],
+                destination: "dest-addr",
+            },
+        } as any);
+
+        expect(response.error).toBeInstanceOf(Error);
+        expect(response.error?.message).toBe("Delegator not configured");
+    });
+
+    it("DELEGATE fails with readonly wallet only", async () => {
+        (updater as any).readonlyWallet = {};
+        // wallet is NOT set — readonly only
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "DELEGATE",
+            payload: {
+                vtxoOutpoints: [],
+                destination: "dest-addr",
+            },
+        } as any);
+
+        expect(response.error).toBeInstanceOf(Error);
+        expect(response.error?.message).toBe(
+            "Read-only wallet: operation requires signing"
+        );
+    });
+
     it("signing operations fail with readonly wallet only", async () => {
         (updater as any).readonlyWallet = {};
         // wallet is NOT set — readonly only

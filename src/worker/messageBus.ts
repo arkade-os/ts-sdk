@@ -5,6 +5,7 @@ import {
     setupServiceWorkerOnce,
 } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
+import { RestDelegatorProvider } from "../providers/delegator";
 import { ReadonlySingleKey, SingleKey } from "../identity";
 import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import { hex } from "@scure/base";
@@ -95,6 +96,7 @@ type Initialize = {
             url: string;
             publicKey?: string;
         };
+        delegatorUrl?: string;
     };
 };
 
@@ -271,6 +273,9 @@ export class MessageBus {
             walletRepository: this.walletRepository,
             contractRepository: this.contractRepository,
         };
+        const delegatorProvider = config.delegatorUrl
+            ? new RestDelegatorProvider(config.delegatorUrl)
+            : undefined;
         if ("privateKey" in config.wallet) {
             const identity = SingleKey.fromHex(config.wallet.privateKey);
             const wallet = await Wallet.create({
@@ -278,6 +283,7 @@ export class MessageBus {
                 arkServerUrl: config.arkServer.url,
                 arkServerPublicKey: config.arkServer.publicKey,
                 storage,
+                delegatorProvider,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
         } else if ("publicKey" in config.wallet) {
@@ -289,6 +295,7 @@ export class MessageBus {
                 arkServerUrl: config.arkServer.url,
                 arkServerPublicKey: config.arkServer.publicKey,
                 storage,
+                delegatorProvider,
             });
             return { readonlyWallet, arkProvider };
         } else {
