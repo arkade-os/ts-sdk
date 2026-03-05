@@ -1052,6 +1052,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return this._delegatorManager;
     }
 
+    /**
+     * @deprecated Use `send`
+     * @param params
+     */
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
