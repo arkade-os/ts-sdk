@@ -1851,7 +1851,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const virtualCoins = await this.getVtxos({
             withRecoverable: false,
         });
-        console.log("Virtual coins available for sending:", virtualCoins);
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
