@@ -1859,7 +1859,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
 
-        let selectedCoins: VirtualCoin[] = [];
+        let selectedCoins: ExtendedVirtualCoin[] = [];
         let btcAmountToSelect = 0;
 
         for (const recipient of recipients) {
@@ -2304,10 +2304,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
  * @returns Selected coins and change amount
  */
 export function selectVirtualCoins(
-    coins: VirtualCoin[],
+    coins: ExtendedVirtualCoin[],
     targetAmount: number
 ): {
-    inputs: VirtualCoin[];
+    inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
     // Sort VTXOs by expiry (ascending) and amount (descending)
@@ -2323,7 +2323,7 @@ export function selectVirtualCoins(
         return b.value - a.value; // Larger amount first
     });
 
-    const selectedCoins: VirtualCoin[] = [];
+    const selectedCoins: ExtendedVirtualCoin[] = [];
     let selectedAmount = 0;
 
     // Select coins until we have enough
