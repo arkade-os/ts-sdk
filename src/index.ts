@@ -150,8 +150,6 @@ import {
     ArkPsbtFieldKeyType,
     CosignerPublicKey,
     VtxoTreeExpiry,
-    ArkadeScriptField,
-    ArkadeScriptWitness,
 } from "./utils/unknownFields";
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
@@ -312,9 +310,6 @@ export {
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
-    ArkadeScriptField,
-    ArkadeScriptWitness,
-
     // Utils
     buildOffchainTx,
     verifyTapscriptSignatures,

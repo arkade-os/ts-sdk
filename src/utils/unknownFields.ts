@@ -10,8 +10,6 @@ export enum ArkPsbtFieldKey {
     VtxoTreeExpiry = "expiry",
     Cosigner = "cosigner",
     ConditionWitness = "condition",
-    ArkadeScript = "arkadescript",
-    ArkadeScriptWitness = "arkadescriptwitness",
 }
 
 /**
@@ -192,46 +190,6 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
                 type: blocks ? "blocks" : "seconds",
                 value: BigInt(blocks ?? seconds ?? 0),
             };
-        }),
-};
-
-/**
- * ArkadeScriptField is set to pass Arkade script data in PSBT
- */
-export const ArkadeScriptField: ArkPsbtFieldCoder<Uint8Array> = {
-    key: ArkPsbtFieldKey.ArkadeScript,
-    encode: (value) => [
-        {
-            type: ArkPsbtFieldKeyType,
-            key: encodedPsbtFieldKey[ArkPsbtFieldKey.ArkadeScript],
-        },
-        value,
-    ],
-    decode: (value) =>
-        nullIfCatch(() => {
-            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.ArkadeScript))
-                return null;
-            return value[1];
-        }),
-};
-
-/**
- * ArkadeScriptWitness is set to pass Arkade script witness data in PSBT
- */
-export const ArkadeScriptWitness: ArkPsbtFieldCoder<Uint8Array[]> = {
-    key: ArkPsbtFieldKey.ArkadeScriptWitness,
-    encode: (value) => [
-        {
-            type: ArkPsbtFieldKeyType,
-            key: encodedPsbtFieldKey[ArkPsbtFieldKey.ArkadeScriptWitness],
-        },
-        RawWitness.encode(value),
-    ],
-    decode: (value) =>
-        nullIfCatch(() => {
-            if (!checkKeyMatch(value[0], ArkPsbtFieldKey.ArkadeScriptWitness))
-                return null;
-            return RawWitness.decode(value[1]);
         }),
 };
 

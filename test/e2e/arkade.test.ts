@@ -5,8 +5,6 @@ import { execSync } from "child_process";
 import {
     arkade,
     asset,
-    ArkadeScriptField,
-    setArkPsbtField,
     buildOffchainTx,
     MultisigTapscript,
     CSVMultisigTapscript,
@@ -19,12 +17,27 @@ import {
     Batch,
     RestIntrospectorProvider,
 } from "../../src";
+import { Extension, IntrospectorPacket } from "../../src/extension";
 import {
     beforeEachFaucet,
     createTestArkWallet,
     createTestIdentity,
     faucetOffchain,
 } from "./utils";
+
+/**
+ * Adds an IntrospectorPacket Extension OP_RETURN output to a transaction.
+ */
+function addArkadeScriptExtension(
+    tx: Transaction,
+    vin: number,
+    scriptBytes: Uint8Array
+): void {
+    const packet = IntrospectorPacket.create([
+        { vin, script: scriptBytes, witness: new Uint8Array(0) },
+    ]);
+    tx.addOutput(Extension.create([packet]).txOut());
+}
 
 const INTROSPECTOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
@@ -179,8 +192,8 @@ describe("arkade", () => {
             checkpointUnrollClosure
         );
 
-        // Set ArkadeScript PSBT field on input 0
-        setArkPsbtField(arkTx, 0, ArkadeScriptField, arkadeScriptBytes);
+        // Add IntrospectorPacket Extension OP_RETURN for input 0
+        addArkadeScriptExtension(arkTx, 0, arkadeScriptBytes);
 
         // Bob signs the arkTx
         const bobSignedArkTx = await bob.sign(arkTx);
@@ -301,8 +314,8 @@ describe("arkade", () => {
 
         const intentProof = Intent.create(message, [coin], outputs);
 
-        // Set ArkadeScript field on input 1 (the VTXO input, input 0 is the message input)
-        setArkPsbtField(intentProof, 1, ArkadeScriptField, arkadeScriptBytes);
+        // Add IntrospectorPacket Extension OP_RETURN for input 1 (the VTXO input, input 0 is the message input)
+        addArkadeScriptExtension(intentProof, 1, arkadeScriptBytes);
 
         // Bob signs the intent
         const signedProof = await bob.sign(intentProof);
@@ -469,7 +482,7 @@ describe("arkade", () => {
         };
 
         const intentProof = Intent.create(message, [coin], outputs);
-        setArkPsbtField(intentProof, 1, ArkadeScriptField, arkadeScriptBytes);
+        addArkadeScriptExtension(intentProof, 1, arkadeScriptBytes);
 
         const signedProof = await bob.sign(intentProof);
         const signedProofB64 = base64.encode(signedProof.toPSBT());
@@ -609,7 +622,7 @@ describe("arkade", () => {
             checkpointUnrollClosure
         );
 
-        setArkPsbtField(arkTx, 0, ArkadeScriptField, arkadeScriptBytes);
+        addArkadeScriptExtension(arkTx, 0, arkadeScriptBytes);
 
         const bobSignedArkTx = await bob.sign(arkTx);
 
@@ -778,7 +791,7 @@ describe("arkade", () => {
             checkpointUnrollClosure
         );
 
-        setArkPsbtField(mintTx, 0, ArkadeScriptField, mintArkadeScript);
+        addArkadeScriptExtension(mintTx, 0, mintArkadeScript);
 
         const bobSignedMintTx = await bob.sign(mintTx);
 
@@ -873,12 +886,7 @@ describe("arkade", () => {
             [settleCoin],
             outputs
         );
-        setArkPsbtField(
-            settleIntentProof,
-            1,
-            ArkadeScriptField,
-            settleArkadeScript
-        );
+        addArkadeScriptExtension(settleIntentProof, 1, settleArkadeScript);
 
         const signedSettleProof = await bob.sign(settleIntentProof);
         const signedSettleProofB64 = base64.encode(signedSettleProof.toPSBT());

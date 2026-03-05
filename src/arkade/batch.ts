@@ -32,7 +32,12 @@ import type {
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
-import { setArkPsbtField, ArkadeScriptField } from "../utils/unknownFields";
+import {
+    Extension,
+    ExtensionNotFoundError,
+    IntrospectorPacket,
+} from "../extension";
+import type { IntrospectorEntry, ExtensionPacket } from "../extension";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
@@ -160,6 +165,10 @@ export function createArkadeBatchHandler(
             let connectorIndex = 0;
             const connectorLeaves = connectorTree?.leaves() || [];
 
+            // Collect boarding entries for the commitment tx IntrospectorPacket
+            const boardingEntries: IntrospectorEntry[] = [];
+            const boardingIndices: number[] = [];
+
             for (const input of inputs) {
                 // Auto-detect: is this input in the commitment tx? (boarding)
                 let boardingIdx: number | null = null;
@@ -181,16 +190,12 @@ export function createArkadeBatchHandler(
                         tapLeafScript: [input.forfeitTapLeafScript],
                     });
 
-                    setArkPsbtField(
-                        commitmentPsbt,
-                        boardingIdx,
-                        ArkadeScriptField,
-                        input.arkadeScriptBytes
-                    );
-
-                    commitmentPsbt = await signer.sign(commitmentPsbt, [
-                        boardingIdx,
-                    ]);
+                    boardingEntries.push({
+                        vin: boardingIdx,
+                        script: input.arkadeScriptBytes,
+                        witness: new Uint8Array(0),
+                    });
+                    boardingIndices.push(boardingIdx);
                     hasBoardingInputs = true;
                 } else {
                     // Settlement: build forfeit from connector leaf
@@ -230,16 +235,34 @@ export function createArkadeBatchHandler(
                         forfeitOutputScript
                     );
 
-                    setArkPsbtField(
-                        forfeitTx,
-                        0,
-                        ArkadeScriptField,
-                        input.arkadeScriptBytes
+                    // Add IntrospectorPacket as Extension OP_RETURN output
+                    const forfeitPacket = IntrospectorPacket.create([
+                        {
+                            vin: 0,
+                            script: input.arkadeScriptBytes,
+                            witness: new Uint8Array(0),
+                        },
+                    ]);
+                    forfeitTx.addOutput(
+                        Extension.create([forfeitPacket]).txOut()
                     );
 
                     forfeitTx = await signer.sign(forfeitTx, [0]);
                     signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
                 }
+            }
+
+            // Add IntrospectorPacket to commitment tx for boarding inputs
+            if (boardingEntries.length > 0) {
+                const introspectorPacket =
+                    IntrospectorPacket.create(boardingEntries);
+                addIntrospectorPacketToTx(commitmentPsbt, introspectorPacket);
+
+                // Sign all boarding inputs
+                commitmentPsbt = await signer.sign(
+                    commitmentPsbt,
+                    boardingIndices
+                );
             }
 
             // Build connector tree nodes for introspector
@@ -279,4 +302,43 @@ export function createArkadeBatchHandler(
             );
         },
     };
+}
+
+/**
+ * Adds an IntrospectorPacket to a transaction's Extension OP_RETURN output.
+ * If the tx already has an Extension (e.g., with asset data), the introspector
+ * packet is merged into it. Otherwise, a new Extension output is added.
+ */
+function addIntrospectorPacketToTx(
+    tx: Transaction,
+    introspectorPacket: IntrospectorPacket
+): void {
+    // Check if the tx already has an Extension OP_RETURN
+    let existingExtensionIdx: number | null = null;
+    let existingPackets: ExtensionPacket[] = [];
+
+    for (let i = 0; i < tx.outputsLength; i++) {
+        const output = tx.getOutput(i);
+        if (!output?.script) continue;
+        if (Extension.isExtension(output.script)) {
+            existingExtensionIdx = i;
+            const ext = Extension.fromBytes(output.script);
+            // Collect non-introspector packets to preserve them
+            const assetPacket = ext.getAssetPacket();
+            if (assetPacket) existingPackets.push(assetPacket);
+            break;
+        }
+    }
+
+    const allPackets: ExtensionPacket[] = [
+        ...existingPackets,
+        introspectorPacket,
+    ];
+    const newExtension = Extension.create(allPackets);
+
+    if (existingExtensionIdx !== null) {
+        tx.updateOutput(existingExtensionIdx, newExtension.txOut());
+    } else {
+        tx.addOutput(newExtension.txOut());
+    }
 }
