@@ -110,6 +110,7 @@ services:
             - FULMINE_SWAP_TIMEOUT=120
             - FULMINE_SCHEDULER_POLL_INTERVAL=10
             - FULMINE_DELEGATOR_ENABLED=true
+            - FULMINE_DELEGATOR_FEE=0
         ports:
             - "7000:7000"
             - "7001:7001"
