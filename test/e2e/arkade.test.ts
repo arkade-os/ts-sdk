@@ -26,17 +26,18 @@ import {
 } from "./utils";
 
 /**
- * Adds an IntrospectorPacket Extension OP_RETURN output to a transaction.
+ * Creates an Extension OP_RETURN output containing an IntrospectorPacket.
+ * Optionally merges with other ExtensionPackets (e.g., asset packets).
  */
-function addArkadeScriptExtension(
-    tx: Transaction,
+function makeIntrospectorExtensionOutput(
     vin: number,
-    scriptBytes: Uint8Array
-): void {
+    scriptBytes: Uint8Array,
+    ...extraPackets: import("../../src/extension").ExtensionPacket[]
+) {
     const packet = IntrospectorPacket.create([
         { vin, script: scriptBytes, witness: new Uint8Array(0) },
     ]);
-    tx.addOutput(Extension.create([packet]).txOut());
+    return Extension.create([...extraPackets, packet]).txOut();
 }
 
 const INTROSPECTOR_URL = "http://localhost:7073";
@@ -188,12 +189,12 @@ describe("arkade", () => {
         const alicePkScript = ArkAddress.decode(aliceAddress).pkScript;
         const { arkTx, checkpoints } = buildOffchainTx(
             [{ ...vtxo, tapLeafScript, tapTree }],
-            [{ script: alicePkScript, amount: BigInt(fundAmount) }],
+            [
+                { script: alicePkScript, amount: BigInt(fundAmount) },
+                makeIntrospectorExtensionOutput(0, arkadeScriptBytes),
+            ],
             checkpointUnrollClosure
         );
-
-        // Add IntrospectorPacket Extension OP_RETURN for input 0
-        addArkadeScriptExtension(arkTx, 0, arkadeScriptBytes);
 
         // Bob signs the arkTx
         const bobSignedArkTx = await bob.sign(arkTx);
@@ -312,10 +313,11 @@ describe("arkade", () => {
             virtualStatus: vtxo.virtualStatus,
         };
 
-        const intentProof = Intent.create(message, [coin], outputs);
-
-        // Add IntrospectorPacket Extension OP_RETURN for input 1 (the VTXO input, input 0 is the message input)
-        addArkadeScriptExtension(intentProof, 1, arkadeScriptBytes);
+        const intentProof = Intent.create(
+            message,
+            [coin],
+            [...outputs, makeIntrospectorExtensionOutput(1, arkadeScriptBytes)]
+        );
 
         // Bob signs the intent
         const signedProof = await bob.sign(intentProof);
@@ -481,8 +483,11 @@ describe("arkade", () => {
             },
         };
 
-        const intentProof = Intent.create(message, [coin], outputs);
-        addArkadeScriptExtension(intentProof, 1, arkadeScriptBytes);
+        const intentProof = Intent.create(
+            message,
+            [coin],
+            [...outputs, makeIntrospectorExtensionOutput(1, arkadeScriptBytes)]
+        );
 
         const signedProof = await bob.sign(intentProof);
         const signedProofB64 = base64.encode(signedProof.toPSBT());
@@ -610,10 +615,10 @@ describe("arkade", () => {
             ),
         ]);
 
-        // Build offchain tx outputs (asset packet before P2A anchor)
+        // Build offchain tx outputs (combined Extension with asset + introspector packets)
         const outputs = [
             { script: alicePkScript, amount: BigInt(fundAmount) },
-            assetPacket.txOut(),
+            makeIntrospectorExtensionOutput(0, arkadeScriptBytes, assetPacket),
         ];
 
         const { arkTx, checkpoints } = buildOffchainTx(
@@ -621,8 +626,6 @@ describe("arkade", () => {
             outputs,
             checkpointUnrollClosure
         );
-
-        addArkadeScriptExtension(arkTx, 0, arkadeScriptBytes);
 
         const bobSignedArkTx = await bob.sign(arkTx);
 
@@ -786,12 +789,14 @@ describe("arkade", () => {
                     script: settleContractPkScript,
                     amount: BigInt(fundAmount),
                 },
-                issuancePacket.txOut(),
+                makeIntrospectorExtensionOutput(
+                    0,
+                    mintArkadeScript,
+                    issuancePacket
+                ),
             ],
             checkpointUnrollClosure
         );
-
-        addArkadeScriptExtension(mintTx, 0, mintArkadeScript);
 
         const bobSignedMintTx = await bob.sign(mintTx);
 
@@ -858,7 +863,6 @@ describe("arkade", () => {
                 script: alicePkScript,
                 amount: BigInt(fundAmount),
             },
-            transferPacket.txOut(),
         ];
 
         const settleMessage: Intent.RegisterMessage = {
@@ -884,9 +888,15 @@ describe("arkade", () => {
         const settleIntentProof = Intent.create(
             settleMessage,
             [settleCoin],
-            outputs
+            [
+                ...outputs,
+                makeIntrospectorExtensionOutput(
+                    1,
+                    settleArkadeScript,
+                    transferPacket
+                ),
+            ]
         );
-        addArkadeScriptExtension(settleIntentProof, 1, settleArkadeScript);
 
         const signedSettleProof = await bob.sign(settleIntentProof);
         const signedSettleProofB64 = base64.encode(signedSettleProof.toPSBT());
