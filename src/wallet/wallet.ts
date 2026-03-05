@@ -1052,6 +1052,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return this._delegatorManager;
     }
 
+    /**
+     * @deprecated Use `send`
+     * @param params
+     */
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
@@ -2076,20 +2080,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @returns The ark transaction id and server-signed checkpoint PSBTs (for bookkeeping)
      */
     async buildAndSubmitOffchainTx(
-        inputs: VirtualCoin[],
+        inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[]
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
-        const tapLeafScript = this.offchainTapscript.forfeit();
-        if (!tapLeafScript) {
-            throw new Error("Selected leaf not found");
-        }
-        const tapTree = this.offchainTapscript.encode();
         const offchainTx = buildOffchainTx(
-            inputs.map((input) => ({
-                ...input,
-                tapLeafScript,
-                tapTree,
-            })),
+            inputs.map((input) => {
+                return {
+                    ...input,
+                    tapLeafScript: input.forfeitTapLeafScript,
+                };
+            }),
             outputs,
             this.serverUnrollScript
         );
