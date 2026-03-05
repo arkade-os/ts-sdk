@@ -1248,6 +1248,134 @@ describe("Delegator Lifecycle", () => {
     );
 });
 
+describe("Cross-contract spending", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    it(
+        "should spend VTXOs from both default and delegate contracts in a single send",
+        { timeout: 120000 },
+        async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+            const identity = createTestIdentity();
+
+            const onchainProvider = new EsploraProvider(
+                "http://localhost:3000",
+                { forcePolling: true, pollingInterval: 2000 }
+            );
+
+            // Step 1 — No delegator: receive 1000 to default address
+            const wallet1 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const defaultAddress = await wallet1.getAddress();
+            await wallet1.getContractManager();
+
+            faucetOffchain(defaultAddress, 1_000);
+            await waitFor(async () => (await wallet1.getVtxos()).length > 0);
+
+            const balance1 = await wallet1.getBalance();
+            expect(balance1.total).toBeGreaterThanOrEqual(1_000);
+
+            // Step 2 — Enable delegator: receive 1000 to delegate address
+            const wallet2 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+                delegatorProvider: new RestDelegatorProvider(
+                    "http://localhost:7002"
+                ),
+            });
+
+            const delegateAddress = await wallet2.getAddress();
+            expect(delegateAddress).not.toBe(defaultAddress);
+
+            const manager = await wallet2.getContractManager();
+
+            // Both contracts registered (default from step 1 + delegate)
+            const contracts = await manager.getContracts({
+                type: ["default", "delegate"],
+            });
+            expect(contracts).toHaveLength(2);
+
+            faucetOffchain(delegateAddress, 1_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
+
+            // Wallet should see VTXOs from both contracts
+            const allVtxos = await wallet2.getVtxos();
+            expect(allVtxos).toHaveLength(2);
+            const totalBalance = allVtxos.reduce((sum, v) => sum + v.value, 0);
+            // Each VTXO ≈ 1000 (delegate VTXO may be slightly less due to fee)
+            expect(totalBalance).toBeGreaterThanOrEqual(1_500);
+
+            // Snapshot delegate VTXOs before sending
+            const contractsBefore = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosBefore = contractsBefore[0].vtxos;
+            expect(delegateVtxosBefore.length).toBeGreaterThan(0);
+
+            // Step 3 — Spend 1500: exceeds any single VTXO, forces both pools
+            const bob = await createTestArkWallet();
+            const bobAddress = await bob.wallet.getAddress();
+
+            const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
+            // Send more than any single VTXO can cover
+            const sendAmount = maxSingleVtxo + 100;
+
+            const txid = await wallet2.sendBitcoin({
+                address: bobAddress,
+                amount: sendAmount,
+            });
+            expect(txid).toBeDefined();
+
+            // Verify delegate VTXOs were consumed
+            const contractsAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            const spentDelegateVtxos = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfterUnspent.some(
+                        (after) =>
+                            after.txid === before.txid &&
+                            after.vout === before.vout
+                    )
+            );
+            expect(spentDelegateVtxos.length).toBeGreaterThan(0);
+
+            // Step 4 — Verify change landed on the delegate address
+            await waitFor(async () => {
+                const vtxos = await wallet2.getVtxos();
+                return vtxos.some((v) => !v.isSpent);
+            });
+
+            const vtxosAfter = await wallet2.getVtxos();
+            const changeVtxos = vtxosAfter.filter((v) => !v.isSpent);
+            // Change should exist (totalBalance - sendAmount > 0)
+            expect(changeVtxos.length).toBeGreaterThan(0);
+
+            // The change VTXO should be on the delegate contract
+            // (the current address since delegate is active)
+            const delegateContractAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateUnspentAfter = delegateContractAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            // At least one unspent VTXO on delegate = the change output
+            expect(delegateUnspentAfter.length).toBeGreaterThan(0);
+        }
+    );
+});
+
 describe("Asset integration tests", () => {
     beforeEach(beforeEachFaucet, 20000);
 
