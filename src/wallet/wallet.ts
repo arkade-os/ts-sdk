@@ -435,30 +435,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return allExtended;
     }
 
-    protected async getVirtualCoins(
-        filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
-    ): Promise<VirtualCoin[]> {
-        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
-        const response = await this.indexerProvider.getVtxos({ scripts });
-        const allVtxos = response.vtxos;
-
-        let vtxos: VirtualCoin[] = allVtxos.filter(isSpendable);
-
-        // all recoverable vtxos are spendable by definition
-        if (!filter.withRecoverable) {
-            vtxos = vtxos.filter(
-                (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
-            );
-        }
-
-        if (filter.withUnrolled) {
-            const spentVtxos = allVtxos.filter((vtxo) => !isSpendable(vtxo));
-            vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
-        }
-
-        return vtxos;
-    }
-
     async getTransactionHistory(): Promise<ArkTransaction[]> {
         const scripts = await this.getWalletScripts();
         const response = await this.indexerProvider.getVtxos({ scripts });
@@ -1398,7 +1374,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const vtxos = await this.getVirtualCoins();
+        const vtxos = await this.getVtxos();
         let settlementPsbt = Transaction.fromPSBT(
             base64.decode(event.commitmentTx)
         );
@@ -1872,7 +1848,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const address = await this.getAddress();
         const outputAddress = ArkAddress.decode(address);
 
-        const virtualCoins = await this.getVirtualCoins({
+        const virtualCoins = await this.getVtxos({
             withRecoverable: false,
         });
 
