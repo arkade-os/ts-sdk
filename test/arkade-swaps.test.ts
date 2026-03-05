@@ -1201,6 +1201,10 @@ describe("ArkadeSwaps", () => {
                     ...mockArkBtcChainSwap,
                 };
                 vi.spyOn(swaps, "claimBtc").mockResolvedValue();
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
+                    status: "transaction.claimed",
+                    transaction: { id: mock.id, hex: mock.hex },
+                });
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_id, callback) => {
                         // Simulate status updates
@@ -1617,6 +1621,10 @@ describe("ArkadeSwaps", () => {
                     ...mockBtcArkChainSwap,
                 };
                 vi.spyOn(swaps, "claimArk").mockResolvedValue();
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
+                    status: "transaction.claimed",
+                    transaction: { id: mock.id, hex: mock.hex },
+                });
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_id, callback) => {
                         // Simulate status updates
