@@ -1150,12 +1150,42 @@ describe("Delegator Lifecycle", () => {
             const bob = await createTestArkWallet();
             const bobAddress = await bob.wallet.getAddress();
 
-            // Send using VTXOs from both contract types
+            // Capture delegate VTXOs before sending
+            const contractsBefore = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            expect(contractsBefore).toHaveLength(1);
+            const delegateVtxosBefore = contractsBefore[0].vtxos;
+            expect(delegateVtxosBefore.length).toBeGreaterThan(0);
+
+            // Sum all individual VTXO values to find the max single VTXO
+            const allVtxos2 = await wallet2.getVtxos();
+            const maxSingleVtxo = Math.max(...allVtxos2.map((v) => v.value));
+
+            // Send more than any single VTXO so both pools must be consumed
+            const sendAmount = maxSingleVtxo + 1_000;
             const txid2 = await wallet2.sendBitcoin({
                 address: bobAddress,
-                amount: 5_000,
+                amount: sendAmount,
             });
             expect(txid2).toBeDefined();
+
+            // Verify delegate VTXOs were spent
+            const contractsAfter = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfter = contractsAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            const spentDelegateOutpoints = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfter.some(
+                        (after) =>
+                            after.txid === before.txid &&
+                            after.vout === before.vout
+                    )
+            );
+            expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
 
             // Phase 3 — Remove delegator
             const wallet3 = await Wallet.create({
@@ -1178,12 +1208,42 @@ describe("Delegator Lifecycle", () => {
             const vtxos3 = await wallet3.getVtxos();
             expect(vtxos3.length).toBeGreaterThanOrEqual(2);
 
+            // Capture delegate VTXOs before spending (forfeit path)
+            const contracts3Before = await manager3.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            expect(contracts3Before).toHaveLength(1);
+            const delegateVtxos3Before = contracts3Before[0].vtxos;
+            expect(delegateVtxos3Before.length).toBeGreaterThan(0);
+
+            // Send more than any single VTXO so delegate pool must be consumed
+            const allVtxos3 = await wallet3.getVtxos();
+            const maxSingleVtxo3 = Math.max(...allVtxos3.map((v) => v.value));
+            const sendAmount3 = maxSingleVtxo3 + 1_000;
+
             // Spending still works — delegate VTXOs use forfeit path (Alice + Server)
             const txid3 = await wallet3.sendBitcoin({
                 address: bobAddress,
-                amount: 5_000,
+                amount: sendAmount3,
             });
             expect(txid3).toBeDefined();
+
+            // Verify delegate VTXOs were consumed via forfeit path
+            const contracts3After = await manager3.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxos3After = contracts3After[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            const spentDelegate3 = delegateVtxos3Before.filter(
+                (before) =>
+                    !delegateVtxos3After.some(
+                        (after) =>
+                            after.txid === before.txid &&
+                            after.vout === before.vout
+                    )
+            );
+            expect(spentDelegate3.length).toBeGreaterThan(0);
         }
     );
 });
