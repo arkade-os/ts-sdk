@@ -2177,16 +2177,6 @@ describe("Asset integration tests", () => {
                 ),
             });
 
-            // Fund default address and issue asset after delegation is set up
-            faucetOffchain(defaultAddress, 1_000);
-            await waitFor(async () => (await wallet1.getVtxos()).length > 0);
-
-            const issueResult = await wallet2.assetManager.issue({
-                amount: 500,
-            });
-            expect(issueResult.assetId).toBeDefined();
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
             const delegateAddress = await wallet2.getAddress();
             expect(delegateAddress).not.toBe(defaultAddress);
 
@@ -2196,6 +2186,16 @@ describe("Asset integration tests", () => {
                 type: ["default", "delegate"],
             });
             expect(contracts).toHaveLength(2);
+
+            // Fund default address and issue asset after delegation is set up
+            faucetOffchain(defaultAddress, 1_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length > 0);
+
+            const issueResult = await wallet2.assetManager.issue({
+                amount: 500,
+            });
+            expect(issueResult.assetId).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
 
             faucetOffchain(delegateAddress, 1_000);
             await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
