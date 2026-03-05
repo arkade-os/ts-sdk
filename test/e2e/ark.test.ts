@@ -1115,7 +1115,7 @@ describe("Delegator Lifecycle", () => {
             await waitFor(async () => (await wallet1.getVtxos()).length > 0);
 
             const balance1 = await wallet1.getBalance();
-            expect(balance1.offchain.total).toBeGreaterThanOrEqual(10_000);
+            expect(balance1.total).toBeGreaterThanOrEqual(10_000);
 
             // Phase 2 — Add delegator
             const wallet2 = await Wallet.create({
