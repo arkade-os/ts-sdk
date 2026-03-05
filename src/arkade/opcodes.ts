@@ -1,7 +1,7 @@
 /**
  * Arkade Script Opcodes
  *
- * This module defines ONLY Arkade-specific opcodes (0xc4-0xf2).
+ * This module defines ONLY Arkade-specific opcodes (0xb3, 0xc4-0xf3).
  * Standard Bitcoin opcodes are imported from @scure/btc-signer.
  *
  * Reference: arkade-os/introspector pkg/arkade/opcode.go
@@ -11,6 +11,9 @@ import { OP } from "@scure/btc-signer";
 export { OP };
 
 export const ARKADE_OP = {
+    // Merkle Branch Verification (0xb3 — repurposed NOP4 slot)
+    MERKLEBRANCHVERIFY: 0xb3,
+
     // SHA256 Streaming (0xc4-0xc6)
     SHA256INITIALIZE: 0xc4,
     SHA256UPDATE: 0xc5,
@@ -72,6 +75,9 @@ export const ARKADE_OP = {
     INSPECTINASSETCOUNT: 0xf0,
     INSPECTINASSETAT: 0xf1,
     INSPECTINASSETLOOKUP: 0xf2,
+
+    // Transaction ID (0xf3)
+    TXID: 0xf3,
 } as const;
 
 export const ARKADE_OPCODE_NAMES: Record<number, string> = Object.fromEntries(

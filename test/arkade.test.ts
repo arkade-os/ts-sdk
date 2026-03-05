@@ -123,6 +123,37 @@ describe("Script Encoding/Decoding", () => {
             expect(decoded).toEqual(script);
         });
 
+        it("should encode and decode MERKLEBRANCHVERIFY opcode (0xb3)", () => {
+            const script: ArkadeScriptType = ["MERKLEBRANCHVERIFY"];
+            const encoded = ArkadeScript.encode(script);
+            expect(encoded).toEqual(new Uint8Array([0xb3]));
+            const decoded = ArkadeScript.decode(encoded);
+            expect(decoded).toEqual(["MERKLEBRANCHVERIFY"]);
+        });
+
+        it("should encode and decode TXID opcode (0xf3)", () => {
+            const script: ArkadeScriptType = ["TXID"];
+            const encoded = ArkadeScript.encode(script);
+            expect(encoded).toEqual(new Uint8Array([0xf3]));
+            const decoded = ArkadeScript.decode(encoded);
+            expect(decoded).toEqual(["TXID"]);
+        });
+
+        it("should encode script using MERKLEBRANCHVERIFY and TXID together", () => {
+            const root = new Uint8Array(32).fill(0xaa);
+            const script: ArkadeScriptType = [
+                "MERKLEBRANCHVERIFY",
+                root,
+                "EQUALVERIFY",
+                "TXID",
+            ];
+            const decoded = ArkadeScript.decode(ArkadeScript.encode(script));
+            expect(decoded[0]).toBe("MERKLEBRANCHVERIFY");
+            expect(decoded[1]).toEqual(root);
+            expect(decoded[2]).toBe("EQUALVERIFY");
+            expect(decoded[3]).toBe("TXID");
+        });
+
         it("should encode and decode mixed script", () => {
             const data1 = hex.decode("deadbeef");
             const data2 = new Uint8Array(32).fill(0x11);
@@ -176,6 +207,12 @@ describe("ASM Conversion", () => {
         it("should convert Arkade opcodes to ASM", () => {
             expect(toASM(["SHA256INITIALIZE", "ADD64", "TWEAKVERIFY"])).toBe(
                 "OP_SHA256INITIALIZE OP_ADD64 OP_TWEAKVERIFY"
+            );
+        });
+
+        it("should convert MERKLEBRANCHVERIFY and TXID to ASM", () => {
+            expect(toASM(["MERKLEBRANCHVERIFY", "TXID"])).toBe(
+                "OP_MERKLEBRANCHVERIFY OP_TXID"
             );
         });
 

@@ -5,7 +5,7 @@
  * that work with both standard Bitcoin opcodes and Arkade extension opcodes.
  *
  * Note: We use our own decoder for scripts because @scure/btc-signer doesn't
- * recognize Arkade opcodes (0xc4-0xf2) and would treat them as data pushes.
+ * recognize Arkade opcodes (0xb3, 0xc4-0xf3) and would treat them as data pushes.
  */
 
 import * as P from "micro-packed";

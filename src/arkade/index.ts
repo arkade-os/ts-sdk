@@ -7,7 +7,7 @@
  *
  * ## Features
  * - Standard Bitcoin opcodes via @scure/btc-signer (re-exported as OP)
- * - Arkade extension opcodes (0xc4-0xf2)
+ * - Arkade extension opcodes (0xb3, 0xc4-0xf3)
  * - Script encoding/decoding via ScriptElement arrays
  * - ASM format conversion with Arkade opcode support
  *
