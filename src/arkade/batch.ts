@@ -32,12 +32,7 @@ import type {
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
-import {
-    Extension,
-    ExtensionNotFoundError,
-    IntrospectorPacket,
-} from "../extension";
-import type { IntrospectorEntry, ExtensionPacket } from "../extension";
+import { Extension, IntrospectorPacket } from "../extension";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
@@ -165,8 +160,6 @@ export function createArkadeBatchHandler(
             let connectorIndex = 0;
             const connectorLeaves = connectorTree?.leaves() || [];
 
-            // Collect boarding entries for the commitment tx IntrospectorPacket
-            const boardingEntries: IntrospectorEntry[] = [];
             const boardingIndices: number[] = [];
 
             for (const input of inputs) {
@@ -190,11 +183,6 @@ export function createArkadeBatchHandler(
                         tapLeafScript: [input.forfeitTapLeafScript],
                     });
 
-                    boardingEntries.push({
-                        vin: boardingIdx,
-                        script: input.arkadeScriptBytes,
-                        witness: new Uint8Array(0),
-                    });
                     boardingIndices.push(boardingIdx);
                     hasBoardingInputs = true;
                 } else {
@@ -209,6 +197,18 @@ export function createArkadeBatchHandler(
                     if (!connectorOutput?.amount || !connectorOutput?.script) {
                         continue;
                     }
+
+                    // Build Extension OP_RETURN with IntrospectorPacket
+                    const forfeitPacket = IntrospectorPacket.create([
+                        {
+                            vin: 0,
+                            script: input.arkadeScriptBytes,
+                            witness: new Uint8Array(0),
+                        },
+                    ]);
+                    const forfeitExtOutput = Extension.create([
+                        forfeitPacket,
+                    ]).txOut();
 
                     let forfeitTx = buildForfeitTx(
                         [
@@ -232,19 +232,9 @@ export function createArkadeBatchHandler(
                                 },
                             },
                         ],
-                        forfeitOutputScript
-                    );
-
-                    // Add IntrospectorPacket as Extension OP_RETURN output
-                    const forfeitPacket = IntrospectorPacket.create([
-                        {
-                            vin: 0,
-                            script: input.arkadeScriptBytes,
-                            witness: new Uint8Array(0),
-                        },
-                    ]);
-                    forfeitTx.addOutput(
-                        Extension.create([forfeitPacket]).txOut()
+                        forfeitOutputScript,
+                        undefined,
+                        [forfeitExtOutput]
                     );
 
                     forfeitTx = await signer.sign(forfeitTx, [0]);
@@ -252,13 +242,10 @@ export function createArkadeBatchHandler(
                 }
             }
 
-            // Add IntrospectorPacket to commitment tx for boarding inputs
-            if (boardingEntries.length > 0) {
-                const introspectorPacket =
-                    IntrospectorPacket.create(boardingEntries);
-                addIntrospectorPacketToTx(commitmentPsbt, introspectorPacket);
-
-                // Sign all boarding inputs
+            // Sign boarding inputs on the commitment tx
+            // The introspector already knows the arkade scripts from the intent proof,
+            // so we don't modify the commitment tx outputs (which would change the txid).
+            if (boardingIndices.length > 0) {
                 commitmentPsbt = await signer.sign(
                     commitmentPsbt,
                     boardingIndices
@@ -302,43 +289,4 @@ export function createArkadeBatchHandler(
             );
         },
     };
-}
-
-/**
- * Adds an IntrospectorPacket to a transaction's Extension OP_RETURN output.
- * If the tx already has an Extension (e.g., with asset data), the introspector
- * packet is merged into it. Otherwise, a new Extension output is added.
- */
-function addIntrospectorPacketToTx(
-    tx: Transaction,
-    introspectorPacket: IntrospectorPacket
-): void {
-    // Check if the tx already has an Extension OP_RETURN
-    let existingExtensionIdx: number | null = null;
-    let existingPackets: ExtensionPacket[] = [];
-
-    for (let i = 0; i < tx.outputsLength; i++) {
-        const output = tx.getOutput(i);
-        if (!output?.script) continue;
-        if (Extension.isExtension(output.script)) {
-            existingExtensionIdx = i;
-            const ext = Extension.fromBytes(output.script);
-            // Collect non-introspector packets to preserve them
-            const assetPacket = ext.getAssetPacket();
-            if (assetPacket) existingPackets.push(assetPacket);
-            break;
-        }
-    }
-
-    const allPackets: ExtensionPacket[] = [
-        ...existingPackets,
-        introspectorPacket,
-    ];
-    const newExtension = Extension.create(allPackets);
-
-    if (existingExtensionIdx !== null) {
-        tx.updateOutput(existingExtensionIdx, newExtension.txOut());
-    } else {
-        tx.addOutput(newExtension.txOut());
-    }
 }
