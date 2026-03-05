@@ -32,7 +32,6 @@ import type {
 import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
-import { Extension, IntrospectorPacket } from "../extension";
 import { buildForfeitTx } from "../forfeit";
 import { Batch } from "../wallet/batch";
 import { Intent } from "../intent";
@@ -198,18 +197,6 @@ export function createArkadeBatchHandler(
                         continue;
                     }
 
-                    // Build Extension OP_RETURN with IntrospectorPacket
-                    const forfeitPacket = IntrospectorPacket.create([
-                        {
-                            vin: 0,
-                            script: input.arkadeScriptBytes,
-                            witness: new Uint8Array(0),
-                        },
-                    ]);
-                    const forfeitExtOutput = Extension.create([
-                        forfeitPacket,
-                    ]).txOut();
-
                     let forfeitTx = buildForfeitTx(
                         [
                             {
@@ -232,9 +219,7 @@ export function createArkadeBatchHandler(
                                 },
                             },
                         ],
-                        forfeitOutputScript,
-                        undefined,
-                        [forfeitExtOutput]
+                        forfeitOutputScript
                     );
 
                     forfeitTx = await signer.sign(forfeitTx, [0]);

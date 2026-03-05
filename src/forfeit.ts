@@ -8,8 +8,7 @@ import { P2A } from "./utils/anchor";
 export function buildForfeitTx(
     inputs: TransactionInputUpdate[],
     forfeitPkScript: Uint8Array,
-    txLocktime?: number,
-    additionalOutputs?: TransactionOutput[]
+    txLocktime?: number
 ): Transaction {
     let amount = 0n;
     for (const input of inputs) {
@@ -25,16 +24,14 @@ export function buildForfeitTx(
             script: forfeitPkScript,
             amount,
         },
-        txLocktime,
-        additionalOutputs
+        txLocktime
     );
 }
 
 export function buildForfeitTxWithOutput(
     inputs: TransactionInputUpdate[],
     output: TransactionOutput,
-    txLocktime?: number,
-    additionalOutputs?: TransactionOutput[]
+    txLocktime?: number
 ): Transaction {
     const tx = new Transaction({
         version: 3,
@@ -44,11 +41,6 @@ export function buildForfeitTxWithOutput(
         tx.addInput(input);
     }
     tx.addOutput(output);
-    if (additionalOutputs) {
-        for (const out of additionalOutputs) {
-            tx.addOutput(out);
-        }
-    }
     tx.addOutput(P2A);
     return tx;
 }
