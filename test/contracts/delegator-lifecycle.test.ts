@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
     ContractManager,
     IndexerProvider,
@@ -14,17 +14,20 @@ import {
     TEST_DELEGATE_SCRIPT,
 } from "./helpers";
 
-vi.useFakeTimers();
-
 describe("Delegator Lifecycle", () => {
     let contractRepository: InMemoryContractRepository;
     let walletRepository: InMemoryWalletRepository;
     let mockIndexer: IndexerProvider;
 
     beforeEach(() => {
+        vi.useFakeTimers();
         contractRepository = new InMemoryContractRepository();
         walletRepository = new InMemoryWalletRepository();
         mockIndexer = createMockIndexerProvider();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it("should add delegator — persisted contracts survive re-creation", async () => {
