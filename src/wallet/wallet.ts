@@ -1932,12 +1932,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
 
             try {
-                // Use sendBitcoin with selectedVtxos to drain exact coins,
-                // avoiding dust change left in the ephemeral cash wallet
-                await cashWallet.sendBitcoin({
+                await cashWallet.send({
                     address: myAddress,
                     amount: sweptAmount,
-                    selectedVtxos: spendable as ExtendedVirtualCoin[],
                 });
             } catch (error) {
                 throw new Error(
