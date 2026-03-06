@@ -1,9 +1,8 @@
 import {
     ArkProvider,
     IndexerProvider,
+    IWallet,
     NetworkName,
-    ServiceWorkerWallet,
-    Wallet,
 } from "@arkade-os/sdk";
 import {
     CreateReverseSwapResponse,
@@ -16,6 +15,7 @@ import {
     CreateChainSwapResponse,
 } from "./boltz-swap-provider";
 import { SwapManagerConfig } from "./swap-manager";
+import { SwapRepository } from "./repositories/swap-repository";
 
 // TODO: replace with better data structure
 export interface Vtxo {
@@ -110,12 +110,8 @@ export type PendingSwap =
     | PendingSubmarineSwap
     | PendingChainSwap;
 
-export interface RefundHandler {
-    onRefundNeeded: (swapData: PendingSubmarineSwap) => Promise<void>;
-}
-
-export interface ArkadeChainSwapConfig {
-    wallet: Wallet | ServiceWorkerWallet;
+export interface ArkadeSwapsConfig {
+    wallet: IWallet;
     arkProvider?: ArkProvider;
     swapProvider: BoltzSwapProvider;
     indexerProvider?: IndexerProvider;
@@ -126,40 +122,12 @@ export interface ArkadeChainSwapConfig {
      * - `SwapManagerConfig` object: SwapManager enabled with custom configuration
      */
     swapManager?: boolean | (SwapManagerConfig & { autoStart?: boolean });
-}
-
-export interface ArkadeLightningConfig {
-    wallet: Wallet | ServiceWorkerWallet;
-    arkProvider?: ArkProvider;
-    swapProvider: BoltzSwapProvider;
-    indexerProvider?: IndexerProvider;
-    feeConfig?: Partial<FeeConfig>;
-    refundHandler?: RefundHandler;
-    timeoutConfig?: Partial<TimeoutConfig>;
-    retryConfig?: Partial<RetryConfig>;
     /**
-     * Enable background swap monitoring and autonomous actions.
-     * - `false` or `undefined`: SwapManager disabled
-     * - `true`: SwapManager enabled with default configuration
-     * - `SwapManagerConfig` object: SwapManager enabled with custom configuration
+     * Optional swap repository to use for persisting swap data.
+     * - `undefined`: fallback to default IndexedDbSwapRepository
+     * - `SwapRepository` object: SwapRepository enabled with custom configuration
      */
-    swapManager?: boolean | (SwapManagerConfig & { autoStart?: boolean });
-}
-
-export interface TimeoutConfig {
-    swapExpiryBlocks: number;
-    invoiceExpirySeconds: number;
-    claimDelayBlocks: number;
-}
-
-export interface FeeConfig {
-    maxMinerFeeSats: number;
-    maxSwapFeeSats: number;
-}
-
-export interface RetryConfig {
-    maxAttempts: number;
-    delayMs: number;
+    swapRepository?: SwapRepository;
 }
 
 export interface DecodedInvoice {

@@ -1,3 +1,5 @@
+import { sha256 } from "@noble/hashes/sha2.js";
+import { hex } from "@scure/base";
 import {
     isPendingChainSwap,
     isPendingReverseSwap,
@@ -9,6 +11,7 @@ import {
     PendingSubmarineSwap,
     PendingSwap,
 } from "../types";
+import { decodeInvoice } from "./decoding";
 
 /**
  * Generic type for swap save functions
@@ -52,7 +55,6 @@ export async function saveSwap(
 
 /**
  * Update a reverse swap's status and save it
- * This pattern appears ~10+ times in arkade-lightning.ts
  */
 export async function updateReverseSwapStatus(
     swap: PendingReverseSwap,
@@ -69,7 +71,6 @@ export async function updateReverseSwapStatus(
 
 /**
  * Update a submarine swap's status and save it
- * This pattern appears ~10+ times in arkade-lightning.ts
  */
 export async function updateSubmarineSwapStatus(
     swap: PendingSubmarineSwap,
@@ -82,4 +83,68 @@ export async function updateSubmarineSwapStatus(
         status,
         ...additionalFields,
     });
+}
+
+/**
+ * Update a chain swap's status and save it
+ */
+export async function updateChainSwapStatus(
+    swap: PendingChainSwap,
+    status: PendingChainSwap["status"],
+    saveFunc: (swap: PendingChainSwap) => Promise<void>,
+    additionalFields?: Partial<PendingChainSwap>
+): Promise<void> {
+    await saveFunc({
+        ...swap,
+        status,
+        ...additionalFields,
+    });
+}
+
+/**
+ * Enrich a reverse swap with its preimage after validation.
+ */
+export function enrichReverseSwapPreimage(
+    swap: PendingReverseSwap,
+    preimage: string
+): PendingReverseSwap {
+    const computedHash = hex.encode(sha256(hex.decode(preimage)));
+    if (computedHash !== swap.request.preimageHash) {
+        throw new Error(
+            `Preimage does not match swap: expected hash ${swap.request.preimageHash}, got ${computedHash}`
+        );
+    }
+    swap.preimage = preimage;
+    return swap;
+}
+
+/**
+ * Enrich a submarine swap with its invoice after validation.
+ */
+export function enrichSubmarineSwapInvoice(
+    swap: PendingSubmarineSwap,
+    invoice: string
+): PendingSubmarineSwap {
+    let paymentHash: string;
+    try {
+        const decoded = decodeInvoice(invoice);
+        if (!decoded.paymentHash) {
+            throw new Error("Invoice missing payment hash");
+        }
+        paymentHash = decoded.paymentHash;
+    } catch (error) {
+        if (error instanceof Error) {
+            throw new Error(`Invalid Lightning invoice: ${error.message}`);
+        }
+        throw new Error(`Invalid Lightning invoice format`);
+    }
+
+    if (swap.preimageHash && paymentHash !== swap.preimageHash) {
+        throw new Error(
+            `Invoice payment hash does not match swap: expected ${swap.preimageHash}, got ${paymentHash}`
+        );
+    }
+
+    swap.request.invoice = invoice;
+    return swap;
 }

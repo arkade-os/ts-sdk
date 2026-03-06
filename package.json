@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/boltz-swap",
-    "version": "0.2.20",
+    "version": "0.3.0-next.8",
     "type": "module",
     "description": "A production-ready TypeScript package that brings Boltz submarine-swaps to Arkade.",
     "main": "./dist/index.js",
@@ -15,20 +15,56 @@
                 "types": "./dist/index.d.ts",
                 "default": "./dist/index.cjs"
             }
+        },
+        "./expo": {
+            "import": {
+                "types": "./dist/expo/index.d.ts",
+                "default": "./dist/expo/index.js"
+            },
+            "require": {
+                "types": "./dist/expo/index.d.ts",
+                "default": "./dist/expo/index.cjs"
+            }
+        },
+        "./repositories/sqlite": {
+            "import": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/sqlite/index.d.ts",
+                "default": "./dist/repositories/sqlite/index.cjs"
+            }
+        },
+        "./repositories/realm": {
+            "import": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.js"
+            },
+            "require": {
+                "types": "./dist/repositories/realm/index.d.ts",
+                "default": "./dist/repositories/realm/index.cjs"
+            }
         }
     },
     "files": [
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+        "build": "tsup src/index.ts src/expo/index.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
+        "prepack": "pnpm run build",
         "test": "vitest run",
         "test:unit": "vitest run --exclude test/e2e",
         "test:setup": "test/setupRegtestEnv.sh",
         "test:integration": "vitest run test/e2e/**",
         "test:down": "test/setupRegtestEnv.sh down",
+        "test:build-docker": "docker compose -f test.docker-compose.yml build --no-cache",
+        "test:up-docker": "docker compose -f test.docker-compose.yml up arkd arkd-wallet nbxplorer pgnbxplorer -d",
+        "test:setup-docker": "node test/e2e/setup.mjs",
+        "test:integration-docker": "vitest run test/e2e/**",
+        "test:down-docker": "docker compose -f test.docker-compose.yml down -v",
         "release": "pnpm run build && bash scripts/release.sh",
         "release:dry-run": "bash scripts/release.sh --dry-run",
         "release:cleanup": "bash scripts/release.sh --cleanup",
@@ -48,7 +84,7 @@
     "author": "Arkade-OS",
     "license": "MIT",
     "dependencies": {
-        "@arkade-os/sdk": "0.3.13",
+        "@arkade-os/sdk": "0.4.0",
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1",
@@ -64,6 +100,7 @@
         "@typescript-eslint/parser": "^8.43.0",
         "eslint": "^9.35.0",
         "eventsource": "^4.1.0",
+        "fake-indexeddb": "^6.0.0",
         "prettier": "3.6.2",
         "tsup": "^8.5.0",
         "typescript": "^5.9.2",
@@ -71,10 +108,21 @@
         "vitest": "^3.2.4"
     },
     "engines": {
-        "node": ">=22"
+        "node": ">=22.12.0 <23",
+        "pnpm": ">=10.25.0 <11"
     },
     "publishConfig": {
         "access": "public"
     },
-    "packageManager": "pnpm@10.25.0"
+    "packageManager": "pnpm@10.25.0",
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "sqlite3",
+            "@arkade-os/sdk"
+        ],
+        "ignoredBuiltDependencies": [
+            "canvas",
+            "esbuild"
+        ]
+    }
 }

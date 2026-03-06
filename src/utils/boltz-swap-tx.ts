@@ -4,14 +4,8 @@
  */
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
-import {
-    Script,
-    Transaction,
-    SigHash,
-    Address,
-    OutScript,
-} from "@scure/btc-signer";
-import { tapLeafHash, TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
+import { Script, Transaction } from "@scure/btc-signer";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { compareBytes, equalBytes } from "@scure/btc-signer/utils.js";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import type { MusigKeyAgg } from "./musig";
@@ -42,6 +36,13 @@ export type DetectedSwapOutput = TransactionOutput & { vout: number };
 
 export const REGTEST_NETWORK = {
     bech32: "bcrt",
+    pubKeyHash: 0x6f,
+    scriptHash: 0xc4,
+    wif: 0xef,
+};
+
+export const MUTINYNET_NETWORK = {
+    bech32: "tb",
     pubKeyHash: 0x6f,
     scriptHash: 0xc4,
     wif: 0xef,
@@ -148,8 +149,20 @@ export const tweakMusig = (musig: MusigKeyAgg, tree: TapTree): MusigKeyAgg => {
 // Swap output detection
 // ---------------------------------------------------------------------------
 
-const toXOnly = (pubKey: Uint8Array): Uint8Array =>
-    pubKey.length === 32 ? pubKey : pubKey.subarray(1, 33);
+const toXOnly = (pubKey: Uint8Array): Uint8Array => {
+    if (pubKey.length === 32) return pubKey;
+    if (pubKey.length === 33) {
+        if (pubKey[0] !== 0x02 && pubKey[0] !== 0x03) {
+            throw new Error(
+                `Invalid compressed public key prefix: 0x${pubKey[0].toString(16).padStart(2, "0")}`
+            );
+        }
+        return pubKey.subarray(1, 33);
+    }
+    throw new Error(
+        `Invalid public key length: expected 32 or 33 bytes, got ${pubKey.length}`
+    );
+};
 
 const p2trScript = (publicKey: Uint8Array): Uint8Array =>
     Script.encode(["OP_1", toXOnly(publicKey)]);

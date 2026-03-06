@@ -1,23 +1,16 @@
-import {
-    PendingChainSwap,
-    PendingReverseSwap,
-    PendingSubmarineSwap,
-} from "./types";
+import type { PendingSwap } from "./types";
 
 interface ErrorOptions {
     message?: string;
     isClaimable?: boolean;
     isRefundable?: boolean;
-    pendingSwap?: PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap;
+    pendingSwap?: PendingSwap;
 }
 
 export class SwapError extends Error {
     public isClaimable: boolean;
     public isRefundable: boolean;
-    public pendingSwap?:
-        | PendingReverseSwap
-        | PendingSubmarineSwap
-        | PendingChainSwap;
+    public pendingSwap?: PendingSwap;
 
     constructor(options: ErrorOptions = {}) {
         super(options.message ?? "Error during swap.");
@@ -29,14 +22,14 @@ export class SwapError extends Error {
 }
 
 export class InvoiceExpiredError extends SwapError {
-    constructor(options: ErrorOptions) {
+    constructor(options: ErrorOptions = {}) {
         super({ message: "The invoice has expired.", ...options });
         this.name = "InvoiceExpiredError";
     }
 }
 
 export class InvoiceFailedToPayError extends SwapError {
-    constructor(options: ErrorOptions) {
+    constructor(options: ErrorOptions = {}) {
         super({
             message: "The provider failed to pay the invoice",
             ...options,
@@ -72,7 +65,7 @@ export class SchemaError extends SwapError {
 }
 
 export class SwapExpiredError extends SwapError {
-    constructor(options: ErrorOptions) {
+    constructor(options: ErrorOptions = {}) {
         super({ message: "The swap has expired", ...options });
         this.name = "SwapExpiredError";
     }

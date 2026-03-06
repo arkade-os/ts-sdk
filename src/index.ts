@@ -1,5 +1,4 @@
-export { ArkadeChainSwap } from "./arkade-chainswap";
-export { ArkadeLightning } from "./arkade-lightning";
+export { ArkadeSwaps } from "./arkade-swaps";
 export {
     BoltzSwapProvider,
     BoltzSwapStatus,
@@ -8,6 +7,7 @@ export {
     isChainFinalStatus,
     isChainPendingStatus,
     isChainRefundableStatus,
+    isChainSignableStatus,
     isChainSuccessStatus,
     isChainSwapClaimable,
     isChainSwapRefundable,
@@ -49,17 +49,26 @@ export {
     saveSwap,
     updateReverseSwapStatus,
     updateSubmarineSwapStatus,
+    updateChainSwapStatus,
+    enrichReverseSwapPreimage,
+    enrichSubmarineSwapInvoice,
 } from "./utils/swap-helpers";
 export type { SwapSaver } from "./utils/swap-helpers";
 export { SwapManager } from "./swap-manager";
+export { ArkadeSwapsMessageHandler } from "./serviceWorker/arkade-swaps-message-handler";
+export { ServiceWorkerArkadeSwaps } from "./serviceWorker/arkade-swaps-runtime";
+/** `@deprecated` Use ArkadeSwapsMessageHandler */
+export { ArkadeSwapsMessageHandler as ArkadeLightningMessageHandler } from "./serviceWorker/arkade-swaps-message-handler";
+/** `@deprecated` Use ServiceWorkerArkadeSwaps */
+export { ServiceWorkerArkadeSwaps as ServiceWorkerArkadeLightning } from "./serviceWorker/arkade-swaps-runtime";
+export { migrateToSwapRepository } from "./repositories/migrationFromContracts";
 export type {
     CreateLightningInvoiceResponse,
     CreateLightningInvoiceRequest,
     SendLightningPaymentResponse,
     SendLightningPaymentRequest,
     IncomingPaymentSubscription,
-    ArkadeChainSwapConfig,
-    ArkadeLightningConfig,
+    ArkadeSwapsConfig,
     PendingSubmarineSwap,
     PendingReverseSwap,
     ChainFeesResponse,
@@ -68,15 +77,19 @@ export type {
     BtcToArkResponse,
     DecodedInvoice,
     LimitsResponse,
-    RefundHandler,
-    TimeoutConfig,
     FeesResponse,
     PendingSwap,
-    RetryConfig,
-    FeeConfig,
     Network,
+    Chain,
     Vtxo,
 } from "./types";
-export type { SwapManagerConfig, SwapManagerEvents } from "./swap-manager";
+export type {
+    SwapManagerConfig,
+    SwapManagerEvents,
+    SwapManagerClient,
+    SwapManagerCallbacks,
+} from "./swap-manager";
 export { logger, setLogger } from "./logger";
 export type { Logger } from "./logger";
+export { IndexedDbSwapRepository } from "./repositories/IndexedDb/swap-repository";
+export { SwapRepository } from "./repositories/swap-repository";

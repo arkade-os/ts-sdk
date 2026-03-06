@@ -573,31 +573,13 @@ const isSwapTree = (data: any): data is SwapTree => {
     );
 };
 
-export type Timeouts = {
-    refund: number;
-    unilateralClaim: number;
-    unilateralRefund: number;
-    unilateralRefundWithoutReceiver: number;
-};
-
-const isTimeouts = (data: any): data is Timeouts => {
-    return (
-        data &&
-        typeof data === "object" &&
-        typeof data.refund === "number" &&
-        typeof data.unilateralClaim === "number" &&
-        typeof data.unilateralRefund === "number" &&
-        typeof data.unilateralRefundWithoutReceiver === "number"
-    );
-};
-
 type ChainSwapDetailsResponse = {
     amount: number;
     lockupAddress: string;
     timeoutBlockHeight: number;
     serverPublicKey: string;
     swapTree?: SwapTree;
-    timeouts?: Timeouts;
+    timeouts?: TimeoutBlockHeights;
     bip21?: string;
 };
 
@@ -612,7 +594,7 @@ const isChainSwapDetailsResponse = (
         typeof data.serverPublicKey === "string" &&
         typeof data.timeoutBlockHeight === "number" &&
         (data.swapTree === undefined || isSwapTree(data.swapTree)) &&
-        (data.timeouts === undefined || isTimeouts(data.timeouts)) &&
+        (data.timeouts === undefined || isTimeoutBlockHeights(data.timeouts)) &&
         (data.bip21 === undefined || typeof data.bip21 === "string")
     );
 };
@@ -897,6 +879,7 @@ export class BoltzSwapProvider {
 
     constructor(config: SwapProviderConfig) {
         this.network = config.network;
+        this.referralId = config.referralId;
         const apiUrl = config.apiUrl || BASE_URLS[config.network];
         if (!apiUrl)
             throw new Error(
@@ -1215,7 +1198,11 @@ export class BoltzSwapProvider {
 
             webSocket.onerror = (error) => {
                 clearTimeout(connectionTimeout);
-                reject(new NetworkError(`WebSocket error: ${error.message}`));
+                reject(
+                    new NetworkError(
+                        `WebSocket error: ${(error as any).message}`
+                    )
+                );
             };
 
             webSocket.onopen = () => {

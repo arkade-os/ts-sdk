@@ -2,5 +2,8 @@ node_modules
 dist
 *storage.json
 .idea
-.claude
+
+# AI
 CLAUDE.md
+.claude
+*.agent.md

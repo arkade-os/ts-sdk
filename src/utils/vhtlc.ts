@@ -188,7 +188,7 @@ export const joinBatch = async (
             arkProvider,
             identity,
             signerSession,
-            hex.decode(forfeitPubkey).slice(1),
+            normalizeToXOnlyKey(forfeitPubkey, "forfeit"),
             isRecoverable ? undefined : OutScript.encode(decodedAddress)
         );
 
