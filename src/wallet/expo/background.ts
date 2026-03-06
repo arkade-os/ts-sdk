@@ -4,10 +4,7 @@ import type { ContractRepository } from "../../repositories/contractRepository";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
 import type { TaskProcessor } from "../../worker/expo/taskRunner";
 import type { TaskItem } from "../../worker/expo/taskQueue";
-import {
-    runTasks,
-    createTaskDependencies,
-} from "../../worker/expo/taskRunner";
+import { runTasks, createTaskDependencies } from "../../worker/expo/taskRunner";
 import {
     contractPollProcessor,
     CONTRACT_POLL_TASK_TYPE,
