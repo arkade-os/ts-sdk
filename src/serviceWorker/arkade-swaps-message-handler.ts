@@ -38,10 +38,10 @@ import {
 import { ArkadeSwaps } from "../arkade-swaps";
 import type { SwapManagerClient } from "../swap-manager";
 
-export const DEFAULT_MESSAGE_TAG = "ARKADE_LIGHTNING_UPDATER";
+export const DEFAULT_MESSAGE_TAG = "ARKADE_SWAPS_UPDATER";
 
-export type RequestInitArkLn = RequestEnvelope & {
-    type: "INIT_ARKADE_LIGHTNING";
+export type RequestInitArkSwaps = RequestEnvelope & {
+    type: "INIT_ARKADE_SWAPS";
     payload: Omit<
         ArkadeSwapsConfig,
         "wallet" | "swapRepository" | "swapProvider" | "indexerProvider"
@@ -54,8 +54,8 @@ export type RequestInitArkLn = RequestEnvelope & {
     };
 };
 
-export type ResponseInitArkLn = ResponseEnvelope & {
-    type: "ARKADE_LIGHTNING_INITIALIZED";
+export type ResponseInitArkSwaps = ResponseEnvelope & {
+    type: "ARKADE_SWAPS_INITIALIZED";
 };
 
 export type RequestCreateLightningInvoice = RequestEnvelope & {
@@ -432,7 +432,7 @@ export type ResponseSwapManagerWaitForCompletion = ResponseEnvelope & {
 };
 
 export type ArkadeSwapsUpdaterRequest =
-    | RequestInitArkLn
+    | RequestInitArkSwaps
     | RequestCreateLightningInvoice
     | RequestSendLightningPayment
     | RequestCreateSubmarineSwap
@@ -475,7 +475,7 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestSwapManagerWaitForCompletion;
 
 export type ArkadeSwapsUpdaterResponse =
-    | ResponseInitArkLn
+    | ResponseInitArkSwaps
     | ResponseCreateLightningInvoice
     | ResponseSendLightningPayment
     | ResponseCreateSubmarineSwap
@@ -644,12 +644,12 @@ export class ArkadeSwapsMessageHandler
         message: ArkadeSwapsUpdaterRequest
     ): Promise<ArkadeSwapsUpdaterResponse> {
         const id = message.id;
-        if (message.type === "INIT_ARKADE_LIGHTNING") {
+        if (message.type === "INIT_ARKADE_SWAPS") {
             try {
                 await this.handleInit(message);
                 return this.tagged({
                     id,
-                    type: "ARKADE_LIGHTNING_INITIALIZED",
+                    type: "ARKADE_SWAPS_INITIALIZED",
                 });
             } catch (error) {
                 return this.tagged({ id, error: error as Error });
@@ -1033,7 +1033,7 @@ export class ArkadeSwapsMessageHandler
         }
     }
 
-    private async handleInit({ payload }: RequestInitArkLn): Promise<void> {
+    private async handleInit({ payload }: RequestInitArkSwaps): Promise<void> {
         if (!this.wallet) {
             throw new Error("Wallet is required");
         }

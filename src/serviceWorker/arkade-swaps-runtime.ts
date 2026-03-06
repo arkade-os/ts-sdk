@@ -21,7 +21,7 @@ import {
     ArkadeSwapsUpdaterRequest,
     ArkadeSwapsUpdaterResponse,
     DEFAULT_MESSAGE_TAG,
-    RequestInitArkLn,
+    RequestInitArkSwaps,
 } from "./arkade-swaps-message-handler";
 import type {
     ResponseArkToBtc,
@@ -115,10 +115,10 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             Boolean(config.swapManager)
         );
 
-        const initMessage: RequestInitArkLn = {
+        const initMessage: RequestInitArkSwaps = {
             tag: messageTag,
             id: getRandomId(),
-            type: "INIT_ARKADE_LIGHTNING",
+            type: "INIT_ARKADE_SWAPS",
             payload: {
                 network: config.network,
                 arkServerUrl: config.arkServerUrl,
