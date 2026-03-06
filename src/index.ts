@@ -4,12 +4,15 @@ import {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
+    ReadonlySeedIdentity,
 } from "./identity/seedIdentity";
 import type {
     SeedIdentityOptions,
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
+    SigningRequest,
+    SeedIdentityJSON,
 } from "./identity/seedIdentity";
 import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
@@ -250,6 +253,7 @@ export {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
+    ReadonlySeedIdentity,
     OnchainWallet,
     Ramps,
     VtxoManager,
@@ -409,6 +413,8 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
+    SigningRequest,
+    SeedIdentityJSON,
 
     // Indexer types
     IndexerProvider,
