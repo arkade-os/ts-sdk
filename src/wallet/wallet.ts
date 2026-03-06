@@ -67,6 +67,7 @@ import {
 } from "../utils/arkTransaction";
 import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
+import { ArkCash } from "../arkcash";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
@@ -1824,6 +1825,146 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         return { finalized, pending };
+    }
+
+    /**
+     * Create an ArkCash bearer instrument.
+     *
+     * Generates a fresh keypair, sends the specified amount to a DefaultVtxo
+     * controlled by the new key, and returns the encoded arkcash string.
+     * The receiver can claim the funds using `claimCash()` without ever
+     * sharing their address.
+     *
+     * @param amount - Amount in satoshis to send
+     * @returns The encoded arkcash string (e.g., "arkcash1...")
+     */
+    async createCash(amount: number): Promise<string> {
+        const info = await this.arkProvider.getInfo();
+        const serverPubKey = hex.decode(info.signerPubkey).slice(1);
+
+        const csvTimelock: RelativeTimelock = {
+            value: info.unilateralExitDelay,
+            type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+        };
+
+        // Derive HRP: ark→arkcash, tark→tarkcash, nark→narkcash
+        const cashHrp = this.network.hrp.replace(/ark$/, "arkcash");
+
+        const cash = ArkCash.generate(serverPubKey, csvTimelock, cashHrp);
+        const address = cash.address(this.network.hrp).encode();
+
+        await this.send({ address, amount });
+
+        return cash.toString();
+    }
+
+    /**
+     * Claim an ArkCash bearer instrument.
+     *
+     * Parses the arkcash string, queries the server for VTXOs belonging to
+     * the arkcash contract, and sweeps them to the wallet's own address.
+     *
+     * If VTXOs are spendable and above dust, they are swept offchain instantly.
+     * Otherwise, the arkcash contract is imported and VTXOs appear in the
+     * wallet's balance for manual management.
+     *
+     * Note: when VTXOs are imported as a contract, the arkcash private key
+     * is not stored. Retain the original arkcash string if you need to
+     * unilaterally exit these VTXOs later.
+     *
+     * @param cashStr - The encoded arkcash string (e.g., "arkcash1...")
+     * @returns Object with `swept` (amount swept offchain) and `imported` (amount imported as contract)
+     */
+    async claimCash(
+        cashStr: string
+    ): Promise<{ swept: number; imported: number }> {
+        const cash = ArkCash.fromString(cashStr);
+        const cashIdentity = cash.identity;
+        const cashPubKey = cash.publicKey;
+        const cashScript = cash.vtxoScript;
+        const cashPkScript = hex.encode(cashScript.pkScript);
+
+        // Query spendable VTXOs for the arkcash contract
+        const { vtxos } = await this.indexerProvider.getVtxos({
+            scripts: [cashPkScript],
+            spendableOnly: true,
+        });
+
+        if (vtxos.length === 0) {
+            throw new Error("No VTXOs found for this arkcash");
+        }
+
+        const myAddress = await this.getAddress();
+
+        // Separate spendable VTXOs from those that need import
+        const spendable: typeof vtxos = [];
+        const toImport: typeof vtxos = [];
+        let sweptAmount = 0;
+        let importedAmount = 0;
+
+        for (const vtxo of vtxos) {
+            if (
+                isSpendable(vtxo) &&
+                !isRecoverable(vtxo) &&
+                !isSubdust(vtxo, this.dustAmount) &&
+                vtxo.virtualStatus.state !== "swept"
+            ) {
+                spendable.push(vtxo);
+                sweptAmount += vtxo.value;
+            } else {
+                toImport.push(vtxo);
+                importedAmount += vtxo.value;
+            }
+        }
+
+        // Sweep spendable VTXOs to own address
+        if (spendable.length > 0) {
+            // Create a temporary wallet with the arkcash identity to sign the sweep
+            const cashWallet = await Wallet.create({
+                identity: cashIdentity,
+                arkProvider: this.arkProvider,
+                indexerProvider: this.indexerProvider,
+                onchainProvider: this.onchainProvider,
+                storage: {
+                    walletRepository: this.walletRepository,
+                    contractRepository: this.contractRepository,
+                },
+            });
+
+            try {
+                await cashWallet.send({
+                    address: myAddress,
+                    amount: sweptAmount,
+                });
+            } catch (error) {
+                throw new Error(
+                    `Failed to sweep arkcash VTXOs — they may have been claimed by another party: ${error instanceof Error ? error.message : String(error)}`
+                );
+            }
+        }
+
+        // Import remaining VTXOs as a contract
+        if (toImport.length > 0) {
+            const manager = await this.getContractManager();
+            const csvTimelockStr = timelockToSequence(
+                cash.csvTimelock
+            ).toString();
+
+            await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(cashPubKey),
+                    serverPubKey: hex.encode(cash.serverPubKey),
+                    csvTimelock: csvTimelockStr,
+                },
+                script: cashPkScript,
+                address: cash.address(this.network.hrp).encode(),
+                state: "active",
+                label: "arkcash-import",
+            });
+        }
+
+        return { swept: sweptAmount, imported: importedAmount };
     }
 
     /**

@@ -154,6 +154,7 @@ import {
 import { Intent } from "./intent";
 import { BIP322 } from "./bip322";
 import { ArkNote } from "./arknote";
+import { ArkCash } from "./arkcash";
 import { networks, Network, NetworkName } from "./networks";
 import {
     RestIndexerProvider,
@@ -312,6 +313,9 @@ export {
 
     // Arknote
     ArkNote,
+
+    // Arkcash
+    ArkCash,
 
     // Network
     networks,
