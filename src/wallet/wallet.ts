@@ -1982,6 +1982,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * Otherwise, the arkcash contract is imported and VTXOs appear in the
      * wallet's balance for manual management.
      *
+     * Note: when VTXOs are imported as a contract, the arkcash private key
+     * is not stored. Retain the original arkcash string if you need to
+     * unilaterally exit these VTXOs later.
+     *
      * @param cashStr - The encoded arkcash string (e.g., "arkcash1...")
      * @returns Object with `swept` (amount swept offchain) and `imported` (amount imported as contract)
      */
@@ -2041,7 +2045,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 },
             });
 
-            await cashWallet.send({ address: myAddress, amount: sweptAmount });
+            try {
+                // Use sendBitcoin with selectedVtxos to drain exact coins,
+                // avoiding dust change left in the ephemeral cash wallet
+                await cashWallet.sendBitcoin({
+                    address: myAddress,
+                    amount: sweptAmount,
+                    selectedVtxos: spendable as ExtendedVirtualCoin[],
+                });
+            } catch (error) {
+                throw new Error(
+                    `Failed to sweep arkcash VTXOs — they may have been claimed by another party: ${error instanceof Error ? error.message : String(error)}`
+                );
+            }
         }
 
         // Import remaining VTXOs as a contract
