@@ -20,6 +20,7 @@ import {
     InMemoryContractRepository,
     ArkCash,
 } from "../../src";
+import { pubSchnorr } from "@scure/btc-signer/utils.js";
 import {
     arkdExec,
     beforeEachFaucet,
@@ -2339,13 +2340,10 @@ describe("ArkCash", () => {
     }, 120_000);
 
     it("should encode and decode arkcash string correctly", () => {
-        const { hex } = require("@scure/base");
-
         const privKey = hex.decode(
             "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
         );
         // Use a valid secp256k1 public key as server pubkey
-        const { pubSchnorr } = require("@scure/btc-signer/utils.js");
         const serverPubKey = pubSchnorr(
             hex.decode(
                 "11d2a03264d0efd311d2a03264d0efd311d2a03264d0efd311d2a03264d0efd3"
