@@ -200,11 +200,6 @@ import {
 } from "./repositories";
 import type { MigrationStatus } from "./repositories";
 import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
-import {
-    extendVirtualCoin,
-    extendVtxoFromContract,
-    extendCoin,
-} from "./wallet/utils";
 
 export * from "./arkfee";
 export * as asset from "./extension/asset";
@@ -366,11 +361,6 @@ export {
     isSubdust,
     isExpired,
     getSequence,
-
-    // VTXO extension helpers (for custom background task integrations)
-    extendVirtualCoin,
-    extendVtxoFromContract,
-    extendCoin,
 
     // Contracts
     ContractManager,
