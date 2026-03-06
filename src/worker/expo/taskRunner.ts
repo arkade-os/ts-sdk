@@ -5,7 +5,12 @@ import type { IndexerProvider } from "../../providers/indexer";
 import type { ArkProvider } from "../../providers/ark";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../../wallet";
 import type { Contract } from "../../contracts/types";
-import { getRandomId } from "../../wallet/utils";
+import type { ReadonlyWallet } from "../../wallet/wallet";
+import {
+    getRandomId,
+    extendVirtualCoin,
+    extendVtxoFromContract,
+} from "../../wallet/utils";
 
 /**
  * Shared dependencies injected into every processor at runtime.
@@ -96,4 +101,49 @@ export async function runTasks<TDeps = TaskDependencies>(
     }
 
     return results;
+}
+
+/**
+ * Options for {@link createTaskDependencies}.
+ */
+export interface CreateTaskDependenciesOptions {
+    walletRepository: WalletRepository;
+    contractRepository: ContractRepository;
+    indexerProvider: IndexerProvider;
+    arkProvider: ArkProvider;
+    offchainTapscript: ReadonlyWallet["offchainTapscript"];
+}
+
+/**
+ * Build the {@link TaskDependencies} needed by task processors
+ * (e.g. {@link import("./processors").contractPollProcessor}).
+ *
+ * This is the same construction that `defineExpoBackgroundTask` does
+ * internally, extracted so that consumers with custom schedulers
+ * (e.g. bare React Native with `react-native-background-fetch`)
+ * can build deps without depending on Expo.
+ */
+export function createTaskDependencies(
+    options: CreateTaskDependenciesOptions
+): TaskDependencies {
+    const {
+        walletRepository,
+        contractRepository,
+        indexerProvider,
+        arkProvider,
+        offchainTapscript,
+    } = options;
+
+    return {
+        walletRepository,
+        contractRepository,
+        indexerProvider,
+        arkProvider,
+        extendVtxo: (vtxo: VirtualCoin, contract?: Contract) => {
+            if (contract) {
+                return extendVtxoFromContract(vtxo, contract);
+            }
+            return extendVirtualCoin({ offchainTapscript }, vtxo);
+        },
+    };
 }

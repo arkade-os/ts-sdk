@@ -4,7 +4,7 @@ import type { ContractRepository } from "../../repositories/contractRepository";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
 import type { TaskProcessor } from "../../worker/expo/taskRunner";
 import type { TaskItem } from "../../worker/expo/taskQueue";
-import { runTasks } from "../../worker/expo/taskRunner";
+import { runTasks, createTaskDependencies } from "../../worker/expo/taskRunner";
 import {
     contractPollProcessor,
     CONTRACT_POLL_TASK_TYPE,
@@ -12,11 +12,7 @@ import {
 import { DefaultVtxo } from "../../script/default";
 import { ExpoArkProvider } from "../../providers/expoArk";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
-import {
-    extendVirtualCoin,
-    extendVtxoFromContract,
-    getRandomId,
-} from "../utils";
+import { getRandomId } from "../utils";
 
 // ── Inline type declarations for optional Expo packages ──────────
 // These avoid a hard build-time dependency on expo-background-task
@@ -148,7 +144,7 @@ export function defineExpoBackgroundTask(
 
             // Reconstruct default offchainTapscript as fallback
             // for VTXOs not associated with a contract.
-            const defaultTapscript = new DefaultVtxo.Script({
+            const offchainTapscript = new DefaultVtxo.Script({
                 pubKey: hex.decode(config.pubkeyHex),
                 serverPubKey: hex.decode(config.serverPubKeyHex),
                 csvTimelock: {
@@ -157,21 +153,15 @@ export function defineExpoBackgroundTask(
                 },
             });
 
-            await runTasks(taskQueue, processors, {
+            const deps = createTaskDependencies({
                 walletRepository,
                 contractRepository,
                 indexerProvider,
                 arkProvider,
-                extendVtxo: (vtxo, contract) => {
-                    if (contract) {
-                        return extendVtxoFromContract(vtxo, contract);
-                    }
-                    return extendVirtualCoin(
-                        { offchainTapscript: defaultTapscript },
-                        vtxo
-                    );
-                },
+                offchainTapscript,
             });
+
+            await runTasks(taskQueue, processors, deps);
 
             // Acknowledge outbox results (no foreground to consume them)
             const results = await taskQueue.getResults();
