@@ -83,12 +83,12 @@ export async function setupServiceWorker(
 
     const readyRegistration =
         await waitForServiceWorkerReady(activationTimeoutMs);
-    const activeServiceWorker =
-        readyRegistration.active || navigator.serviceWorker.controller;
 
-    if (!activeServiceWorker) {
-        throw new Error("Failed to get service worker instance");
+    if (!readyRegistration.active) {
+        throw new Error(
+            "Service worker registration is ready but has no active worker"
+        );
     }
 
-    return activeServiceWorker;
+    return readyRegistration.active;
 }
