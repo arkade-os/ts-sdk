@@ -14,6 +14,10 @@ import {
     ArkAddress,
     buildOffchainTx,
     CSVMultisigTapscript,
+    Wallet,
+    EsploraProvider,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
 } from "../../src";
 import {
     arkdExec,
@@ -22,6 +26,7 @@ import {
     createTestArkWallet,
     createTestArkWalletWithDelegate,
     createTestArkWalletWithMnemonic,
+    createTestIdentity,
     createTestOnchainWallet,
     execCommand,
     faucetOffchain,
@@ -29,6 +34,7 @@ import {
     setFees,
     waitFor,
 } from "./utils";
+import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { hex, base64 } from "@scure/base";
 
 describe("Common", () => {
@@ -208,7 +214,7 @@ describe("Common", () => {
 
                     // Send from Alice to Bob offchain
                     const sendAmount = 5000; // 5k sats instead of 50k
-                    await alice.wallet.sendBitcoin({
+                    await alice.wallet.send({
                         address: bobOffchainAddress!,
                         amount: sendAmount,
                     });
@@ -286,7 +292,7 @@ describe("Common", () => {
 
                     // Send from Alice to Bob offchain
                     const sendAmount = 5000;
-                    const sendTxid = await alice.wallet.sendBitcoin({
+                    const sendTxid = await alice.wallet.send({
                         address: bobOffchainAddress!,
                         amount: sendAmount,
                     });
@@ -791,7 +797,7 @@ describe("Common", () => {
                 await new Promise((resolve) => setTimeout(resolve, 1000));
 
                 // alice should send offchain tx with subdust output
-                await alice.wallet.sendBitcoin({
+                await alice.wallet.send({
                     address: bobOffchainAddress!,
                     amount: 1,
                 });
@@ -804,7 +810,7 @@ describe("Common", () => {
 
                 // bob shouldn't be able to send offchain tx with subdust output
                 await expect(
-                    bob.wallet.sendBitcoin({
+                    bob.wallet.send({
                         address: bobOffchainAddress!,
                         amount: 1,
                     })
@@ -813,7 +819,7 @@ describe("Common", () => {
                 // bob shouldn't be able to settle cause the total amount is less than the dust amount
                 await expect(bob.wallet.settle()).rejects.toThrow();
 
-                await alice.wallet.sendBitcoin({
+                await alice.wallet.send({
                     address: bobOffchainAddress!,
                     amount: fundAmount - 1,
                 });
@@ -1059,7 +1065,8 @@ describe("Delegate", () => {
         const vtxoBeforeDelegate = vtxos[0];
         expect(vtxoBeforeDelegate.txid).toBeDefined();
 
-        await alice.wallet.delegatorManager?.delegate(
+        const delegatorManager = await alice.wallet.getDelegatorManager();
+        await delegatorManager?.delegate(
             [vtxoBeforeDelegate],
             await alice.wallet.getAddress(),
             new Date(Date.now() + 1000)
@@ -1075,6 +1082,422 @@ describe("Delegate", () => {
         expect(vtxoAfterDelegate.txid).not.toBe(vtxoBeforeDelegate.txid);
         expect(vtxoAfterDelegate.value).toBe(vtxoBeforeDelegate.value);
     });
+});
+
+describe("Delegator Lifecycle", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    it(
+        "should track and spend VTXOs across delegator add/remove",
+        { timeout: 120000 },
+        async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+            const identity = createTestIdentity();
+
+            const onchainProvider = new EsploraProvider(
+                "http://localhost:3000",
+                { forcePolling: true, pollingInterval: 2000 }
+            );
+
+            // Phase 1 — No delegator
+            const wallet1 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const addressA = await wallet1.getAddress();
+            await wallet1.getContractManager();
+
+            faucetOffchain(addressA, 10_000);
+            await waitFor(async () => (await wallet1.getVtxos()).length > 0);
+
+            const balance1 = await wallet1.getBalance();
+            expect(balance1.total).toBeGreaterThanOrEqual(10_000);
+
+            // Phase 2 — Add delegator
+            const wallet2 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+                delegatorProvider: new RestDelegatorProvider(
+                    "http://localhost:7002"
+                ),
+            });
+
+            const addressB = await wallet2.getAddress();
+            expect(addressB).not.toBe(addressA);
+
+            const manager2 = await wallet2.getContractManager();
+
+            // Both contracts should be registered (default from phase 1 + delegate)
+            const contracts2 = await manager2.getContracts({
+                type: ["default", "delegate"],
+            });
+            expect(contracts2).toHaveLength(2);
+
+            faucetOffchain(addressB, 10_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
+
+            // VTXOs from both addresses should be visible
+            const vtxos2 = await wallet2.getVtxos();
+            expect(vtxos2.length).toBeGreaterThanOrEqual(2);
+
+            // Create a bob wallet to receive funds
+            const bob = await createTestArkWallet();
+            const bobAddress = await bob.wallet.getAddress();
+
+            // Capture delegate VTXOs before sending
+            const contractsBefore = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            expect(contractsBefore).toHaveLength(1);
+            const delegateVtxosBefore = contractsBefore[0].vtxos;
+            expect(delegateVtxosBefore.length).toBeGreaterThan(0);
+
+            // Sum all individual VTXO values to find the max single VTXO
+            const allVtxos2 = await wallet2.getVtxos();
+            const maxSingleVtxo = Math.max(...allVtxos2.map((v) => v.value));
+
+            // Send more than any single VTXO so both pools must be consumed
+            const sendAmount = maxSingleVtxo + 1_000;
+            const txid2 = await wallet2.send({
+                address: bobAddress,
+                amount: sendAmount,
+            });
+            expect(txid2).toBeDefined();
+
+            // Verify delegate VTXOs were spent
+            const contractsAfter = await manager2.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfter = contractsAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            const spentDelegateOutpoints = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfter.some(
+                        (after) =>
+                            after.txid === before.txid &&
+                            after.vout === before.vout
+                    )
+            );
+            expect(spentDelegateOutpoints.length).toBeGreaterThan(0);
+
+            // Phase 3 — Remove delegator
+            const wallet3 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const manager3 = await wallet3.getContractManager();
+
+            // Both contracts still persisted
+            const contracts3 = await manager3.getContracts();
+            expect(contracts3.length).toBeGreaterThanOrEqual(2);
+
+            faucetOffchain(addressA, 10_000);
+            faucetOffchain(addressB, 10_000);
+            await waitFor(async () => (await wallet3.getVtxos()).length >= 2);
+
+            const vtxos3 = await wallet3.getVtxos();
+            expect(vtxos3.length).toBeGreaterThanOrEqual(2);
+
+            // Capture delegate VTXOs before spending (forfeit path)
+            const contracts3Before = await manager3.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            expect(contracts3Before).toHaveLength(1);
+            const delegateVtxos3Before = contracts3Before[0].vtxos;
+            expect(delegateVtxos3Before.length).toBeGreaterThan(0);
+
+            // Send more than any single VTXO so delegate pool must be consumed
+            const allVtxos3 = await wallet3.getVtxos();
+            const maxSingleVtxo3 = Math.max(...allVtxos3.map((v) => v.value));
+            const sendAmount3 = maxSingleVtxo3 + 1_000;
+
+            // Spending still works — delegate VTXOs use forfeit path (Alice + Server)
+            const txid3 = await wallet3.send({
+                address: bobAddress,
+                amount: sendAmount3,
+            });
+            expect(txid3).toBeDefined();
+
+            // Verify delegate VTXOs were consumed via forfeit path
+            const contracts3After = await manager3.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxos3After = contracts3After[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            const spentDelegate3 = delegateVtxos3Before.filter(
+                (before) =>
+                    !delegateVtxos3After.some(
+                        (after) =>
+                            after.txid === before.txid &&
+                            after.vout === before.vout
+                    )
+            );
+            expect(spentDelegate3.length).toBeGreaterThan(0);
+        }
+    );
+});
+
+describe("Cross-contract spending", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    it(
+        "should spend VTXOs from both default and delegate contracts in a single send",
+        { timeout: 120000 },
+        async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+            const identity = createTestIdentity();
+
+            const onchainProvider = new EsploraProvider(
+                "http://localhost:3000",
+                { forcePolling: true, pollingInterval: 2000 }
+            );
+
+            // Step 1 — No delegator: receive 1000 to default address
+            const wallet1 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const defaultAddress = await wallet1.getAddress();
+            await wallet1.getContractManager();
+
+            faucetOffchain(defaultAddress, 1_000);
+            await waitFor(async () => (await wallet1.getVtxos()).length > 0);
+
+            const balance1 = await wallet1.getBalance();
+            expect(balance1.total).toBeGreaterThanOrEqual(1_000);
+
+            // Step 2 — Enable delegator: receive 1000 to delegate address
+            const wallet2 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+                delegatorProvider: new RestDelegatorProvider(
+                    "http://localhost:7002"
+                ),
+            });
+
+            const delegateAddress = await wallet2.getAddress();
+            expect(delegateAddress).not.toBe(defaultAddress);
+
+            const manager = await wallet2.getContractManager();
+
+            // Both contracts registered (default from step 1 + delegate)
+            const contracts = await manager.getContracts({
+                type: ["default", "delegate"],
+            });
+            expect(contracts).toHaveLength(2);
+
+            faucetOffchain(delegateAddress, 1_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
+
+            // Wallet should see VTXOs from both contracts
+            const allVtxos = await wallet2.getVtxos();
+            expect(allVtxos).toHaveLength(2);
+            const totalBalance = allVtxos.reduce((sum, v) => sum + v.value, 0);
+            // Each VTXO ≈ 1000 (delegate VTXO may be slightly less due to fee)
+            expect(totalBalance).toBeGreaterThanOrEqual(1_500);
+
+            // Snapshot delegate VTXOs before sending
+            const contractsBefore = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosBefore = contractsBefore[0].vtxos;
+            expect(delegateVtxosBefore.length).toBeGreaterThan(0);
+
+            // Step 3 — Spend 1500: exceeds any single VTXO, forces both pools
+            const bob = await createTestArkWallet();
+            const bobAddress = await bob.wallet.getAddress();
+
+            const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
+            // Send more than any single VTXO can cover
+            const sendAmount = maxSingleVtxo + 100;
+
+            const txid = await wallet2.send({
+                address: bobAddress,
+                amount: sendAmount,
+            });
+            expect(txid).toBeDefined();
+
+            // Verify delegate VTXOs were consumed
+            const contractsAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            const spentDelegateVtxos = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfterUnspent.some(
+                        (after) =>
+                            after.txid === before.txid &&
+                            after.vout === before.vout
+                    )
+            );
+            expect(spentDelegateVtxos.length).toBeGreaterThan(0);
+
+            // Step 4 — Verify change landed on the delegate address
+            await waitFor(async () => {
+                const vtxos = await wallet2.getVtxos();
+                return vtxos.some((v) => !v.isSpent);
+            });
+
+            const vtxosAfter = await wallet2.getVtxos();
+            const changeVtxos = vtxosAfter.filter((v) => !v.isSpent);
+            // Change should exist (totalBalance - sendAmount > 0)
+            expect(changeVtxos.length).toBeGreaterThan(0);
+
+            // The change VTXO should be on the delegate contract
+            // (the current address since delegate is active)
+            const delegateContractAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateUnspentAfter = delegateContractAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            // At least one unspent VTXO on delegate = the change output
+            expect(delegateUnspentAfter.length).toBeGreaterThan(0);
+        }
+    );
+
+    it(
+        "should spend VTXOs from both default and delegate contracts in a single send, funded after delegation",
+        { timeout: 120000 },
+        async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+            const identity = createTestIdentity();
+
+            const onchainProvider = new EsploraProvider(
+                "http://localhost:3000",
+                { forcePolling: true, pollingInterval: 2000 }
+            );
+
+            // Step 1 — No delegator: receive 1000 to default address
+            const wallet1 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const defaultAddress = await wallet1.getAddress();
+            await wallet1.getContractManager();
+
+            // Step 2 — Enable delegator: receive 1000 to delegate address
+            const wallet2 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+                delegatorProvider: new RestDelegatorProvider(
+                    "http://localhost:7002"
+                ),
+            });
+
+            faucetOffchain(defaultAddress, 1_000);
+            await waitFor(async () => (await wallet1.getVtxos()).length > 0);
+
+            const balance1 = await wallet1.getBalance();
+            expect(balance1.total).toBeGreaterThanOrEqual(1_000);
+
+            const delegateAddress = await wallet2.getAddress();
+            expect(delegateAddress).not.toBe(defaultAddress);
+
+            const manager = await wallet2.getContractManager();
+
+            // Both contracts registered (default from step 1 + delegate)
+            const contracts = await manager.getContracts({
+                type: ["default", "delegate"],
+            });
+            expect(contracts).toHaveLength(2);
+
+            faucetOffchain(delegateAddress, 1_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
+
+            // Wallet should see VTXOs from both contracts
+            const allVtxos = await wallet2.getVtxos();
+            expect(allVtxos).toHaveLength(2);
+            const totalBalance = allVtxos.reduce((sum, v) => sum + v.value, 0);
+            // Each VTXO ≈ 1000 (delegate VTXO may be slightly less due to fee)
+            expect(totalBalance).toBeGreaterThanOrEqual(1_500);
+
+            // Snapshot delegate VTXOs before sending
+            const contractsBefore = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosBefore = contractsBefore[0].vtxos;
+            expect(delegateVtxosBefore.length).toBeGreaterThan(0);
+
+            // Step 3 — Spend 1500: exceeds any single VTXO, forces both pools
+            const bob = await createTestArkWallet();
+            const bobAddress = await bob.wallet.getAddress();
+
+            const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
+            // Send more than any single VTXO can cover
+            const sendAmount = maxSingleVtxo + 100;
+
+            const txid = await wallet2.send({
+                address: bobAddress,
+                amount: sendAmount,
+            });
+            expect(txid).toBeDefined();
+
+            // Verify delegate VTXOs were consumed
+            const contractsAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateVtxosAfterUnspent = contractsAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            const spentDelegateVtxos = delegateVtxosBefore.filter(
+                (before) =>
+                    !delegateVtxosAfterUnspent.some(
+                        (after) =>
+                            after.txid === before.txid &&
+                            after.vout === before.vout
+                    )
+            );
+            expect(spentDelegateVtxos.length).toBeGreaterThan(0);
+
+            // Step 4 — Verify change landed on the delegate address
+            await waitFor(async () => {
+                const vtxos = await wallet2.getVtxos();
+                return vtxos.some((v) => !v.isSpent);
+            });
+
+            const vtxosAfter = await wallet2.getVtxos();
+            const changeVtxos = vtxosAfter.filter((v) => !v.isSpent);
+            // Change should exist (totalBalance - sendAmount > 0)
+            expect(changeVtxos.length).toBeGreaterThan(0);
+
+            // The change VTXO should be on the delegate contract
+            // (the current address since delegate is active)
+            const delegateContractAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateUnspentAfter = delegateContractAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            // At least one unspent VTXO on delegate = the change output
+            expect(delegateUnspentAfter.length).toBeGreaterThan(0);
+        }
+    );
 });
 
 describe("Asset integration tests", () => {
@@ -1457,4 +1880,372 @@ describe("Asset integration tests", () => {
             .reduce((sum, a) => sum + a.amount, 0);
         expect(assetTotal).toBe(issueAmount);
     });
+
+    it(
+        "should track and spend VTXOs with assets across delegator add/remove",
+        { timeout: 120000 },
+        async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+            const identity = createTestIdentity();
+
+            const onchainProvider = new EsploraProvider(
+                "http://localhost:3000",
+                { forcePolling: true, pollingInterval: 2000 }
+            );
+
+            // Phase 1 — No delegator: fund and issue asset on default address
+            const wallet1 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const addressA = await wallet1.getAddress();
+            await wallet1.getContractManager();
+
+            faucetOffchain(addressA, 10_000);
+            await waitFor(async () => (await wallet1.getVtxos()).length > 0);
+
+            const issueResult1 = await wallet1.assetManager.issue({
+                amount: 100,
+            });
+            expect(issueResult1.assetId).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Phase 2 — Add delegator: fund and issue asset on delegate address
+            const wallet2 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+                delegatorProvider: new RestDelegatorProvider(
+                    "http://localhost:7002"
+                ),
+            });
+
+            const addressB = await wallet2.getAddress();
+            expect(addressB).not.toBe(addressA);
+
+            const manager2 = await wallet2.getContractManager();
+
+            const contracts2 = await manager2.getContracts({
+                type: ["default", "delegate"],
+            });
+            expect(contracts2).toHaveLength(2);
+
+            faucetOffchain(addressB, 10_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
+
+            const issueResult2 = await wallet2.assetManager.issue({
+                amount: 200,
+            });
+            expect(issueResult2.assetId).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Send assets to bob, forcing both VTXO pools to be consumed
+            const bob = await createTestArkWallet();
+            const bobAddress = await bob.wallet.getAddress();
+
+            const allVtxos2 = await wallet2.getVtxos();
+            const maxSingleVtxo = Math.max(...allVtxos2.map((v) => v.value));
+            const sendAmount = maxSingleVtxo + 1_000;
+
+            const txid2 = await wallet2.send({
+                address: bobAddress,
+                amount: sendAmount,
+                assets: [
+                    { assetId: issueResult1.assetId, amount: 50 },
+                    { assetId: issueResult2.assetId, amount: 100 },
+                ],
+            });
+            expect(txid2).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Verify bob received the assets
+            const bobVtxos = await bob.wallet.getVtxos();
+            const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
+            const bobAsset1 = bobAssets.find(
+                (a) => a.assetId === issueResult1.assetId
+            );
+            expect(bobAsset1).toBeDefined();
+            expect(bobAsset1!.amount).toBe(50);
+            const bobAsset2 = bobAssets.find(
+                (a) => a.assetId === issueResult2.assetId
+            );
+            expect(bobAsset2).toBeDefined();
+            expect(bobAsset2!.amount).toBe(100);
+
+            // Verify alice has remaining assets as change
+            const aliceVtxos2 = await wallet2.getVtxos();
+            const aliceAssets2 = aliceVtxos2.flatMap((v) => v.assets ?? []);
+            const aliceRemaining1 = aliceAssets2
+                .filter((a) => a.assetId === issueResult1.assetId)
+                .reduce((sum, a) => sum + a.amount, 0);
+            expect(aliceRemaining1).toBe(50);
+            const aliceRemaining2 = aliceAssets2
+                .filter((a) => a.assetId === issueResult2.assetId)
+                .reduce((sum, a) => sum + a.amount, 0);
+            expect(aliceRemaining2).toBe(100);
+
+            // Phase 3 — Remove delegator: spend via forfeit path with assets
+            const wallet3 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const manager3 = await wallet3.getContractManager();
+
+            const contracts3 = await manager3.getContracts();
+            expect(contracts3.length).toBeGreaterThanOrEqual(2);
+
+            faucetOffchain(addressA, 10_000);
+            faucetOffchain(addressB, 10_000);
+            await waitFor(async () => (await wallet3.getVtxos()).length >= 2);
+
+            const issueResult3 = await wallet3.assetManager.issue({
+                amount: 300,
+            });
+            expect(issueResult3.assetId).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            const allVtxos3 = await wallet3.getVtxos();
+            const maxSingleVtxo3 = Math.max(...allVtxos3.map((v) => v.value));
+            const sendAmount3 = maxSingleVtxo3 + 1_000;
+
+            // Spending works via forfeit path — assets should be preserved
+            const txid3 = await wallet3.send({
+                address: bobAddress,
+                amount: sendAmount3,
+                assets: [{ assetId: issueResult3.assetId, amount: 150 }],
+            });
+            expect(txid3).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Verify bob received the asset from phase 3
+            const bobVtxos3 = await bob.wallet.getVtxos();
+            const bobAssets3 = bobVtxos3.flatMap((v) => v.assets ?? []);
+            const bobAsset3 = bobAssets3.find(
+                (a) => a.assetId === issueResult3.assetId
+            );
+            expect(bobAsset3).toBeDefined();
+            expect(bobAsset3!.amount).toBe(150);
+        }
+    );
+
+    it(
+        "should spend VTXOs with assets from both default and delegate contracts in a single send",
+        { timeout: 120000 },
+        async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+            const identity = createTestIdentity();
+
+            const onchainProvider = new EsploraProvider(
+                "http://localhost:3000",
+                { forcePolling: true, pollingInterval: 2000 }
+            );
+
+            // Step 1 — No delegator: fund default address and issue asset
+            const wallet1 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const defaultAddress = await wallet1.getAddress();
+            await wallet1.getContractManager();
+
+            faucetOffchain(defaultAddress, 1_000);
+            await waitFor(async () => (await wallet1.getVtxos()).length > 0);
+
+            const issueResult = await wallet1.assetManager.issue({
+                amount: 500,
+            });
+            expect(issueResult.assetId).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Step 2 — Enable delegator: fund delegate address
+            const wallet2 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+                delegatorProvider: new RestDelegatorProvider(
+                    "http://localhost:7002"
+                ),
+            });
+
+            const delegateAddress = await wallet2.getAddress();
+            expect(delegateAddress).not.toBe(defaultAddress);
+
+            const manager = await wallet2.getContractManager();
+
+            const contracts = await manager.getContracts({
+                type: ["default", "delegate"],
+            });
+            expect(contracts).toHaveLength(2);
+
+            faucetOffchain(delegateAddress, 1_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
+
+            // Step 3 — Send requiring both pools, including the asset
+            const bob = await createTestArkWallet();
+            const bobAddress = await bob.wallet.getAddress();
+
+            const allVtxos = await wallet2.getVtxos();
+            const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
+            const sendAmount = maxSingleVtxo + 100;
+
+            const txid = await wallet2.send({
+                address: bobAddress,
+                amount: sendAmount,
+                assets: [{ assetId: issueResult.assetId, amount: 200 }],
+            });
+            expect(txid).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Verify bob received the asset
+            const bobVtxos = await bob.wallet.getVtxos();
+            const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
+            const bobAsset = bobAssets.find(
+                (a) => a.assetId === issueResult.assetId
+            );
+            expect(bobAsset).toBeDefined();
+            expect(bobAsset!.amount).toBe(200);
+
+            // Verify change has remaining asset on delegate contract
+            await waitFor(async () => {
+                const vtxos = await wallet2.getVtxos();
+                return vtxos.some((v) => !v.isSpent);
+            });
+
+            const vtxosAfter = await wallet2.getVtxos();
+            const aliceAssets = vtxosAfter.flatMap((v) => v.assets ?? []);
+            const aliceRemaining = aliceAssets
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((sum, a) => sum + a.amount, 0);
+            expect(aliceRemaining).toBe(300);
+
+            // Change should land on delegate contract
+            const delegateContractAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateUnspent = delegateContractAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            expect(delegateUnspent.length).toBeGreaterThan(0);
+        }
+    );
+
+    it(
+        "should spend VTXOs with assets from both default and delegate contracts, funded after delegation",
+        { timeout: 120000 },
+        async () => {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+            const identity = createTestIdentity();
+
+            const onchainProvider = new EsploraProvider(
+                "http://localhost:3000",
+                { forcePolling: true, pollingInterval: 2000 }
+            );
+
+            // Step 1 — Create wallet without delegator
+            const wallet1 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+            });
+
+            const defaultAddress = await wallet1.getAddress();
+            await wallet1.getContractManager();
+
+            // Step 2 — Enable delegator before funding
+            const wallet2 = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider,
+                storage: { walletRepository, contractRepository },
+                delegatorProvider: new RestDelegatorProvider(
+                    "http://localhost:7002"
+                ),
+            });
+
+            const delegateAddress = await wallet2.getAddress();
+            expect(delegateAddress).not.toBe(defaultAddress);
+
+            const manager = await wallet2.getContractManager();
+
+            const contracts = await manager.getContracts({
+                type: ["default", "delegate"],
+            });
+            expect(contracts).toHaveLength(2);
+
+            // Fund default address and issue asset after delegation is set up
+            faucetOffchain(defaultAddress, 1_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length > 0);
+
+            const issueResult = await wallet2.assetManager.issue({
+                amount: 500,
+            });
+            expect(issueResult.assetId).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            faucetOffchain(delegateAddress, 1_000);
+            await waitFor(async () => (await wallet2.getVtxos()).length >= 2);
+
+            // Step 3 — Send requiring both pools, including the asset
+            const bob = await createTestArkWallet();
+            const bobAddress = await bob.wallet.getAddress();
+
+            const allVtxos = await wallet2.getVtxos();
+            const maxSingleVtxo = Math.max(...allVtxos.map((v) => v.value));
+            const sendAmount = maxSingleVtxo + 100;
+
+            const txid = await wallet2.send({
+                address: bobAddress,
+                amount: sendAmount,
+                assets: [{ assetId: issueResult.assetId, amount: 200 }],
+            });
+            expect(txid).toBeDefined();
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+
+            // Verify bob received the asset
+            const bobVtxos = await bob.wallet.getVtxos();
+            const bobAssets = bobVtxos.flatMap((v) => v.assets ?? []);
+            const bobAsset = bobAssets.find(
+                (a) => a.assetId === issueResult.assetId
+            );
+            expect(bobAsset).toBeDefined();
+            expect(bobAsset!.amount).toBe(200);
+
+            // Verify change has remaining asset on delegate contract
+            await waitFor(async () => {
+                const vtxos = await wallet2.getVtxos();
+                return vtxos.some((v) => !v.isSpent);
+            });
+
+            const vtxosAfter = await wallet2.getVtxos();
+            const aliceAssets = vtxosAfter.flatMap((v) => v.assets ?? []);
+            const aliceRemaining = aliceAssets
+                .filter((a) => a.assetId === issueResult.assetId)
+                .reduce((sum, a) => sum + a.amount, 0);
+            expect(aliceRemaining).toBe(300);
+
+            // Change should land on delegate contract
+            const delegateContractAfter = await manager.getContractsWithVtxos({
+                type: ["delegate"],
+            });
+            const delegateUnspent = delegateContractAfter[0].vtxos.filter(
+                (v) => !v.isSpent
+            );
+            expect(delegateUnspent.length).toBeGreaterThan(0);
+        }
+    );
 });

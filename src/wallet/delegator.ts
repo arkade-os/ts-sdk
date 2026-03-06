@@ -3,6 +3,7 @@ import {
     ArkAddress,
     ArkProvider,
     decodeTapscript,
+    DelegateInfo,
     Estimator,
     ExtendedCoin,
     ExtendedVirtualCoin,
@@ -23,7 +24,7 @@ import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils";
 import { getNetwork, NetworkName } from "../networks";
 
-export interface DelegatorManager {
+export interface IDelegatorManager {
     delegate(
         vtxos: ExtendedVirtualCoin[],
         destination: string,
@@ -32,14 +33,20 @@ export interface DelegatorManager {
         delegated: Outpoint[];
         failed: { outpoints: Outpoint[]; error: unknown }[];
     }>;
+
+    getDelegateInfo(): Promise<DelegateInfo>;
 }
 
-export class DelegatorManagerImpl implements DelegatorManager {
+export class DelegatorManagerImpl implements IDelegatorManager {
     constructor(
         readonly delegatorProvider: DelegatorProvider,
         readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
         readonly identity: Identity
     ) {}
+
+    async getDelegateInfo(): Promise<DelegateInfo> {
+        return this.delegatorProvider.getDelegateInfo();
+    }
 
     async delegate(
         vtxos: ExtendedVirtualCoin[],

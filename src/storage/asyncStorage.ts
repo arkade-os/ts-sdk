@@ -1,6 +1,9 @@
 import type { StorageAdapter } from "./index";
 
-// Note: This requires @react-native-async-storage/async-storage to be installed
+/**
+ * @deprecated Use repositories instead
+ * Note: This requires @react-native-async-storage/async-storage to be installed
+ */
 export class AsyncStorageAdapter implements StorageAdapter {
     private AsyncStorage: any;
 

@@ -6,7 +6,7 @@ import {
     AssetOutput,
     Packet,
 } from "../extension/asset";
-import { Asset, Recipient, VirtualCoin } from "./index";
+import { Asset, ExtendedVirtualCoin, Recipient, VirtualCoin } from "./index";
 
 /**
  * Creates an asset packet from asset inputs and receivers.
@@ -97,10 +97,10 @@ export function createAssetPacket(
  * Returns coins sorted by amount (smallest first for better coin selection).
  */
 export function selectCoinsWithAsset(
-    coins: VirtualCoin[],
+    coins: ExtendedVirtualCoin[],
     assetId: string,
     requiredAmount: bigint
-): { selected: VirtualCoin[]; totalAssetAmount: bigint } {
+): { selected: ExtendedVirtualCoin[]; totalAssetAmount: bigint } {
     // filter only coins that have the specified asset
     const coinsWithAsset = coins.filter((coin) =>
         coin.assets?.some((a) => a.assetId === assetId)
@@ -115,7 +115,7 @@ export function selectCoinsWithAsset(
         return amountA - amountB;
     });
 
-    const selected: VirtualCoin[] = [];
+    const selected: ExtendedVirtualCoin[] = [];
     let totalAssetAmount = 0n;
 
     for (const coin of coinsWithAsset) {

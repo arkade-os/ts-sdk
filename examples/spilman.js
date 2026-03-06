@@ -11,6 +11,8 @@
 import {
     SingleKey,
     Wallet,
+    InMemoryContractRepository,
+    InMemoryWalletRepository,
     RestArkProvider,
     RestIndexerProvider,
     buildOffchainTx,
@@ -43,12 +45,20 @@ async function main() {
         identity: bob,
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
+        storage: {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        },
     });
 
     const aliceWallet = await Wallet.create({
         identity: alice,
         esploraUrl: "http://localhost:3000",
         arkServerUrl: "http://localhost:7070",
+        storage: {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        },
     });
 
     console.log("Fetching current chain tip...");

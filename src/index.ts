@@ -15,6 +15,13 @@ import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
+import { DelegateVtxo } from "./script/delegate";
+import {
+    MessageHandler,
+    RequestEnvelope,
+    ResponseEnvelope,
+    MessageBus,
+} from "./worker/messageBus";
 import {
     VtxoScript,
     EncodedVtxoScript,
@@ -44,6 +51,7 @@ import {
     TxKey,
     GetVtxosFilter,
     TapLeaves,
+    StorageConfig,
     isSpendable,
     isSubdust,
     isRecoverable,
@@ -79,10 +87,7 @@ import {
     ServiceWorkerReadonlyWallet,
 } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
-import { setupServiceWorker } from "./wallet/serviceWorker/utils";
-import { Worker } from "./wallet/serviceWorker/worker";
-import { Request } from "./wallet/serviceWorker/request";
-import { Response } from "./wallet/serviceWorker/response";
+import { setupServiceWorker } from "./worker/browser/utils";
 import {
     ESPLORA_URL,
     EsploraProvider,
@@ -172,18 +177,69 @@ import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
 import { Unroll } from "./wallet/unroll";
-import { WalletRepositoryImpl } from "./repositories/walletRepository";
-import { ContractRepositoryImpl } from "./repositories/contractRepository";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
     validateVtxoTxGraph,
     validateConnectorsTxGraph,
 } from "./tree/validation";
 import { buildForfeitTx } from "./forfeit";
-import { DelegatorManagerImpl, DelegatorManager } from "./wallet/delegator";
+import {
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    MIGRATION_KEY,
+    migrateWalletRepository,
+    requiresMigration,
+    getMigrationStatus,
+    rollbackMigration,
+    WalletRepositoryImpl,
+    ContractRepositoryImpl,
+    WalletRepository,
+    ContractRepository,
+} from "./repositories";
+import type { MigrationStatus } from "./repositories";
+import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
 export * as asset from "./extension/asset";
+
+// Contracts
+import {
+    ContractManager,
+    ContractWatcher,
+    contractHandlers,
+    DefaultContractHandler,
+    DelegateContractHandler,
+    VHTLCContractHandler,
+    encodeArkContract,
+    decodeArkContract,
+    contractFromArkContract,
+    contractFromArkContractWithAddress,
+    isArkContract,
+} from "./contracts";
+import type {
+    Contract,
+    ContractVtxo,
+    ContractState,
+    ContractEvent,
+    ContractEventCallback,
+    ContractBalance,
+    ContractWithVtxos,
+    ContractHandler,
+    PathSelection,
+    PathContext,
+    ContractManagerConfig,
+    CreateContractParams,
+    ContractWatcherConfig,
+    ParsedArkContract,
+    DefaultContractParams,
+    DelegateContractParams,
+    VHTLCContractParams,
+} from "./contracts";
+import { IContractManager } from "./contracts/contractManager";
+import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
+import { WalletMessageHandler } from "./wallet/serviceWorker/wallet-message-handler";
 
 export {
     // Wallets
@@ -209,6 +265,7 @@ export {
     // Script-related
     ArkAddress,
     DefaultVtxo,
+    DelegateVtxo,
     VtxoScript,
     VHTLC,
 
@@ -220,11 +277,10 @@ export {
 
     // Service Worker
     setupServiceWorker,
-    Worker,
+    MessageBus,
+    WalletMessageHandler,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
-    Request,
-    Response,
 
     // Tapscript
     decodeTapscript,
@@ -260,7 +316,20 @@ export {
     // Network
     networks,
 
+    // DB
+    closeDatabase,
+    openDatabase,
+
     // Repositories
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    MIGRATION_KEY,
+    migrateWalletRepository,
+    requiresMigration,
+    getMigrationStatus,
+    rollbackMigration,
     WalletRepositoryImpl,
     ContractRepositoryImpl,
 
@@ -292,6 +361,19 @@ export {
     isSubdust,
     isExpired,
     getSequence,
+
+    // Contracts
+    ContractManager,
+    ContractWatcher,
+    contractHandlers,
+    DefaultContractHandler,
+    DelegateContractHandler,
+    VHTLCContractHandler,
+    encodeArkContract,
+    decodeArkContract,
+    contractFromArkContract,
+    contractFromArkContractWithAddress,
+    isArkContract,
 };
 
 export type {
@@ -405,9 +487,42 @@ export type {
     // Anchor
     AnchorBumper,
 
+    // Storage
+    StorageConfig,
+
+    // Contract types
+    Contract,
+    ContractVtxo,
+    ContractState,
+    ContractEvent,
+    ContractEventCallback,
+    ContractBalance,
+    ContractWithVtxos,
+    ContractHandler,
+    IContractManager,
+    PathSelection,
+    PathContext,
+    ContractManagerConfig,
+    CreateContractParams,
+    ContractWatcherConfig,
+    ParsedArkContract,
+    DefaultContractParams,
+    DelegateContractParams,
+    VHTLCContractParams,
+
+    // Service Worker types
+    MessageHandler,
+    RequestEnvelope,
+    ResponseEnvelope,
+
     // Delegator types
-    DelegatorManager,
+    IDelegatorManager,
     DelegatorProvider,
     DelegateInfo,
     DelegateOptions,
+
+    // Repositories
+    WalletRepository,
+    ContractRepository,
+    MigrationStatus,
 };
