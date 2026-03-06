@@ -54,7 +54,7 @@ export type RequestInitArkSwaps = RequestEnvelope & {
     };
 };
 
-export type ResponseInitArkLn = ResponseEnvelope & {
+export type ResponseInitArkSwaps = ResponseEnvelope & {
     type: "ARKADE_SWAPS_INITIALIZED";
 };
 
@@ -475,7 +475,7 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestSwapManagerWaitForCompletion;
 
 export type ArkadeSwapsUpdaterResponse =
-    | ResponseInitArkLn
+    | ResponseInitArkSwaps
     | ResponseCreateLightningInvoice
     | ResponseSendLightningPayment
     | ResponseCreateSubmarineSwap
