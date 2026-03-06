@@ -355,3 +355,223 @@ describe("ServiceWorkerWallet", () => {
         );
     });
 });
+
+describe("sendMessage reinitialize on SW restart", () => {
+    const handler = new WalletMessageHandler();
+    const messageTag = handler.messageTag;
+
+    const stubConfig = {
+        initConfig: {
+            wallet: { publicKey: "deadbeef" },
+            arkServer: { url: "https://ark.test" },
+        },
+        initWalletPayload: {
+            key: { publicKey: "deadbeef" },
+            arkServerUrl: "https://ark.test",
+        },
+    };
+
+    const createWalletWithConfig = (
+        serviceWorker: ServiceWorker,
+        tag = messageTag
+    ) => {
+        const wallet = createWallet(serviceWorker, tag);
+        (wallet as any).initConfig = stubConfig.initConfig;
+        (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
+        return wallet;
+    };
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("retries after re-initializing when SW returns 'MessageBus not initialized'", async () => {
+        let swInitialized = false;
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                    swInitialized = true;
+                    return {
+                        id: message.id,
+                        tag: "INITIALIZE_MESSAGE_BUS",
+                    };
+                }
+                if (message.type === "INIT_WALLET") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "WALLET_INITIALIZED",
+                    };
+                }
+                if (!swInitialized) {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        error: new Error("MessageBus not initialized"),
+                    };
+                }
+                if (message.type === "GET_ADDRESS") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "ADDRESS",
+                        payload: { address: "bc1-reinit" },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWalletWithConfig(serviceWorker as any);
+        const address = await wallet.getAddress();
+
+        expect(address).toBe("bc1-reinit");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: "INITIALIZE_MESSAGE_BUS",
+            })
+        );
+    });
+
+    it("throws after exhausting retries", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                    return {
+                        id: message.id,
+                        tag: "INITIALIZE_MESSAGE_BUS",
+                    };
+                }
+                if (message.type === "INIT_WALLET") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "WALLET_INITIALIZED",
+                    };
+                }
+                // Always return not-initialized (simulates persistent failure)
+                return {
+                    id: message.id,
+                    tag: message.tag ?? messageTag,
+                    error: new Error("MessageBus not initialized"),
+                };
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWalletWithConfig(serviceWorker as any);
+        await expect(wallet.getAddress()).rejects.toThrow(
+            "MessageBus not initialized"
+        );
+
+        // Should have tried 3 times (1 initial + 2 retries)
+        const addressCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_ADDRESS"
+        );
+        expect(addressCalls).toHaveLength(3);
+    });
+
+    it("deduplicates concurrent reinitializations", async () => {
+        let swInitialized = false;
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                    swInitialized = true;
+                    return {
+                        id: message.id,
+                        tag: "INITIALIZE_MESSAGE_BUS",
+                    };
+                }
+                if (message.type === "INIT_WALLET") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "WALLET_INITIALIZED",
+                    };
+                }
+                if (!swInitialized) {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        error: new Error("MessageBus not initialized"),
+                    };
+                }
+                switch (message.type) {
+                    case "GET_ADDRESS":
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "ADDRESS",
+                            payload: { address: "bc1-dedup" },
+                        };
+                    case "GET_BALANCE":
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "BALANCE",
+                            payload: {
+                                onchain: { confirmed: 0, unconfirmed: 0 },
+                                offchain: {
+                                    settled: 0,
+                                    preconfirmed: 0,
+                                    recoverable: 0,
+                                },
+                                total: 0,
+                            },
+                        };
+                    default:
+                        return null;
+                }
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWalletWithConfig(serviceWorker as any);
+
+        // Both fail simultaneously, triggering concurrent reinit
+        const [address, balance] = await Promise.all([
+            wallet.getAddress(),
+            wallet.getBalance(),
+        ]);
+
+        expect(address).toBe("bc1-dedup");
+        expect(balance.total).toBe(0);
+
+        // INITIALIZE_MESSAGE_BUS should have been sent only once
+        const initCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.tag === "INITIALIZE_MESSAGE_BUS"
+        );
+        expect(initCalls).toHaveLength(1);
+    });
+
+    it("does not retry for errors other than 'MessageBus not initialized'", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => ({
+                id: message.id,
+                tag: messageTag,
+                error: new Error("something else went wrong"),
+            }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWalletWithConfig(serviceWorker as any);
+        await expect(wallet.getAddress()).rejects.toThrow(
+            "something else went wrong"
+        );
+
+        // Should have tried only once (no retry for unrelated errors)
+        const addressCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_ADDRESS"
+        );
+        expect(addressCalls).toHaveLength(1);
+    });
+});

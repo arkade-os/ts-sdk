@@ -278,6 +278,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
     private readonly _readonlyAssetManager: IReadonlyAssetManager;
+    protected initConfig: MessageBusInitConfig | null = null;
+    protected initWalletPayload: RequestInitWallet["payload"] | null = null;
+    protected messageBusTimeoutMs?: number;
+    private reinitPromise: Promise<void> | null = null;
 
     get assetManager(): IReadonlyAssetManager {
         return this._readonlyAssetManager;
@@ -357,6 +361,17 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         await wallet.sendMessage(initMessage);
 
+        wallet.initConfig = {
+            wallet: initConfig.key,
+            arkServer: {
+                url: initConfig.arkServerUrl,
+                publicKey: initConfig.arkServerPublicKey,
+            },
+            delegatorUrl: initConfig.delegatorUrl,
+        };
+        wallet.initWalletPayload = initConfig;
+        wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
+
         return wallet;
     }
 
@@ -396,8 +411,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         });
     }
 
-    // send a message and wait for a response
-    protected async sendMessage(
+    private sendMessageDirect(
         request: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
@@ -437,6 +451,58 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             navigator.serviceWorker.addEventListener("message", messageHandler);
             this.serviceWorker.postMessage(request);
         });
+    }
+
+    // send a message, retrying up to 2 times if the service worker was
+    // killed and restarted by the OS (mobile browsers do this aggressively)
+    protected async sendMessage(
+        request: WalletUpdaterRequest
+    ): Promise<WalletUpdaterResponse> {
+        const maxRetries = 2;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await this.sendMessageDirect(request);
+            } catch (error: any) {
+                const isNotInitialized =
+                    typeof error?.message === "string" &&
+                    error.message.includes("MessageBus not initialized");
+
+                if (!isNotInitialized || attempt >= maxRetries) {
+                    throw error;
+                }
+
+                await this.reinitialize();
+            }
+        }
+    }
+
+    private async reinitialize(): Promise<void> {
+        if (this.reinitPromise) return this.reinitPromise;
+
+        this.reinitPromise = (async () => {
+            if (!this.initConfig || !this.initWalletPayload) {
+                throw new Error("Cannot re-initialize: missing configuration");
+            }
+
+            await initializeMessageBus(
+                this.serviceWorker,
+                this.initConfig,
+                this.messageBusTimeoutMs
+            );
+
+            const initMessage: RequestInitWallet = {
+                tag: this.messageTag,
+                type: "INIT_WALLET",
+                id: getRandomId(),
+                payload: this.initWalletPayload,
+            };
+
+            await this.sendMessageDirect(initMessage);
+        })().finally(() => {
+            this.reinitPromise = null;
+        });
+
+        return this.reinitPromise;
     }
 
     async clear() {
@@ -890,6 +956,17 @@ export class ServiceWorkerWallet
 
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
+
+        wallet.initConfig = {
+            wallet: initConfig.key,
+            arkServer: {
+                url: initConfig.arkServerUrl,
+                publicKey: initConfig.arkServerPublicKey,
+            },
+            delegatorUrl: initConfig.delegatorUrl,
+        };
+        wallet.initWalletPayload = initConfig;
+        wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
 
         return wallet;
     }
