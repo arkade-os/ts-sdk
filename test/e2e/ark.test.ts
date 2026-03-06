@@ -18,6 +18,7 @@ import {
     EsploraProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    ArkCash,
 } from "../../src";
 import {
     arkdExec,
@@ -2319,4 +2320,120 @@ describe("Asset integration tests", () => {
             expect(delegateUnspent.length).toBeGreaterThan(0);
         }
     );
+});
+
+describe("ArkCash", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    it("should send and claim arkcash (happy path)", async () => {
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
+
+        // Fund Alice
+        const aliceAddr = await alice.wallet.getAddress();
+        faucetOffchain(aliceAddr, 10000);
+        await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+
+        // Alice creates cash — Bob never shares an address
+        const cashStr = await alice.wallet.createCash(5000);
+        expect(cashStr).toMatch(/cash1/);
+
+        // Bob claims the cash
+        const result = await bob.wallet.claimCash(cashStr);
+        expect(result.swept).toBeGreaterThan(0);
+
+        // Wait for Bob to see his VTXOs
+        await waitFor(async () => {
+            const balance = await bob.wallet.getBalance();
+            return balance.total > 0;
+        });
+
+        const bobBalance = await bob.wallet.getBalance();
+        expect(bobBalance.total).toBeGreaterThan(0);
+    }, 60_000);
+
+    it("should fail to claim already-swept arkcash", async () => {
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
+        const charlie = await createTestArkWallet();
+
+        // Fund Alice
+        const aliceAddr = await alice.wallet.getAddress();
+        faucetOffchain(aliceAddr, 10000);
+        await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+
+        // Alice creates cash
+        const cashStr = await alice.wallet.createCash(5000);
+
+        // Bob claims first
+        await bob.wallet.claimCash(cashStr);
+        await waitFor(async () => {
+            const balance = await bob.wallet.getBalance();
+            return balance.total > 0;
+        });
+
+        // Charlie tries to claim the same cash — should fail (no VTXOs left)
+        await expect(charlie.wallet.claimCash(cashStr)).rejects.toThrow(
+            "No VTXOs found"
+        );
+    }, 90_000);
+
+    it("should create and claim multiple arkcash tokens", async () => {
+        const alice = await createTestArkWallet();
+        const bob = await createTestArkWallet();
+
+        // Fund Alice generously
+        const aliceAddr = await alice.wallet.getAddress();
+        faucetOffchain(aliceAddr, 30000);
+        await waitFor(async () => (await alice.wallet.getVtxos()).length > 0);
+
+        // Alice creates two cash tokens
+        const cash1 = await alice.wallet.createCash(5000);
+        // Wait for Alice's change to be available
+        await waitFor(async () => {
+            const vtxos = await alice.wallet.getVtxos();
+            return vtxos.length > 0;
+        });
+        const cash2 = await alice.wallet.createCash(3000);
+
+        // Bob claims both
+        const result1 = await bob.wallet.claimCash(cash1);
+        const result2 = await bob.wallet.claimCash(cash2);
+
+        expect(result1.swept + result1.imported).toBeGreaterThan(0);
+        expect(result2.swept + result2.imported).toBeGreaterThan(0);
+
+        await waitFor(async () => {
+            const balance = await bob.wallet.getBalance();
+            return balance.total > 0;
+        });
+    }, 120_000);
+
+    it("should encode and decode arkcash string correctly", () => {
+        const { hex } = require("@scure/base");
+
+        const privKey = hex.decode(
+            "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+        );
+        // Use a valid secp256k1 public key as server pubkey
+        const { pubSchnorr } = require("@scure/btc-signer/utils.js");
+        const serverPubKey = pubSchnorr(
+            hex.decode(
+                "11d2a03264d0efd311d2a03264d0efd311d2a03264d0efd311d2a03264d0efd3"
+            )
+        );
+
+        const cash = new ArkCash(privKey, serverPubKey, {
+            type: "blocks",
+            value: 144n,
+        });
+
+        const encoded = cash.toString();
+        const decoded = ArkCash.fromString(encoded);
+
+        expect(hex.encode(decoded.privateKey)).toBe(hex.encode(privKey));
+        expect(hex.encode(decoded.serverPubKey)).toBe(hex.encode(serverPubKey));
+        expect(decoded.csvTimelock.type).toBe("blocks");
+        expect(decoded.csvTimelock.value).toBe(144n);
+    });
 });
