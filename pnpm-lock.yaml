@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@arkade-os/sdk':
-        specifier: 0.4.0-next.4
-        version: 0.4.0-next.4
+        specifier: 0.4.0-next.7
+        version: 0.4.0-next.7
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.0.1
@@ -72,8 +72,8 @@ importers:
 
 packages:
 
-  '@arkade-os/sdk@0.4.0-next.4':
-    resolution: {integrity: sha512-Eb2lNl4zPBjP8RLAigfWFbLOCMOLoaqz4t4x9+es/tlysGGKjQUukAOvseM+0tttYU6ExPItg5yMub+vXszK2A==}
+  '@arkade-os/sdk@0.4.0-next.7':
+    resolution: {integrity: sha512-KGdYsUvBr8QhW8BEfCUCVh+cEAs2TcPLHJrbAuFbV0SEuM2TwYlBpAMsMxZheCjLfQw3Hl7DSTxREx1y1O02Ng==}
     engines: {node: '>=22.12.0 <23', pnpm: '>=10.25.0 <11'}
     peerDependencies:
       '@react-native-async-storage/async-storage': '>=1.0.0'
@@ -1403,7 +1403,7 @@ packages:
 
 snapshots:
 
-  '@arkade-os/sdk@0.4.0-next.4':
+  '@arkade-os/sdk@0.4.0-next.7':
     dependencies:
       '@kukks/bitcoin-descriptors': 3.1.0
       '@marcbachmann/cel-js': 7.3.1

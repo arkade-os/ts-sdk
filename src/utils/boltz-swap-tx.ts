@@ -4,14 +4,8 @@
  */
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
-import {
-    Script,
-    Transaction,
-    SigHash,
-    Address,
-    OutScript,
-} from "@scure/btc-signer";
-import { tapLeafHash, TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
+import { Script, Transaction } from "@scure/btc-signer";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { compareBytes, equalBytes } from "@scure/btc-signer/utils.js";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import type { MusigKeyAgg } from "./musig";
@@ -42,6 +36,13 @@ export type DetectedSwapOutput = TransactionOutput & { vout: number };
 
 export const REGTEST_NETWORK = {
     bech32: "bcrt",
+    pubKeyHash: 0x6f,
+    scriptHash: 0xc4,
+    wif: 0xef,
+};
+
+export const MUTINYNET_NETWORK = {
+    bech32: "tb",
     pubKeyHash: 0x6f,
     scriptHash: 0xc4,
     wif: 0xef,

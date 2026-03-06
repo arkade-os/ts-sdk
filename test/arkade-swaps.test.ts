@@ -351,7 +351,6 @@ describe("ArkadeSwaps", () => {
         ephemeralKey: hex.encode(randomBytes(32)),
         toAddress: mock.address.btc,
         status: "swap.created",
-        btcTxHex: "mock-btc-tx-hex",
         amount: mock.amount,
     };
 
@@ -935,23 +934,6 @@ describe("ArkadeSwaps", () => {
         });
 
         describe("claimBtc", () => {
-            it("should throw error when btcTxHex is missing", async () => {
-                // arrange
-                const pendingSwap: PendingChainSwap = {
-                    ...mockArkBtcChainSwap,
-                    btcTxHex: undefined,
-                };
-
-                vi.spyOn(arkProvider, "getInfo").mockResolvedValueOnce(
-                    mockArkInfo
-                );
-
-                // act & assert
-                await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    "BTC transaction hex is required"
-                );
-            });
-
             it("should throw error when toAddress is missing", async () => {
                 // arrange
                 const pendingSwap: PendingChainSwap = {
@@ -1219,6 +1201,10 @@ describe("ArkadeSwaps", () => {
                     ...mockArkBtcChainSwap,
                 };
                 vi.spyOn(swaps, "claimBtc").mockResolvedValue();
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
+                    status: "transaction.claimed",
+                    transaction: { id: mock.id, hex: mock.hex },
+                });
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_id, callback) => {
                         // Simulate status updates
@@ -1635,6 +1621,10 @@ describe("ArkadeSwaps", () => {
                     ...mockBtcArkChainSwap,
                 };
                 vi.spyOn(swaps, "claimArk").mockResolvedValue();
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValueOnce({
+                    status: "transaction.claimed",
+                    transaction: { id: mock.id, hex: mock.hex },
+                });
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
                     async (_id, callback) => {
                         // Simulate status updates
@@ -1732,7 +1722,7 @@ describe("ArkadeSwaps", () => {
             // Mock the swap repository methods
             mockSwapRepository.saveSwap.mockResolvedValue();
             mockSwapRepository.getAllSwaps.mockImplementation(
-                async (filter) => {
+                async (filter: any) => {
                     if (filter?.type === "reverse") {
                         return [];
                     }
@@ -1780,7 +1770,7 @@ describe("ArkadeSwaps", () => {
                 ];
 
                 mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter) => {
+                    async (filter: any) => {
                         if (filter?.type === "reverse") {
                             return mockReverseSwaps;
                         }
@@ -1833,7 +1823,7 @@ describe("ArkadeSwaps", () => {
                 ];
 
                 mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter) => {
+                    async (filter: any) => {
                         if (filter?.type === "submarine") {
                             return mockSubmarineSwaps;
                         }
@@ -1887,7 +1877,7 @@ describe("ArkadeSwaps", () => {
                 ];
 
                 mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter) => {
+                    async (filter: any) => {
                         if (filter?.type === "chain") {
                             return mockChainSwaps;
                         }
@@ -1967,7 +1957,7 @@ describe("ArkadeSwaps", () => {
                 ];
 
                 mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter) => {
+                    async (filter: any) => {
                         if (filter?.type === "reverse") {
                             return mockReverseSwaps;
                         }
@@ -2030,7 +2020,7 @@ describe("ArkadeSwaps", () => {
                 ];
 
                 mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter) => {
+                    async (filter: any) => {
                         if (filter?.type === "reverse") {
                             return mockReverseSwaps;
                         }
@@ -2144,7 +2134,7 @@ describe("ArkadeSwaps", () => {
                 ];
 
                 mockSwapRepository.getAllSwaps.mockImplementation(
-                    async (filter) => {
+                    async (filter: any) => {
                         if (filter?.type === "chain") {
                             return mockChainSwaps;
                         }

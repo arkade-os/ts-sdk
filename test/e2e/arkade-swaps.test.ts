@@ -70,8 +70,10 @@ const getBtcAddressFunds = async (address: string): Promise<number> => {
     );
     const outputJson = JSON.parse(stdout);
     return (
-        outputJson.chain_stats.funded_txo_sum +
-        outputJson.mempool_stats.funded_txo_sum
+        outputJson.chain_stats.funded_txo_sum -
+        outputJson.chain_stats.spent_txo_sum +
+        outputJson.mempool_stats.funded_txo_sum -
+        outputJson.mempool_stats.spent_txo_sum
     );
 };
 
@@ -81,6 +83,13 @@ const getBtcAddressTxs = async (address: string): Promise<number> => {
     );
     const outputJson = JSON.parse(stdout);
     return outputJson.chain_stats.tx_count + outputJson.mempool_stats.tx_count;
+};
+
+const getBtcAddressTxUtxos = async (address: string): Promise<any[]> => {
+    const { stdout } = await execAsync(
+        `curl -s http://localhost:3000/address/${address}/utxo`
+    );
+    return JSON.parse(stdout);
 };
 
 const waitForBtcTxConfirmation = async (address: string, timeout = 10_000) => {
@@ -93,6 +102,24 @@ const waitForBtcTxConfirmation = async (address: string, timeout = 10_000) => {
         const intervalId = setInterval(async () => {
             const txs = await getBtcAddressTxs(address);
             if (txs === 1) {
+                clearTimeout(timeoutId);
+                clearInterval(intervalId);
+                resolve(true);
+            }
+        }, 500);
+    });
+};
+
+const waitForBtcTxClaimed = async (address: string, timeout = 10_000) => {
+    await generateBlocks(1);
+    await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout(() => {
+            clearInterval(intervalId);
+            reject(new Error("Timed out waiting for Btc explorer to update"));
+        }, timeout);
+        const intervalId = setInterval(async () => {
+            const utxos = await getBtcAddressTxUtxos(address);
+            if (utxos.length === 0) {
                 clearTimeout(timeoutId);
                 clearInterval(intervalId);
                 resolve(true);
@@ -1059,6 +1086,29 @@ describe("ArkadeSwaps", () => {
 
                     const balance = await wallet.getBalance();
                     expect(balance.available).toEqual(amountSats);
+                }
+            );
+
+            it(
+                "should help Boltz claim the HTLC",
+                { timeout: 20_000 },
+                async () => {
+                    const amountSats = 21000;
+                    const { btcAddress, amountToPay, pendingSwap } =
+                        await swaps.btcToArk({
+                            receiverLockAmount: amountSats,
+                        });
+
+                    await fundBtcAddress(btcAddress, amountToPay);
+                    const initialBalance = await getBtcAddressFunds(btcAddress);
+                    expect(initialBalance).toBeGreaterThan(0);
+
+                    await swaps.waitAndClaimArk(pendingSwap);
+
+                    const balance = await wallet.getBalance();
+                    expect(balance.available).toEqual(amountSats);
+
+                    await waitForBtcTxClaimed(btcAddress);
                 }
             );
 

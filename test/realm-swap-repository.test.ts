@@ -32,14 +32,13 @@ function createMockRealm() {
     function makeResultSet(items: Record<string, unknown>[]) {
         const arr = [...items];
 
-        const resultSet = Object.assign(arr, {
-            filtered(
-                query: string,
-                ...args: unknown[]
-            ): Record<string, unknown>[] & {
-                filtered: typeof resultSet.filtered;
-                sorted: typeof resultSet.sorted;
-            } {
+        type ResultSet = Record<string, unknown>[] & {
+            filtered: (query: string, ...args: unknown[]) => ResultSet;
+            sorted: (field: string, reverse?: boolean) => ResultSet;
+        };
+
+        const resultSet: ResultSet = Object.assign(arr, {
+            filtered(query: string, ...args: unknown[]): ResultSet {
                 // Parse conditions separated by AND
                 const conditions = query
                     .split(/\s+AND\s+/i)
@@ -491,7 +490,6 @@ describe("RealmSwapRepository", () => {
     it("handles chain swaps with optional fields", async () => {
         const chain = createChainSwap("c1", "transaction.server.confirmed", {
             toAddress: "bc1qrecipient",
-            btcTxHex: "0200000001abcdef...",
         });
         await repo.saveSwap(chain);
 
@@ -502,7 +500,6 @@ describe("RealmSwapRepository", () => {
         expect(result).toBeDefined();
         expect(result.type).toBe("chain");
         expect(result.toAddress).toBe("bc1qrecipient");
-        expect(result.btcTxHex).toBe("0200000001abcdef...");
         expect(result.amount).toBe(50000);
         expect(result.response.claimDetails.amount).toBe(49500);
         expect(result.response.lockupDetails.lockupAddress).toBe("ark1lockup");
