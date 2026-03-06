@@ -1998,10 +1998,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const cashScript = cash.vtxoScript;
         const cashPkScript = hex.encode(cashScript.pkScript);
 
-        // Query VTXOs for the arkcash contract
+        // Query spendable VTXOs for the arkcash contract
         const { vtxos } = await this.indexerProvider.getVtxos({
             scripts: [cashPkScript],
-            spendableOnly: false,
+            spendableOnly: true,
         });
 
         if (vtxos.length === 0) {
