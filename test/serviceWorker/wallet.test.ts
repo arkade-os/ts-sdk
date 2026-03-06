@@ -58,7 +58,36 @@ describe("ServiceWorkerReadonlyWallet", () => {
     const messageTag = handler.messageTag;
 
     afterEach(() => {
+        vi.restoreAllMocks();
         vi.unstubAllGlobals();
+    });
+
+    it("passes the activation timeout through setup", async () => {
+        const serviceWorker = { state: "activated" } as ServiceWorker;
+        const setupServiceWorkerMock = vi
+            .spyOn(
+                await import("../../src/worker/browser/utils"),
+                "setupServiceWorker"
+            )
+            .mockResolvedValue(serviceWorker);
+        const createMock = vi
+            .spyOn(ServiceWorkerReadonlyWallet, "create")
+            .mockResolvedValue({} as ServiceWorkerReadonlyWallet);
+
+        await ServiceWorkerReadonlyWallet.setup({
+            serviceWorkerPath: "/sw.js",
+            serviceWorkerActivationTimeoutMs: 30_000,
+            arkServerUrl: "https://ark.example",
+            identity: {} as any,
+        });
+
+        expect(setupServiceWorkerMock).toHaveBeenCalledWith({
+            path: "/sw.js",
+            activationTimeoutMs: 30_000,
+        });
+        expect(createMock).toHaveBeenCalledWith(
+            expect.objectContaining({ serviceWorker })
+        );
     });
 
     it("sends GET_ADDRESS and returns the payload", async () => {
@@ -208,7 +237,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         ).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(
-            manager.getSpendablePaths({ contractId: "c1" })
+            manager.getSpendablePaths({ contractScript: "c1" })
         ).resolves.toEqual(paths);
         await expect(manager.isWatching()).resolves.toBe(true);
 

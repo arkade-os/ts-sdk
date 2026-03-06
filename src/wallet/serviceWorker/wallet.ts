@@ -217,6 +217,7 @@ export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
 
 export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
+    serviceWorkerActivationTimeoutMs?: number;
 };
 
 type MessageBusInitConfig = {
@@ -400,9 +401,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
         // Register and setup the service worker
-        const serviceWorker = await setupServiceWorker(
-            options.serviceWorkerPath
-        );
+        const serviceWorker = await setupServiceWorker({
+            path: options.serviceWorkerPath,
+            activationTimeoutMs: options.serviceWorkerActivationTimeoutMs,
+        });
 
         // Use the existing create method
         return await ServiceWorkerReadonlyWallet.create({
@@ -996,9 +998,10 @@ export class ServiceWorkerWallet
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerWallet> {
         // Register and setup the service worker
-        const serviceWorker = await setupServiceWorker(
-            options.serviceWorkerPath
-        );
+        const serviceWorker = await setupServiceWorker({
+            path: options.serviceWorkerPath,
+            activationTimeoutMs: options.serviceWorkerActivationTimeoutMs,
+        });
 
         // Use the existing create method
         return ServiceWorkerWallet.create({
