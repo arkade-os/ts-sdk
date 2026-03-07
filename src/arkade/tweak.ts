@@ -11,7 +11,8 @@
 import { schnorr, secp256k1 } from "@noble/curves/secp256k1.js";
 import { hex } from "@scure/base";
 
-const TAG = "ArkScriptHash";
+const TAG_SCRIPT = "ArkScriptHash";
+const TAG_WITNESS = "ArkWitnessHash";
 
 /**
  * Compute the tagged hash of an Arkade script.
@@ -21,7 +22,21 @@ const TAG = "ArkScriptHash";
  * @returns 32-byte hash
  */
 export function arkadeScriptHash(script: Uint8Array): Uint8Array {
-    return schnorr.utils.taggedHash(TAG, script);
+    return schnorr.utils.taggedHash(TAG_SCRIPT, script);
+}
+
+/**
+ * Compute the tagged hash of an Arkade witness.
+ * Uses BIP-340 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || witness)
+ *
+ * @param witness - The raw Arkade witness bytes
+ * @returns 32-byte hash, or 32 zero bytes if witness is empty
+ */
+export function arkadeWitnessHash(witness: Uint8Array): Uint8Array {
+    if (witness.length === 0) {
+        return new Uint8Array(32);
+    }
+    return schnorr.utils.taggedHash(TAG_WITNESS, witness);
 }
 
 /**

@@ -96,7 +96,7 @@ services:
               target: /app/data
 
     introspector:
-        image: ghcr.io/arklabshq/introspector:v0.0.1-rc.0
+        image: ghcr.io/arklabshq/introspector:v0.0.1-rc.1
         container_name: introspector
         depends_on:
             - arkd

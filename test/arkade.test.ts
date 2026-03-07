@@ -12,6 +12,7 @@ import {
     OPCODE_NAMES,
     OPCODE_VALUES,
     ARKADE_OPCODES,
+    ARKADE_OP,
     toASM,
     fromASM,
     ArkadeScript,
@@ -19,6 +20,8 @@ import {
     ARKADE_OPS,
     ArkadeVtxoScript,
     computeArkadeScriptPublicKey,
+    arkadeScriptHash,
+    arkadeWitnessHash,
 } from "../src/arkade";
 import { MultisigTapscript, CSVMultisigTapscript, VtxoScript } from "../src";
 
@@ -387,8 +390,8 @@ describe("ArkadeScript CoderType", () => {
         });
 
         it("should throw for truly unknown opcodes", () => {
-            // 0xc8 is in the Arkade range but not assigned
-            expect(() => ArkadeScript.decode(new Uint8Array([0xc8]))).toThrow(
+            // 0xd0 is in the Arkade range but not assigned
+            expect(() => ArkadeScript.decode(new Uint8Array([0xd0]))).toThrow(
                 "Unknown opcode"
             );
         });
@@ -679,5 +682,78 @@ describe("ArkadeVtxoScript", () => {
             hex.encode(manualVtxo.tweakedPublicKey)
         );
         expect(vtxo.arkadeScripts.size).toBe(0);
+    });
+});
+
+describe("Introspector Packet Opcodes", () => {
+    it("should define INSPECTINPUTARKADESCRIPTHASH at 0xc8", () => {
+        expect(ARKADE_OP.INSPECTINPUTARKADESCRIPTHASH).toBe(0xc8);
+        expect(OPCODE_NAMES[0xc8]).toBe("OP_INSPECTINPUTARKADESCRIPTHASH");
+        expect(OPCODE_VALUES["INSPECTINPUTARKADESCRIPTHASH"]).toBe(0xc8);
+        expect(OPCODE_VALUES["OP_INSPECTINPUTARKADESCRIPTHASH"]).toBe(0xc8);
+    });
+
+    it("should define INSPECTINPUTARKADEWITNESSHASH at 0xce", () => {
+        expect(ARKADE_OP.INSPECTINPUTARKADEWITNESSHASH).toBe(0xce);
+        expect(OPCODE_NAMES[0xce]).toBe("OP_INSPECTINPUTARKADEWITNESSHASH");
+        expect(OPCODE_VALUES["INSPECTINPUTARKADEWITNESSHASH"]).toBe(0xce);
+        expect(OPCODE_VALUES["OP_INSPECTINPUTARKADEWITNESSHASH"]).toBe(0xce);
+    });
+
+    it("should encode and decode INSPECTINPUTARKADESCRIPTHASH", () => {
+        const script: ArkadeScriptType = ["INSPECTINPUTARKADESCRIPTHASH"];
+        const encoded = ArkadeScript.encode(script);
+        expect(encoded).toEqual(new Uint8Array([0xc8]));
+        const decoded = ArkadeScript.decode(encoded);
+        expect(decoded).toEqual(["INSPECTINPUTARKADESCRIPTHASH"]);
+    });
+
+    it("should encode and decode INSPECTINPUTARKADEWITNESSHASH", () => {
+        const script: ArkadeScriptType = ["INSPECTINPUTARKADEWITNESSHASH"];
+        const encoded = ArkadeScript.encode(script);
+        expect(encoded).toEqual(new Uint8Array([0xce]));
+        const decoded = ArkadeScript.decode(encoded);
+        expect(decoded).toEqual(["INSPECTINPUTARKADEWITNESSHASH"]);
+    });
+
+    it("should include new opcodes in ARKADE_OPCODES list", () => {
+        expect(ARKADE_OPCODES).toContain(0xc8);
+        expect(ARKADE_OPCODES).toContain(0xce);
+    });
+
+    it("should round-trip ASM for new opcodes", () => {
+        const asm =
+            "OP_0 OP_INSPECTINPUTARKADESCRIPTHASH OP_INSPECTINPUTARKADEWITNESSHASH OP_EQUAL";
+        const bytes = ArkadeScript.encode(fromASM(asm));
+        expect(toASM(ArkadeScript.decode(bytes))).toBe(asm);
+    });
+});
+
+describe("arkadeWitnessHash", () => {
+    it("should return 32 zero bytes for empty witness", () => {
+        const hash = arkadeWitnessHash(new Uint8Array(0));
+        expect(hash).toEqual(new Uint8Array(32));
+        expect(hash.length).toBe(32);
+    });
+
+    it("should return a 32-byte tagged hash for non-empty witness", () => {
+        const witness = new Uint8Array([0x01, 0x02, 0x03]);
+        const hash = arkadeWitnessHash(witness);
+        expect(hash.length).toBe(32);
+        // Should not be all zeros
+        expect(hash.some((b) => b !== 0)).toBe(true);
+    });
+
+    it("should produce different hashes for different witnesses", () => {
+        const hash1 = arkadeWitnessHash(new Uint8Array([0x01]));
+        const hash2 = arkadeWitnessHash(new Uint8Array([0x02]));
+        expect(hex.encode(hash1)).not.toBe(hex.encode(hash2));
+    });
+
+    it("should produce different hashes than arkadeScriptHash for same data", () => {
+        const data = new Uint8Array([0x01, 0x02, 0x03]);
+        const scriptHash = arkadeScriptHash(data);
+        const witnessHash = arkadeWitnessHash(data);
+        expect(hex.encode(scriptHash)).not.toBe(hex.encode(witnessHash));
     });
 });
