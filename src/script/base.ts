@@ -125,21 +125,18 @@ export class VtxoScript {
         > = [];
         for (const leaf of this.leaves) {
             try {
-                const tapscript = CSVMultisigTapscript.decode(
-                    scriptFromTapLeafScript(leaf)
-                );
-                paths.push(tapscript);
-                continue;
-            } catch (e) {
-                try {
-                    const tapscript = ConditionCSVMultisigTapscript.decode(
-                        scriptFromTapLeafScript(leaf)
-                    );
-                    paths.push(tapscript);
-                } catch (e) {
-                    continue;
+                const script = scriptFromTapLeafScript(leaf);
+                if (CSVMultisigTapscript.isScriptValid(script)) {
+                    const tapScript = CSVMultisigTapscript.decode(script);
+                    paths.push(tapScript);
+                } else if (
+                    ConditionCSVMultisigTapscript.isScriptValid(script)
+                ) {
+                    const tapScript =
+                        ConditionCSVMultisigTapscript.decode(script);
+                    paths.push(tapScript);
                 }
-            }
+            } catch (e) {}
         }
         return paths;
     }
