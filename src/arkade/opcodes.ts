@@ -21,6 +21,7 @@ export const ARKADE_OP = {
 
     // Input Introspection (0xc7-0xcb)
     INSPECTINPUTOUTPOINT: 0xc7,
+    INSPECTINPUTARKADESCRIPTHASH: 0xc8,
     INSPECTINPUTVALUE: 0xc9,
     INSPECTINPUTSCRIPTPUBKEY: 0xca,
     INSPECTINPUTSEQUENCE: 0xcb,
@@ -28,6 +29,9 @@ export const ARKADE_OP = {
     // Signatures (0xcc-0xcd)
     CHECKSIGFROMSTACK: 0xcc,
     PUSHCURRENTINPUTINDEX: 0xcd,
+
+    // Input Arkade Witness Introspection (0xce)
+    INSPECTINPUTARKADEWITNESSHASH: 0xce,
 
     // Output Introspection (0xcf, 0xd1)
     INSPECTOUTPUTVALUE: 0xcf,
