@@ -414,7 +414,7 @@ export namespace CSVMultisigTapscript {
         const asm = Script.decode(script);
 
         if (asm.length < 3) {
-            throw new Error(`Invalid script: too short (expected at least 3)`);
+            return new Error(`Invalid script: too short (expected at least 3)`);
         }
 
         const sequence = asm[0];
@@ -743,7 +743,7 @@ export namespace CLTVMultisigTapscript {
 
         const locktime = asm[0];
         if (typeof locktime === "string" || typeof locktime === "number") {
-            return new Error("Invalid script: expected locktime number");
+            return new Error("Invalid script: expected locktime as bytes");
         }
 
         if (asm[1] !== "CHECKLOCKTIMEVERIFY" || asm[2] !== "DROP") {
