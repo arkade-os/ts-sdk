@@ -694,7 +694,7 @@ export namespace CLTVMultisigTapscript {
 
         const asm = Script.decode(script);
 
-        const locktime = asm[0] as Bytes;
+        const locktime = asm[0];
 
         const multisigScript = new Uint8Array(Script.encode(asm.slice(3)));
         let multisig: MultisigTapscript.Type;
@@ -707,7 +707,12 @@ export namespace CLTVMultisigTapscript {
             );
         }
 
-        const absoluteTimelock = MinimalScriptNum.decode(locktime);
+        let absoluteTimelock: bigint;
+        if (typeof locktime === "number") {
+            absoluteTimelock = BigInt(locktime);
+        } else {
+            absoluteTimelock = MinimalScriptNum.decode(locktime as Bytes);
+        }
 
         const reconstructed = encode({
             absoluteTimelock,
@@ -742,8 +747,10 @@ export namespace CLTVMultisigTapscript {
         }
 
         const locktime = asm[0];
-        if (typeof locktime === "string" || typeof locktime === "number") {
-            return new Error("Invalid script: expected locktime as bytes");
+        if (typeof locktime === "string") {
+            return new Error(
+                "Invalid script: expected locktime as number or bytes"
+            );
         }
 
         if (asm[1] !== "CHECKLOCKTIMEVERIFY" || asm[2] !== "DROP") {
