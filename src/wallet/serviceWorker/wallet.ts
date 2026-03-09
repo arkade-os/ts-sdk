@@ -7,6 +7,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    StorageConfig,
     IReadonlyWallet,
     IReadonlyAssetManager,
     IAssetManager,
@@ -17,17 +18,89 @@ import {
     BurnParams,
     Recipient,
 } from "..";
-import { Request } from "./request";
-import { Response } from "./response";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from "../../identity";
-import { IndexedDBStorageAdapter } from "../../storage/indexedDB";
 import { WalletRepository } from "../../repositories/walletRepository";
-import { WalletRepositoryImpl } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
-import { ContractRepositoryImpl } from "../../repositories/contractRepository";
-import { DEFAULT_DB_NAME, setupServiceWorker } from "./utils";
+import { setupServiceWorker } from "../../worker/browser/utils";
+import {
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
+} from "../../repositories";
+import {
+    RequestClear,
+    RequestCreateContract,
+    RequestDeleteContract,
+    RequestGetAddress,
+    RequestGetBalance,
+    RequestGetBoardingAddress,
+    RequestGetBoardingUtxos,
+    RequestGetContracts,
+    RequestGetContractsWithVtxos,
+    RequestGetStatus,
+    RequestGetSpendablePaths,
+    RequestGetTransactionHistory,
+    RequestGetVtxos,
+    RequestInitWallet,
+    RequestIsContractManagerWatching,
+    RequestReloadWallet,
+    RequestSendBitcoin,
+    RequestSettle,
+    RequestUpdateContract,
+    ResponseGetAddress,
+    ResponseGetBalance,
+    ResponseGetBoardingAddress,
+    ResponseGetBoardingUtxos,
+    ResponseGetContracts,
+    ResponseGetContractsWithVtxos,
+    ResponseGetStatus,
+    ResponseGetSpendablePaths,
+    ResponseGetTransactionHistory,
+    ResponseGetVtxos,
+    ResponseIsContractManagerWatching,
+    ResponseReloadWallet,
+    ResponseSendBitcoin,
+    ResponseUpdateContract,
+    ResponseCreateContract,
+    ResponseContractEvent,
+    WalletUpdaterRequest,
+    WalletUpdaterResponse,
+    RequestGetAllSpendingPaths,
+    ResponseGetAllSpendingPaths,
+    RequestSend,
+    ResponseSend,
+    RequestGetAssetDetails,
+    ResponseGetAssetDetails,
+    RequestIssue,
+    ResponseIssue,
+    RequestReissue,
+    ResponseReissue,
+    RequestBurn,
+    ResponseBurn,
+    RequestDelegate,
+    ResponseDelegate,
+    RequestGetDelegateInfo,
+    ResponseGetDelegateInfo,
+    DEFAULT_MESSAGE_TAG,
+} from "./wallet-message-handler";
+import type {
+    Contract,
+    ContractEventCallback,
+    ContractWithVtxos,
+    GetContractsFilter,
+    PathSelection,
+} from "../../contracts";
+import type {
+    CreateContractParams,
+    GetAllSpendingPathsOptions,
+    GetSpendablePathsOptions,
+    IContractManager,
+} from "../../contracts/contractManager";
+import type { ContractState } from "../../contracts/types";
+import type { IDelegatorManager } from "../delegator";
+import type { DelegateInfo } from "../../providers/delegator";
+import { getRandomId } from "../utils";
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -37,34 +110,23 @@ const isPrivateKeyIdentity = (
     return typeof (identity as any).toHex === "function";
 };
 
-class UnexpectedResponseError extends Error {
-    constructor(response: Response.Base) {
-        super(
-            `Unexpected response type. Got: ${JSON.stringify(response, null, 2)}`
-        );
-        this.name = "UnexpectedResponseError";
-    }
-}
-
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
     constructor(
         protected readonly sendMessage: (
-            msg: Request.Base
-        ) => Promise<Response.Base>,
-        protected readonly getRandomId: () => string
+            msg: WalletUpdaterRequest
+        ) => Promise<WalletUpdaterResponse>,
+        protected readonly messageTag: string
     ) {}
 
     async getAssetDetails(assetId: string): Promise<AssetDetails> {
-        const message: Request.GetAssetDetails = {
+        const message: RequestGetAssetDetails = {
+            tag: this.messageTag,
             type: "GET_ASSET_DETAILS",
-            id: this.getRandomId(),
-            assetId,
+            id: getRandomId(),
+            payload: { assetId },
         };
         const response = await this.sendMessage(message);
-        if (Response.isAssetDetailsResponse(response)) {
-            return response.assetDetails;
-        }
-        throw new UnexpectedResponseError(response);
+        return (response as ResponseGetAssetDetails).payload.assetDetails;
     }
 }
 
@@ -73,42 +135,36 @@ class ServiceWorkerAssetManager
     implements IAssetManager
 {
     async issue(params: IssuanceParams): Promise<IssuanceResult> {
-        const message: Request.Issue = {
+        const message: RequestIssue = {
+            tag: this.messageTag,
             type: "ISSUE",
-            id: this.getRandomId(),
-            params,
+            id: getRandomId(),
+            payload: { params },
         };
         const response = await this.sendMessage(message);
-        if (Response.isIssueSuccess(response)) {
-            return response.result;
-        }
-        throw new UnexpectedResponseError(response);
+        return (response as ResponseIssue).payload.result;
     }
 
     async reissue(params: ReissuanceParams): Promise<string> {
-        const message: Request.Reissue = {
+        const message: RequestReissue = {
+            tag: this.messageTag,
             type: "REISSUE",
-            id: this.getRandomId(),
-            params,
+            id: getRandomId(),
+            payload: { params },
         };
         const response = await this.sendMessage(message);
-        if (Response.isReissueSuccess(response)) {
-            return response.txid;
-        }
-        throw new UnexpectedResponseError(response);
+        return (response as ResponseReissue).payload.txid;
     }
 
     async burn(params: BurnParams): Promise<string> {
-        const message: Request.Burn = {
+        const message: RequestBurn = {
+            tag: this.messageTag,
             type: "BURN",
-            id: this.getRandomId(),
-            params,
+            id: getRandomId(),
+            payload: { params },
         };
         const response = await this.sendMessage(message);
-        if (Response.isBurnSuccess(response)) {
-            return response.txid;
-        }
-        throw new UnexpectedResponseError(response);
+        return (response as ResponseBurn).payload.txid;
     }
 }
 
@@ -131,10 +187,10 @@ class ServiceWorkerAssetManager
  * });
  *
  * // ADVANCED: Manual setup with service worker control
- * const serviceWorker = await setupServiceWorker("/service-worker.js");
+ * const worker = await setupServiceWorker("/service-worker.js");
  * const identity = SingleKey.fromHex('your_private_key_hex');
  * const wallet = await ServiceWorkerWallet.create({
- *   serviceWorker,
+ *   worker,
  *   identity,
  *   arkServerUrl: 'https://mutinynet.arkade.sh'
  * });
@@ -148,10 +204,12 @@ interface ServiceWorkerWalletOptions {
     arkServerPublicKey?: string;
     arkServerUrl: string;
     esploraUrl?: string;
-    dbName?: string;
-    dbVersion?: number;
+    storage?: StorageConfig;
     identity: ReadonlyIdentity | Identity;
     delegatorUrl?: string;
+    // Override the default tag for the messages sent and received from the SW
+    walletUpdaterTag?: string;
+    messageBusTimeoutMs?: number;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -159,19 +217,61 @@ export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
 
 export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
     serviceWorkerPath: string;
+    serviceWorkerActivationTimeoutMs?: number;
 };
 
-const createCommon = (options: ServiceWorkerWalletCreateOptions) => {
-    // Default to IndexedDB for service worker context
-    const storage = new IndexedDBStorageAdapter(
-        options.dbName || DEFAULT_DB_NAME,
-        options.dbVersion
-    );
-    // Create repositories
-    return {
-        walletRepo: new WalletRepositoryImpl(storage),
-        contractRepo: new ContractRepositoryImpl(storage),
+type MessageBusInitConfig = {
+    wallet:
+        | {
+              privateKey: string;
+          }
+        | {
+              publicKey: string;
+          };
+    arkServer: {
+        url: string;
+        publicKey?: string;
     };
+    delegatorUrl?: string;
+    timeoutMs?: number;
+};
+
+const initializeMessageBus = (
+    serviceWorker: ServiceWorker,
+    config: MessageBusInitConfig,
+    timeoutMs = 2000
+) => {
+    const initCmd = {
+        tag: "INITIALIZE_MESSAGE_BUS",
+        id: getRandomId(),
+        config: { ...config, timeoutMs },
+    };
+
+    return new Promise<void>((resolve, reject) => {
+        const cleanup = () => {
+            navigator.serviceWorker.removeEventListener("message", onMessage);
+            clearTimeout(timeoutId);
+        };
+
+        const onMessage = (event: any) => {
+            const response = event.data;
+            if (response?.id !== initCmd.id) return;
+            cleanup();
+            if (response.error) {
+                reject(response.error);
+            } else {
+                resolve();
+            }
+        };
+
+        const timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new Error("MessageBus timed out!"));
+        }, timeoutMs);
+
+        navigator.serviceWorker.addEventListener("message", onMessage);
+        serviceWorker.postMessage(initCmd);
+    });
 };
 
 export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
@@ -179,6 +279,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     public readonly contractRepository: ContractRepository;
     public readonly identity: ReadonlyIdentity;
     private readonly _readonlyAssetManager: IReadonlyAssetManager;
+    protected initConfig: MessageBusInitConfig | null = null;
+    protected initWalletPayload: RequestInitWallet["payload"] | null = null;
+    protected messageBusTimeoutMs?: number;
+    private reinitPromise: Promise<void> | null = null;
 
     get assetManager(): IReadonlyAssetManager {
         return this._readonlyAssetManager;
@@ -188,46 +292,86 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         public readonly serviceWorker: ServiceWorker,
         identity: ReadonlyIdentity,
         walletRepository: WalletRepository,
-        contractRepository: ContractRepository
+        contractRepository: ContractRepository,
+        protected readonly messageTag: string
     ) {
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
         this._readonlyAssetManager = new ServiceWorkerReadonlyAssetManager(
             (msg) => this.sendMessage(msg),
-            getRandomId
+            messageTag
         );
     }
 
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
-        const { walletRepo, contractRepo } = createCommon(options);
+        const walletRepository =
+            options.storage?.walletRepository ??
+            new IndexedDBWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ??
+            new IndexedDBContractRepository();
+
+        const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
         // Create the wallet instance
         const wallet = new ServiceWorkerReadonlyWallet(
             options.serviceWorker,
             options.identity,
-            walletRepo,
-            contractRepo
+            walletRepository,
+            contractRepository,
+            messageTag
         );
 
         const publicKey = await options.identity
             .compressedPublicKey()
             .then(hex.encode);
 
-        // Initialize the service worker with the config
-        const initMessage: Request.InitWallet = {
-            type: "INIT_WALLET",
-            id: getRandomId(),
+        const initConfig = {
             key: { publicKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
 
-        // Initialize the service worker
+        // Bootstrap the MessageBus in the service worker
+        await initializeMessageBus(
+            options.serviceWorker,
+            {
+                wallet: initConfig.key,
+                arkServer: {
+                    url: initConfig.arkServerUrl,
+                    publicKey: initConfig.arkServerPublicKey,
+                },
+                delegatorUrl: initConfig.delegatorUrl,
+                timeoutMs: options.messageBusTimeoutMs,
+            },
+            options.messageBusTimeoutMs
+        );
+
+        // Initialize the wallet handler
+        const initMessage: RequestInitWallet = {
+            tag: messageTag,
+            type: "INIT_WALLET",
+            id: getRandomId(),
+            payload: initConfig,
+        };
+
         await wallet.sendMessage(initMessage);
+
+        wallet.initConfig = {
+            wallet: initConfig.key,
+            arkServer: {
+                url: initConfig.arkServerUrl,
+                publicKey: initConfig.arkServerPublicKey,
+            },
+            delegatorUrl: initConfig.delegatorUrl,
+        };
+        wallet.initWalletPayload = initConfig;
+        wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
 
         return wallet;
     }
@@ -257,57 +401,122 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
         // Register and setup the service worker
-        const serviceWorker = await setupServiceWorker(
-            options.serviceWorkerPath
-        );
+        const serviceWorker = await setupServiceWorker({
+            path: options.serviceWorkerPath,
+            activationTimeoutMs: options.serviceWorkerActivationTimeoutMs,
+        });
 
         // Use the existing create method
-        return ServiceWorkerReadonlyWallet.create({
+        return await ServiceWorkerReadonlyWallet.create({
             ...options,
             serviceWorker,
         });
     }
 
-    // send a message and wait for a response
-    protected async sendMessage<T extends Request.Base>(
-        message: T
-    ): Promise<Response.Base> {
+    private sendMessageDirect(
+        request: WalletUpdaterRequest
+    ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
-            const messageHandler = (event: MessageEvent) => {
-                const response = event.data as Response.Base;
-                if (response.id === "") {
-                    reject(new Error("Invalid response id"));
-                    return;
-                }
-                if (response.id !== message.id) {
-                    return;
-                }
+            const cleanup = () => {
+                clearTimeout(timeoutId);
                 navigator.serviceWorker.removeEventListener(
                     "message",
                     messageHandler
                 );
+            };
 
-                if (!response.success) {
-                    reject(new Error((response as Response.Error).message));
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(
+                    new Error(
+                        `Service worker message timed out (${request.type})`
+                    )
+                );
+            }, 30_000);
+
+            const messageHandler = (
+                event: MessageEvent<WalletUpdaterResponse>
+            ) => {
+                const response = event.data;
+                if (request.id !== response.id) {
+                    return;
+                }
+
+                cleanup();
+                if (response.error) {
+                    reject(response.error);
                 } else {
                     resolve(response);
                 }
             };
 
             navigator.serviceWorker.addEventListener("message", messageHandler);
-            this.serviceWorker.postMessage(message);
+            this.serviceWorker.postMessage(request);
         });
     }
 
+    // send a message, retrying up to 2 times if the service worker was
+    // killed and restarted by the OS (mobile browsers do this aggressively)
+    protected async sendMessage(
+        request: WalletUpdaterRequest
+    ): Promise<WalletUpdaterResponse> {
+        const maxRetries = 2;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await this.sendMessageDirect(request);
+            } catch (error: any) {
+                const isNotInitialized =
+                    typeof error?.message === "string" &&
+                    error.message.includes("MessageBus not initialized");
+
+                if (!isNotInitialized || attempt >= maxRetries) {
+                    throw error;
+                }
+
+                await this.reinitialize();
+            }
+        }
+    }
+
+    private async reinitialize(): Promise<void> {
+        if (this.reinitPromise) return this.reinitPromise;
+
+        this.reinitPromise = (async () => {
+            if (!this.initConfig || !this.initWalletPayload) {
+                throw new Error("Cannot re-initialize: missing configuration");
+            }
+
+            await initializeMessageBus(
+                this.serviceWorker,
+                this.initConfig,
+                this.messageBusTimeoutMs
+            );
+
+            const initMessage: RequestInitWallet = {
+                tag: this.messageTag,
+                type: "INIT_WALLET",
+                id: getRandomId(),
+                payload: this.initWalletPayload,
+            };
+
+            await this.sendMessageDirect(initMessage);
+        })().finally(() => {
+            this.reinitPromise = null;
+        });
+
+        return this.reinitPromise;
+    }
+
     async clear() {
-        const message: Request.Clear = {
-            type: "CLEAR",
+        const message: RequestClear = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "CLEAR",
         };
         // Clear page-side storage to maintain parity with SW
         try {
             const address = await this.getAddress();
-            await this.walletRepository.clearVtxos(address);
+            await this.walletRepository.deleteVtxos(address);
         } catch (_) {
             console.warn("Failed to clear vtxos from wallet repository");
         }
@@ -316,130 +525,331 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     async getAddress(): Promise<string> {
-        const message: Request.GetAddress = {
-            type: "GET_ADDRESS",
+        const message: RequestGetAddress = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_ADDRESS",
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isAddress(response)) {
-                return response.address;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetAddress).payload.address;
         } catch (error) {
             throw new Error(`Failed to get address: ${error}`);
         }
     }
 
     async getBoardingAddress(): Promise<string> {
-        const message: Request.GetBoardingAddress = {
-            type: "GET_BOARDING_ADDRESS",
+        const message: RequestGetBoardingAddress = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_BOARDING_ADDRESS",
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isBoardingAddress(response)) {
-                return response.address;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetBoardingAddress).payload.address;
         } catch (error) {
             throw new Error(`Failed to get boarding address: ${error}`);
         }
     }
 
     async getBalance(): Promise<WalletBalance> {
-        const message: Request.GetBalance = {
-            type: "GET_BALANCE",
+        const message: RequestGetBalance = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_BALANCE",
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isBalance(response)) {
-                return response.balance;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetBalance).payload;
         } catch (error) {
             throw new Error(`Failed to get balance: ${error}`);
         }
     }
 
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const message: Request.GetBoardingUtxos = {
-            type: "GET_BOARDING_UTXOS",
+        const message: RequestGetBoardingUtxos = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_BOARDING_UTXOS",
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isBoardingUtxos(response)) {
-                return response.boardingUtxos;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetBoardingUtxos).payload.utxos;
         } catch (error) {
             throw new Error(`Failed to get boarding UTXOs: ${error}`);
         }
     }
 
-    async getStatus(): Promise<Response.WalletStatus["status"]> {
-        const message: Request.GetStatus = {
-            type: "GET_STATUS",
+    async getStatus(): Promise<ResponseGetStatus["payload"]> {
+        const message: RequestGetStatus = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_STATUS",
         };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletStatus(response)) {
-            return response.status;
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseGetStatus).payload;
+        } catch (error) {
+            throw new Error(`Failed to get status: ${error}`);
         }
-        throw new UnexpectedResponseError(response);
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const message: Request.GetTransactionHistory = {
-            type: "GET_TRANSACTION_HISTORY",
+        const message: RequestGetTransactionHistory = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "GET_TRANSACTION_HISTORY",
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isTransactionHistory(response)) {
-                return response.transactions;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetTransactionHistory).payload
+                .transactions;
         } catch (error) {
             throw new Error(`Failed to get transaction history: ${error}`);
         }
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        const message: Request.GetVtxos = {
-            type: "GET_VTXOS",
+        const message: RequestGetVtxos = {
             id: getRandomId(),
-            filter,
+            tag: this.messageTag,
+            type: "GET_VTXOS",
+            payload: { filter },
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isVtxos(response)) {
-                return response.vtxos;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseGetVtxos).payload.vtxos;
         } catch (error) {
             throw new Error(`Failed to get vtxos: ${error}`);
         }
     }
 
     async reload(): Promise<boolean> {
-        const message: Request.ReloadWallet = {
-            type: "RELOAD_WALLET",
+        const message: RequestReloadWallet = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "RELOAD_WALLET",
         };
-        const response = await this.sendMessage(message);
-        if (Response.isWalletReloaded(response)) {
-            return response.success;
+        try {
+            const response = await this.sendMessage(message);
+            return (response as ResponseReloadWallet).payload.reloaded;
+        } catch (error) {
+            throw new Error(`Failed to reload wallet: ${error}`);
         }
-        throw new UnexpectedResponseError(response);
+    }
+
+    async getContractManager(): Promise<IContractManager> {
+        const wallet = this;
+
+        const sendContractMessage = async <T extends WalletUpdaterRequest>(
+            message: T
+        ): Promise<WalletUpdaterResponse> => {
+            return wallet.sendMessage(message as WalletUpdaterRequest);
+        };
+
+        const messageTag = this.messageTag;
+
+        const manager: IContractManager = {
+            async createContract(
+                params: CreateContractParams
+            ): Promise<Contract> {
+                const message: RequestCreateContract = {
+                    type: "CREATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: params,
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseCreateContract).payload
+                        .contract;
+                } catch (e) {
+                    throw new Error("Failed to create contract");
+                }
+            },
+
+            async getContracts(
+                filter?: GetContractsFilter
+            ): Promise<Contract[]> {
+                const message: RequestGetContracts = {
+                    type: "GET_CONTRACTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { filter },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetContracts).payload.contracts;
+                } catch (e) {
+                    throw new Error("Failed to get contracts");
+                }
+            },
+
+            async getContractsWithVtxos(
+                filter: GetContractsFilter
+            ): Promise<ContractWithVtxos[]> {
+                const message: RequestGetContractsWithVtxos = {
+                    type: "GET_CONTRACTS_WITH_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { filter },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetContractsWithVtxos).payload
+                        .contracts;
+                } catch (e) {
+                    throw new Error("Failed to get contracts with vtxos");
+                }
+            },
+
+            async updateContract(
+                script: string,
+                updates: Partial<Omit<Contract, "script" | "createdAt">>
+            ): Promise<Contract> {
+                const message: RequestUpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, updates },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseUpdateContract).payload
+                        .contract;
+                } catch (e) {
+                    throw new Error("Failed to update contract");
+                }
+            },
+
+            async setContractState(
+                script: string,
+                state: ContractState
+            ): Promise<void> {
+                const message: RequestUpdateContract = {
+                    type: "UPDATE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script, updates: { state } },
+                };
+                try {
+                    await sendContractMessage(message);
+                    return;
+                } catch (e) {
+                    throw new Error("Failed to update contract state");
+                }
+            },
+
+            async deleteContract(script: string): Promise<void> {
+                const message: RequestDeleteContract = {
+                    type: "DELETE_CONTRACT",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { script },
+                };
+                try {
+                    await sendContractMessage(message);
+                    return;
+                } catch (e) {
+                    throw new Error("Failed to delete contract");
+                }
+            },
+
+            async getSpendablePaths(
+                options: GetSpendablePathsOptions
+            ): Promise<PathSelection[]> {
+                const message: RequestGetSpendablePaths = {
+                    type: "GET_SPENDABLE_PATHS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { options },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetSpendablePaths).payload
+                        .paths;
+                } catch (e) {
+                    throw new Error("Failed to get spendable paths");
+                }
+            },
+
+            async getAllSpendingPaths(
+                options: GetAllSpendingPathsOptions
+            ): Promise<PathSelection[]> {
+                const message: RequestGetAllSpendingPaths = {
+                    type: "GET_ALL_SPENDING_PATHS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { options },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseGetAllSpendingPaths).payload
+                        .paths;
+                } catch (e) {
+                    throw new Error("Failed to get all spending paths");
+                }
+            },
+
+            onContractEvent(callback: ContractEventCallback): () => void {
+                const messageHandler = (event: MessageEvent) => {
+                    const response = event.data as WalletUpdaterResponse;
+                    if (response.type !== "CONTRACT_EVENT") {
+                        return;
+                    }
+                    if (response.tag !== messageTag) {
+                        return;
+                    }
+                    callback((response as ResponseContractEvent).payload.event);
+                };
+
+                navigator.serviceWorker.addEventListener(
+                    "message",
+                    messageHandler
+                );
+
+                return () => {
+                    navigator.serviceWorker.removeEventListener(
+                        "message",
+                        messageHandler
+                    );
+                };
+            },
+
+            async isWatching(): Promise<boolean> {
+                const message: RequestIsContractManagerWatching = {
+                    type: "IS_CONTRACT_MANAGER_WATCHING",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseIsContractManagerWatching)
+                        .payload.isWatching;
+                } catch (e) {
+                    throw new Error(
+                        "Failed to check if contract manager is watching"
+                    );
+                }
+            },
+
+            dispose(): void {
+                return;
+            },
+
+            [Symbol.dispose](): void {
+                // no-op
+                return;
+            },
+        };
+
+        return manager;
     }
 }
 
@@ -451,21 +861,31 @@ export class ServiceWorkerWallet
     public readonly contractRepository: ContractRepository;
     public readonly identity: Identity;
     private readonly _assetManager: IAssetManager;
+    private readonly hasDelegator: boolean;
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
         identity: PrivateKeyIdentity,
         walletRepository: WalletRepository,
-        contractRepository: ContractRepository
+        contractRepository: ContractRepository,
+        messageTag: string,
+        hasDelegator: boolean
     ) {
-        super(serviceWorker, identity, walletRepository, contractRepository);
+        super(
+            serviceWorker,
+            identity,
+            walletRepository,
+            contractRepository,
+            messageTag
+        );
         this.identity = identity;
         this.walletRepository = walletRepository;
         this.contractRepository = contractRepository;
         this._assetManager = new ServiceWorkerAssetManager(
             (msg) => this.sendMessage(msg),
-            getRandomId
+            messageTag
         );
+        this.hasDelegator = hasDelegator;
     }
 
     get assetManager(): IAssetManager {
@@ -475,7 +895,13 @@ export class ServiceWorkerWallet
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
-        const { walletRepo, contractRepo } = createCommon(options);
+        const walletRepository =
+            options.storage?.walletRepository ??
+            new IndexedDBWalletRepository();
+
+        const contractRepository =
+            options.storage?.contractRepository ??
+            new IndexedDBContractRepository();
 
         // Extract identity and check if it can expose private key
         const identity = isPrivateKeyIdentity(options.identity)
@@ -490,26 +916,59 @@ export class ServiceWorkerWallet
         // Extract private key for service worker initialization
         const privateKey = identity.toHex();
 
+        const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
+
         // Create the wallet instance
         const wallet = new ServiceWorkerWallet(
             options.serviceWorker,
             identity,
-            walletRepo,
-            contractRepo
+            walletRepository,
+            contractRepository,
+            messageTag,
+            !!options.delegatorUrl
         );
 
-        // Initialize the service worker with the config
-        const initMessage: Request.InitWallet = {
-            type: "INIT_WALLET",
-            id: getRandomId(),
+        const initConfig = {
             key: { privateKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
 
+        await initializeMessageBus(
+            options.serviceWorker,
+            {
+                wallet: initConfig.key,
+                arkServer: {
+                    url: initConfig.arkServerUrl,
+                    publicKey: initConfig.arkServerPublicKey,
+                },
+                delegatorUrl: initConfig.delegatorUrl,
+                timeoutMs: options.messageBusTimeoutMs,
+            },
+            options.messageBusTimeoutMs
+        );
+        // Initialize the service worker with the config
+        const initMessage: RequestInitWallet = {
+            tag: messageTag,
+            type: "INIT_WALLET",
+            id: getRandomId(),
+            payload: initConfig,
+        };
+
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
+
+        wallet.initConfig = {
+            wallet: initConfig.key,
+            arkServer: {
+                url: initConfig.arkServerUrl,
+                publicKey: initConfig.arkServerPublicKey,
+            },
+            delegatorUrl: initConfig.delegatorUrl,
+        };
+        wallet.initWalletPayload = initConfig;
+        wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
 
         return wallet;
     }
@@ -539,9 +998,10 @@ export class ServiceWorkerWallet
         options: ServiceWorkerWalletSetupOptions
     ): Promise<ServiceWorkerWallet> {
         // Register and setup the service worker
-        const serviceWorker = await setupServiceWorker(
-            options.serviceWorkerPath
-        );
+        const serviceWorker = await setupServiceWorker({
+            path: options.serviceWorkerPath,
+            activationTimeoutMs: options.serviceWorkerActivationTimeoutMs,
+        });
 
         // Use the existing create method
         return ServiceWorkerWallet.create({
@@ -551,18 +1011,16 @@ export class ServiceWorkerWallet
     }
 
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
-        const message: Request.SendBitcoin = {
-            type: "SEND_BITCOIN",
-            params,
+        const message: RequestSendBitcoin = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "SEND_BITCOIN",
+            payload: params,
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isSendBitcoinSuccess(response)) {
-                return response.txid;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseSendBitcoin).payload.txid;
         } catch (error) {
             throw new Error(`Failed to send bitcoin: ${error}`);
         }
@@ -572,35 +1030,36 @@ export class ServiceWorkerWallet
         params?: SettleParams,
         callback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        const message: Request.Settle = {
-            type: "SETTLE",
-            params,
+        const message: RequestSettle = {
             id: getRandomId(),
+            tag: this.messageTag,
+            type: "SETTLE",
+            payload: { params },
         };
 
         try {
             return new Promise((resolve, reject) => {
-                const messageHandler = (event: MessageEvent) => {
-                    const response = event.data as Response.Base;
+                const messageHandler = (
+                    event: MessageEvent<WalletUpdaterResponse>
+                ) => {
+                    const response = event.data;
                     if (response.id !== message.id) {
                         return;
                     }
 
-                    if (!response.success) {
+                    if (response.error) {
                         navigator.serviceWorker.removeEventListener(
                             "message",
                             messageHandler
                         );
-                        reject(new Error((response as Response.Error).message));
+                        reject(response.error);
                         return;
                     }
 
                     switch (response.type) {
                         case "SETTLE_EVENT":
                             if (callback) {
-                                callback(
-                                    (response as Response.SettleEvent).event
-                                );
+                                callback(response.payload);
                             }
                             break;
                         case "SETTLE_SUCCESS":
@@ -608,10 +1067,12 @@ export class ServiceWorkerWallet
                                 "message",
                                 messageHandler
                             );
-                            resolve((response as Response.SettleSuccess).txid);
+                            resolve(response.payload.txid);
                             break;
                         default:
-                            break;
+                            console.error(
+                                `Unexpected response type for SETTLE request: ${response.type}`
+                            );
                     }
                 };
 
@@ -627,25 +1088,75 @@ export class ServiceWorkerWallet
     }
 
     async send(...recipients: Recipient[]): Promise<string> {
-        const message: Request.Send = {
+        const message: RequestSend = {
+            tag: this.messageTag,
             type: "SEND",
             id: getRandomId(),
-            recipients,
+            payload: { recipients },
         };
 
         try {
             const response = await this.sendMessage(message);
-            if (Response.isSendSuccess(response)) {
-                return response.txid;
-            }
-            throw new UnexpectedResponseError(response);
+            return (response as ResponseSend).payload.txid;
         } catch (error) {
             throw new Error(`Send failed: ${error}`);
         }
     }
-}
 
-function getRandomId(): string {
-    const randomValue = crypto.getRandomValues(new Uint8Array(16));
-    return hex.encode(randomValue);
+    async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
+        if (!this.hasDelegator) {
+            return undefined;
+        }
+
+        const wallet = this;
+        const messageTag = this.messageTag;
+
+        const manager: IDelegatorManager = {
+            async delegate(vtxos, destination, delegateAt?) {
+                const message: RequestDelegate = {
+                    tag: messageTag,
+                    type: "DELEGATE",
+                    id: getRandomId(),
+                    payload: {
+                        vtxoOutpoints: vtxos.map((v) => ({
+                            txid: v.txid,
+                            vout: v.vout,
+                        })),
+                        destination,
+                        delegateAt: delegateAt?.getTime(),
+                    },
+                };
+
+                try {
+                    const response = await wallet.sendMessage(message);
+                    const payload = (response as ResponseDelegate).payload;
+                    return {
+                        delegated: payload.delegated,
+                        failed: payload.failed.map((f) => ({
+                            outpoints: f.outpoints,
+                            error: f.error,
+                        })),
+                    };
+                } catch (error) {
+                    throw new Error(`Delegation failed: ${error}`);
+                }
+            },
+
+            async getDelegateInfo(): Promise<DelegateInfo> {
+                const message: RequestGetDelegateInfo = {
+                    type: "GET_DELEGATE_INFO",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetDelegateInfo).payload.info;
+                } catch (e) {
+                    throw new Error("Failed to get delegate info");
+                }
+            },
+        };
+
+        return manager;
+    }
 }

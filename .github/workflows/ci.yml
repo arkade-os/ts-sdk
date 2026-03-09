@@ -77,4 +77,4 @@ jobs:
       if: always()
 
     - name: Check TypeScript compilation
-      run: pnpm build 
+      run: pnpm build

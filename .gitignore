@@ -3,4 +3,9 @@ dist/
 docs/
 .mintlify-last
 .idea
-.claude
+.claude/
+*.sqlite
+
+# AI
+CLAUDE.md
+TASKS.md

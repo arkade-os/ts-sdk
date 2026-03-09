@@ -144,6 +144,7 @@ export class AssetOutputs {
     validate(): void {
         const seen = new Set<number>();
         for (const output of this.outputs) {
+            output.validate();
             if (seen.has(output.vout)) {
                 throw new Error(`duplicated output vout ${output.vout}`);
             }

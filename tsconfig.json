@@ -20,6 +20,7 @@
         "node_modules",
         "dist",
         "**/*.test.ts",
-        "examples"
+        "examples",
+        "src/repositories/indexedDB/websqlAdapter.ts"
     ]
 }

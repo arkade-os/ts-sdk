@@ -16,7 +16,12 @@ npm install @arkade-os/sdk
 ### Creating a Wallet
 
 ```typescript
-import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
+import {
+  MnemonicIdentity,
+  Wallet,
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository
+} from '@arkade-os/sdk'
 import { generateMnemonic } from '@scure/bip39'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
 
@@ -30,8 +35,11 @@ const wallet = await Wallet.create({
   // Esplora API, can be left empty - mempool.space API will be used
   esploraUrl: 'https://mutinynet.com/api',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Optional: specify storage adapter (defaults to InMemoryStorageAdapter)
-  // storage: new LocalStorageAdapter() // for browser persistence
+  // Optional: provide repositories for persistence (defaults to IndexedDB)
+  // storage: {
+  //   walletRepository: new IndexedDBWalletRepository('my-wallet-db'),
+  //   contractRepository: new IndexedDBContractRepository('my-wallet-db')
+  // }
 })
 ```
 
@@ -542,80 +550,284 @@ await Unroll.completeUnroll(
 
 ### Running the wallet in a service worker
 
-**Ultra-simplified setup!** We handle all the complex service worker registration and identity management for you:
+The SDK provides a `MessageBus` orchestrator that runs inside a service worker
+and routes messages to pluggable `MessageHandler`s. The built-in
+`WalletMessageHandler` exposes all wallet operations over this message bus, and
+`ServiceWorkerWallet` is a client-side proxy that communicates with it
+transparently.
+
+#### Service worker file
+
+```javascript
+// service-worker.js
+import {
+  MessageBus,
+  WalletMessageHandler,
+  IndexedDBWalletRepository,
+  IndexedDBContractRepository,
+} from '@arkade-os/sdk'
+
+const walletRepo = new IndexedDBWalletRepository()
+const contractRepo = new IndexedDBContractRepository()
+
+const bus = new MessageBus(walletRepo, contractRepo, {
+  messageHandlers: [new WalletMessageHandler()],
+  tickIntervalMs: 10_000, // default 10s
+})
+
+bus.start()
+```
+
+#### Client-side usage
 
 ```typescript
-// SIMPLE SETUP with identity! 🎉
-import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk';
+// app.ts
+import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
 
-// Create your identity
-const identity = SingleKey.fromHex('your_private_key_hex');
-// Or generate a new one:
-// const identity = SingleKey.fromRandomBytes();
+const identity = SingleKey.fromHex('your_private_key_hex')
 
+// One-liner: registers the SW, initializes the MessageBus, and creates the wallet
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity
-});
+  identity,
+})
 
-// That's it! Ready to use immediately:
-const address = await wallet.getAddress();
-const balance = await wallet.getBalance();
+// Use like any other wallet — calls are proxied to the service worker
+const address = await wallet.getAddress()
+const balance = await wallet.getBalance()
 ```
 
-You'll also need to create a service worker file:
+For watch-only wallets, use `ServiceWorkerReadonlyWallet` with a
+`ReadonlySingleKey` identity instead.
+
+### Worker Architecture
+
+The _worker_ captures the background processing infrastructure for the SDK.
+Two platform-specific implementations share common patterns (pluggable
+handlers, periodic scheduling, repository/provider dependency injection) but
+differ in orchestration and communication.
+
+| Platform | Directory                                    | Orchestrator | Communication |
+|----------|----------------------------------------------|-------------|---------------|
+| **Browser** | [`browser/`](./src/worker/browser/README.md) | `MessageBus` inside a Service Worker | `postMessage` between SW and window clients |
+| **Expo/React Native** | [`expo/`](./src/worker/expo/README.md)       | `runTasks()` called from foreground interval and OS background wake | `AsyncStorageTaskQueue` inbox/outbox |
+
+See the platform READMEs for architecture details, runtime flow, and usage
+examples.
+
+
+
+### Repositories (Storage)
+
+The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
+`storage`, the SDK uses IndexedDB repositories with the default database name.
+
+#### Migration from v1 StorageAdapter
+
+> [!WARNING]
+> If you previously used the v1 `StorageAdapter`-based repositories, migrate
+> data into the new IndexedDB repositories before use:
+>
+> ```typescript
+> import {
+>   IndexedDBWalletRepository,
+>   IndexedDBContractRepository,
+>   getMigrationStatus,
+>   migrateWalletRepository,
+>   rollbackMigration,
+> } from '@arkade-os/sdk'
+> import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'
+>
+> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
+> const newDbName = 'my-app-db'
+> const walletRepository = new IndexedDBWalletRepository(newDbName)
+>
+> // Check migration status before running
+> const status = await getMigrationStatus('wallet', oldStorage)
+> // status: "not-needed" | "pending" | "in-progress" | "done"
+>
+> if (status === 'pending' || status === 'in-progress') {
+>   try {
+>     await migrateWalletRepository(oldStorage, walletRepository, {
+>       onchain: [ 'address-1', 'address-2' ],
+>       offchain: [ 'onboarding-address-1' ],
+>     })
+>   } catch (err) {
+>     // Reset migration flag so the next attempt starts clean
+>     await rollbackMigration('wallet', oldStorage)
+>     throw err
+>   }
+> }
+> ```
+>
+> **Migration status helpers:**
+>
+> | Helper | Description |
+> |--------|-------------|
+> | `getMigrationStatus(repoType, adapter)` | Returns `"not-needed"` (no legacy DB), `"pending"`, `"in-progress"` (interrupted), or `"done"` |
+> | `requiresMigration(repoType, adapter)` | Returns `true` if status is `"pending"` or `"in-progress"` |
+> | `rollbackMigration(repoType, adapter)` | Removes the migration flag so migration can re-run from scratch |
+> | `MIGRATION_KEY(repoType)` | Returns the storage key used for the migration flag |
+>
+> `migrateWalletRepository` sets an `"in-progress"` flag before copying data.
+> If the process crashes mid-way, the flag remains as `"in-progress"` so the
+> next call to `getMigrationStatus` can detect the partial migration. Old data
+> is never deleted — re-running migration after a rollback is safe.
+>
+> Anything related to contract repository migration must be handled by the package which created them. The SDK doesn't manage contracts in V1. Data remains untouched and persisted in the same old location.
+>
+> If you persisted custom data in the ContractRepository via its `setContractData` method,
+> or a custom collection via `saveToContractCollection`, you'll need to migrate it manually:
+>
+> ```typescript
+> // Custom data stored in the ContractRepository
+> const oldStorage = new IndexedDBStorageAdapter('legacy-wallet', 1)
+> const oldRepo = new ContractRepositoryImpl(storageAdapter)
+> const customContract = await oldRepo.getContractData('my-contract', 'status')
+> await contractRepository.setContractData('my-contract', 'status', customData)
+> const customCollection = await oldRepo.getContractCollection('swaps')
+> await contractRepository.saveToContractCollection('swaps', customCollection)
+> ```
+
+#### Repository Versioning
+
+`WalletRepository`, `ContractRepository`, and `SwapRepository` (in
+`@arkade-os/boltz-swap`) each declare a `readonly version` field with a literal
+type. All built-in implementations set this to the current version. If you
+maintain a custom repository implementation, TypeScript will produce a compile
+error when the version is bumped, signaling that a semantic update is required:
 
 ```typescript
-// service-worker.js
-import { Worker } from '@arkade-os/sdk'
+import { WalletRepository } from '@arkade-os/sdk'
 
-// Worker handles communication between the main thread and service worker
-new Worker().start()
+class MyWalletRepository implements WalletRepository {
+  readonly version = 1 // must match the interface's literal type
+  // ...
+}
 ```
 
-### Storage Adapters
+#### SQLite Repository (Node.js / React Native)
 
-Choose the appropriate storage adapter for your environment:
+For Node.js or React Native environments, use the SQLite repository with any
+SQLite driver. The SDK accepts a `SQLExecutor` interface — you provide the
+driver, the SDK handles the schema.
+
+See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
+a full working example using `better-sqlite3`.
 
 ```typescript
-import { 
-  SingleKey,
-  Wallet,
-  InMemoryStorageAdapter,     // Works everywhere, data lost on restart
-} from '@arkade-os/sdk'
+import { SingleKey, Wallet } from '@arkade-os/sdk'
+import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
+import Database from 'better-sqlite3'
 
-// Import additional storage adapters as needed:
-import { LocalStorageAdapter } from '@arkade-os/sdk/adapters/localStorage'        // Browser/PWA persistent storage  
-import { IndexedDBStorageAdapter } from '@arkade-os/sdk/adapters/indexedDB'      // Browser/PWA/Service Worker advanced storage
-import { AsyncStorageAdapter } from '@arkade-os/sdk/adapters/asyncStorage'      // React Native persistent storage
-import { FileSystemStorageAdapter } from '@arkade-os/sdk/adapters/fileSystem'   // Node.js file-based storage
+const db = new Database('my-wallet.sqlite')
+db.pragma('journal_mode = WAL')
 
-// Node.js
-const storage = new FileSystemStorageAdapter('./wallet-data')
+const executor: SQLExecutor = {
+  run: async (sql, params) => { db.prepare(sql).run(...(params ?? [])) },
+  get: async (sql, params) => db.prepare(sql).get(...(params ?? [])) as any,
+  all: async (sql, params) => db.prepare(sql).all(...(params ?? [])) as any,
+}
 
-// Browser/PWA
-const storage = new LocalStorageAdapter()
-// or for advanced features:
-const storage = new IndexedDBStorageAdapter('my-app', 1)
+const wallet = await Wallet.create({
+  identity: SingleKey.fromHex('your_private_key_hex'),
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  storage: {
+    walletRepository: new SQLiteWalletRepository(executor),
+    contractRepository: new SQLiteContractRepository(executor),
+  },
+})
+```
 
-// React Native  
-const storage = new AsyncStorageAdapter()
+#### Realm Repository (React Native)
 
-// Service Worker
-const storage = new IndexedDBStorageAdapter('service-worker-wallet', 1)
+For React Native apps using Realm, pass your Realm instance directly:
 
-// Load identity from storage (simple pattern everywhere)
-const privateKeyHex = await storage.getItem('private-key')
-const identity = SingleKey.fromHex(privateKeyHex)
+```typescript
+import { RealmWalletRepository, RealmContractRepository, ArkRealmSchemas } from '@arkade-os/sdk/repositories/realm'
 
-// Create wallet (same API everywhere)
+const realm = await Realm.open({ schema: [...ArkRealmSchemas, ...yourSchemas] })
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  storage // optional
+  storage: {
+    walletRepository: new RealmWalletRepository(realm),
+    contractRepository: new RealmContractRepository(realm),
+  },
 })
 ```
+
+#### IndexedDB Repository (Browser)
+
+In the browser, the SDK defaults to IndexedDB repositories when no `storage`
+is provided:
+
+```typescript
+import { SingleKey, Wallet } from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity: SingleKey.fromHex('your_private_key_hex'),
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  // Uses IndexedDB by default in the browser
+})
+```
+
+If you want a custom database name or a different repository implementation,
+pass `storage` explicitly.
+
+For ephemeral storage (no persistence), pass the in-memory repositories:
+
+```typescript
+import {
+  InMemoryWalletRepository,
+  InMemoryContractRepository,
+  Wallet
+} from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  storage: {
+    walletRepository: new InMemoryWalletRepository(),
+    contractRepository: new InMemoryContractRepository()
+  }
+})
+```
+
+### Using with Node.js
+
+Node.js does not provide a global `EventSource` implementation. The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching. You must polyfill it before using the SDK:
+
+```bash
+npm install eventsource
+```
+
+```typescript
+import { EventSource } from "eventsource";
+(globalThis as any).EventSource = EventSource;
+
+// Use dynamic import so the polyfill is set before the SDK evaluates
+const { Wallet, SingleKey, Ramps } = await import("@arkade-os/sdk");
+```
+
+If you also need IndexedDB persistence (e.g. for `WalletRepository`), set up the shim before any SDK import:
+
+```typescript
+// Must define `self` BEFORE calling setGlobalVars
+if (typeof self === "undefined") {
+    (globalThis as any).self = globalThis;
+}
+import setGlobalVars from "indexeddbshim/src/node-UnicodeIdentifiers";
+(globalThis as any).window = globalThis;
+setGlobalVars(null, { checkOrigin: false });
+```
+
+> **Note:** `eventsource` and `indexeddbshim` are optional peer dependencies.
+> Without the `EventSource` polyfill, settlement operations will fail with
+> `ReferenceError: EventSource is not defined`.
+
+See [`examples/node/multiple-wallets.ts`](examples/node/multiple-wallets.ts) for a complete working example.
 
 ### Using with Expo/React Native
 
@@ -645,6 +857,31 @@ Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
 - **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
 
+For persistence in Expo/React Native, use the SQLite repository with `expo-sqlite`:
+
+```typescript
+import { SQLiteWalletRepository, SQLiteContractRepository } from '@arkade-os/sdk/repositories/sqlite'
+import * as SQLite from 'expo-sqlite'
+
+const db = SQLite.openDatabaseSync('my-wallet.db')
+const executor = {
+  run: (sql, params) => db.runAsync(sql, params ?? []),
+  get: (sql, params) => db.getFirstAsync(sql, params ?? []),
+  all: (sql, params) => db.getAllAsync(sql, params ?? []),
+}
+
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'),
+  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'),
+  storage: {
+    walletRepository: new SQLiteWalletRepository(executor),
+    contractRepository: new SQLiteContractRepository(executor),
+  },
+})
+```
+
 #### Crypto Polyfill Requirement
 
 Install `expo-crypto` and polyfill `crypto.getRandomValues()` at the top of your app entry point:
@@ -665,6 +902,88 @@ import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/ex
 ```
 
 This is required for MuSig2 settlements and cryptographic operations.
+
+### Contract Management
+
+Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for VTXOs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+
+When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and failsafe polling for free - no code changes needed.
+
+For advanced use cases, you can access the ContractManager directly to register external contracts:
+
+```typescript
+// Get the contract manager (wallet's default address is already registered)
+const manager = await wallet.getContractManager()
+
+// Register a VHTLC contract (e.g., for a Lightning swap)
+const contract = await manager.createContract({
+  type: 'vhtlc',
+  params: {
+    sender: alicePubKey,
+    receiver: bobPubKey,
+    server: serverPubKey,
+    hash: paymentHash,
+    refundLocktime: '800000',
+    claimDelay: '100',
+    refundDelay: '102',
+    refundNoReceiverDelay: '103',
+  },
+  script: swapScript,
+  address: swapAddress,
+})
+
+// Listen for all contracts events (wallet address + external contracts)
+const unsubscribe = await manager.onContractEvent((event) => {
+  switch (event.type) {
+    case 'vtxo_received':
+      console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractScript}`)
+      break
+    case 'vtxo_spent':
+      console.log(`Spent VTXOs on ${event.contractScript}`)
+      break
+    case 'contract_expired':
+      console.log(`Contract ${event.contractScript} expired`)
+      break
+  }
+})
+
+// Update contract data (e.g., set preimage when revealed)
+await manager.updateContractParams(contract.script, { preimage: revealedPreimage })
+
+// Check spendable paths (requires a specific VTXO)
+const [withVtxos] = await manager.getContractsWithVtxos({ script: contract.script })
+const vtxo = withVtxos.vtxos[0]
+const paths = manager.getSpendablePaths({
+  contractScript: contract.script,
+  vtxo,
+  collaborative: true,
+  walletPubKey: myPubKey,
+})
+if (paths.length > 0) {
+  console.log('Contract is spendable via:', paths[0].leaf)
+}
+
+// Or list all possible paths for the current context (no spendability checks)
+const allPaths = manager.getAllSpendingPaths({
+  contractScript: contract.script,
+  collaborative: true,
+  walletPubKey: myPubKey,
+})
+
+// Get balances across all contracts
+const balances = await manager.getAllBalances()
+
+// Manually sweep all eligible contracts
+const sweepResults = await manager.sweepAll()
+
+// Stop watching
+unsubscribe()
+```
+
+The watcher features:
+- **Automatic reconnection** with exponential backoff (1s → 30s max)
+- **Failsafe polling** every 60 seconds to catch missed events
+- **Immediate sync** on connection and after failures
 
 ### Repository Pattern
 

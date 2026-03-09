@@ -7,7 +7,7 @@ import {
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
-    VirtualCoin,
+    ExtendedVirtualCoin,
 } from ".";
 import {
     AssetGroup,
@@ -103,7 +103,7 @@ export class AssetManager
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
 
-        let selectedCoins: VirtualCoin[] = [];
+        let selectedCoins: ExtendedVirtualCoin[] = [];
 
         // when referencing an existing control asset, select its VTXO first
         if (params.controlAssetId) {
@@ -319,7 +319,7 @@ export class AssetManager
         const reissueInputs: AssetInput[] = [];
         for (const [inputIndex, assets] of assetInputs) {
             for (const asset of assets) {
-                if (asset.assetId != params.assetId) continue;
+                if (asset.assetId !== params.assetId) continue;
                 reissueInputs.push(
                     AssetInput.create(inputIndex, BigInt(asset.amount))
                 );

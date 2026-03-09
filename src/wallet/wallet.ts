@@ -1,6 +1,6 @@
 import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
-import { SigHash, Transaction, Address, OutScript } from "@scure/btc-signer";
+import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
@@ -12,14 +12,14 @@ import {
     OnchainProvider,
 } from "../providers/onchain";
 import {
-    BatchFinalizationEvent,
-    SettlementEvent,
-    TreeSigningStartedEvent,
     ArkProvider,
-    RestArkProvider,
+    BatchFinalizationEvent,
     BatchStartedEvent,
+    RestArkProvider,
+    SettlementEvent,
     SignedIntent,
     TreeNoncesEvent,
+    TreeSigningStartedEvent,
 } from "../providers/ark";
 import { SignerSession } from "../tree/signingSession";
 import { buildForfeitTx } from "../forfeit";
@@ -71,15 +71,8 @@ import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
-import { InMemoryStorageAdapter } from "../storage/inMemory";
-import {
-    WalletRepository,
-    WalletRepositoryImpl,
-} from "../repositories/walletRepository";
-import {
-    ContractRepository,
-    ContractRepositoryImpl,
-} from "../repositories/contractRepository";
+import { WalletRepository } from "../repositories/walletRepository";
+import { ContractRepository } from "../repositories/contractRepository";
 import { extendCoin, extendVirtualCoin, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
@@ -89,7 +82,14 @@ import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
-import { DelegatorManager, DelegatorManagerImpl } from "./delegator";
+import { IDelegatorManager, DelegatorManagerImpl } from "./delegator";
+import {
+    IndexedDBContractRepository,
+    IndexedDBWalletRepository,
+} from "../repositories";
+import { ContractManager } from "../contracts/contractManager";
+import { contractHandlers } from "../contracts/handlers";
+import { timelockToSequence } from "../contracts/handlers/helpers";
 
 export type IncomingFunds =
     | {
@@ -122,6 +122,9 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 }
 
 export class ReadonlyWallet implements IReadonlyWallet {
+    private _contractManager?: ContractManager;
+    private _contractManagerInitializing?: Promise<ContractManager>;
+    protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
 
     get assetManager(): IReadonlyAssetManager {
@@ -139,8 +142,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
         public readonly contractRepository: ContractRepository,
-        readonly delegatorProvider?: DelegatorProvider
+        readonly delegatorProvider?: DelegatorProvider,
+        watcherConfig?: ReadonlyWalletConfig["watcherConfig"]
     ) {
+        this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
     }
 
@@ -246,10 +251,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             csvTimelock: boardingTimelock,
         });
 
-        // Set up storage and repositories
-        const storage = config.storage || new InMemoryStorageAdapter();
-        const walletRepository = new WalletRepositoryImpl(storage);
-        const contractRepository = new ContractRepositoryImpl(storage);
+        const walletRepository =
+            config.storage?.walletRepository ?? new IndexedDBWalletRepository();
+
+        const contractRepository =
+            config.storage?.contractRepository ??
+            new IndexedDBContractRepository();
 
         return {
             arkProvider,
@@ -287,7 +294,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
-            setup.delegatorProvider
+            setup.delegatorProvider,
+            config.watcherConfig
         );
     }
 
@@ -296,6 +304,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.network.hrp,
             this.arkServerPublicKey
         );
+    }
+
+    /**
+     * Get the contract script for the wallet's default address.
+     * This is the pkScript hex, used to identify the wallet in ContractManager.
+     */
+    get defaultContractScript(): string {
+        return hex.encode(this.offchainTapscript.pkScript);
     }
 
     async getAddress(): Promise<string> {
@@ -378,52 +394,50 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const address = await this.getAddress();
+        const scriptMap = await this.getScriptMap();
+        const f = filter ?? { withRecoverable: true, withUnrolled: false };
+        const allExtended: ExtendedVirtualCoin[] = [];
 
-        // Try to get from cache first first (optional fast path)
-        // const cachedVtxos = await this.walletRepository.getVtxos(address);
-        // if (cachedVtxos.length) return cachedVtxos;
+        // Query each script separately so we can extend VTXOs with the correct tapscript
+        for (const [scriptHex, vtxoScript] of scriptMap) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts: [scriptHex],
+            });
 
-        // For now, always fetch fresh data from provider and update cache
-        // In future, we can add cache invalidation logic based on timestamps
-        const vtxos = await this.getVirtualCoins(filter);
-        const extendedVtxos = vtxos.map((vtxo) =>
-            extendVirtualCoin(this, vtxo)
-        );
+            let vtxos: VirtualCoin[] = response.vtxos.filter(isSpendable);
+
+            if (!f.withRecoverable) {
+                vtxos = vtxos.filter(
+                    (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
+                );
+            }
+
+            if (f.withUnrolled) {
+                const spentVtxos = response.vtxos.filter(
+                    (vtxo) => !isSpendable(vtxo)
+                );
+                vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
+            }
+
+            for (const vtxo of vtxos) {
+                allExtended.push({
+                    ...vtxo,
+                    forfeitTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.forfeit(),
+                    tapTree: vtxoScript.encode(),
+                });
+            }
+        }
 
         // Update cache with fresh data
-        await this.walletRepository.saveVtxos(address, extendedVtxos);
+        await this.walletRepository.saveVtxos(address, allExtended);
 
-        return extendedVtxos;
-    }
-
-    protected async getVirtualCoins(
-        filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
-    ): Promise<VirtualCoin[]> {
-        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
-        const response = await this.indexerProvider.getVtxos({ scripts });
-        const allVtxos = response.vtxos;
-
-        let vtxos: VirtualCoin[] = allVtxos.filter(isSpendable);
-
-        // all recoverable vtxos are spendable by definition
-        if (!filter.withRecoverable) {
-            vtxos = vtxos.filter(
-                (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
-            );
-        }
-
-        if (filter.withUnrolled) {
-            const spentVtxos = allVtxos.filter((vtxo) => !isSpendable(vtxo));
-            vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
-        }
-
-        return vtxos;
+        return allExtended;
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const response = await this.indexerProvider.getVtxos({
-            scripts: [hex.encode(this.offchainTapscript.pkScript)],
-        });
+        const scripts = await this.getWalletScripts();
+        const response = await this.indexerProvider.getVtxos({ scripts });
 
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
@@ -571,12 +585,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         if (this.indexerProvider && arkAddress) {
-            const offchainScript = this.offchainTapscript;
+            const walletScripts = await this.getWalletScripts();
 
             const subscriptionId =
-                await this.indexerProvider.subscribeForScripts([
-                    hex.encode(offchainScript.pkScript),
-                ]);
+                await this.indexerProvider.subscribeForScripts(walletScripts);
 
             const abortController = new AbortController();
             const subscription = this.indexerProvider.getSubscription(
@@ -591,7 +603,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 );
             };
 
-            // Handle subscription updates asynchronously without blocking
+            // Handle subscription updates asynchronously without blocking.
+            // Note: subscription covers all wallet scripts (default + delegate),
+            // but we can't determine which script each VTXO belongs to from the
+            // subscription event. VTXOs are extended with the current offchainTapscript;
+            // this is for notification/display only — not for spending.
+            // For correct extension metadata, use getVtxos() which queries per-script.
             (async () => {
                 try {
                     for await (const update of subscription) {
@@ -626,7 +643,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     async fetchPendingTxs(): Promise<string[]> {
         // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
-        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
+        const scripts = await this.getWalletScripts();
         let { vtxos } = await this.indexerProvider.getVtxos({
             scripts,
         });
@@ -638,6 +655,214 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     vtxo.arkTxId !== undefined
             )
             .map((_) => _.arkTxId!);
+    }
+
+    // ========================================================================
+    // Multi-script support (default + delegate addresses)
+    // ========================================================================
+
+    /**
+     * Get all pkScript hex strings for the wallet's own addresses
+     * (both delegate and non-delegate, current and historical).
+     * Falls back to only the current script if ContractManager is not yet initialized.
+     */
+    async getWalletScripts(): Promise<string[]> {
+        // Only use the contract manager if it's already initialized or
+        // currently initializing — never trigger initialization here to
+        // avoid blocking callers that don't need it.
+        if (this._contractManager || this._contractManagerInitializing) {
+            try {
+                const manager = await this.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+                if (contracts.length > 0) {
+                    return contracts.map((c) => c.script);
+                }
+            } catch {
+                // fall through to current script only
+            }
+        }
+        return [hex.encode(this.offchainTapscript.pkScript)];
+    }
+
+    /**
+     * Build a map of scriptHex → VtxoScript for all wallet contracts,
+     * so VTXOs can be extended with the correct tapscript per contract.
+     */
+    async getScriptMap(): Promise<
+        Map<string, DefaultVtxo.Script | DelegateVtxo.Script>
+    > {
+        const map = new Map<string, DefaultVtxo.Script | DelegateVtxo.Script>();
+
+        // Always include the current script
+        const currentScriptHex = hex.encode(this.offchainTapscript.pkScript);
+        map.set(currentScriptHex, this.offchainTapscript);
+
+        if (this._contractManager) {
+            try {
+                const contracts = await this._contractManager.getContracts({
+                    type: ["default", "delegate"],
+                });
+                for (const contract of contracts) {
+                    if (map.has(contract.script)) continue;
+                    const handler = contractHandlers.get(contract.type);
+                    if (handler) {
+                        const script = handler.createScript(contract.params) as
+                            | DefaultVtxo.Script
+                            | DelegateVtxo.Script;
+                        map.set(contract.script, script);
+                    }
+                }
+            } catch {
+                // ContractManager error — only current script in map
+            }
+        }
+
+        return map;
+    }
+
+    // ========================================================================
+    // Contract Management
+    // ========================================================================
+
+    /**
+     * Get the ContractManager for managing contracts including the wallet's default address.
+     *
+     * The ContractManager handles:
+     * - The wallet's default receiving address (as a "default" contract)
+     * - External contracts (Boltz swaps, HTLCs, etc.)
+     * - Multi-contract watching with resilient connections
+     *
+     * @example
+     * ```typescript
+     * const manager = await wallet.getContractManager();
+     *
+     * // Create a contract for a Boltz swap
+     * const contract = await manager.createContract({
+     *   label: "Boltz Swap",
+     *   type: "vhtlc",
+     *   params: { ... },
+     *   script: swapScript,
+     *   address: swapAddress,
+     * });
+     *
+     * // Start watching for events (includes wallet's default address)
+     * const stop = await manager.onContractEvent((event) => {
+     *   console.log(`${event.type} on ${event.contractScript}`);
+     * });
+     * ```
+     */
+    async getContractManager(): Promise<ContractManager> {
+        // Return existing manager if already initialized
+        if (this._contractManager) {
+            return this._contractManager;
+        }
+
+        // If initialization is in progress, wait for it
+        if (this._contractManagerInitializing) {
+            return this._contractManagerInitializing;
+        }
+
+        // Start initialization and store the promise
+        this._contractManagerInitializing = this.initializeContractManager();
+
+        try {
+            const manager = await this._contractManagerInitializing;
+            this._contractManager = manager;
+            return manager;
+        } catch (error) {
+            // Clear the initializing promise so subsequent calls can retry
+            this._contractManagerInitializing = undefined;
+            throw error;
+        } finally {
+            // Clear the initializing promise after completion
+            this._contractManagerInitializing = undefined;
+        }
+    }
+
+    private async initializeContractManager(): Promise<ContractManager> {
+        const manager = await ContractManager.create({
+            indexerProvider: this.indexerProvider,
+            contractRepository: this.contractRepository,
+            walletRepository: this.walletRepository,
+            getDefaultAddress: () => this.getAddress(),
+            watcherConfig: this.watcherConfig,
+        });
+
+        // Register the wallet's current address as a contract
+        const csvTimelock =
+            this.offchainTapscript.options.csvTimelock ??
+            DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+
+        const isDelegateScript =
+            this.offchainTapscript instanceof DelegateVtxo.Script;
+
+        if (isDelegateScript) {
+            const delegateScript = this
+                .offchainTapscript as DelegateVtxo.Script;
+
+            // Register the delegate contract (current address)
+            await manager.createContract({
+                type: "delegate",
+                params: {
+                    pubKey: hex.encode(delegateScript.options.pubKey),
+                    serverPubKey: hex.encode(
+                        delegateScript.options.serverPubKey
+                    ),
+                    delegatePubKey: hex.encode(
+                        delegateScript.options.delegatePubKey
+                    ),
+                    csvTimelock: csvTimelockStr,
+                },
+                script: this.defaultContractScript,
+                address: await this.getAddress(),
+                state: "active",
+            });
+
+            // Also register the non-delegate version so old VTXOs remain visible
+            const nonDelegateScript = new DefaultVtxo.Script({
+                pubKey: delegateScript.options.pubKey,
+                serverPubKey: delegateScript.options.serverPubKey,
+                csvTimelock,
+            });
+            await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(delegateScript.options.pubKey),
+                    serverPubKey: hex.encode(
+                        delegateScript.options.serverPubKey
+                    ),
+                    csvTimelock: csvTimelockStr,
+                },
+                script: hex.encode(nonDelegateScript.pkScript),
+                address: nonDelegateScript
+                    .address(this.network.hrp, this.arkServerPublicKey)
+                    .encode(),
+                state: "active",
+            });
+        } else {
+            // Register the default contract (current address)
+            await manager.createContract({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(this.offchainTapscript.options.pubKey),
+                    serverPubKey: hex.encode(
+                        this.offchainTapscript.options.serverPubKey
+                    ),
+                    csvTimelock: csvTimelockStr,
+                },
+                script: this.defaultContractScript,
+                address: await this.getAddress(),
+                state: "active",
+            });
+
+            // Any old "delegate" contract from a prior wallet incarnation
+            // is already loaded by ContractManager.initialize() from ContractRepository
+        }
+
+        return manager;
     }
 }
 
@@ -678,7 +903,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     static MIN_FEE_RATE = 1; // sats/vbyte
 
     override readonly identity: Identity;
-    readonly delegatorManager?: DelegatorManager;
+    private readonly _delegatorManager?: IDelegatorManager;
 
     private _walletAssetManager?: IAssetManager;
 
@@ -703,7 +928,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
         renewalConfig?: WalletConfig["renewalConfig"],
-        delegatorProvider?: DelegatorProvider
+        delegatorProvider?: DelegatorProvider,
+        watcherConfig?: WalletConfig["watcherConfig"]
     ) {
         super(
             identity,
@@ -716,7 +942,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             dustAmount,
             walletRepository,
             contractRepository,
-            delegatorProvider
+            delegatorProvider,
+            watcherConfig
         );
         this.identity = identity;
         this.renewalConfig = {
@@ -724,7 +951,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
-        this.delegatorManager = delegatorProvider
+        this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
     }
@@ -777,7 +1004,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.walletRepository,
             setup.contractRepository,
             config.renewalConfig,
-            config.delegatorProvider
+            config.delegatorProvider,
+            config.watcherConfig
         );
     }
 
@@ -814,10 +1042,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.boardingTapscript,
             this.dustAmount,
             this.walletRepository,
-            this.contractRepository
+            this.contractRepository,
+            this.delegatorProvider,
+            this.watcherConfig
         );
     }
 
+    async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
+        return this._delegatorManager;
+    }
+
+    /**
+     * @deprecated Use `send`
+     * @param params
+     */
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
@@ -1140,7 +1378,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const vtxos = await this.getVirtualCoins();
+        const vtxos = await this.getVtxos();
         let settlementPsbt = Transaction.fromPSBT(
             base64.decode(event.commitmentTx)
         );
@@ -1516,22 +1754,37 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const MAX_INPUTS_PER_INTENT = 20;
 
         if (!vtxos || vtxos.length === 0) {
-            // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
-            const scripts = [hex.encode(this.offchainTapscript.pkScript)];
-            let { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos({
-                scripts,
-            });
-            fetchedVtxos = fetchedVtxos.filter(
-                (vtxo) =>
-                    vtxo.virtualStatus.state !== "swept" &&
-                    vtxo.virtualStatus.state !== "settled"
-            );
+            // Query per-script so each VTXO is extended with the correct tapscript
+            const scriptMap = await this.getScriptMap();
+            const allExtended: ExtendedVirtualCoin[] = [];
 
-            if (fetchedVtxos.length === 0) {
+            for (const [scriptHex, vtxoScript] of scriptMap) {
+                const { vtxos: fetchedVtxos } =
+                    await this.indexerProvider.getVtxos({
+                        scripts: [scriptHex],
+                    });
+
+                const pending = fetchedVtxos.filter(
+                    (vtxo) =>
+                        vtxo.virtualStatus.state !== "swept" &&
+                        vtxo.virtualStatus.state !== "settled"
+                );
+
+                for (const vtxo of pending) {
+                    allExtended.push({
+                        ...vtxo,
+                        forfeitTapLeafScript: vtxoScript.forfeit(),
+                        intentTapLeafScript: vtxoScript.forfeit(),
+                        tapTree: vtxoScript.encode(),
+                    });
+                }
+            }
+
+            if (allExtended.length === 0) {
                 return { finalized: [], pending: [] };
             }
 
-            vtxos = fetchedVtxos.map((v) => extendVirtualCoin(this, v));
+            vtxos = allExtended;
         }
         const finalized: string[] = [];
         const pending: string[] = [];
@@ -1599,14 +1852,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const address = await this.getAddress();
         const outputAddress = ArkAddress.decode(address);
 
-        const virtualCoins = await this.getVirtualCoins({
+        const virtualCoins = await this.getVtxos({
             withRecoverable: false,
         });
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
 
-        let selectedCoins: VirtualCoin[] = [];
+        let selectedCoins: ExtendedVirtualCoin[] = [];
         let btcAmountToSelect = 0;
 
         for (const recipient of recipients) {
@@ -1827,20 +2080,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @returns The ark transaction id and server-signed checkpoint PSBTs (for bookkeeping)
      */
     async buildAndSubmitOffchainTx(
-        inputs: VirtualCoin[],
+        inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[]
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
-        const tapLeafScript = this.offchainTapscript.forfeit();
-        if (!tapLeafScript) {
-            throw new Error("Selected leaf not found");
-        }
-        const tapTree = this.offchainTapscript.encode();
         const offchainTx = buildOffchainTx(
-            inputs.map((input) => ({
-                ...input,
-                tapLeafScript,
-                tapTree,
-            })),
+            inputs.map((input) => {
+                return {
+                    ...input,
+                    tapLeafScript: input.forfeitTapLeafScript,
+                };
+            }),
             outputs,
             this.serverUnrollScript
         );
@@ -1876,21 +2125,48 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const commitmentTxIds = new Set<string>();
             let batchExpiry: number = Number.MAX_SAFE_INTEGER;
 
+            if (inputs.length !== signedCheckpointTxs.length) {
+                console.warn(
+                    `updateDbAfterOffchainTx: inputs length (${inputs.length}) differs from signedCheckpointTxs length (${signedCheckpointTxs.length})`
+                );
+            }
+
+            const safeLength = Math.min(
+                inputs.length,
+                signedCheckpointTxs.length
+            );
             for (const [inputIndex, input] of inputs.entries()) {
                 const vtxo = extendVirtualCoin(this, input);
 
-                const checkpointB64 = signedCheckpointTxs[inputIndex];
-                const checkpoint = Transaction.fromPSBT(
-                    base64.decode(checkpointB64)
-                );
+                if (
+                    inputIndex < safeLength &&
+                    signedCheckpointTxs[inputIndex]
+                ) {
+                    const checkpoint = Transaction.fromPSBT(
+                        base64.decode(signedCheckpointTxs[inputIndex])
+                    );
 
-                spentVtxos.push({
-                    ...vtxo,
-                    virtualStatus: { ...vtxo.virtualStatus, state: "spent" },
-                    spentBy: checkpoint.id,
-                    arkTxId: arkTxid,
-                    isSpent: true,
-                });
+                    spentVtxos.push({
+                        ...vtxo,
+                        virtualStatus: {
+                            ...vtxo.virtualStatus,
+                            state: "spent",
+                        },
+                        spentBy: checkpoint.id,
+                        arkTxId: arkTxid,
+                        isSpent: true,
+                    });
+                } else {
+                    spentVtxos.push({
+                        ...vtxo,
+                        virtualStatus: {
+                            ...vtxo.virtualStatus,
+                            state: "spent",
+                        },
+                        arkTxId: arkTxid,
+                        isSpent: true,
+                    });
+                }
 
                 if (vtxo.virtualStatus.commitmentTxIds) {
                     for (const id of vtxo.virtualStatus.commitmentTxIds) {
@@ -2000,8 +2276,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 await this.walletRepository.saveVtxos(addr, spentVtxos);
             }
 
-            for (const utxoId of boardingUtxoToRemove) {
-                await this.walletRepository.removeUtxo(boardingAddress, utxoId);
+            if (boardingUtxoToRemove.size > 0) {
+                const currentUtxos =
+                    await this.walletRepository.getUtxos(boardingAddress);
+                const filtered = currentUtxos.filter(
+                    (u) => !boardingUtxoToRemove.has(`${u.txid}:${u.vout}`)
+                );
+                // Clear and re-save the filtered list
+                await this.walletRepository.deleteUtxos(boardingAddress);
+                if (filtered.length > 0) {
+                    await this.walletRepository.saveUtxos(
+                        boardingAddress,
+                        filtered
+                    );
+                }
             }
         } catch (e) {
             console.warn("error updating repository after settle", e);
@@ -2016,10 +2304,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
  * @returns Selected coins and change amount
  */
 export function selectVirtualCoins(
-    coins: VirtualCoin[],
+    coins: ExtendedVirtualCoin[],
     targetAmount: number
 ): {
-    inputs: VirtualCoin[];
+    inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
     // Sort VTXOs by expiry (ascending) and amount (descending)
@@ -2035,7 +2323,7 @@ export function selectVirtualCoins(
         return b.value - a.value; // Larger amount first
     });
 
-    const selectedCoins: VirtualCoin[] = [];
+    const selectedCoins: ExtendedVirtualCoin[] = [];
     let selectedAmount = 0;
 
     // Select coins until we have enough

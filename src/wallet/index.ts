@@ -3,10 +3,13 @@ import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { StorageAdapter } from "../storage";
 import { RenewalConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
+import { ContractWatcherConfig } from "../contracts/contractWatcher";
+import { ContractRepository, WalletRepository } from "../repositories";
+import { IContractManager } from "../contracts/contractManager";
+import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
 
 /**
@@ -30,7 +33,7 @@ export interface BaseWalletConfig {
     arkServerPublicKey?: string;
     boardingTimelock?: RelativeTimelock;
     exitTimelock?: RelativeTimelock;
-    storage?: StorageAdapter;
+    storage?: StorageConfig;
     arkProvider?: ArkProvider;
     indexerProvider?: IndexerProvider;
     onchainProvider?: OnchainProvider;
@@ -66,6 +69,11 @@ export interface BaseWalletConfig {
  */
 export interface ReadonlyWalletConfig extends BaseWalletConfig {
     identity: ReadonlyIdentity;
+    /**
+     * Configuration for the ContractManager's watcher.
+     * Controls reconnection behavior and failsafe polling.
+     */
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
 }
 
 /**
@@ -107,6 +115,11 @@ export interface WalletConfig extends ReadonlyWalletConfig {
     renewalConfig?: RenewalConfig;
 }
 
+export type StorageConfig = {
+    walletRepository: WalletRepository;
+    contractRepository: ContractRepository;
+};
+
 /**
  * Provider class constructor interface for dependency injection.
  * Ensures provider classes follow the consistent constructor pattern.
@@ -134,7 +147,7 @@ export interface SendBitcoinParams {
     amount: number;
     feeRate?: number;
     memo?: string;
-    selectedVtxos?: VirtualCoin[];
+    selectedVtxos?: ExtendedVirtualCoin[];
 }
 
 export interface Asset {
@@ -323,7 +336,11 @@ export interface IWallet extends IReadonlyWallet {
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string>;
     send(...recipients: Recipient[]): Promise<string>;
+
+    // TODO: this needs to be async or find a workaround
     assetManager: IAssetManager;
+
+    getDelegatorManager(): Promise<IDelegatorManager | undefined>;
 }
 
 /**
@@ -343,6 +360,12 @@ export interface IReadonlyWallet {
     getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]>;
     getBoardingUtxos(): Promise<ExtendedCoin[]>;
     getTransactionHistory(): Promise<ArkTransaction[]>;
+
+    /**
+     * Returns the contract manager associated with this wallet.
+     * This is useful for querying contract state and watching for contract events.
+     */
+    getContractManager(): Promise<IContractManager>;
 
     assetManager: IReadonlyAssetManager;
 }

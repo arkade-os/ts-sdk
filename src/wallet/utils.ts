@@ -1,4 +1,3 @@
-import { TransactionOutput } from "@scure/btc-signer/psbt";
 import { Recipient } from ".";
 import {
     ArkAddress,
@@ -7,7 +6,12 @@ import {
     type ExtendedVirtualCoin,
     type VirtualCoin,
 } from "..";
+import type { Contract } from "../contracts/types";
+import { contractHandlers } from "../contracts/handlers";
+import { DefaultVtxo } from "../script/default";
+import { DelegateVtxo } from "../script/delegate";
 import { ReadonlyWallet } from "./wallet";
+import { hex } from "@scure/base";
 import { Bytes } from "@scure/btc-signer/utils";
 
 export const DUST_AMOUNT = 546; // sats
@@ -34,6 +38,30 @@ export function extendCoin(
         intentTapLeafScript: wallet.boardingTapscript.forfeit(),
         tapTree: wallet.boardingTapscript.encode(),
     };
+}
+
+export function extendVtxoFromContract(
+    vtxo: VirtualCoin,
+    contract: Contract
+): ExtendedVirtualCoin {
+    const handler = contractHandlers.get(contract.type);
+    if (!handler) {
+        throw new Error(`No handler for contract type '${contract.type}'`);
+    }
+    const script = handler.createScript(contract.params) as
+        | DefaultVtxo.Script
+        | DelegateVtxo.Script;
+    return {
+        ...vtxo,
+        forfeitTapLeafScript: script.forfeit(),
+        intentTapLeafScript: script.forfeit(),
+        tapTree: script.encode(),
+    };
+}
+
+export function getRandomId(): string {
+    const randomValue = crypto.getRandomValues(new Uint8Array(16));
+    return hex.encode(randomValue);
 }
 
 export function isValidArkAddress(address: string): boolean {
