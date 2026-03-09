@@ -117,6 +117,7 @@ export class MessageBus {
         wallet?: Wallet;
         readonlyWallet: ReadonlyWallet;
     }>;
+    private readonly boundOnMessage = this.onMessage.bind(this);
 
     constructor(
         private readonly walletRepository: WalletRepository,
@@ -142,7 +143,7 @@ export class MessageBus {
         if (this.debug) console.log("MessageBus starting");
 
         // Hook message routing
-        self.addEventListener("message", this.onMessage.bind(this));
+        self.addEventListener("message", this.boundOnMessage);
 
         // activate service worker immediately
         self.addEventListener("install", () => {
@@ -168,7 +169,7 @@ export class MessageBus {
             this.tickTimeout = null;
         }
 
-        self.removeEventListener("message", this.onMessage.bind(this));
+        self.removeEventListener("message", this.boundOnMessage);
 
         await Promise.all(
             Array.from(this.handlers.values()).map((updater) => updater.stop())
@@ -330,6 +331,9 @@ export class MessageBus {
             if (this.debug) {
                 console.log("Init Command received");
             }
+            // Intentionally not wrapped with withTimeout: initialization
+            // performs network calls (buildServices) and handler startup
+            // that may legitimately exceed the message timeout.
             await this.waitForInit(event.data.config);
             event.source?.postMessage({ id, tag });
             if (this.debug) {
@@ -434,10 +438,12 @@ export class MessageBus {
         }
     }
 
-    private withTimeout<T>(
-        promise: Promise<T>,
-        label: string
-    ): Promise<T> {
+    /**
+     * Race `promise` against a timeout. Note: this does NOT cancel the
+     * underlying work — the original promise keeps running. This is safe
+     * here because only the caller (not the handler) posts the response.
+     */
+    private withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
         if (this.messageTimeoutMs <= 0) return promise;
         return new Promise((resolve, reject) => {
             const timer = self.setTimeout(() => {
