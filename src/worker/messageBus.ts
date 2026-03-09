@@ -73,6 +73,7 @@ export interface MessageHandler<
 type Options = {
     messageHandlers: MessageHandler[];
     tickIntervalMs?: number;
+    messageTimeoutMs?: number;
     debug?: boolean;
     buildServices?: (config: Initialize["config"]) => Promise<{
         arkProvider: ArkProvider;
@@ -103,6 +104,7 @@ type Initialize = {
 export class MessageBus {
     private handlers: Map<string, MessageHandler>;
     private tickIntervalMs: number;
+    private messageTimeoutMs: number;
     private running = false;
     private tickTimeout: number | null = null;
     private tickInProgress = false;
@@ -122,12 +124,14 @@ export class MessageBus {
         {
             messageHandlers,
             tickIntervalMs = 10_000,
+            messageTimeoutMs = 30_000,
             debug = false,
             buildServices,
         }: Options
     ) {
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
+        this.messageTimeoutMs = messageTimeoutMs;
         this.debug = debug;
         this.buildServicesFn = buildServices ?? this.buildServices.bind(this);
     }
@@ -196,7 +200,10 @@ export class MessageBus {
 
             for (const updater of this.handlers.values()) {
                 try {
-                    const response = await updater.tick(now);
+                    const response = await this.withTimeout(
+                        updater.tick(now),
+                        `${updater.messageTag}:tick`
+                    );
                     if (this.debug)
                         console.log(
                             `[${updater.messageTag}] outgoing tick response:`,
@@ -305,7 +312,18 @@ export class MessageBus {
         }
     }
 
-    private async onMessage(event: ExtendableMessageEvent) {
+    private onMessage(event: ExtendableMessageEvent) {
+        // Keep the service worker alive while async work is pending.
+        // Without this, the browser may terminate the SW mid-operation,
+        // causing all pending responses to be lost silently.
+        const promise = this.processMessage(event);
+        if (typeof event.waitUntil === "function") {
+            event.waitUntil(promise);
+        }
+        return promise;
+    }
+
+    private async processMessage(event: ExtendableMessageEvent) {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
 
         if (tag === "INITIALIZE_MESSAGE_BUS") {
@@ -357,7 +375,12 @@ export class MessageBus {
         if (broadcast) {
             const updaters = Array.from(this.handlers.values());
             const results = await Promise.allSettled(
-                updaters.map((updater) => updater.handleMessage(event.data))
+                updaters.map((updater) =>
+                    this.withTimeout(
+                        updater.handleMessage(event.data),
+                        updater.messageTag
+                    )
+                )
             );
 
             results.forEach((result, index) => {
@@ -395,7 +418,10 @@ export class MessageBus {
         }
 
         try {
-            const response = await updater.handleMessage(event.data);
+            const response = await this.withTimeout(
+                updater.handleMessage(event.data),
+                tag
+            );
             if (this.debug)
                 console.log(`[${tag}] outgoing response:`, response);
             if (response) {
@@ -406,6 +432,32 @@ export class MessageBus {
             const error = err instanceof Error ? err : new Error(String(err));
             event.source?.postMessage({ id, tag, error });
         }
+    }
+
+    private withTimeout<T>(
+        promise: Promise<T>,
+        label: string
+    ): Promise<T> {
+        if (this.messageTimeoutMs <= 0) return promise;
+        return new Promise((resolve, reject) => {
+            const timer = self.setTimeout(() => {
+                reject(
+                    new Error(
+                        `Message handler timed out after ${this.messageTimeoutMs}ms (${label})`
+                    )
+                );
+            }, this.messageTimeoutMs);
+            promise.then(
+                (val) => {
+                    self.clearTimeout(timer);
+                    resolve(val);
+                },
+                (err) => {
+                    self.clearTimeout(timer);
+                    reject(err);
+                }
+            );
+        });
     }
 
     /**
