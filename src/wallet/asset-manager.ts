@@ -42,7 +42,8 @@ export class AssetManager
     }
 
     /**
-     * Issue a new asset.
+     * Issue a new asset. Supports self-controlled assets (single-tx) and
+     * referencing an existing control asset.
      * @param params - Parameters for asset issuance
      * @param params.amount - Amount of asset units to issue
      * @param params.controlAssetId - Optional existing control asset ID (for reissuable assets)

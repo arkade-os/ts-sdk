@@ -1466,13 +1466,12 @@ describe("Asset integration tests", () => {
             const aliceAddress = await alice.wallet.getAddress();
 
             // fund alice with a single small VTXO (just above dust)
-            const fundAmount = 2_000;
+            const fundAmount = Number(alice.wallet.dustAmount) + 500;
             faucetOffchain(aliceAddress!, fundAmount);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
-            // verify alice has exactly 1 VTXO
-            let vtxos = await alice.wallet.getVtxos();
-            expect(vtxos.length).toBe(1);
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                return v.length === 1;
+            });
 
             // issue a self-controlled asset in a single transaction
             const result = await alice.wallet.assetManager.issue({
@@ -1483,11 +1482,14 @@ describe("Asset integration tests", () => {
             expect(result.arkTxId).toBeDefined();
             expect(result.assetId).toBeDefined();
 
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-
-            // verify the asset appears on a vtxo
-            vtxos = await alice.wallet.getVtxos();
-            expect(vtxos.length).toBeGreaterThan(0);
+            // wait for the asset to appear on a vtxo
+            let vtxos: Awaited<ReturnType<typeof alice.wallet.getVtxos>> = [];
+            await waitFor(async () => {
+                vtxos = await alice.wallet.getVtxos();
+                return vtxos.some((v) =>
+                    v.assets?.some((a) => a.assetId === result.assetId)
+                );
+            });
 
             const allAssets = vtxos.flatMap((v) => v.assets ?? []);
             const issuedAsset = allAssets.find(
@@ -1503,9 +1505,16 @@ describe("Asset integration tests", () => {
             });
             expect(reissueTxid).toBeDefined();
 
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            // wait for reissued amount to appear
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                const total = v
+                    .flatMap((c) => c.assets ?? [])
+                    .filter((a) => a.assetId === result.assetId)
+                    .reduce((sum, a) => sum + a.amount, 0);
+                return total === 1500;
+            });
 
-            // verify total is 1000 + 500
             const vtxosAfter = await alice.wallet.getVtxos();
             const totalAmount = vtxosAfter
                 .flatMap((v) => v.assets ?? [])
@@ -1522,25 +1531,26 @@ describe("Asset integration tests", () => {
             const alice = await createTestArkWallet();
             const aliceAddress = await alice.wallet.getAddress();
 
-            // fund alice with a single small VTXO
-            const fundAmount = 2_000;
+            // fund alice with a single small VTXO (just above dust)
+            const fundAmount = Number(alice.wallet.dustAmount) + 500;
             faucetOffchain(aliceAddress!, fundAmount);
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-
-            // verify alice has exactly 1 VTXO
-            let vtxos = await alice.wallet.getVtxos();
-            expect(vtxos.length).toBe(1);
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                return v.length === 1;
+            });
 
             // first issuance to create a control asset
             const controlResult = await alice.wallet.assetManager.issue({
                 amount: 1,
             });
 
-            await new Promise((resolve) => setTimeout(resolve, 3000));
-
-            // verify alice still has VTXOs (the control token is on one)
-            vtxos = await alice.wallet.getVtxos();
-            expect(vtxos.length).toBeGreaterThan(0);
+            // wait for the control token to appear
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                return v.some((c) =>
+                    c.assets?.some((a) => a.assetId === controlResult.assetId)
+                );
+            });
 
             // second issuance using the control asset — this is the bug scenario:
             // the only VTXO carries the control token, so issue() must select it
@@ -1552,10 +1562,17 @@ describe("Asset integration tests", () => {
             expect(issueResult.arkTxId).toBeDefined();
             expect(issueResult.assetId).toBeDefined();
 
-            await new Promise((resolve) => setTimeout(resolve, 1000));
+            // wait for both the issued asset and control asset to appear
+            let vtxos: Awaited<ReturnType<typeof alice.wallet.getVtxos>> = [];
+            await waitFor(async () => {
+                vtxos = await alice.wallet.getVtxos();
+                const assets = vtxos.flatMap((v) => v.assets ?? []);
+                return (
+                    assets.some((a) => a.assetId === issueResult.assetId) &&
+                    assets.some((a) => a.assetId === controlResult.assetId)
+                );
+            });
 
-            // verify both the issued asset and control asset appear
-            vtxos = await alice.wallet.getVtxos();
             const allAssets = vtxos.flatMap((v) => v.assets ?? []);
 
             const issuedAsset = allAssets.find(
