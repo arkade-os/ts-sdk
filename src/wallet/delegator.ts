@@ -2,6 +2,7 @@ import { TransactionOutput } from "@scure/btc-signer/psbt";
 import {
     ArkAddress,
     ArkProvider,
+    Asset,
     decodeTapscript,
     DelegateInfo,
     Estimator,
@@ -12,8 +13,10 @@ import {
     isRecoverable,
     MultisigTapscript,
     Outpoint,
+    Recipient,
     SignedIntent,
     Transaction,
+    VirtualCoin,
     VtxoScript,
 } from "..";
 import { DelegatorProvider } from "../providers/delegator";
@@ -23,6 +26,8 @@ import { buildForfeitTxWithOutput } from "../forfeit";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils";
 import { getNetwork, NetworkName } from "../networks";
+import { createAssetPacket } from "./asset";
+import { Extension } from "../extension";
 
 export interface IDelegatorManager {
     delegate(
@@ -369,6 +374,57 @@ async function makeSignedDelegateIntent(
     cosignerPubKeys: string[],
     validAt: number
 ): Promise<SignedIntent<Intent.RegisterMessage>> {
+    // if some of the inputs hold assets, build the asset packet and append as output
+    // in the intent proof tx, there is a "fake" input at index 0
+    // so the real coin indices are offset by +1
+    const assetInputs = new Map<number, Asset[]>();
+    for (let i = 0; i < coins.length; i++) {
+        if ("assets" in coins[i]) {
+            const assets = (coins[i] as unknown as VirtualCoin).assets;
+            if (assets && assets.length > 0) {
+                assetInputs.set(i + 1, assets);
+            }
+        }
+    }
+
+    let outputAssets: Asset[] | undefined;
+    let assetOutputIndex: number | undefined; // where to send the assets
+
+    if (assetInputs.size > 0) {
+        // collect all input assets and assign them to the first offchain output
+        const allAssets = new Map<string, bigint>();
+        for (const [, assets] of assetInputs) {
+            for (const asset of assets) {
+                const existing = allAssets.get(asset.assetId) ?? 0n;
+                allAssets.set(asset.assetId, existing + BigInt(asset.amount));
+            }
+        }
+
+        outputAssets = [];
+        for (const [assetId, amount] of allAssets) {
+            outputAssets.push({ assetId, amount: Number(amount) });
+        }
+
+        const firstOffchainIndex = outputs.findIndex(
+            (_, i) => !onchainOutputsIndexes.includes(i)
+        );
+        if (firstOffchainIndex === -1) {
+            throw new Error("Cannot settle assets without an offchain output");
+        }
+        assetOutputIndex = firstOffchainIndex;
+    }
+
+    const recipients: Recipient[] = outputs.map((output, i) => ({
+        address: "", // not needed for asset packet creation
+        amount: Number(output.amount),
+        assets: i === assetOutputIndex ? outputAssets : undefined,
+    }));
+
+    if (outputAssets && outputAssets.length > 0) {
+        const assetPacket = createAssetPacket(assetInputs, recipients);
+        outputs.push(Extension.create([assetPacket]).txOut());
+    }
+
     const message: Intent.RegisterMessage = {
         type: "register",
         onchain_output_indexes: onchainOutputsIndexes,
