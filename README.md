@@ -318,13 +318,15 @@ VTXOs have an expiration time (batch expiry). The SDK provides the `VtxoManager`
 
 #### Settlement Configuration
 
-The recommended way to configure `VtxoManager` is via `settlementConfig` on the wallet:
+The recommended way to configure `VtxoManager` is via `settlementConfig` on the wallet.
+If you omit `settlementConfig`, settlement is enabled with the default behavior:
+VTXO renewal at 3 days and boarding UTXO sweep enabled.
 
 ```typescript
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Enable settlement with defaults (VTXO renewal at 3 days, no boarding sweep)
+  // Enable settlement with defaults explicitly
   settlementConfig: {},
 })
 ```

@@ -116,7 +116,7 @@ export interface WalletConfig extends ReadonlyWalletConfig {
     renewalConfig?: RenewalConfig;
     /**
      * Configuration for automatic settlement and renewal.
-     * `false` = explicitly disabled, `undefined` = disabled by default, `{}` = enabled with defaults.
+     * `false` = explicitly disabled, `undefined` = enabled by default, `{}` = enabled with defaults.
      */
     settlementConfig?: SettlementConfig | false;
 }
