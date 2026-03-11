@@ -1255,6 +1255,16 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             );
         });
 
+        it("should have sweep enabled with empty settlementConfig (defaults apply)", async () => {
+            const wallet = createMockWalletWithBoarding([]);
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            // Empty {} should apply DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep (true)
+            await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "No expired boarding UTXOs to sweep"
+            );
+        });
+
         it("should throw when no expired boarding UTXOs found", async () => {
             const wallet = createMockWalletWithBoarding([]);
             const manager = new VtxoManager(wallet, undefined, {

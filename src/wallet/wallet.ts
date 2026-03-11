@@ -1186,8 +1186,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const boardingTimelock = exitScript.params.timelock;
 
+            // For block-based timelocks, fetch the chain tip height
+            let chainTipHeight: number | undefined;
+            if (boardingTimelock.type === "blocks") {
+                const tip = await this.onchainProvider.getChainTip();
+                chainTipHeight = tip.height;
+            }
+
             const boardingUtxos = (await this.getBoardingUtxos()).filter(
-                (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
+                (utxo) =>
+                    !hasBoardingTxExpired(
+                        utxo,
+                        boardingTimelock,
+                        chainTipHeight
+                    )
             );
 
             const filteredBoardingUtxos = [];
