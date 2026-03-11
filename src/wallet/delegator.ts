@@ -388,7 +388,9 @@ async function makeSignedDelegateIntent(
     }
 
     let outputAssets: Asset[] | undefined;
-    let assetOutputIndex: number | undefined; // where to send the assets
+
+    // add asset packet to the last output by default
+    let assetOutputIndex = outputs.length - 1;
 
     if (assetInputs.size > 0) {
         // collect all input assets and assign them to the first offchain output
@@ -404,14 +406,6 @@ async function makeSignedDelegateIntent(
         for (const [assetId, amount] of allAssets) {
             outputAssets.push({ assetId, amount: Number(amount) });
         }
-
-        const firstOffchainIndex = outputs.findIndex(
-            (_, i) => !onchainOutputsIndexes.includes(i)
-        );
-        if (firstOffchainIndex === -1) {
-            throw new Error("Cannot settle assets without an offchain output");
-        }
-        assetOutputIndex = firstOffchainIndex;
     }
 
     const recipients: Recipient[] = outputs.map((output, i) => ({
