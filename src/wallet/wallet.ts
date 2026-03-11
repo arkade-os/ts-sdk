@@ -82,7 +82,11 @@ import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
-import { IDelegatorManager, DelegatorManagerImpl } from "./delegator";
+import {
+    IDelegatorManager,
+    DelegatorManagerImpl,
+    findDestinationOutputIndex,
+} from "./delegator";
 import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
@@ -1266,10 +1270,22 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         let outputAssets: Asset[] | undefined;
-        let assetOutputIndex: number | undefined; // where to send the assets
+
+        const destinationScript = ArkAddress.decode(
+            await this.getAddress()
+        ).pkScript;
+        const assetOutputIndex = findDestinationOutputIndex(
+            outputs,
+            destinationScript
+        );
 
         if (assetInputs.size > 0) {
-            // collect all input assets and assign them to the first offchain output
+            if (assetOutputIndex === -1) {
+                throw new Error(
+                    "Cannot assign assets: no output matches the destination address"
+                );
+            }
+            // collect all input assets and assign them to the destination output
             const allAssets = new Map<string, bigint>();
             for (const [, assets] of assetInputs) {
                 for (const asset of assets) {
@@ -1285,16 +1301,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             for (const [assetId, amount] of allAssets) {
                 outputAssets.push({ assetId, amount: Number(amount) });
             }
-
-            const firstOffchainIndex = params.outputs.findIndex(
-                (_, i) => !onchainOutputIndexes.includes(i)
-            );
-            if (firstOffchainIndex === -1) {
-                throw new Error(
-                    "Cannot settle assets without an offchain output"
-                );
-            }
-            assetOutputIndex = firstOffchainIndex;
         }
 
         const recipients: Recipient[] = params.outputs.map((output, i) => ({
