@@ -82,25 +82,23 @@ export interface RenewalConfig {
  * 2. **Boarding UTXO sweep**: Sweep expired boarding UTXOs back to a fresh boarding address
  *    via the unilateral exit path (on-chain self-spend to restart the timelock)
  *
+ * Enabled by default when no config is provided.
  * Pass `false` to explicitly disable all settlement behavior.
- * Pass `{}` to enable with all defaults.
  *
  * @example
  * ```typescript
- * // Enable with defaults (VTXO renewal at 3 days, no boarding sweep)
+ * // Default behavior: VTXO renewal at 3 days + boarding sweep enabled
  * const wallet = await Wallet.create({
  *   identity: SingleKey.fromHex('...'),
  *   arkServerUrl: 'https://ark.example.com',
- *   settlementConfig: {},
  * });
  *
- * // Enable both VTXO renewal and boarding UTXO sweep
+ * // Custom threshold
  * const wallet = await Wallet.create({
  *   identity: SingleKey.fromHex('...'),
  *   arkServerUrl: 'https://ark.example.com',
  *   settlementConfig: {
  *     vtxoThreshold: 86400, // 24 hours in seconds
- *     boardingUtxoSweep: true,
  *   },
  * });
  *
@@ -127,7 +125,7 @@ export interface SettlementConfig {
      * with multiple inputs and one output. A dust check ensures the sweep is only
      * performed when the output after fees is above dust.
      *
-     * @default false
+     * @default true
      */
     boardingUtxoSweep?: boolean;
 }
@@ -146,7 +144,7 @@ export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
  */
 export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
     vtxoThreshold: DEFAULT_THRESHOLD_SECONDS,
-    boardingUtxoSweep: false,
+    boardingUtxoSweep: true,
 };
 
 /** Extracts the dust amount from the wallet, defaulting to 330 sats. */
@@ -351,7 +349,7 @@ export class VtxoManager {
         readonly renewalConfig?: RenewalConfig,
         settlementConfig?: SettlementConfig | false
     ) {
-        // Normalize: prefer settlementConfig, fall back to renewalConfig
+        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
         if (settlementConfig !== undefined) {
             this.settlementConfig = settlementConfig;
         } else if (renewalConfig && renewalConfig.enabled) {
@@ -360,8 +358,12 @@ export class VtxoManager {
                     ? renewalConfig.thresholdMs / 1000
                     : undefined,
             };
-        } else {
+        } else if (renewalConfig) {
+            // renewalConfig provided but not enabled → disabled
             this.settlementConfig = false;
+        } else {
+            // No config at all → enabled by default
+            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
         }
     }
 
