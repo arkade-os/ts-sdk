@@ -365,6 +365,34 @@ export class VtxoManager {
             // No config at all → enabled by default
             this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
         }
+
+        // Will try to renew and delegate any new vtxo received
+        const me = this;
+        Promise.all([
+            wallet.getDelegatorManager(),
+            wallet.getContractManager(),
+            wallet.getAddress(),
+        ])
+            .then(([delegatorManager, contractManager, destination]) => {
+                // TODO: implement disposal
+                const _stopWatching = contractManager.onContractEvent(
+                    (event) => {
+                        if (event.type === "vtxo_received") {
+                            me.renewVtxos().catch((e) => {
+                                console.error("Error renewing VTXOs:", e);
+                            }); // within 3 days
+                            delegatorManager
+                                ?.delegate(event.vtxos, destination)
+                                .catch((e) => {
+                                    console.error("Error delegating VTXOs:", e);
+                                });
+                        }
+                    }
+                );
+            })
+            .catch((e) => {
+                console.error("Error renewing VTXOs from VtxoManager", e);
+            });
     }
 
     // ========== Recovery Methods ==========
