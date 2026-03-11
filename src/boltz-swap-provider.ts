@@ -869,7 +869,7 @@ export type RestoredChainSwap = {
         lockupAddress: string;
         serverPublicKey: string;
         timeoutBlockHeight: number;
-        transaction: {
+        transaction?: {
             id: string;
             vout: number;
         };
@@ -893,10 +893,11 @@ export const isRestoredChainSwap = (data: any): data is RestoredChainSwap => {
         isTree(data.refundDetails.tree) &&
         typeof data.refundDetails.amount === "number" &&
         typeof data.refundDetails.keyIndex === "number" &&
-        data.refundDetails.transaction &&
-        typeof data.refundDetails.transaction === "object" &&
-        typeof data.refundDetails.transaction.id === "string" &&
-        typeof data.refundDetails.transaction.vout === "number" &&
+        (data.refundDetails.transaction === undefined ||
+            (data.refundDetails.transaction &&
+                typeof data.refundDetails.transaction === "object" &&
+                typeof data.refundDetails.transaction.id === "string" &&
+                typeof data.refundDetails.transaction.vout === "number")) &&
         typeof data.refundDetails.lockupAddress === "string" &&
         typeof data.refundDetails.serverPublicKey === "string" &&
         typeof data.refundDetails.timeoutBlockHeight === "number"
