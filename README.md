@@ -310,20 +310,59 @@ const settleTxid = await wallet.settle({
 
 ### VTXO Management (Renewal & Recovery)
 
-VTXOs have an expiration time (batch expiry). The SDK provides the `VtxoManager` class to handle both:
+VTXOs have an expiration time (batch expiry). The SDK provides the `VtxoManager` class to handle:
 
 - **Renewal**: Renew VTXOs before they expire to maintain unilateral control of the funds.
 - **Recovery**: Reclaim swept or expired VTXOs back to the wallet in case renewal window was missed.
+- **Boarding UTXO Sweep**: Sweep expired boarding UTXOs back to a fresh boarding address to restart the timelock.
+
+#### Settlement Configuration
+
+The recommended way to configure `VtxoManager` is via `settlementConfig` on the wallet:
+
+```typescript
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  // Enable settlement with defaults (VTXO renewal at 3 days, no boarding sweep)
+  settlementConfig: {},
+})
+```
+
+```typescript
+// Enable both VTXO renewal and boarding UTXO sweep
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  settlementConfig: {
+    vtxoThreshold: 86400,      // renew when 24 hours remain (in seconds)
+    boardingUtxoSweep: true,   // sweep expired boarding UTXOs
+  },
+})
+```
+
+```typescript
+// Explicitly disable all settlement
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl: 'https://mutinynet.arkade.sh',
+  settlementConfig: false,
+})
+```
+
+Create the `VtxoManager` by passing the wallet and its settlement config:
 
 ```typescript
 import { VtxoManager } from '@arkade-os/sdk'
 
-// Create manager with optional renewal configuration
-const manager = new VtxoManager(wallet, {
-  enabled: true,                   // Enable expiration monitoring
-  thresholdMs: 24 * 60 * 60 * 1000 // Alert when 24h hours % of lifetime remains (default)
-})
+const manager = new VtxoManager(
+  wallet,
+  undefined,               // deprecated renewalConfig
+  wallet.settlementConfig  // new settlementConfig
+)
 ```
+
+> **Migration from `renewalConfig`:** The old `renewalConfig` with `enabled` and `thresholdMs` (milliseconds) is still supported but deprecated. If both are provided, `settlementConfig` takes precedence. The new `vtxoThreshold` uses **seconds** instead of milliseconds.
 
 #### Renewal: Prevent Expiration
 
@@ -341,6 +380,26 @@ const expiringVtxos = await manager.getExpiringVtxos()
 const urgentlyExpiring = await manager.getExpiringVtxos(5_000)
 ```
 
+#### Boarding UTXO Sweep
+
+When a boarding UTXO's CSV timelock expires, it can no longer be onboarded into Ark cooperatively. The sweep feature detects these expired UTXOs and builds a raw on-chain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
+
+- Multiple expired UTXOs are batched into a single transaction (many inputs, one output)
+- A dust check ensures the sweep is skipped if fees would consume the entire value
+
+```typescript
+// Check for expired boarding UTXOs
+const expired = await manager.getExpiredBoardingUtxos()
+console.log(`${expired.length} expired boarding UTXOs`)
+
+// Sweep them back to a fresh boarding address (requires boardingUtxoSweep: true)
+try {
+  const txid = await manager.sweepExpiredBoardingUtxos()
+  console.log('Swept expired boarding UTXOs:', txid)
+} catch (e) {
+  // "No expired boarding UTXOs to sweep" or "Sweep not economical"
+}
+```
 
 #### Recovery: Reclaim Swept VTXOs
 

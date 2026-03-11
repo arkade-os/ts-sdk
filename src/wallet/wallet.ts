@@ -65,7 +65,11 @@ import {
     hasBoardingTxExpired,
     isValidArkAddress,
 } from "../utils/arkTransaction";
-import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
+import {
+    DEFAULT_RENEWAL_CONFIG,
+    DEFAULT_SETTLEMENT_CONFIG,
+    SettlementConfig,
+} from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -907,9 +911,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private _walletAssetManager?: IAssetManager;
 
+    /** @deprecated Use settlementConfig instead */
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
+
+    public readonly settlementConfig: SettlementConfig | false;
 
     protected constructor(
         identity: Identity,
@@ -927,9 +934,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
+        /** @deprecated Use settlementConfig */
         renewalConfig?: WalletConfig["renewalConfig"],
         delegatorProvider?: DelegatorProvider,
-        watcherConfig?: WalletConfig["watcherConfig"]
+        watcherConfig?: WalletConfig["watcherConfig"],
+        settlementConfig?: WalletConfig["settlementConfig"]
     ) {
         super(
             identity,
@@ -946,11 +955,29 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             watcherConfig
         );
         this.identity = identity;
+
+        // Backwards-compatible: keep renewalConfig populated for any code reading it
         this.renewalConfig = {
             enabled: renewalConfig?.enabled ?? false,
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
+
+        // Normalize: prefer settlementConfig, fall back to renewalConfig
+        if (settlementConfig !== undefined) {
+            this.settlementConfig = settlementConfig;
+        } else if (renewalConfig) {
+            this.settlementConfig =
+                renewalConfig.enabled === false
+                    ? false
+                    : {
+                          vtxoThreshold: renewalConfig.thresholdMs
+                              ? renewalConfig.thresholdMs / 1000
+                              : undefined,
+                      };
+        } else {
+            this.settlementConfig = false;
+        }
         this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
@@ -1005,7 +1032,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.contractRepository,
             config.renewalConfig,
             config.delegatorProvider,
-            config.watcherConfig
+            config.watcherConfig,
+            config.settlementConfig
         );
     }
 
