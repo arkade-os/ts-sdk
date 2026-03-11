@@ -3,10 +3,15 @@ import {
     VtxoManager,
     isVtxoExpiringSoon,
     DEFAULT_RENEWAL_CONFIG,
+    DEFAULT_SETTLEMENT_CONFIG,
+    DEFAULT_THRESHOLD_SECONDS,
     getExpiringAndRecoverableVtxos,
     DEFAULT_THRESHOLD_MS,
+    SettlementConfig,
 } from "../src/wallet/vtxo-manager";
-import { IWallet, ExtendedVirtualCoin } from "../src/wallet";
+import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
+import { CSVMultisigTapscript } from "../src/script/tapscript";
+import { hex } from "@scure/base";
 
 // Mock wallet implementation
 const createMockWallet = (
@@ -850,6 +855,349 @@ describe("VtxoManager - Renewal", () => {
             expect(wallet.settle).toHaveBeenCalledWith(
                 expect.any(Object),
                 callback
+            );
+        });
+    });
+});
+
+describe("SettlementConfig", () => {
+    describe("DEFAULT_SETTLEMENT_CONFIG", () => {
+        it("should have correct default values", () => {
+            expect(DEFAULT_SETTLEMENT_CONFIG.vtxoThreshold).toBe(
+                DEFAULT_THRESHOLD_SECONDS
+            );
+            expect(DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep).toBe(false);
+        });
+
+        it("should match DEFAULT_THRESHOLD_MS converted to seconds", () => {
+            expect(DEFAULT_THRESHOLD_SECONDS).toBe(DEFAULT_THRESHOLD_MS / 1000);
+        });
+    });
+
+    describe("VtxoManager constructor normalization", () => {
+        it("should set settlementConfig to false when no config provided", () => {
+            const wallet = createMockWallet();
+            const manager = new VtxoManager(wallet);
+
+            expect(manager.settlementConfig).toBe(false);
+        });
+
+        it("should use settlementConfig directly when provided", () => {
+            const wallet = createMockWallet();
+            const config: SettlementConfig = {
+                vtxoThreshold: 86400,
+                boardingUtxoSweep: true,
+            };
+            const manager = new VtxoManager(wallet, undefined, config);
+
+            expect(manager.settlementConfig).toEqual(config);
+        });
+
+        it("should accept empty object as settlementConfig (enable with defaults)", () => {
+            const wallet = createMockWallet();
+            const manager = new VtxoManager(wallet, undefined, {});
+
+            expect(manager.settlementConfig).toEqual({});
+        });
+
+        it("should accept false to explicitly disable", () => {
+            const wallet = createMockWallet();
+            const manager = new VtxoManager(wallet, undefined, false);
+
+            expect(manager.settlementConfig).toBe(false);
+        });
+
+        it("should normalize renewalConfig to settlementConfig when no settlementConfig given", () => {
+            const wallet = createMockWallet();
+            const manager = new VtxoManager(wallet, {
+                enabled: true,
+                thresholdMs: 86400000, // 1 day in ms
+            });
+
+            expect(manager.settlementConfig).toEqual({
+                vtxoThreshold: 86400, // converted to seconds
+            });
+        });
+
+        it("should normalize disabled renewalConfig to false", () => {
+            const wallet = createMockWallet();
+            const manager = new VtxoManager(wallet, { enabled: false });
+
+            expect(manager.settlementConfig).toBe(false);
+        });
+
+        it("should prefer settlementConfig over renewalConfig", () => {
+            const wallet = createMockWallet();
+            const manager = new VtxoManager(
+                wallet,
+                { enabled: true, thresholdMs: 999999 },
+                { vtxoThreshold: 42, boardingUtxoSweep: true }
+            );
+
+            expect(manager.settlementConfig).toEqual({
+                vtxoThreshold: 42,
+                boardingUtxoSweep: true,
+            });
+        });
+
+        it("should normalize renewalConfig without thresholdMs", () => {
+            const wallet = createMockWallet();
+            const manager = new VtxoManager(wallet, { enabled: true });
+
+            // No thresholdMs → vtxoThreshold should be undefined (use default at runtime)
+            expect(manager.settlementConfig).toEqual({
+                vtxoThreshold: undefined,
+            });
+        });
+    });
+
+    describe("getExpiringVtxos with settlementConfig", () => {
+        it("should use vtxoThreshold from settlementConfig (converted to ms)", async () => {
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            const vtxos: ExtendedVirtualCoin[] = [
+                {
+                    txid: "vtxo1",
+                    vout: 0,
+                    value: 5000,
+                    createdAt,
+                    virtualStatus: {
+                        state: "settled",
+                        batchExpiry: now + 50_000, // expires in 50 seconds
+                    },
+                } as ExtendedVirtualCoin,
+            ];
+            const wallet = createMockWallet(vtxos);
+            // 100 seconds threshold → 50s remaining is within threshold
+            const manager = new VtxoManager(wallet, undefined, {
+                vtxoThreshold: 100,
+            });
+
+            const expiring = await manager.getExpiringVtxos();
+
+            expect(expiring).toHaveLength(1);
+        });
+
+        it("should not return VTXOs outside settlementConfig threshold", async () => {
+            const now = Date.now();
+            const createdAt = new Date(now - 100_000);
+            const vtxos: ExtendedVirtualCoin[] = [
+                {
+                    txid: "vtxo1",
+                    vout: 0,
+                    value: 5000,
+                    createdAt,
+                    virtualStatus: {
+                        state: "settled",
+                        batchExpiry: now + 200_000, // expires in 200 seconds
+                    },
+                } as ExtendedVirtualCoin,
+            ];
+            const wallet = createMockWallet(vtxos);
+            // 100 seconds threshold → 200s remaining is NOT within threshold
+            const manager = new VtxoManager(wallet, undefined, {
+                vtxoThreshold: 100,
+            });
+
+            const expiring = await manager.getExpiringVtxos();
+
+            expect(expiring).toHaveLength(0);
+        });
+    });
+});
+
+describe("VtxoManager - Boarding UTXO Sweep", () => {
+    // Helper to create mock ExtendedCoin (boarding UTXO)
+    const createMockBoardingUtxo = (
+        value: number,
+        blockTime?: number
+    ): ExtendedCoin => {
+        return {
+            txid: `boarding-txid-${value}`,
+            vout: 0,
+            value,
+            status: {
+                confirmed: !!blockTime,
+                block_time: blockTime,
+            },
+        } as ExtendedCoin;
+    };
+
+    // Build a valid exit script for mocking the boarding tapscript
+    const mockPubkey = new Uint8Array(32).fill(0x01);
+    const csvScript = CSVMultisigTapscript.encode({
+        timelock: { type: "seconds", value: 604672n }, // ~7 days, multiple of 512
+        pubkeys: [mockPubkey],
+    });
+    const exitScriptHex = hex.encode(csvScript.script);
+
+    // Mock wallet with boarding UTXO support
+    const createMockWalletWithBoarding = (
+        boardingUtxos: ExtendedCoin[] = [],
+        opts: {
+            boardingAddress?: string;
+            feeRate?: number;
+        } = {}
+    ) => {
+        const { boardingAddress = "bcrt1qtest", feeRate = 1 } = opts;
+
+        const mockPkScript = new Uint8Array([
+            0x51,
+            0x20,
+            ...new Array(32).fill(0),
+        ]); // P2TR-like
+
+        return {
+            getVtxos: vi.fn().mockResolvedValue([]),
+            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            settle: vi.fn().mockResolvedValue("mock-txid"),
+            dustAmount: 330n,
+            getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+            getBoardingAddress: vi.fn().mockResolvedValue(boardingAddress),
+            boardingTapscript: {
+                exitScript: exitScriptHex,
+                pkScript: mockPkScript,
+                exit: vi.fn().mockReturnValue([
+                    {
+                        version: 0xc0,
+                        internalKey: new Uint8Array(32),
+                        merklePath: [new Uint8Array(32)],
+                    },
+                    new Uint8Array([0xc0, 0x01, 0x02, 0x03]),
+                ]),
+            },
+            onchainProvider: {
+                getFeeRate: vi.fn().mockResolvedValue(feeRate),
+                broadcastTransaction: vi.fn().mockResolvedValue("sweep-txid"),
+            },
+            network: {
+                bech32: "bcrt",
+                pubKeyHash: 0x6f,
+                scriptHash: 0xc4,
+                wif: 0xef,
+            },
+            identity: {
+                sign: vi.fn().mockImplementation((tx: any) => tx),
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
+            },
+        } as any;
+    };
+
+    describe("getExpiredBoardingUtxos", () => {
+        it("should return empty array when no boarding UTXOs", async () => {
+            const wallet = createMockWalletWithBoarding([]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(0);
+        });
+
+        it("should filter out unconfirmed UTXOs (no block_time)", async () => {
+            const utxos = [createMockBoardingUtxo(10000, undefined)];
+            const wallet = createMockWalletWithBoarding(utxos);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(0);
+        });
+
+        it("should return expired UTXOs when timelock is satisfied", async () => {
+            // The CSV timelock is 604672 seconds (~7 days)
+            // block_time far in the past → timelock satisfied
+            const pastBlockTime = Math.floor(Date.now() / 1000) - 700_000;
+            const utxos = [
+                createMockBoardingUtxo(50000, pastBlockTime),
+                createMockBoardingUtxo(30000, pastBlockTime),
+            ];
+            const wallet = createMockWalletWithBoarding(utxos);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(2);
+        });
+
+        it("should filter out UTXOs whose timelock is not yet satisfied", async () => {
+            // block_time is very recent → timelock NOT satisfied
+            const recentBlockTime = Math.floor(Date.now() / 1000) - 60;
+            const utxos = [createMockBoardingUtxo(50000, recentBlockTime)];
+            const wallet = createMockWalletWithBoarding(utxos);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(0);
+        });
+
+        it("should return mixed results (some expired, some not)", async () => {
+            const pastBlockTime = Math.floor(Date.now() / 1000) - 700_000;
+            const recentBlockTime = Math.floor(Date.now() / 1000) - 60;
+            const utxos = [
+                createMockBoardingUtxo(50000, pastBlockTime), // expired
+                createMockBoardingUtxo(30000, recentBlockTime), // not expired
+                createMockBoardingUtxo(20000, undefined), // unconfirmed
+            ];
+            const wallet = createMockWalletWithBoarding(utxos);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(1);
+            expect(expired[0].value).toBe(50000);
+        });
+    });
+
+    describe("sweepExpiredBoardingUtxos", () => {
+        it("should throw when boarding UTXO sweep is not enabled", async () => {
+            const wallet = createMockWalletWithBoarding();
+
+            // No settlementConfig (disabled)
+            const manager1 = new VtxoManager(wallet);
+            await expect(manager1.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "Boarding UTXO sweep is not enabled"
+            );
+
+            // Explicitly false
+            const manager2 = new VtxoManager(wallet, undefined, false);
+            await expect(manager2.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "Boarding UTXO sweep is not enabled"
+            );
+
+            // Enabled but boardingUtxoSweep not set
+            const manager3 = new VtxoManager(wallet, undefined, {});
+            await expect(manager3.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "Boarding UTXO sweep is not enabled"
+            );
+
+            // Enabled but boardingUtxoSweep explicitly false
+            const manager4 = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+            });
+            await expect(manager4.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "Boarding UTXO sweep is not enabled"
+            );
+        });
+
+        it("should throw when no expired boarding UTXOs found", async () => {
+            const wallet = createMockWalletWithBoarding([]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "No expired boarding UTXOs to sweep"
             );
         });
     });

@@ -114,6 +114,7 @@ export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
     boardingUtxoSweep: false,
 };
 
+/** Extracts the dust amount from the wallet, defaulting to 330 sats. */
 function getDustAmount(wallet: IWallet): bigint {
     return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : 330n;
 }
@@ -703,6 +704,7 @@ export class VtxoManager {
 
     // ========== Private Helpers ==========
 
+    /** Decodes the boarding tapscript exit path to extract the CSV timelock. */
     private getBoardingTimelock() {
         const wallet = this.wallet as unknown as {
             boardingTapscript: { exitScript: string };
@@ -713,6 +715,7 @@ export class VtxoManager {
         return exitScript.params.timelock;
     }
 
+    /** Returns the TapLeafScript for the boarding tapscript's exit (CSV) path. */
     private getBoardingExitLeaf() {
         const wallet = this.wallet as unknown as {
             boardingTapscript: {
@@ -724,6 +727,7 @@ export class VtxoManager {
         return wallet.boardingTapscript.exit();
     }
 
+    /** Returns the pkScript (output script) of the boarding tapscript. */
     private getBoardingOutputScript() {
         const wallet = this.wallet as unknown as {
             boardingTapscript: { pkScript: Uint8Array };
@@ -731,6 +735,7 @@ export class VtxoManager {
         return wallet.boardingTapscript.pkScript;
     }
 
+    /** Returns the on-chain provider for fee estimation and broadcasting. */
     private getOnchainProvider() {
         const wallet = this.wallet as unknown as {
             onchainProvider: import("../providers/onchain").OnchainProvider;
@@ -738,6 +743,7 @@ export class VtxoManager {
         return wallet.onchainProvider;
     }
 
+    /** Returns the Bitcoin network configuration from the wallet. */
     private getNetwork() {
         const wallet = this.wallet as unknown as {
             network: import("../networks").Network;
@@ -745,6 +751,7 @@ export class VtxoManager {
         return wallet.network;
     }
 
+    /** Returns the wallet's identity for transaction signing. */
     private getIdentity() {
         return this.wallet.identity;
     }
