@@ -179,7 +179,7 @@ export type PendingSwap =
     | PendingSubmarineSwap
     | PendingChainSwap;
 
-/** Configuration for initializing ArkadeSwaps. */
+/** Configuration for initializing ArkadeSwaps via the constructor (swapProvider is required). */
 export interface ArkadeSwapsConfig {
     /** An IWallet instance from @arkade-os/sdk (must expose arkProvider and indexerProvider). */
     wallet: IWallet;
@@ -190,9 +190,9 @@ export interface ArkadeSwapsConfig {
     /** Explicit IndexerProvider. Falls back to wallet.indexerProvider if omitted. */
     indexerProvider?: IndexerProvider;
     /**
-     * Enable background swap monitoring and autonomous actions.
-     * - `false` or `undefined`: SwapManager disabled
-     * - `true`: SwapManager enabled with default configuration
+     * Background swap monitoring and autonomous actions (enabled by default).
+     * - `undefined` or `true`: SwapManager enabled with default configuration
+     * - `false`: SwapManager disabled
      * - `SwapManagerConfig` object: SwapManager enabled with custom configuration
      */
     swapManager?: boolean | (SwapManagerConfig & { autoStart?: boolean });
@@ -203,6 +203,17 @@ export interface ArkadeSwapsConfig {
      */
     swapRepository?: SwapRepository;
 }
+
+/**
+ * Configuration for {@link ArkadeSwaps.create} — same as ArkadeSwapsConfig but
+ * `swapProvider` is optional (auto-created from the wallet's network if omitted).
+ */
+export type ArkadeSwapsCreateConfig = Omit<
+    ArkadeSwapsConfig,
+    "swapProvider"
+> & {
+    swapProvider?: BoltzSwapProvider;
+};
 
 /** A decoded BOLT11 Lightning invoice. */
 export interface DecodedInvoice {

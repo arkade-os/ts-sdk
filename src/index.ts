@@ -69,6 +69,7 @@ export type {
     SendLightningPaymentRequest,
     IncomingPaymentSubscription,
     ArkadeSwapsConfig,
+    ArkadeSwapsCreateConfig,
     PendingSubmarineSwap,
     PendingReverseSwap,
     ChainFeesResponse,

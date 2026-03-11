@@ -242,12 +242,13 @@ describe("ArkadeSwaps", () => {
             }),
         });
 
-        // Create ArkadeSwaps instance
+        // Create ArkadeSwaps instance (disable SwapManager for manual swap tests)
         swaps = new ArkadeSwaps({
             wallet,
             swapProvider,
             arkProvider,
             indexerProvider,
+            swapManager: false,
         });
 
         // Mock console.error to avoid polluting test output

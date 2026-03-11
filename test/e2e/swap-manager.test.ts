@@ -48,12 +48,13 @@ describe("SwapManager", () => {
             }),
         });
 
-        // Create ArkadeSwaps instance
+        // Create ArkadeSwaps instance without SwapManager (for baseline tests)
         swaps = new ArkadeSwaps({
             wallet,
             swapProvider,
             arkProvider,
             indexerProvider,
+            swapManager: false,
         });
 
         // Mock console.error to avoid polluting test output
@@ -113,8 +114,8 @@ describe("SwapManager", () => {
             expect(swapManagerInstance.getSwapManager()).toBeNull();
         });
 
-        it("should have null swapManager when not configured", () => {
-            // assert - using the default instance without swapManager
+        it("should have null swapManager when explicitly disabled", () => {
+            // assert - using the instance with swapManager: false
             expect(swaps.getSwapManager()).toBeNull();
         });
 

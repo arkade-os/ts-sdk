@@ -475,6 +475,7 @@ describe("ArkadeSwaps", () => {
             swapProvider,
             indexerProvider,
             swapRepository: mockSwapRepository,
+            swapManager: false,
         });
     });
 

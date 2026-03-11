@@ -20,6 +20,7 @@ import {
 } from "@arkade-os/sdk";
 import type {
     Chain,
+    Network,
     LimitsResponse,
     FeesResponse,
     ChainFeesResponse,
@@ -28,6 +29,7 @@ import type {
     PendingSubmarineSwap,
     PendingSwap,
     ArkadeSwapsConfig,
+    ArkadeSwapsCreateConfig,
     CreateLightningInvoiceRequest,
     CreateLightningInvoiceResponse,
     SendLightningPaymentRequest,
@@ -114,6 +116,42 @@ export class ArkadeSwaps {
     /** Storage backend for persisting swap data. */
     readonly swapRepository: SwapRepository;
 
+    /**
+     * Creates an ArkadeSwaps instance, auto-detecting the network from the wallet's Ark server.
+     * If no `swapProvider` is given, one is created automatically using the detected network.
+     *
+     * This is the recommended way to initialize ArkadeSwaps.
+     *
+     * @param config - Configuration options. swapProvider is auto-created from the wallet's network if omitted.
+     * @returns A fully initialized ArkadeSwaps instance.
+     *
+     * @example
+     * ```ts
+     * const swaps = await ArkadeSwaps.create({
+     *   wallet,
+     *   swapManager: true,
+     * });
+     * ```
+     */
+    static async create(config: ArkadeSwapsCreateConfig): Promise<ArkadeSwaps> {
+        if (config.swapProvider) {
+            return new ArkadeSwaps(config as ArkadeSwapsConfig);
+        }
+
+        const arkProvider =
+            config.arkProvider ?? (config.wallet as any).arkProvider;
+        if (!arkProvider)
+            throw new Error(
+                "Ark provider is required either in wallet or config."
+            );
+
+        const arkInfo = await arkProvider.getInfo();
+        const network = arkInfo.network as Network;
+        const swapProvider = new BoltzSwapProvider({ network });
+
+        return new ArkadeSwaps({ ...config, swapProvider });
+    }
+
     constructor(config: ArkadeSwapsConfig) {
         if (!config.wallet) throw new Error("Wallet is required.");
         if (!config.swapProvider) throw new Error("Swap provider is required.");
@@ -121,7 +159,7 @@ export class ArkadeSwaps {
         this.wallet = config.wallet;
         // Prioritize wallet providers, fallback to config providers for backward compatibility
         const arkProvider =
-            (config.wallet as any).arkProvider ?? config.arkProvider;
+            config.arkProvider ?? (config.wallet as any).arkProvider;
         if (!arkProvider)
             throw new Error(
                 "Ark provider is required either in wallet or config."
@@ -129,7 +167,7 @@ export class ArkadeSwaps {
         this.arkProvider = arkProvider;
 
         const indexerProvider =
-            (config.wallet as any).indexerProvider ?? config.indexerProvider;
+            config.indexerProvider ?? (config.wallet as any).indexerProvider;
         if (!indexerProvider)
             throw new Error(
                 "Indexer provider is required either in wallet or config."
@@ -145,13 +183,15 @@ export class ArkadeSwaps {
             this.swapRepository = new IndexedDbSwapRepository();
         }
 
-        // Initialize SwapManager if config is provided
-        // - true: use defaults
+        // Initialize SwapManager (enabled by default)
+        // - true/undefined: use defaults
         // - object: use provided config
-        // - false/undefined: disabled
-        if (config.swapManager) {
+        // - false: disabled
+        if (config.swapManager !== false) {
             const swapManagerConfig =
-                config.swapManager === true ? {} : config.swapManager;
+                !config.swapManager || config.swapManager === true
+                    ? {}
+                    : config.swapManager;
 
             // Extract autostart (defaults to true) before passing to SwapManager
             const shouldAutostart = swapManagerConfig.autoStart ?? true;
