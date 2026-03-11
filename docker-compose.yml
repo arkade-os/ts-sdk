@@ -48,7 +48,7 @@ services:
 
     arkd-wallet:
         restart: unless-stopped
-        image: http://ghcr.io/arkade-os/arkd:v0.9.0
+        image: ghcr.io/arkade-os/arkd:v0.9.0
 #        build:
 #            context: .
 #            dockerfile: wallet.Dockerfile
@@ -67,7 +67,7 @@ services:
             - type: tmpfs
               target: /app/data
     arkd:
-        image: http://ghcr.io/arkade-os/arkd:v0.9.0
+        image: ghcr.io/arkade-os/arkd:v0.9.0
         # temporarily using image
 #        build:
 #            context: .
