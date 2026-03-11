@@ -3,7 +3,7 @@ import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
-import { RenewalConfig } from "./vtxo-manager";
+import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
@@ -99,20 +99,26 @@ export interface ReadonlyWalletConfig extends BaseWalletConfig {
  *   onchainProvider: new EsploraProvider('https://mempool.space/api')
  * });
  *
- * // With renewal configuration
+ * // With settlement configuration
  * const wallet = await Wallet.create({
  *   identity: SingleKey.fromHex('...'),
  *   arkServerUrl: 'https://ark.example.com',
- *   renewalConfig: {
- *     enabled: true,
- *     thresholdMs: 86400000, // 24 hours
- *   }
+ *   settlementConfig: {
+ *     vtxoThreshold: 86400, // 24 hours in seconds
+ *     boardingUtxoSweep: true,
+ *   },
  * });
  * ```
  */
 export interface WalletConfig extends ReadonlyWalletConfig {
     identity: Identity;
+    /** @deprecated Use settlementConfig instead */
     renewalConfig?: RenewalConfig;
+    /**
+     * Configuration for automatic settlement and renewal.
+     * `false` = explicitly disabled, `undefined` = disabled by default, `{}` = enabled with defaults.
+     */
+    settlementConfig?: SettlementConfig | false;
 }
 
 export type StorageConfig = {
