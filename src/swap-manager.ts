@@ -67,6 +67,7 @@ export interface SwapManagerConfig {
     events?: SwapManagerEvents;
 }
 
+/** Event callbacks for swap lifecycle events. Can be provided in config or registered via on/off methods. */
 export interface SwapManagerEvents {
     onSwapUpdate?: (swap: PendingSwap, oldStatus: BoltzSwapStatus) => void;
     onSwapCompleted?: (swap: PendingSwap) => void;
@@ -76,35 +77,52 @@ export interface SwapManagerEvents {
     onWebSocketDisconnected?: (error?: Error) => void;
 }
 
-// Event listener types
+/** Callback for swap status changes. Receives the updated swap and its previous status. */
 type SwapUpdateListener = (
     swap: PendingSwap,
     oldStatus: BoltzSwapStatus
 ) => void;
+/** Callback for swap completions (final success state reached). */
 type SwapCompletedListener = (swap: PendingSwap) => void;
+/** Callback for swap failures. Includes the error that caused the failure. */
 type SwapFailedListener = (swap: PendingSwap, error: Error) => void;
+/** Callback after a swap action (claim/refund) has been executed. */
 type ActionExecutedListener = (swap: PendingSwap, action: Actions) => void;
+/** Callback when the WebSocket connection is established. */
 type WebSocketConnectedListener = () => void;
+/** Callback when the WebSocket disconnects. Includes the error if disconnection was not clean. */
 type WebSocketDisconnectedListener = (error?: Error) => void;
 
+/** Per-swap update callback used with subscribeToSwapUpdates. */
 type SwapUpdateCallback = (
     swap: PendingSwap,
     oldStatus: BoltzSwapStatus
 ) => void;
 
+/** Public interface for SwapManager consumers. Provides swap monitoring, event subscription, and lifecycle control. */
 export interface SwapManagerClient {
+    /** Starts the manager, loading initial swaps and connecting WebSocket. */
     start(pendingSwaps: PendingSwap[]): Promise<void>;
+    /** Stops the manager, closes WebSocket, and clears all timers. */
     stop(): Promise<void>;
+    /** Adds a new swap to be monitored. Immediately subscribes via WebSocket. */
     addSwap(swap: PendingSwap): Promise<void>;
+    /** Removes a swap from monitoring. */
     removeSwap(swapId: string): Promise<void>;
+    /** Returns all currently monitored (non-final) swaps. */
     getPendingSwaps(): Promise<PendingSwap[]>;
+    /** Subscribes to status updates for a specific swap. @returns Unsubscribe function. */
     subscribeToSwapUpdates(
         swapId: string,
         callback: SwapUpdateCallback
     ): Promise<() => void>;
+    /** Returns a promise that resolves with { txid } when the swap completes, or rejects on failure. */
     waitForSwapCompletion(swapId: string): Promise<{ txid: string }>;
+    /** Returns true if a claim/refund action is currently executing for this swap. */
     isProcessing(swapId: string): Promise<boolean>;
+    /** Returns true if the manager is monitoring this swap. */
     hasSwap(swapId: string): Promise<boolean>;
+    /** Returns operational statistics (running state, WebSocket status, monitored count, etc.). */
     getStats(): Promise<{
         isRunning: boolean;
         monitoredSwaps: number;
@@ -131,6 +149,7 @@ export interface SwapManagerClient {
     offWebSocketDisconnected(listener: WebSocketDisconnectedListener): void;
 }
 
+/** Internal callbacks wired by ArkadeSwaps to perform claim/refund/save operations. */
 export interface SwapManagerCallbacks {
     claim: (swap: PendingReverseSwap) => Promise<void>;
     refund: (swap: PendingSubmarineSwap) => Promise<void>;
@@ -141,6 +160,16 @@ export interface SwapManagerCallbacks {
     saveSwap: (swap: PendingSwap) => Promise<void>;
 }
 
+/**
+ * Background swap monitor with WebSocket + polling fallback.
+ *
+ * Monitors all pending swaps via a single multiplexed WebSocket connection to Boltz.
+ * Automatically claims reverse swaps, refunds failed submarine swaps, and handles
+ * chain swap actions (claim/refund on both ARK and BTC sides).
+ *
+ * Falls back to HTTP polling when WebSocket is unavailable, with exponential backoff
+ * for both reconnection and polling intervals.
+ */
 export class SwapManager implements SwapManagerClient {
     private readonly swapProvider: BoltzSwapProvider;
     private readonly config: SwapManagerConfig;

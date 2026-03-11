@@ -91,12 +91,27 @@ import {
     refundVHTLCwithOffchainTx,
 } from "./utils/vhtlc";
 
+/**
+ * Unified entry point for Lightning and chain swaps between Arkade, Lightning Network, and Bitcoin.
+ *
+ * Orchestrates submarine swaps (Arkade → Lightning), reverse swaps (Lightning → Arkade),
+ * and chain swaps (ARK ↔ BTC) through the Boltz swap protocol.
+ *
+ * Optionally integrates SwapManager for autonomous background monitoring, auto-claiming,
+ * and auto-refunding of swaps.
+ */
 export class ArkadeSwaps {
+    /** The Arkade wallet instance used for signing and address generation. */
     readonly wallet: IWallet;
+    /** Provider for Ark protocol operations (VTXO management, batch joining). */
     readonly arkProvider: ArkProvider;
+    /** Boltz API client for creating and monitoring swaps. */
     readonly swapProvider: BoltzSwapProvider;
+    /** Provider for querying VTXO state on the Ark indexer. */
     readonly indexerProvider: IndexerProvider;
+    /** Background swap monitor, or null if not enabled. */
     readonly swapManager: SwapManager | null = null;
+    /** Storage backend for persisting swap data. */
     readonly swapRepository: SwapRepository;
 
     constructor(config: ArkadeSwapsConfig) {
@@ -291,9 +306,11 @@ export class ArkadeSwaps {
     // =========================================================================
 
     /**
-     * Creates a Lightning invoice.
-     * @param args - The arguments for creating a Lightning invoice.
-     * @returns The response containing the created Lightning invoice.
+     * Creates a Lightning invoice via a reverse swap (Lightning → Arkade).
+     * @param args.amount - Invoice amount in satoshis.
+     * @param args.description - Optional description for the BOLT11 invoice.
+     * @returns Object containing the BOLT11 invoice, payment hash, preimage, and pending swap for monitoring.
+     * @throws {SwapError} If amount is <= 0 or wallet key retrieval fails.
      */
     async createLightningInvoice(
         args: CreateLightningInvoiceRequest
@@ -311,9 +328,11 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Creates a reverse swap.
-     * @param args - The arguments for creating a reverse swap.
-     * @returns The created pending reverse swap.
+     * Creates a reverse swap (Lightning → Arkade) and saves it to storage.
+     * @param args.amount - Amount in satoshis for the reverse swap.
+     * @param args.description - Optional invoice description.
+     * @returns The pending reverse swap, added to SwapManager if enabled.
+     * @throws {SwapError} If amount is <= 0 or key retrieval fails.
      */
     async createReverseSwap(
         args: CreateLightningInvoiceRequest
@@ -372,8 +391,9 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Claims the VHTLC for a pending reverse swap.
-     * @param pendingSwap - The pending reverse swap to claim the VHTLC.
+     * Claims the VHTLC for a pending reverse swap, transferring locked funds to the wallet.
+     * @param pendingSwap - The reverse swap whose VHTLC should be claimed.
+     * @throws {Error} If preimage is missing, VHTLC script creation fails, or no spendable VTXOs found.
      */
     async claimVHTLC(pendingSwap: PendingReverseSwap): Promise<void> {
         // restored swaps may not have preimage
@@ -473,9 +493,13 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Waits for the swap to be confirmed and claims the VHTLC.
-     * @param pendingSwap - The pending reverse swap.
+     * Waits for a reverse swap to be confirmed and claims the VHTLC.
+     * Delegates to SwapManager if enabled, otherwise monitors via WebSocket.
+     * @param pendingSwap - The reverse swap to monitor and claim.
      * @returns The transaction ID of the claimed VHTLC.
+     * @throws {InvoiceExpiredError} If the Lightning invoice expires.
+     * @throws {SwapExpiredError} If the swap exceeds its time limit.
+     * @throws {TransactionFailedError} If the on-chain transaction fails.
      */
     async waitAndClaim(
         pendingSwap: PendingReverseSwap
@@ -579,9 +603,11 @@ export class ArkadeSwaps {
     // =========================================================================
 
     /**
-     * Sends a Lightning payment.
-     * @param args - The arguments for sending a Lightning payment.
-     * @returns The result of the payment.
+     * Sends a Lightning payment via a submarine swap (Arkade → Lightning).
+     * Creates the swap, sends funds, and waits for settlement. Auto-refunds on failure.
+     * @param args.invoice - BOLT11 Lightning invoice to pay.
+     * @returns The amount paid, preimage (proof of payment), and transaction ID.
+     * @throws {TransactionFailedError} If the payment fails (auto-refunds if possible).
      */
     async sendLightningPayment(
         args: SendLightningPaymentRequest
@@ -618,9 +644,10 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Creates a submarine swap.
-     * @param args - The arguments for creating a submarine swap.
-     * @returns The created pending submarine swap.
+     * Creates a submarine swap (Arkade → Lightning) and saves it to storage.
+     * @param args.invoice - BOLT11 Lightning invoice to pay.
+     * @returns The pending submarine swap, added to SwapManager if enabled.
+     * @throws {SwapError} If invoice is missing or key retrieval fails.
      */
     async createSubmarineSwap(
         args: SendLightningPaymentRequest
@@ -667,8 +694,10 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Claims the VHTLC for a pending submarine swap (aka refund).
-     * @param pendingSwap - The pending submarine swap to refund the VHTLC.
+     * Refunds the VHTLC for a failed submarine swap, returning locked funds to the wallet.
+     * Uses multi-party signatures (user + Boltz + server) for non-recoverable VTXOs.
+     * @param pendingSwap - The submarine swap to refund.
+     * @throws {Error} If preimage hash is unavailable, VHTLC not found, or already spent.
      */
     async refundVHTLC(pendingSwap: PendingSubmarineSwap): Promise<void> {
         const preimageHash = pendingSwap.request.invoice
@@ -775,9 +804,12 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Waits for the swap settlement.
-     * @param pendingSwap - The pending submarine swap.
-     * @returns The status of the swap settlement.
+     * Waits for a submarine swap's Lightning payment to settle.
+     * @param pendingSwap - The submarine swap to monitor.
+     * @returns The preimage from the settled Lightning payment (proof of payment).
+     * @throws {SwapExpiredError} If the swap expires.
+     * @throws {InvoiceFailedToPayError} If Boltz fails to route the payment.
+     * @throws {TransactionLockupFailedError} If the lockup transaction fails.
      */
     async waitForSwapSettlement(
         pendingSwap: PendingSubmarineSwap
@@ -862,8 +894,12 @@ export class ArkadeSwaps {
 
     /**
      * Creates a chain swap from ARK to BTC.
-     * @param args - Swap arguments.
-     * @returns The payment details and pending chain swap.
+     * @param args.btcAddress - Destination Bitcoin address.
+     * @param args.senderLockAmount - Exact amount sender locks (receiver gets less after fees). Specify this OR receiverLockAmount.
+     * @param args.receiverLockAmount - Exact amount receiver gets (sender pays more). Specify this OR senderLockAmount.
+     * @param args.feeSatsPerByte - Fee rate for the BTC claim transaction (default: 1).
+     * @returns The ARK lockup address, amount to pay, and pending swap.
+     * @throws {SwapError} If chain swap verification fails.
      */
     async arkToBtc(args: {
         btcAddress: string;
@@ -1235,8 +1271,11 @@ export class ArkadeSwaps {
 
     /**
      * Creates a chain swap from BTC to ARK.
-     * @param args - Swap arguments.
-     * @returns The pending chain swap and payment details.
+     * @param args.feeSatsPerByte - Fee rate for BTC transactions (default: 1).
+     * @param args.senderLockAmount - Exact BTC amount to lock. Specify this OR receiverLockAmount.
+     * @param args.receiverLockAmount - Exact ARK amount to receive. Specify this OR senderLockAmount.
+     * @returns The BTC lockup address, amount to pay, and pending swap.
+     * @throws {SwapError} If chain swap verification fails.
      */
     async btcToArk(args: {
         feeSatsPerByte?: number;
@@ -2147,6 +2186,7 @@ export type ArkadeLightningConfig = ArkadeSwapsConfig;
 /** @deprecated Use ArkadeSwaps instead */
 export const ArkadeLightning = ArkadeSwaps;
 
+/** Public interface for ArkadeSwaps, defining all swap operations available to consumers. */
 export interface IArkadeSwaps extends AsyncDisposable {
     startSwapManager(): Promise<void>;
     stopSwapManager(): Promise<void>;
