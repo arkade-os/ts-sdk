@@ -25,6 +25,7 @@ import { scriptFromTapLeafScript } from "../script/base";
 import { buildForfeitTxWithOutput } from "../forfeit";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
@@ -289,7 +290,8 @@ async function delegate(
         outputs,
         [],
         [pubkey],
-        delegateAtSeconds
+        delegateAtSeconds,
+        destinationScript
     );
 
     const forfeitOutputScript = OutScript.encode(
@@ -372,7 +374,8 @@ async function makeSignedDelegateIntent(
     outputs: TransactionOutput[],
     onchainOutputsIndexes: number[],
     cosignerPubKeys: string[],
-    validAt: number
+    validAt: number,
+    destinationScript: Bytes
 ): Promise<SignedIntent<Intent.RegisterMessage>> {
     // if some of the inputs hold assets, build the asset packet and append as output
     // in the intent proof tx, there is a "fake" input at index 0
@@ -389,10 +392,17 @@ async function makeSignedDelegateIntent(
 
     let outputAssets: Asset[] | undefined;
 
-    // add asset packet to the last output by default
-    let assetOutputIndex = outputs.length - 1;
+    // find our own output by matching the destination script
+    const assetOutputIndex = outputs.findIndex(
+        (o) => o.script && equalBytes(o.script, destinationScript)
+    );
 
     if (assetInputs.size > 0) {
+        if (assetOutputIndex === -1) {
+            throw new Error(
+                "Cannot assign assets: no output matches the destination address"
+            );
+        }
         // collect all input assets and assign them to the first offchain output
         const allAssets = new Map<string, bigint>();
         for (const [, assets] of assetInputs) {
