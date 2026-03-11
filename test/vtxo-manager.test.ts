@@ -18,9 +18,15 @@ const createMockWallet = (
     vtxos: ExtendedVirtualCoin[] = [],
     arkAddress = "arkade1test"
 ): IWallet => {
+    const contractManager = {
+        onContractEvent: vi.fn().mockReturnValue(() => {}),
+    };
+
     return {
         getVtxos: vi.fn().mockResolvedValue(vtxos),
         getAddress: vi.fn().mockResolvedValue(arkAddress),
+        getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+        getContractManager: vi.fn().mockResolvedValue(contractManager),
         settle: vi.fn().mockResolvedValue("mock-txid"),
         dustAmount: 1000n,
     } as any;
@@ -1102,6 +1108,9 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             feeRate = 1,
             chainTipHeight = 1000,
         } = opts;
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+        };
 
         const mockPkScript = new Uint8Array([
             0x51,
@@ -1112,6 +1121,8 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
             getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
             dustAmount: 330n,
             getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
@@ -1281,6 +1292,10 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             const minimalWallet = {
                 getVtxos: vi.fn().mockResolvedValue([]),
                 getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+                getContractManager: vi.fn().mockResolvedValue({
+                    onContractEvent: vi.fn().mockReturnValue(() => {}),
+                }),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
                 getBoardingUtxos: vi
                     .fn()
@@ -1322,10 +1337,15 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 0x20,
                 ...new Array(32).fill(0),
             ]);
+            const contractManager = {
+                onContractEvent: vi.fn().mockReturnValue(() => {}),
+            };
 
             return {
                 getVtxos: vi.fn().mockResolvedValue([]),
                 getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+                getContractManager: vi.fn().mockResolvedValue(contractManager),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
                 dustAmount: 330n,
                 getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
