@@ -666,10 +666,11 @@ export class VtxoManager {
      * ```
      */
     async sweepExpiredBoardingUtxos(): Promise<string> {
-        if (
-            this.settlementConfig === false ||
-            !this.settlementConfig?.boardingUtxoSweep
-        ) {
+        const sweepEnabled =
+            this.settlementConfig !== false &&
+            (this.settlementConfig?.boardingUtxoSweep ??
+                DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+        if (!sweepEnabled) {
             throw new Error(
                 "Boarding UTXO sweep is not enabled in settlementConfig"
             );
