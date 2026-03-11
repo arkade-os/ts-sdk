@@ -764,7 +764,7 @@ export type Details = {
     lockupAddress: string;
     serverPublicKey: string;
     timeoutBlockHeight: number;
-    timeoutBlockHeights: TimeoutBlockHeights;
+    timeoutBlockHeights?: TimeoutBlockHeights;
     preimageHash?: string;
 };
 
@@ -783,9 +783,58 @@ export const isDetails = (data: any): data is Details => {
         typeof data.lockupAddress === "string" &&
         typeof data.serverPublicKey === "string" &&
         typeof data.timeoutBlockHeight === "number" &&
-        isTimeoutBlockHeights(data.timeoutBlockHeights) &&
+        (data.timeoutBlockHeights === undefined ||
+            isTimeoutBlockHeights(data.timeoutBlockHeights)) &&
         (data.preimageHash === undefined ||
             typeof data.preimageHash === "string")
+    );
+};
+
+export type RestoredChainSwap = {
+    id: string;
+    type: "chain";
+    status: BoltzSwapStatus;
+    createdAt: number;
+    from: "ARK" | "BTC";
+    to: "ARK" | "BTC";
+    preimageHash: string;
+    refundDetails: {
+        amount: number;
+        keyIndex: number;
+        lockupAddress: string;
+        serverPublicKey: string;
+        timeoutBlockHeight: number;
+        transaction: {
+            id: string;
+            vout: number;
+        };
+        tree: Tree;
+    };
+};
+
+export const isRestoredChainSwap = (data: any): data is RestoredChainSwap => {
+    return (
+        data &&
+        typeof data === "object" &&
+        typeof data.id === "string" &&
+        data.type === "chain" &&
+        typeof data.status === "string" &&
+        typeof data.createdAt === "number" &&
+        (data.from === "ARK" || data.from === "BTC") &&
+        (data.to === "ARK" || data.to === "BTC") &&
+        typeof data.preimageHash === "string" &&
+        data.refundDetails &&
+        typeof data.refundDetails === "object" &&
+        isTree(data.refundDetails.tree) &&
+        typeof data.refundDetails.amount === "number" &&
+        typeof data.refundDetails.keyIndex === "number" &&
+        data.refundDetails.transaction &&
+        typeof data.refundDetails.transaction === "object" &&
+        typeof data.refundDetails.transaction.id === "string" &&
+        typeof data.refundDetails.transaction.vout === "number" &&
+        typeof data.refundDetails.lockupAddress === "string" &&
+        typeof data.refundDetails.serverPublicKey === "string" &&
+        typeof data.refundDetails.timeoutBlockHeight === "number"
     );
 };
 
@@ -850,6 +899,7 @@ export type CreateSwapsRestoreRequest = {
 };
 
 export type CreateSwapsRestoreResponse = (
+    | RestoredChainSwap
     | RestoredReverseSwap
     | RestoredSubmarineSwap
 )[];
@@ -861,7 +911,9 @@ export const isCreateSwapsRestoreResponse = (
         Array.isArray(data) &&
         data.every(
             (item) =>
-                isRestoredReverseSwap(item) || isRestoredSubmarineSwap(item)
+                isRestoredChainSwap(item) ||
+                isRestoredReverseSwap(item) ||
+                isRestoredSubmarineSwap(item)
         )
     );
 };

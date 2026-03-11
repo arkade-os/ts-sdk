@@ -526,6 +526,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async restoreSwaps(boltzFees?: FeesResponse): Promise<{
+        chainSwaps: PendingChainSwap[];
         reverseSwaps: PendingReverseSwap[];
         submarineSwaps: PendingSubmarineSwap[];
     }> {

@@ -306,6 +306,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
     }
 
     restoreSwaps(boltzFees?: FeesResponse): Promise<{
+        chainSwaps: PendingChainSwap[];
         reverseSwaps: PendingReverseSwap[];
         submarineSwaps: PendingSubmarineSwap[];
     }> {

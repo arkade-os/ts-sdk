@@ -135,6 +135,7 @@ export type RequestRestoreSwaps = RequestEnvelope & {
 export type ResponseRestoreSwaps = ResponseEnvelope & {
     type: "SWAPS_RESTORED";
     payload: {
+        chainSwaps: PendingChainSwap[];
         reverseSwaps: PendingReverseSwap[];
         submarineSwaps: PendingSubmarineSwap[];
     };

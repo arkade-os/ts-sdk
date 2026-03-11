@@ -47,6 +47,7 @@ import {
     isChainFinalStatus,
     isRestoredReverseSwap,
     isRestoredSubmarineSwap,
+    isRestoredChainSwap,
 } from "./boltz-swap-provider";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
@@ -1964,6 +1965,7 @@ export class ArkadeSwaps {
      * display/monitoring and are not automatically wired into the SwapManager.
      */
     async restoreSwaps(boltzFees?: FeesResponse): Promise<{
+        chainSwaps: PendingChainSwap[];
         reverseSwaps: PendingReverseSwap[];
         submarineSwaps: PendingSubmarineSwap[];
     }> {
@@ -1974,6 +1976,7 @@ export class ArkadeSwaps {
 
         const fees = boltzFees ?? (await this.swapProvider.getFees());
 
+        const chainSwaps: PendingChainSwap[] = [];
         const reverseSwaps: PendingReverseSwap[] = [];
         const submarineSwaps: PendingSubmarineSwap[] = [];
 
@@ -2074,10 +2077,47 @@ export class ArkadeSwaps {
                         },
                     },
                 } as PendingSubmarineSwap);
+            } else if (isRestoredChainSwap(swap)) {
+                const {
+                    amount,
+                    lockupAddress,
+                    serverPublicKey,
+                    timeoutBlockHeight,
+                } = swap.refundDetails;
+
+                chainSwaps.push({
+                    id,
+                    type: "chain",
+                    createdAt,
+                    preimage: "",
+                    ephemeralKey: "",
+                    feeSatsPerByte: 1,
+                    amount,
+                    status,
+                    request: {
+                        to: swap.to,
+                        from: swap.from,
+                        preimageHash: swap.preimageHash,
+                        claimPublicKey: "",
+                        feeSatsPerByte: 1,
+                        refundPublicKey: "",
+                        serverLockAmount: amount,
+                        userLockAmount: amount,
+                    },
+                    response: {
+                        id,
+                        lockupDetails: {
+                            amount,
+                            lockupAddress,
+                            serverPublicKey,
+                            timeoutBlockHeight,
+                        },
+                    },
+                } as PendingChainSwap);
             }
         }
 
-        return { reverseSwaps, submarineSwaps };
+        return { chainSwaps, reverseSwaps, submarineSwaps };
     }
 
     /**
@@ -2130,6 +2170,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         pendingSwap: PendingSubmarineSwap
     ): Promise<{ preimage: string }>;
     restoreSwaps(boltzFees?: FeesResponse): Promise<{
+        chainSwaps: PendingChainSwap[];
         reverseSwaps: PendingReverseSwap[];
         submarineSwaps: PendingSubmarineSwap[];
     }>;
