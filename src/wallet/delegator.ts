@@ -25,6 +25,7 @@ import { scriptFromTapLeafScript } from "../script/base";
 import { buildForfeitTxWithOutput } from "../forfeit";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
@@ -289,7 +290,8 @@ async function delegate(
         outputs,
         [],
         [pubkey],
-        delegateAtSeconds
+        delegateAtSeconds,
+        destinationScript
     );
 
     const forfeitOutputScript = OutScript.encode(
@@ -372,7 +374,8 @@ async function makeSignedDelegateIntent(
     outputs: TransactionOutput[],
     onchainOutputsIndexes: number[],
     cosignerPubKeys: string[],
-    validAt: number
+    validAt: number,
+    destinationScript: Bytes
 ): Promise<SignedIntent<Intent.RegisterMessage>> {
     // if some of the inputs hold assets, build the asset packet and append as output
     // in the intent proof tx, there is a "fake" input at index 0
@@ -388,9 +391,18 @@ async function makeSignedDelegateIntent(
     }
 
     let outputAssets: Asset[] | undefined;
-    let assetOutputIndex: number | undefined; // where to send the assets
+
+    const assetOutputIndex = findDestinationOutputIndex(
+        outputs,
+        destinationScript
+    );
 
     if (assetInputs.size > 0) {
+        if (assetOutputIndex === -1) {
+            throw new Error(
+                "Cannot assign assets: no output matches the destination address"
+            );
+        }
         // collect all input assets and assign them to the first offchain output
         const allAssets = new Map<string, bigint>();
         for (const [, assets] of assetInputs) {
@@ -404,14 +416,6 @@ async function makeSignedDelegateIntent(
         for (const [assetId, amount] of allAssets) {
             outputAssets.push({ assetId, amount: Number(amount) });
         }
-
-        const firstOffchainIndex = outputs.findIndex(
-            (_, i) => !onchainOutputsIndexes.includes(i)
-        );
-        if (firstOffchainIndex === -1) {
-            throw new Error("Cannot settle assets without an offchain output");
-        }
-        assetOutputIndex = firstOffchainIndex;
     }
 
     const recipients: Recipient[] = outputs.map((output, i) => ({
@@ -440,6 +444,19 @@ async function makeSignedDelegateIntent(
         proof: base64.encode(signedProof.toPSBT()),
         message,
     };
+}
+
+/**
+ * Finds the index of the output whose script matches the destination script.
+ * Returns -1 if no match is found.
+ */
+export function findDestinationOutputIndex(
+    outputs: TransactionOutput[],
+    destinationScript: Bytes
+): number {
+    return outputs.findIndex(
+        (o) => o.script && equalBytes(o.script, destinationScript)
+    );
 }
 
 function getDayTimestamp(timestamp: number): number {
