@@ -48,10 +48,10 @@ services:
 
     arkd-wallet:
         restart: unless-stopped
-        image: ghcr.io/arkade-os/arkd:v0.9.0
-#        build:
-#            context: .
-#            dockerfile: wallet.Dockerfile
+#        image: ghcr.io/arkade-os/arkd:v0.9.0
+        build:
+            context: .
+            dockerfile: wallet.Dockerfile
         container_name: arkd-wallet
         depends_on:
             - nbxplorer
@@ -67,11 +67,11 @@ services:
             - type: tmpfs
               target: /app/data
     arkd:
-        image: ghcr.io/arkade-os/arkd:v0.9.0
+#        image: ghcr.io/arkade-os/arkd:v0.9.0
         # temporarily using image
-#        build:
-#            context: .
-#            dockerfile: server.Dockerfile
+        build:
+            context: .
+            dockerfile: server.Dockerfile
         container_name: arkd
         restart: unless-stopped
         depends_on:
