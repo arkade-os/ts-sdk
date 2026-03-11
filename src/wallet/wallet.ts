@@ -1043,13 +1043,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             (this._vtxoManagerInitializing
                 ? await this._vtxoManagerInitializing.catch(() => undefined)
                 : undefined);
-        if (manager) {
-            await manager.dispose();
+        try {
+            if (manager) {
+                await manager.dispose();
+            }
+        } catch {
+            // best-effort teardown; ensure super.dispose() still runs
+        } finally {
             this._vtxoManager = undefined;
             this._vtxoManagerInitializing = undefined;
+            await super.dispose();
         }
-
-        await super.dispose();
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
