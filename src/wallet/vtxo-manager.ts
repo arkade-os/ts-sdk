@@ -2,6 +2,7 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
     IWallet,
+    IReadonlyWallet,
     isExpired,
     isRecoverable,
     isSpendable,
@@ -14,7 +15,41 @@ import { hex } from "@scure/base";
 import { getSequence } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
-import { DUST_AMOUNT } from "./utils";
+import type { OnchainProvider } from "../providers/onchain";
+import type { Network } from "../networks";
+import type { DefaultVtxo } from "../script/default";
+
+/**
+ * Extended wallet interface for boarding UTXO sweep operations.
+ * These properties exist on the concrete Wallet class but not on IWallet.
+ */
+interface SweepCapableWallet extends IReadonlyWallet {
+    boardingTapscript: DefaultVtxo.Script;
+    onchainProvider: OnchainProvider;
+    network: Network;
+}
+
+/** Type guard to check if a wallet has the properties needed for sweep operations. */
+function isSweepCapable(
+    wallet: IWallet
+): wallet is IWallet & SweepCapableWallet {
+    return (
+        "boardingTapscript" in wallet &&
+        "onchainProvider" in wallet &&
+        "network" in wallet
+    );
+}
+
+/** Asserts that the wallet supports sweep operations, throwing a clear error if not. */
+function assertSweepCapable(
+    wallet: IWallet
+): asserts wallet is IWallet & SweepCapableWallet {
+    if (!isSweepCapable(wallet)) {
+        throw new Error(
+            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, and network"
+        );
+    }
+}
 
 export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 export const DEFAULT_THRESHOLD_SECONDS = 3 * 24 * 60 * 60; // 3 days
@@ -319,15 +354,12 @@ export class VtxoManager {
         // Normalize: prefer settlementConfig, fall back to renewalConfig
         if (settlementConfig !== undefined) {
             this.settlementConfig = settlementConfig;
-        } else if (renewalConfig) {
-            this.settlementConfig =
-                renewalConfig.enabled === false
-                    ? false
-                    : {
-                          vtxoThreshold: renewalConfig.thresholdMs
-                              ? renewalConfig.thresholdMs / 1000
-                              : undefined,
-                      };
+        } else if (renewalConfig && renewalConfig.enabled) {
+            this.settlementConfig = {
+                vtxoThreshold: renewalConfig.thresholdMs
+                    ? renewalConfig.thresholdMs / 1000
+                    : undefined,
+            };
         } else {
             this.settlementConfig = false;
         }
@@ -472,6 +504,11 @@ export class VtxoManager {
     async getExpiringVtxos(
         thresholdMs?: number
     ): Promise<ExtendedVirtualCoin[]> {
+        // If settlementConfig is explicitly false and no override provided, renewal is disabled
+        if (this.settlementConfig === false && thresholdMs === undefined) {
+            return [];
+        }
+
         const vtxos = await this.wallet.getVtxos({ withRecoverable: true });
 
         // Resolve threshold: method param > settlementConfig (seconds→ms) > renewalConfig > default
@@ -583,8 +620,15 @@ export class VtxoManager {
         const boardingUtxos = await this.wallet.getBoardingUtxos();
         const boardingTimelock = this.getBoardingTimelock();
 
+        // For block-based timelocks, fetch the chain tip height
+        let chainTipHeight: number | undefined;
+        if (boardingTimelock.type === "blocks") {
+            const tip = await this.getOnchainProvider().getChainTip();
+            chainTipHeight = tip.height;
+        }
+
         return boardingUtxos.filter((utxo) =>
-            hasBoardingTxExpired(utxo, boardingTimelock)
+            hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
         );
     }
 
@@ -670,9 +714,10 @@ export class VtxoManager {
         const outputAmount = totalValue - BigInt(fee);
 
         // Dust check: skip if output after fees is below dust
-        if (outputAmount < BigInt(DUST_AMOUNT)) {
+        const dustAmount = getDustAmount(this.wallet);
+        if (outputAmount < dustAmount) {
             throw new Error(
-                `Sweep not economical: output ${outputAmount} sats after ${fee} sats fee is below dust (${DUST_AMOUNT} sats)`
+                `Sweep not economical: output ${outputAmount} sats after ${fee} sats fee is below dust (${dustAmount} sats)`
             );
         }
 
@@ -704,11 +749,15 @@ export class VtxoManager {
 
     // ========== Private Helpers ==========
 
+    /** Asserts sweep capability and returns the typed wallet. */
+    private getSweepWallet(): IWallet & SweepCapableWallet {
+        assertSweepCapable(this.wallet);
+        return this.wallet;
+    }
+
     /** Decodes the boarding tapscript exit path to extract the CSV timelock. */
     private getBoardingTimelock() {
-        const wallet = this.wallet as unknown as {
-            boardingTapscript: { exitScript: string };
-        };
+        const wallet = this.getSweepWallet();
         const exitScript = CSVMultisigTapscript.decode(
             hex.decode(wallet.boardingTapscript.exitScript)
         );
@@ -717,38 +766,22 @@ export class VtxoManager {
 
     /** Returns the TapLeafScript for the boarding tapscript's exit (CSV) path. */
     private getBoardingExitLeaf() {
-        const wallet = this.wallet as unknown as {
-            boardingTapscript: {
-                exit(): ReturnType<
-                    import("../script/default").DefaultVtxo.Script["exit"]
-                >;
-            };
-        };
-        return wallet.boardingTapscript.exit();
+        return this.getSweepWallet().boardingTapscript.exit();
     }
 
     /** Returns the pkScript (output script) of the boarding tapscript. */
     private getBoardingOutputScript() {
-        const wallet = this.wallet as unknown as {
-            boardingTapscript: { pkScript: Uint8Array };
-        };
-        return wallet.boardingTapscript.pkScript;
+        return this.getSweepWallet().boardingTapscript.pkScript;
     }
 
     /** Returns the on-chain provider for fee estimation and broadcasting. */
     private getOnchainProvider() {
-        const wallet = this.wallet as unknown as {
-            onchainProvider: import("../providers/onchain").OnchainProvider;
-        };
-        return wallet.onchainProvider;
+        return this.getSweepWallet().onchainProvider;
     }
 
     /** Returns the Bitcoin network configuration from the wallet. */
     private getNetwork() {
-        const wallet = this.wallet as unknown as {
-            network: import("../networks").Network;
-        };
-        return wallet.network;
+        return this.getSweepWallet().network;
     }
 
     /** Returns the wallet's identity for transaction signing. */

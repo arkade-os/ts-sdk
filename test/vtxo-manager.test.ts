@@ -548,6 +548,7 @@ describe("VtxoManager - Renewal", () => {
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, {
+                enabled: true,
                 thresholdMs: 100_000, // 100 seconds
             });
 
@@ -687,6 +688,7 @@ describe("VtxoManager - Renewal", () => {
             ];
             const wallet = createMockWallet(vtxos);
             const manager = new VtxoManager(wallet, {
+                enabled: true,
                 thresholdMs: 10_000,
             });
 
@@ -739,7 +741,7 @@ describe("VtxoManager - Renewal", () => {
                 } as any,
             ];
             const wallet = createMockWallet(vtxos, "arkade1myaddress");
-            const manager = new VtxoManager(wallet);
+            const manager = new VtxoManager(wallet, undefined, {});
 
             const txid = await manager.renewVtxos();
 
@@ -770,7 +772,7 @@ describe("VtxoManager - Renewal", () => {
                 } as any,
             ];
             const wallet = createMockWallet(vtxos);
-            const manager = new VtxoManager(wallet);
+            const manager = new VtxoManager(wallet, undefined, {});
 
             await expect(manager.renewVtxos()).rejects.toThrow(
                 "Total amount 900 is below dust threshold 1000"
@@ -809,7 +811,7 @@ describe("VtxoManager - Renewal", () => {
                 } as any,
             ];
             const wallet = createMockWallet(vtxos, "arkade1myaddress");
-            const manager = new VtxoManager(wallet);
+            const manager = new VtxoManager(wallet, undefined, {});
 
             const txid = await manager.renewVtxos();
 
@@ -847,7 +849,7 @@ describe("VtxoManager - Renewal", () => {
                 } as any,
             ];
             const wallet = createMockWallet(vtxos);
-            const manager = new VtxoManager(wallet);
+            const manager = new VtxoManager(wallet, undefined, {});
             const callback = vi.fn();
 
             await manager.renewVtxos(callback);
@@ -949,9 +951,62 @@ describe("SettlementConfig", () => {
                 vtxoThreshold: undefined,
             });
         });
+
+        it("should normalize renewalConfig without enabled to false (opt-in only)", () => {
+            const wallet = createMockWallet();
+            // enabled defaults to false, so { thresholdMs: 5000 } alone should NOT enable
+            const manager = new VtxoManager(wallet, { thresholdMs: 5000 });
+
+            expect(manager.settlementConfig).toBe(false);
+        });
     });
 
     describe("getExpiringVtxos with settlementConfig", () => {
+        it("should return empty array when settlementConfig is false", async () => {
+            const now = Date.now();
+            const vtxos: ExtendedVirtualCoin[] = [
+                {
+                    txid: "vtxo1",
+                    vout: 0,
+                    value: 5000,
+                    createdAt: new Date(now - 100_000),
+                    virtualStatus: {
+                        state: "settled",
+                        batchExpiry: now + 1000, // about to expire
+                    },
+                } as ExtendedVirtualCoin,
+            ];
+            const wallet = createMockWallet(vtxos);
+            const manager = new VtxoManager(wallet, undefined, false);
+
+            const expiring = await manager.getExpiringVtxos();
+
+            expect(expiring).toHaveLength(0);
+        });
+
+        it("should still allow thresholdMs override even when settlementConfig is false", async () => {
+            const now = Date.now();
+            const vtxos: ExtendedVirtualCoin[] = [
+                {
+                    txid: "vtxo1",
+                    vout: 0,
+                    value: 5000,
+                    createdAt: new Date(now - 100_000),
+                    virtualStatus: {
+                        state: "settled",
+                        batchExpiry: now + 1000, // about to expire
+                    },
+                } as ExtendedVirtualCoin,
+            ];
+            const wallet = createMockWallet(vtxos);
+            const manager = new VtxoManager(wallet, undefined, false);
+
+            // Explicit thresholdMs override should work even with false config
+            const expiring = await manager.getExpiringVtxos(999_999);
+
+            expect(expiring).toHaveLength(1);
+        });
+
         it("should use vtxoThreshold from settlementConfig (converted to ms)", async () => {
             const now = Date.now();
             const createdAt = new Date(now - 100_000);
@@ -1010,7 +1065,8 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
     // Helper to create mock ExtendedCoin (boarding UTXO)
     const createMockBoardingUtxo = (
         value: number,
-        blockTime?: number
+        blockTime?: number,
+        blockHeight?: number
     ): ExtendedCoin => {
         return {
             txid: `boarding-txid-${value}`,
@@ -1019,6 +1075,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             status: {
                 confirmed: !!blockTime,
                 block_time: blockTime,
+                block_height: blockHeight,
             },
         } as ExtendedCoin;
     };
@@ -1037,9 +1094,14 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         opts: {
             boardingAddress?: string;
             feeRate?: number;
+            chainTipHeight?: number;
         } = {}
     ) => {
-        const { boardingAddress = "bcrt1qtest", feeRate = 1 } = opts;
+        const {
+            boardingAddress = "bcrt1qtest",
+            feeRate = 1,
+            chainTipHeight = 1000,
+        } = opts;
 
         const mockPkScript = new Uint8Array([
             0x51,
@@ -1069,6 +1131,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             onchainProvider: {
                 getFeeRate: vi.fn().mockResolvedValue(feeRate),
                 broadcastTransaction: vi.fn().mockResolvedValue("sweep-txid"),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: chainTipHeight,
+                    time: Math.floor(Date.now() / 1000),
+                    hash: "0".repeat(64),
+                }),
             },
             network: {
                 bech32: "bcrt",
@@ -1199,6 +1266,137 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
                 "No expired boarding UTXOs to sweep"
             );
+        });
+
+        it("should throw clear error when wallet is not sweep-capable", async () => {
+            // A minimal IWallet that lacks boardingTapscript/onchainProvider/network
+            const minimalWallet = {
+                getVtxos: vi.fn().mockResolvedValue([]),
+                getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                settle: vi.fn().mockResolvedValue("mock-txid"),
+                getBoardingUtxos: vi
+                    .fn()
+                    .mockResolvedValue([createMockBoardingUtxo(10000, 1000)]),
+                getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+                identity: {
+                    sign: vi.fn(),
+                    xOnlyPublicKey: vi
+                        .fn()
+                        .mockResolvedValue(new Uint8Array(32)),
+                },
+            } as any;
+
+            const manager = new VtxoManager(minimalWallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "Boarding UTXO sweep requires a Wallet instance"
+            );
+        });
+    });
+
+    describe("getExpiredBoardingUtxos with block-based timelocks", () => {
+        // Use a block-based timelock (value < 512 → "blocks")
+        const blockMockPubkey = new Uint8Array(32).fill(0x02);
+        const blockCsvScript = CSVMultisigTapscript.encode({
+            timelock: { type: "blocks", value: 10n },
+            pubkeys: [blockMockPubkey],
+        });
+        const blockExitScriptHex = hex.encode(blockCsvScript.script);
+
+        const createBlockBasedWallet = (
+            boardingUtxos: ExtendedCoin[],
+            chainTipHeight: number
+        ) => {
+            const mockPkScript = new Uint8Array([
+                0x51,
+                0x20,
+                ...new Array(32).fill(0),
+            ]);
+
+            return {
+                getVtxos: vi.fn().mockResolvedValue([]),
+                getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                settle: vi.fn().mockResolvedValue("mock-txid"),
+                dustAmount: 330n,
+                getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+                getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+                boardingTapscript: {
+                    exitScript: blockExitScriptHex,
+                    pkScript: mockPkScript,
+                    exit: vi.fn().mockReturnValue([
+                        {
+                            version: 0xc0,
+                            internalKey: new Uint8Array(32),
+                            merklePath: [new Uint8Array(32)],
+                        },
+                        new Uint8Array([0xc0, 0x01, 0x02, 0x03]),
+                    ]),
+                },
+                onchainProvider: {
+                    getFeeRate: vi.fn().mockResolvedValue(1),
+                    broadcastTransaction: vi
+                        .fn()
+                        .mockResolvedValue("sweep-txid"),
+                    getChainTip: vi.fn().mockResolvedValue({
+                        height: chainTipHeight,
+                        time: Math.floor(Date.now() / 1000),
+                        hash: "0".repeat(64),
+                    }),
+                },
+                network: {
+                    bech32: "bcrt",
+                    pubKeyHash: 0x6f,
+                    scriptHash: 0xc4,
+                    wif: 0xef,
+                },
+                identity: {
+                    sign: vi.fn().mockImplementation((tx: any) => tx),
+                    xOnlyPublicKey: vi
+                        .fn()
+                        .mockResolvedValue(new Uint8Array(32)),
+                },
+            } as any;
+        };
+
+        it("should detect expired UTXOs using block-based timelock", async () => {
+            // Timelock is 10 blocks, UTXO at height 100, chain tip at 110+
+            const utxos = [createMockBoardingUtxo(50000, 1000, 100)];
+            const wallet = createBlockBasedWallet(utxos, 110);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(1);
+        });
+
+        it("should not detect UTXOs before block-based timelock expires", async () => {
+            // Timelock is 10 blocks, UTXO at height 100, chain tip at 105 (only 5 blocks elapsed)
+            const utxos = [createMockBoardingUtxo(50000, 1000, 100)];
+            const wallet = createBlockBasedWallet(utxos, 105);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(0);
+        });
+
+        it("should skip UTXOs without block_height for block-based timelocks", async () => {
+            // UTXO confirmed but missing block_height
+            const utxos = [createMockBoardingUtxo(50000, 1000, undefined)];
+            const wallet = createBlockBasedWallet(utxos, 200);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: true,
+            });
+
+            const expired = await manager.getExpiredBoardingUtxos();
+
+            expect(expired).toHaveLength(0);
         });
     });
 });

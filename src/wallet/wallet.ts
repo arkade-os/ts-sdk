@@ -966,15 +966,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // Normalize: prefer settlementConfig, fall back to renewalConfig
         if (settlementConfig !== undefined) {
             this.settlementConfig = settlementConfig;
-        } else if (renewalConfig) {
-            this.settlementConfig =
-                renewalConfig.enabled === false
-                    ? false
-                    : {
-                          vtxoThreshold: renewalConfig.thresholdMs
-                              ? renewalConfig.thresholdMs / 1000
-                              : undefined,
-                      };
+        } else if (renewalConfig && this.renewalConfig.enabled) {
+            this.settlementConfig = {
+                vtxoThreshold: renewalConfig.thresholdMs
+                    ? renewalConfig.thresholdMs / 1000
+                    : undefined,
+            };
         } else {
             this.settlementConfig = false;
         }
