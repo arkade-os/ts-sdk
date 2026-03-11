@@ -963,7 +963,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ...renewalConfig,
         };
 
-        // Normalize: prefer settlementConfig, fall back to renewalConfig
+        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
         if (settlementConfig !== undefined) {
             this.settlementConfig = settlementConfig;
         } else if (renewalConfig && this.renewalConfig.enabled) {
@@ -972,8 +972,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     ? renewalConfig.thresholdMs / 1000
                     : undefined,
             };
-        } else {
+        } else if (renewalConfig) {
+            // renewalConfig provided but not enabled → disabled
             this.settlementConfig = false;
+        } else {
+            // No config at all → enabled by default
+            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
         }
         this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)

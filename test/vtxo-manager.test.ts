@@ -868,7 +868,7 @@ describe("SettlementConfig", () => {
             expect(DEFAULT_SETTLEMENT_CONFIG.vtxoThreshold).toBe(
                 DEFAULT_THRESHOLD_SECONDS
             );
-            expect(DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep).toBe(false);
+            expect(DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep).toBe(true);
         });
 
         it("should match DEFAULT_THRESHOLD_MS converted to seconds", () => {
@@ -877,11 +877,11 @@ describe("SettlementConfig", () => {
     });
 
     describe("VtxoManager constructor normalization", () => {
-        it("should set settlementConfig to false when no config provided", () => {
+        it("should enable settlementConfig by default when no config provided", () => {
             const wallet = createMockWallet();
             const manager = new VtxoManager(wallet);
 
-            expect(manager.settlementConfig).toBe(false);
+            expect(manager.settlementConfig).toEqual(DEFAULT_SETTLEMENT_CONFIG);
         });
 
         it("should use settlementConfig directly when provided", () => {
@@ -1230,30 +1230,28 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         it("should throw when boarding UTXO sweep is not enabled", async () => {
             const wallet = createMockWalletWithBoarding();
 
-            // No settlementConfig (disabled)
-            const manager1 = new VtxoManager(wallet);
+            // Explicitly false
+            const manager1 = new VtxoManager(wallet, undefined, false);
             await expect(manager1.sweepExpiredBoardingUtxos()).rejects.toThrow(
                 "Boarding UTXO sweep is not enabled"
             );
 
-            // Explicitly false
-            const manager2 = new VtxoManager(wallet, undefined, false);
+            // Enabled but boardingUtxoSweep explicitly false
+            const manager2 = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+            });
             await expect(manager2.sweepExpiredBoardingUtxos()).rejects.toThrow(
                 "Boarding UTXO sweep is not enabled"
             );
+        });
 
-            // Enabled but boardingUtxoSweep not set
-            const manager3 = new VtxoManager(wallet, undefined, {});
-            await expect(manager3.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "Boarding UTXO sweep is not enabled"
-            );
+        it("should have sweep enabled by default (no config)", async () => {
+            const wallet = createMockWalletWithBoarding([]);
+            const manager = new VtxoManager(wallet);
 
-            // Enabled but boardingUtxoSweep explicitly false
-            const manager4 = new VtxoManager(wallet, undefined, {
-                boardingUtxoSweep: false,
-            });
-            await expect(manager4.sweepExpiredBoardingUtxos()).rejects.toThrow(
-                "Boarding UTXO sweep is not enabled"
+            // Default config enables sweep, so error should be about no UTXOs, not "not enabled"
+            await expect(manager.sweepExpiredBoardingUtxos()).rejects.toThrow(
+                "No expired boarding UTXOs to sweep"
             );
         });
 
