@@ -340,8 +340,13 @@ export function getExpiringAndRecoverableVtxos(
  * }
  * ```
  */
-export class VtxoManager {
+export class VtxoManager implements AsyncDisposable {
     readonly settlementConfig: SettlementConfig | false;
+    private contractEventsSubscription?: () => void;
+    private readonly contractEventsSubscriptionReady: Promise<
+        (() => void) | undefined
+    >;
+    private disposePromise?: Promise<void>;
 
     constructor(
         readonly wallet: IWallet,
@@ -366,32 +371,10 @@ export class VtxoManager {
             this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
         }
 
-        // Will try to renew and delegate any new vtxo received
-        const me = this;
-        Promise.all([
-            wallet.getDelegatorManager(),
-            wallet.getContractManager(),
-            wallet.getAddress(),
-        ])
-            .then(([delegatorManager, contractManager, destination]) => {
-                // TODO: implement disposal
-                const _stopWatching = contractManager.onContractEvent(
-                    (event) => {
-                        if (event.type === "vtxo_received") {
-                            me.renewVtxos().catch((e) => {
-                                console.error("Error renewing VTXOs:", e);
-                            }); // within 3 days
-                            delegatorManager
-                                ?.delegate(event.vtxos, destination)
-                                .catch((e) => {
-                                    console.error("Error delegating VTXOs:", e);
-                                });
-                        }
-                    }
-                );
-            })
-            .catch((e) => {
-                console.error("Error renewing VTXOs from VtxoManager", e);
+        this.contractEventsSubscriptionReady =
+            this.initializeSubscription().then((subscription) => {
+                this.contractEventsSubscription = subscription;
+                return subscription;
             });
     }
 
@@ -818,5 +801,54 @@ export class VtxoManager {
     /** Returns the wallet's identity for transaction signing. */
     private getIdentity() {
         return this.wallet.identity;
+    }
+
+    private async initializeSubscription(): Promise<(() => void) | undefined> {
+        if (this.settlementConfig === false) {
+            return undefined;
+        }
+
+        try {
+            const [delegatorManager, contractManager, destination] =
+                await Promise.all([
+                    this.wallet.getDelegatorManager(),
+                    this.wallet.getContractManager(),
+                    this.wallet.getAddress(),
+                ]);
+
+            const stopWatching = contractManager.onContractEvent((event) => {
+                if (event.type !== "vtxo_received") {
+                    return;
+                }
+
+                this.renewVtxos().catch((e) => {
+                    console.error("Error renewing VTXOs:", e);
+                });
+                delegatorManager
+                    ?.delegate(event.vtxos, destination)
+                    .catch((e) => {
+                        console.error("Error delegating VTXOs:", e);
+                    });
+            });
+
+            return stopWatching;
+        } catch (e) {
+            console.error("Error renewing VTXOs from VtxoManager", e);
+            return undefined;
+        }
+    }
+
+    async dispose(): Promise<void> {
+        this.disposePromise ??= (async () => {
+            const subscription = await this.contractEventsSubscriptionReady;
+            this.contractEventsSubscription = undefined;
+            subscription?.();
+        })();
+
+        return this.disposePromise;
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
     }
 }

@@ -10,26 +10,44 @@ import {
     SettlementConfig,
 } from "../src/wallet/vtxo-manager";
 import { IWallet, ExtendedCoin, ExtendedVirtualCoin } from "../src/wallet";
+import { Wallet } from "../src/wallet/wallet";
 import { CSVMultisigTapscript } from "../src/script/tapscript";
 import { hex } from "@scure/base";
+
+type MockWalletOptions = {
+    contractManager?: {
+        onContractEvent: ReturnType<typeof vi.fn>;
+    };
+    delegatorManager?: {
+        delegate: ReturnType<typeof vi.fn>;
+    };
+};
 
 // Mock wallet implementation
 const createMockWallet = (
     vtxos: ExtendedVirtualCoin[] = [],
-    arkAddress = "arkade1test"
+    arkAddress = "arkade1test",
+    options: MockWalletOptions = {}
 ): IWallet => {
-    const contractManager = {
+    const contractManager = options.contractManager ?? {
         onContractEvent: vi.fn().mockReturnValue(() => {}),
     };
 
     return {
         getVtxos: vi.fn().mockResolvedValue(vtxos),
         getAddress: vi.fn().mockResolvedValue(arkAddress),
-        getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+        getDelegatorManager: vi
+            .fn()
+            .mockResolvedValue(options.delegatorManager),
         getContractManager: vi.fn().mockResolvedValue(contractManager),
         settle: vi.fn().mockResolvedValue("mock-txid"),
         dustAmount: 1000n,
     } as any;
+};
+
+const flushMicrotasks = async () => {
+    await Promise.resolve();
+    await Promise.resolve();
 };
 
 // Helper to create mock VTXO
@@ -315,6 +333,49 @@ describe("VtxoManager - Recovery", () => {
                 callback
             );
         });
+    });
+});
+
+describe("VtxoManager - Lifecycle", () => {
+    it("should subscribe to contract events when settlement is enabled", async () => {
+        const unsubscribe = vi.fn();
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(unsubscribe),
+        };
+        const wallet = createMockWallet([], "arkade1test", { contractManager });
+
+        new VtxoManager(wallet, undefined, {});
+        await flushMicrotasks();
+
+        expect(wallet.getContractManager).toHaveBeenCalledTimes(1);
+        expect(contractManager.onContractEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it("should not subscribe to contract events when settlement is disabled", async () => {
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+        };
+        const wallet = createMockWallet([], "arkade1test", { contractManager });
+
+        new VtxoManager(wallet, undefined, false);
+        await flushMicrotasks();
+
+        expect(wallet.getContractManager).not.toHaveBeenCalled();
+        expect(contractManager.onContractEvent).not.toHaveBeenCalled();
+    });
+
+    it("should unsubscribe from contract events on dispose", async () => {
+        const unsubscribe = vi.fn();
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(unsubscribe),
+        };
+        const wallet = createMockWallet([], "arkade1test", { contractManager });
+        const manager = new VtxoManager(wallet, undefined, {});
+
+        await flushMicrotasks();
+        await manager.dispose();
+
+        expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -1063,6 +1124,49 @@ describe("SettlementConfig", () => {
             const expiring = await manager.getExpiringVtxos();
 
             expect(expiring).toHaveLength(0);
+        });
+    });
+
+    describe("Wallet disposal", () => {
+        it("should cache the owned VtxoManager", async () => {
+            const wallet = Object.create(Wallet.prototype) as Wallet & {
+                renewalConfig: Wallet["renewalConfig"];
+                settlementConfig: Wallet["settlementConfig"];
+            };
+
+            wallet.renewalConfig = {
+                enabled: false,
+                thresholdMs: DEFAULT_THRESHOLD_MS,
+            };
+            wallet.settlementConfig = false;
+
+            const manager1 = await wallet.getVtxoManager();
+            const manager2 = await wallet.getVtxoManager();
+
+            expect(manager1).toBe(manager2);
+        });
+
+        it("should dispose the owned VtxoManager", async () => {
+            const managerDispose = vi.fn().mockResolvedValue(undefined);
+            const contractManagerDispose = vi.fn();
+            const wallet = Object.create(Wallet.prototype) as Wallet & {
+                _vtxoManager?: { dispose(): Promise<void> };
+                _vtxoManagerInitializing?: Promise<unknown>;
+                _contractManager?: { dispose(): void };
+                _contractManagerInitializing?: Promise<unknown>;
+            };
+
+            wallet._vtxoManager = {
+                dispose: managerDispose,
+            };
+            wallet._contractManager = {
+                dispose: contractManagerDispose,
+            };
+
+            await wallet.dispose();
+
+            expect(managerDispose).toHaveBeenCalledTimes(1);
+            expect(contractManagerDispose).toHaveBeenCalledTimes(1);
         });
     });
 });
