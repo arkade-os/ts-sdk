@@ -1094,6 +1094,19 @@ export class WalletMessageHandler
             this.contractEventsSubscription = undefined;
         }
 
+        // Dispose the wallet to stop the ContractWatcher (and its polling
+        // intervals) before clearing the repositories, otherwise the poller
+        // will hit a closing IndexedDB connection.
+        try {
+            if (this.wallet) {
+                await this.wallet.dispose();
+            } else {
+                await this.readonlyWallet.dispose();
+            }
+        } catch (_) {
+            // best-effort teardown
+        }
+
         try {
             await this.walletRepository?.clear();
         } catch (_) {
