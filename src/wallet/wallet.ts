@@ -69,6 +69,7 @@ import {
     DEFAULT_RENEWAL_CONFIG,
     DEFAULT_SETTLEMENT_CONFIG,
     SettlementConfig,
+    VtxoManager,
 } from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
@@ -872,6 +873,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         return manager;
     }
+
+    async dispose(): Promise<void> {
+        const manager =
+            this._contractManager ??
+            (this._contractManagerInitializing
+                ? await this._contractManagerInitializing.catch(() => undefined)
+                : undefined);
+
+        manager?.dispose();
+        this._contractManager = undefined;
+        this._contractManagerInitializing = undefined;
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
+    }
 }
 
 /**
@@ -912,6 +929,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     override readonly identity: Identity;
     private readonly _delegatorManager?: IDelegatorManager;
+    private _vtxoManager?: VtxoManager;
+    private _vtxoManagerInitializing?: Promise<VtxoManager>;
 
     private _walletAssetManager?: IAssetManager;
 
@@ -993,6 +1012,46 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return this._walletAssetManager;
     }
 
+    async getVtxoManager(): Promise<VtxoManager> {
+        if (this._vtxoManager) {
+            return this._vtxoManager;
+        }
+
+        if (this._vtxoManagerInitializing) {
+            return this._vtxoManagerInitializing;
+        }
+
+        this._vtxoManagerInitializing = Promise.resolve(
+            new VtxoManager(this, this.renewalConfig, this.settlementConfig)
+        );
+
+        try {
+            const manager = await this._vtxoManagerInitializing;
+            this._vtxoManager = manager;
+            return manager;
+        } catch (error) {
+            this._vtxoManagerInitializing = undefined;
+            throw error;
+        } finally {
+            this._vtxoManagerInitializing = undefined;
+        }
+    }
+
+    override async dispose(): Promise<void> {
+        const manager =
+            this._vtxoManager ??
+            (this._vtxoManagerInitializing
+                ? await this._vtxoManagerInitializing.catch(() => undefined)
+                : undefined);
+        if (manager) {
+            await manager.dispose();
+            this._vtxoManager = undefined;
+            this._vtxoManagerInitializing = undefined;
+        }
+
+        await super.dispose();
+    }
+
     static async create(config: WalletConfig): Promise<Wallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
@@ -1019,7 +1078,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         );
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
-        return new Wallet(
+        const wallet = new Wallet(
             config.identity,
             setup.network,
             setup.networkName,
@@ -1040,6 +1099,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             config.watcherConfig,
             config.settlementConfig
         );
+
+        await wallet.getVtxoManager();
+
+        return wallet;
     }
 
     /**
