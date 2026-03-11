@@ -392,9 +392,9 @@ async function makeSignedDelegateIntent(
 
     let outputAssets: Asset[] | undefined;
 
-    // find our own output by matching the destination script
-    const assetOutputIndex = outputs.findIndex(
-        (o) => o.script && equalBytes(o.script, destinationScript)
+    const assetOutputIndex = findDestinationOutputIndex(
+        outputs,
+        destinationScript
     );
 
     if (assetInputs.size > 0) {
@@ -444,6 +444,19 @@ async function makeSignedDelegateIntent(
         proof: base64.encode(signedProof.toPSBT()),
         message,
     };
+}
+
+/**
+ * Finds the index of the output whose script matches the destination script.
+ * Returns -1 if no match is found.
+ */
+export function findDestinationOutputIndex(
+    outputs: TransactionOutput[],
+    destinationScript: Bytes
+): number {
+    return outputs.findIndex(
+        (o) => o.script && equalBytes(o.script, destinationScript)
+    );
 }
 
 function getDayTimestamp(timestamp: number): number {
