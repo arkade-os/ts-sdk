@@ -359,6 +359,7 @@ export class VtxoManager implements AsyncDisposable {
     private disposePromise?: Promise<void>;
     private pollIntervalId?: ReturnType<typeof setInterval>;
     private knownBoardingUtxos = new Set<string>();
+    private sweptBoardingUtxos = new Set<string>();
     private pollInProgress = false;
 
     constructor(
@@ -706,7 +707,11 @@ export class VtxoManager implements AsyncDisposable {
             );
         }
 
-        const expiredUtxos = await this.getExpiredBoardingUtxos();
+        const allExpired = await this.getExpiredBoardingUtxos();
+        // Filter out UTXOs already swept (tx broadcast but not yet confirmed)
+        const expiredUtxos = allExpired.filter(
+            (u) => !this.sweptBoardingUtxos.has(`${u.txid}:${u.vout}`)
+        );
         if (expiredUtxos.length === 0) {
             throw new Error("No expired boarding UTXOs to sweep");
         }
@@ -777,7 +782,16 @@ export class VtxoManager implements AsyncDisposable {
         signedTx.finalize();
 
         // Broadcast
-        return this.getOnchainProvider().broadcastTransaction(signedTx.hex);
+        const txid = await this.getOnchainProvider().broadcastTransaction(
+            signedTx.hex
+        );
+
+        // Mark UTXOs as swept to prevent duplicate broadcasts on next poll
+        for (const u of expiredUtxos) {
+            this.sweptBoardingUtxos.add(`${u.txid}:${u.vout}`);
+        }
+
+        return txid;
     }
 
     // ========== Private Helpers ==========
@@ -902,10 +916,7 @@ export class VtxoManager implements AsyncDisposable {
                     DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
             if (sweepEnabled) {
                 try {
-                    const txid = await this.sweepExpiredBoardingUtxos();
-                    console.log(
-                        `Auto-swept expired boarding UTXOs, txid: ${txid}`
-                    );
+                    await this.sweepExpiredBoardingUtxos();
                 } catch (e) {
                     if (
                         !(e instanceof Error) ||
@@ -930,15 +941,15 @@ export class VtxoManager implements AsyncDisposable {
     private async settleBoardingUtxos(): Promise<void> {
         const boardingUtxos = await this.wallet.getBoardingUtxos();
 
-        // Exclude expired UTXOs — those should be swept, not settled
-        const expiredSet = new Set<string>();
+        // Exclude expired UTXOs — those should be swept, not settled.
+        // If we can't determine expired status, bail out entirely to avoid
+        // accidentally settling expired UTXOs (which would conflict with sweep).
+        let expiredSet: Set<string>;
         try {
             const expired = await this.getExpiredBoardingUtxos();
-            for (const u of expired) {
-                expiredSet.add(`${u.txid}:${u.vout}`);
-            }
+            expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
         } catch {
-            // If we can't determine expired UTXOs, skip filtering
+            return;
         }
 
         const unsettledUtxos = boardingUtxos.filter(
