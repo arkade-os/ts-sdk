@@ -841,6 +841,10 @@ export class VtxoManager implements AsyncDisposable {
             return undefined;
         }
 
+        // Start polling for boarding UTXOs independently of contract manager
+        // SSE setup. Use a short delay to let the wallet finish construction.
+        setTimeout(() => this.startBoardingUtxoPoll(), 1000);
+
         try {
             const [delegatorManager, contractManager, destination] =
                 await Promise.all([
@@ -863,9 +867,6 @@ export class VtxoManager implements AsyncDisposable {
                         console.error("Error delegating VTXOs:", e);
                     });
             });
-
-            // Start polling for boarding UTXOs
-            this.startBoardingUtxoPoll();
 
             return stopWatching;
         } catch (e) {
@@ -895,8 +896,8 @@ export class VtxoManager implements AsyncDisposable {
     }
 
     private async pollBoardingUtxos(): Promise<void> {
-        // Guard: wallet must support getBoardingUtxos
-        if (typeof this.wallet.getBoardingUtxos !== "function") return;
+        // Guard: wallet must support boarding UTXO + sweep operations
+        if (!isSweepCapable(this.wallet)) return;
         // Skip if a previous poll is still running
         if (this.pollInProgress) return;
         this.pollInProgress = true;
