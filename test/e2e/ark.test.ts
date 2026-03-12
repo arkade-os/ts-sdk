@@ -1106,6 +1106,7 @@ describe("Delegator Lifecycle", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const addressA = await wallet1.getAddress();
@@ -1126,6 +1127,7 @@ describe("Delegator Lifecycle", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const addressB = await wallet2.getAddress();
@@ -1193,6 +1195,7 @@ describe("Delegator Lifecycle", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const manager3 = await wallet3.getContractManager();
@@ -1270,6 +1273,7 @@ describe("Cross-contract spending", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -1290,6 +1294,7 @@ describe("Cross-contract spending", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const delegateAddress = await wallet2.getAddress();
@@ -1394,6 +1399,7 @@ describe("Cross-contract spending", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -1408,6 +1414,7 @@ describe("Cross-contract spending", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             faucetOffchain(defaultAddress, 1_000);
@@ -1900,6 +1907,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const addressA = await wallet1.getAddress();
@@ -1923,6 +1931,7 @@ describe("Asset integration tests", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const addressB = await wallet2.getAddress();
@@ -1995,6 +2004,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const manager3 = await wallet3.getContractManager();
@@ -2055,6 +2065,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -2078,6 +2089,7 @@ describe("Asset integration tests", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const delegateAddress = await wallet2.getAddress();
@@ -2161,6 +2173,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -2175,6 +2188,7 @@ describe("Asset integration tests", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const delegateAddress = await wallet2.getAddress();
