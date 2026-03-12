@@ -905,25 +905,21 @@ export class VtxoManager implements AsyncDisposable {
     }
 
     /**
-     * Auto-settle new (unexpired) boarding UTXOs into the Ark.
-     * Only settles UTXOs that haven't been seen before by this manager.
+     * Auto-settle new boarding UTXOs into the Ark.
+     * Only settles UTXOs not already in-flight (tracked in knownBoardingUtxos).
+     * UTXOs are marked as known only after a successful settle, so failed
+     * attempts will be retried on the next poll.
      */
     private async settleBoardingUtxos(): Promise<void> {
         const boardingUtxos = await this.wallet.getBoardingUtxos();
-        const newUtxos = boardingUtxos.filter(
+        const unsettledUtxos = boardingUtxos.filter(
             (u) => !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`)
         );
 
-        // Track all current UTXOs
-        this.knownBoardingUtxos.clear();
-        for (const u of boardingUtxos) {
-            this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
-        }
-
-        if (newUtxos.length === 0) return;
+        if (unsettledUtxos.length === 0) return;
 
         const dustAmount = getDustAmount(this.wallet);
-        const totalAmount = newUtxos.reduce(
+        const totalAmount = unsettledUtxos.reduce(
             (sum, u) => sum + BigInt(u.value),
             0n
         );
@@ -931,9 +927,14 @@ export class VtxoManager implements AsyncDisposable {
 
         const arkAddress = await this.wallet.getAddress();
         await this.wallet.settle({
-            inputs: newUtxos,
+            inputs: unsettledUtxos,
             outputs: [{ address: arkAddress, amount: totalAmount }],
         });
+
+        // Mark as known only after successful settle
+        for (const u of unsettledUtxos) {
+            this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+        }
     }
 
     async dispose(): Promise<void> {
