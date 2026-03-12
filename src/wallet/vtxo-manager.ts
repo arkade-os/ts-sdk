@@ -660,19 +660,9 @@ export class VtxoManager implements AsyncDisposable {
             chainTipHeight = tip.height;
         }
 
-        const expired = boardingUtxos.filter((utxo) =>
+        return boardingUtxos.filter((utxo) =>
             hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
         );
-
-        if (boardingUtxos.length > 0 && expired.length === 0) {
-            console.log(
-                `[VtxoManager] ${boardingUtxos.length} boarding UTXOs, 0 expired. ` +
-                    `timelock={type:${boardingTimelock.type},value:${boardingTimelock.value}}, chainTip=${chainTipHeight}, ` +
-                    `utxos=${boardingUtxos.map((u) => `${u.txid.slice(0, 8)}:h=${u.status.block_height},t=${u.status.block_time}`).join("; ")}`
-            );
-        }
-
-        return expired;
     }
 
     /**
@@ -800,6 +790,10 @@ export class VtxoManager implements AsyncDisposable {
         for (const u of expiredUtxos) {
             this.sweptBoardingUtxos.add(`${u.txid}:${u.vout}`);
         }
+
+        // Mark the sweep output as "known" so the next poll doesn't try to
+        // auto-settle it back into Ark (it lands at the same boarding address).
+        this.knownBoardingUtxos.add(`${txid}:0`);
 
         return txid;
     }
