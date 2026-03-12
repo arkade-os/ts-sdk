@@ -588,7 +588,13 @@ export class VtxoManager implements AsyncDisposable {
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
         // Get all VTXOs (including recoverable ones)
-        const vtxos = await this.getExpiringVtxos();
+        // Use default threshold to bypass settlementConfig gate (manual API should always work)
+        const vtxos = await this.getExpiringVtxos(
+            this.settlementConfig !== false &&
+                this.settlementConfig?.vtxoThreshold !== undefined
+                ? this.settlementConfig.vtxoThreshold * 1000
+                : DEFAULT_RENEWAL_CONFIG.thresholdMs
+        );
 
         if (vtxos.length === 0) {
             throw new Error("No VTXOs available to renew");
@@ -874,6 +880,9 @@ export class VtxoManager implements AsyncDisposable {
     }
 
     private pollBoardingUtxos(): void {
+        // Guard: wallet must support getBoardingUtxos
+        if (typeof this.wallet.getBoardingUtxos !== "function") return;
+
         this.settleBoardingUtxos().catch((e) => {
             console.error("Error auto-settling boarding UTXOs:", e);
         });

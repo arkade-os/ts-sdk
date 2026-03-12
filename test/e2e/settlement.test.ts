@@ -210,6 +210,8 @@ describe("Settlement - VtxoManager Recovery", () => {
         async () => {
             const identity = SingleKey.fromRandomBytes();
 
+            // Settlement disabled to prevent auto-renewal from interfering
+            // with the manual recover/renew calls in these tests
             const wallet = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -221,10 +223,7 @@ describe("Settlement - VtxoManager Recovery", () => {
                     walletRepository: new InMemoryWalletRepository(),
                     contractRepository: new InMemoryContractRepository(),
                 },
-                settlementConfig: {
-                    // Long poll interval to avoid auto-settle interference
-                    pollIntervalMs: 120_000,
-                },
+                settlementConfig: false,
             });
 
             const address = await wallet.getAddress();
@@ -306,10 +305,7 @@ describe("Settlement - VtxoManager Recovery", () => {
                     walletRepository: new InMemoryWalletRepository(),
                     contractRepository: new InMemoryContractRepository(),
                 },
-                settlementConfig: {
-                    // Long poll interval to avoid auto-settle interference
-                    pollIntervalMs: 120_000,
-                },
+                settlementConfig: false,
             });
 
             const address = await wallet.getAddress();
