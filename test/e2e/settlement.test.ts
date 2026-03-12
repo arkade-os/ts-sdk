@@ -122,10 +122,11 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             await waitFor(
                 async () => {
                     const utxos = await wallet.getBoardingUtxos();
-                    return (
-                        utxos.length > 0 &&
-                        utxos.every((u) => u.txid !== initialTxid)
+                    const hasUtxos = utxos.length > 0;
+                    const hasDifferentUtxos = utxos.every(
+                        (u) => u.txid !== initialTxid
                     );
+                    return hasUtxos && hasDifferentUtxos;
                 },
                 { timeout: 60000, interval: 2000 }
             );
