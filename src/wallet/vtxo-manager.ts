@@ -902,7 +902,10 @@ export class VtxoManager implements AsyncDisposable {
                     DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
             if (sweepEnabled) {
                 try {
-                    await this.sweepExpiredBoardingUtxos();
+                    const txid = await this.sweepExpiredBoardingUtxos();
+                    console.log(
+                        `Auto-swept expired boarding UTXOs, txid: ${txid}`
+                    );
                 } catch (e) {
                     if (
                         !(e instanceof Error) ||
