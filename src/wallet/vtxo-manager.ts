@@ -879,20 +879,26 @@ export class VtxoManager implements AsyncDisposable {
         );
     }
 
-    private pollBoardingUtxos(): void {
+    private async pollBoardingUtxos(): Promise<void> {
         // Guard: wallet must support getBoardingUtxos
         if (typeof this.wallet.getBoardingUtxos !== "function") return;
 
-        this.settleBoardingUtxos().catch((e) => {
+        // Settle new (unexpired) UTXOs first, then sweep expired ones.
+        // Sequential to avoid racing for the same UTXOs.
+        try {
+            await this.settleBoardingUtxos();
+        } catch (e) {
             console.error("Error auto-settling boarding UTXOs:", e);
-        });
+        }
 
         const sweepEnabled =
             this.settlementConfig !== false &&
             (this.settlementConfig?.boardingUtxoSweep ??
                 DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
         if (sweepEnabled) {
-            this.sweepExpiredBoardingUtxos().catch((e) => {
+            try {
+                await this.sweepExpiredBoardingUtxos();
+            } catch (e) {
                 // "No expired boarding UTXOs to sweep" is expected most of the time
                 if (
                     !(e instanceof Error) ||
@@ -900,20 +906,35 @@ export class VtxoManager implements AsyncDisposable {
                 ) {
                     console.error("Error auto-sweeping boarding UTXOs:", e);
                 }
-            });
+            }
         }
     }
 
     /**
-     * Auto-settle new boarding UTXOs into the Ark.
+     * Auto-settle new (unexpired) boarding UTXOs into the Ark.
+     * Skips UTXOs that are already expired (those are handled by sweep).
      * Only settles UTXOs not already in-flight (tracked in knownBoardingUtxos).
      * UTXOs are marked as known only after a successful settle, so failed
      * attempts will be retried on the next poll.
      */
     private async settleBoardingUtxos(): Promise<void> {
         const boardingUtxos = await this.wallet.getBoardingUtxos();
+
+        // Exclude expired UTXOs — those should be swept, not settled
+        const expiredSet = new Set<string>();
+        try {
+            const expired = await this.getExpiredBoardingUtxos();
+            for (const u of expired) {
+                expiredSet.add(`${u.txid}:${u.vout}`);
+            }
+        } catch {
+            // If we can't determine expired UTXOs, skip filtering
+        }
+
         const unsettledUtxos = boardingUtxos.filter(
-            (u) => !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`)
+            (u) =>
+                !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
+                !expiredSet.has(`${u.txid}:${u.vout}`)
         );
 
         if (unsettledUtxos.length === 0) return;
