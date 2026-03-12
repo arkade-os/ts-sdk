@@ -63,6 +63,7 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         },
+        settlementConfig: false,
     });
 
     return {
@@ -86,6 +87,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             contractRepository: new InMemoryContractRepository(),
         },
         delegatorProvider: new RestDelegatorProvider("http://localhost:7002"),
+        settlementConfig: false,
     });
 
     return {
@@ -111,6 +113,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         },
+        settlementConfig: false,
     });
 
     return {
