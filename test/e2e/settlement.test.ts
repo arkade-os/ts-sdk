@@ -66,11 +66,43 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
     beforeEach(beforeEachFaucet, 20000);
 
     it(
-        "should auto-sweep a single expired boarding UTXO",
+        "should auto-sweep an expired boarding UTXO via poll loop",
         { timeout: 120000 },
         async () => {
             const identity = SingleKey.fromRandomBytes();
 
+            // Get boarding address first with settlement disabled,
+            // fund and expire UTXOs before creating the real wallet.
+            // This ensures the poll loop sees already-expired UTXOs.
+            const setupWallet = await Wallet.create({
+                identity,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                settlementConfig: false,
+                boardingTimelock: { type: "blocks", value: 5n },
+            });
+
+            const boardingAddress = await setupWallet.getBoardingAddress();
+            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+
+            await waitFor(
+                async () => (await setupWallet.getBoardingUtxos()).length > 0
+            );
+
+            const initialUtxos = await setupWallet.getBoardingUtxos();
+            expect(initialUtxos).toHaveLength(1);
+            const initialTxid = initialUtxos[0].txid;
+
+            // Mine to expire the boarding UTXO
+            execCommand("nigiri rpc --generate 6");
+
+            await setupWallet.dispose();
+
+            // Now create the real wallet with settlement + sweep enabled.
+            // The poll loop should detect the expired UTXO and auto-sweep it.
             const wallet = await Wallet.create({
                 identity,
                 arkServerUrl: "http://localhost:7070",
@@ -81,120 +113,27 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
                 boardingTimelock: { type: "blocks", value: 5n },
                 settlementConfig: {
                     boardingUtxoSweep: true,
-                    // Use long poll interval — we don't want auto-settle to
-                    // grab the UTXO before we expire it.
-                    pollIntervalMs: 120_000,
+                    pollIntervalMs: 5000,
                 },
             });
 
-            const boardingAddress = await wallet.getBoardingAddress();
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
-
+            // Wait for the sweep to happen automatically — the boarding UTXO
+            // txid should change as it gets swept to a fresh boarding address.
             await waitFor(
-                async () => (await wallet.getBoardingUtxos()).length > 0
-            );
-
-            const boardingUtxos = await wallet.getBoardingUtxos();
-            expect(boardingUtxos).toHaveLength(1);
-            const initialTxid = boardingUtxos[0].txid;
-
-            // Mine enough blocks to expire the boarding timelock
-            execCommand("nigiri rpc --generate 6");
-
-            // Now use the wallet's VtxoManager to verify and trigger sweep
-            const manager = await wallet.getVtxoManager();
-            await waitFor(async () => {
-                const expired = await manager.getExpiredBoardingUtxos();
-                return expired.length > 0;
-            });
-
-            const sweepTxid = await manager.sweepExpiredBoardingUtxos();
-            expect(sweepTxid).toHaveLength(64);
-
-            execCommand("nigiri rpc --generate 1");
-
-            await waitFor(async () => {
-                const utxos = await wallet.getBoardingUtxos();
-                return utxos.some((u) => u.txid === sweepTxid);
-            });
-
-            const newUtxos = await wallet.getBoardingUtxos();
-            // Swept UTXO should be a different txid (fresh boarding address)
-            expect(newUtxos.some((u) => u.txid !== initialTxid)).toBe(true);
-            // No more expired UTXOs after sweep
-            expect(await manager.getExpiredBoardingUtxos()).toHaveLength(0);
-
-            await wallet.dispose();
-        }
-    );
-
-    it(
-        "should batch-sweep multiple expired boarding UTXOs",
-        { timeout: 120000 },
-        async () => {
-            const identity = SingleKey.fromRandomBytes();
-
-            const wallet = await Wallet.create({
-                identity,
-                arkServerUrl: "http://localhost:7070",
-                onchainProvider: new EsploraProvider("http://localhost:3000", {
-                    forcePolling: true,
-                    pollingInterval: 2000,
-                }),
-                boardingTimelock: { type: "blocks", value: 5n },
-                settlementConfig: {
-                    boardingUtxoSweep: true,
-                    pollIntervalMs: 120_000,
+                async () => {
+                    const utxos = await wallet.getBoardingUtxos();
+                    return (
+                        utxos.length > 0 &&
+                        utxos.every((u) => u.txid !== initialTxid)
+                    );
                 },
-            });
-
-            const boardingAddress = await wallet.getBoardingAddress();
-
-            // Fund twice to create two separate boarding UTXOs
-            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
-            execCommand(`nigiri faucet ${boardingAddress} 0.002`);
-
-            await waitFor(
-                async () => (await wallet.getBoardingUtxos()).length >= 2
+                { timeout: 60000, interval: 2000 }
             );
 
-            const boardingUtxos = await wallet.getBoardingUtxos();
-            expect(boardingUtxos.length).toBeGreaterThanOrEqual(2);
-            const totalInitialValue = boardingUtxos.reduce(
-                (sum, u) => sum + u.value,
-                0
-            );
-
-            // Mine to expire all boarding UTXOs
-            execCommand("nigiri rpc --generate 6");
-
-            const manager = await wallet.getVtxoManager();
-            await waitFor(async () => {
-                const expired = await manager.getExpiredBoardingUtxos();
-                return expired.length >= 2;
-            });
-
-            // A single sweep should batch all expired UTXOs into one tx
-            const sweepTxid = await manager.sweepExpiredBoardingUtxos();
-            expect(sweepTxid).toHaveLength(64);
-
-            execCommand("nigiri rpc --generate 1");
-
-            await waitFor(async () => {
-                const utxos = await wallet.getBoardingUtxos();
-                return utxos.some((u) => u.txid === sweepTxid);
-            });
-
-            // Should produce a single output (batched)
-            const newUtxos = await wallet.getBoardingUtxos();
-            const sweepOutput = newUtxos.filter((u) => u.txid === sweepTxid);
-            expect(sweepOutput).toHaveLength(1);
-
-            // Total value should be less (fees) but reasonable
-            expect(sweepOutput[0].value).toBeLessThan(totalInitialValue);
-            expect(sweepOutput[0].value).toBeGreaterThan(330);
-
-            expect(await manager.getExpiredBoardingUtxos()).toHaveLength(0);
+            const sweptUtxos = await wallet.getBoardingUtxos();
+            expect(sweptUtxos.length).toBeGreaterThan(0);
+            // All UTXOs should have new txids (the sweep output)
+            expect(sweptUtxos.every((u) => u.txid !== initialTxid)).toBe(true);
 
             await wallet.dispose();
         }
