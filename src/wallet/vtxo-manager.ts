@@ -128,6 +128,15 @@ export interface SettlementConfig {
      * @default true
      */
     boardingUtxoSweep?: boolean;
+
+    /**
+     * Polling interval in milliseconds for checking boarding UTXOs.
+     * The poll loop auto-settles new boarding UTXOs into Ark and
+     * sweeps expired ones (when boardingUtxoSweep is enabled).
+     *
+     * @default 60000 (1 minute)
+     */
+    pollIntervalMs?: number;
 }
 
 /**
@@ -145,6 +154,7 @@ export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
 export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
     vtxoThreshold: DEFAULT_THRESHOLD_SECONDS,
     boardingUtxoSweep: true,
+    pollIntervalMs: 60_000,
 };
 
 /** Extracts the dust amount from the wallet, defaulting to 330 sats. */
@@ -347,6 +357,8 @@ export class VtxoManager implements AsyncDisposable {
         (() => void) | undefined
     >;
     private disposePromise?: Promise<void>;
+    private pollIntervalId?: ReturnType<typeof setInterval>;
+    private knownBoardingUtxos = new Set<string>();
 
     constructor(
         readonly wallet: IWallet,
@@ -831,6 +843,9 @@ export class VtxoManager implements AsyncDisposable {
                     });
             });
 
+            // Start polling for boarding UTXOs
+            this.startBoardingUtxoPoll();
+
             return stopWatching;
         } catch (e) {
             console.error("Error renewing VTXOs from VtxoManager", e);
@@ -838,8 +853,86 @@ export class VtxoManager implements AsyncDisposable {
         }
     }
 
+    /**
+     * Starts a polling loop that:
+     * 1. Auto-settles new boarding UTXOs into Ark
+     * 2. Sweeps expired boarding UTXOs (when boardingUtxoSweep is enabled)
+     */
+    private startBoardingUtxoPoll(): void {
+        if (this.settlementConfig === false) return;
+
+        const intervalMs =
+            this.settlementConfig.pollIntervalMs ??
+            DEFAULT_SETTLEMENT_CONFIG.pollIntervalMs;
+
+        // Run once immediately, then on interval
+        this.pollBoardingUtxos();
+        this.pollIntervalId = setInterval(
+            () => this.pollBoardingUtxos(),
+            intervalMs
+        );
+    }
+
+    private pollBoardingUtxos(): void {
+        this.settleBoardingUtxos().catch((e) => {
+            console.error("Error auto-settling boarding UTXOs:", e);
+        });
+
+        const sweepEnabled =
+            this.settlementConfig !== false &&
+            (this.settlementConfig?.boardingUtxoSweep ??
+                DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+        if (sweepEnabled) {
+            this.sweepExpiredBoardingUtxos().catch((e) => {
+                // "No expired boarding UTXOs to sweep" is expected most of the time
+                if (
+                    !(e instanceof Error) ||
+                    !e.message.includes("No expired boarding UTXOs")
+                ) {
+                    console.error("Error auto-sweeping boarding UTXOs:", e);
+                }
+            });
+        }
+    }
+
+    /**
+     * Auto-settle new (unexpired) boarding UTXOs into the Ark.
+     * Only settles UTXOs that haven't been seen before by this manager.
+     */
+    private async settleBoardingUtxos(): Promise<void> {
+        const boardingUtxos = await this.wallet.getBoardingUtxos();
+        const newUtxos = boardingUtxos.filter(
+            (u) => !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`)
+        );
+
+        // Track all current UTXOs
+        this.knownBoardingUtxos.clear();
+        for (const u of boardingUtxos) {
+            this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+        }
+
+        if (newUtxos.length === 0) return;
+
+        const dustAmount = getDustAmount(this.wallet);
+        const totalAmount = newUtxos.reduce(
+            (sum, u) => sum + BigInt(u.value),
+            0n
+        );
+        if (totalAmount < dustAmount) return;
+
+        const arkAddress = await this.wallet.getAddress();
+        await this.wallet.settle({
+            inputs: newUtxos,
+            outputs: [{ address: arkAddress, amount: totalAmount }],
+        });
+    }
+
     async dispose(): Promise<void> {
         this.disposePromise ??= (async () => {
+            if (this.pollIntervalId) {
+                clearInterval(this.pollIntervalId);
+                this.pollIntervalId = undefined;
+            }
             const subscription = await this.contractEventsSubscriptionReady;
             this.contractEventsSubscription = undefined;
             subscription?.();
