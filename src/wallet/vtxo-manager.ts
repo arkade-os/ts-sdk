@@ -359,6 +359,7 @@ export class VtxoManager implements AsyncDisposable {
     private disposePromise?: Promise<void>;
     private pollIntervalId?: ReturnType<typeof setInterval>;
     private knownBoardingUtxos = new Set<string>();
+    private pollInProgress = false;
 
     constructor(
         readonly wallet: IWallet,
@@ -882,31 +883,37 @@ export class VtxoManager implements AsyncDisposable {
     private async pollBoardingUtxos(): Promise<void> {
         // Guard: wallet must support getBoardingUtxos
         if (typeof this.wallet.getBoardingUtxos !== "function") return;
+        // Skip if a previous poll is still running
+        if (this.pollInProgress) return;
+        this.pollInProgress = true;
 
-        // Settle new (unexpired) UTXOs first, then sweep expired ones.
-        // Sequential to avoid racing for the same UTXOs.
         try {
-            await this.settleBoardingUtxos();
-        } catch (e) {
-            console.error("Error auto-settling boarding UTXOs:", e);
-        }
-
-        const sweepEnabled =
-            this.settlementConfig !== false &&
-            (this.settlementConfig?.boardingUtxoSweep ??
-                DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
-        if (sweepEnabled) {
+            // Settle new (unexpired) UTXOs first, then sweep expired ones.
+            // Sequential to avoid racing for the same UTXOs.
             try {
-                await this.sweepExpiredBoardingUtxos();
+                await this.settleBoardingUtxos();
             } catch (e) {
-                // "No expired boarding UTXOs to sweep" is expected most of the time
-                if (
-                    !(e instanceof Error) ||
-                    !e.message.includes("No expired boarding UTXOs")
-                ) {
-                    console.error("Error auto-sweeping boarding UTXOs:", e);
+                console.error("Error auto-settling boarding UTXOs:", e);
+            }
+
+            const sweepEnabled =
+                this.settlementConfig !== false &&
+                (this.settlementConfig?.boardingUtxoSweep ??
+                    DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+            if (sweepEnabled) {
+                try {
+                    await this.sweepExpiredBoardingUtxos();
+                } catch (e) {
+                    if (
+                        !(e instanceof Error) ||
+                        !e.message.includes("No expired boarding UTXOs")
+                    ) {
+                        console.error("Error auto-sweeping boarding UTXOs:", e);
+                    }
                 }
             }
+        } finally {
+            this.pollInProgress = false;
         }
     }
 

@@ -119,15 +119,18 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
 
             // Wait for the sweep to happen automatically — the boarding UTXO
             // txid should change as it gets swept to a fresh boarding address.
+            // Mine a block each iteration so the sweep tx confirms and the new
+            // UTXO appears in esplora's confirmed UTXO set.
             await waitFor(
                 async () => {
+                    execCommand("nigiri rpc --generate 1");
                     const utxos = await wallet.getBoardingUtxos();
                     return (
                         utxos.length > 0 &&
                         utxos.every((u) => u.txid !== initialTxid)
                     );
                 },
-                { timeout: 60000, interval: 2000 }
+                { timeout: 60000, interval: 5000 }
             );
 
             const sweptUtxos = await wallet.getBoardingUtxos();
