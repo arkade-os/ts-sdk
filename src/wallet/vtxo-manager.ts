@@ -660,9 +660,19 @@ export class VtxoManager implements AsyncDisposable {
             chainTipHeight = tip.height;
         }
 
-        return boardingUtxos.filter((utxo) =>
+        const expired = boardingUtxos.filter((utxo) =>
             hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
         );
+
+        if (boardingUtxos.length > 0 && expired.length === 0) {
+            console.log(
+                `[VtxoManager] ${boardingUtxos.length} boarding UTXOs, 0 expired. ` +
+                    `timelock={type:${boardingTimelock.type},value:${boardingTimelock.value}}, chainTip=${chainTipHeight}, ` +
+                    `utxos=${boardingUtxos.map((u) => `${u.txid.slice(0, 8)}:h=${u.status.block_height},t=${u.status.block_time}`).join("; ")}`
+            );
+        }
+
+        return expired;
     }
 
     /**
