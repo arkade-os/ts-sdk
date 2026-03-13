@@ -200,6 +200,7 @@ describe("ArkadeSwaps", () => {
         fundedWallet = await Wallet.create({
             identity: SingleKey.fromRandomBytes(),
             arkServerUrl: arkUrl,
+            settlementConfig: false,
         });
 
         const amount = 1_000_000;
@@ -236,6 +237,7 @@ describe("ArkadeSwaps", () => {
         wallet = await Wallet.create({
             identity,
             arkServerUrl: arkUrl,
+            settlementConfig: false,
             onchainProvider: new EsploraProvider("http://localhost:3000", {
                 forcePolling: true,
                 pollingInterval: 2000,
