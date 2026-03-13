@@ -1352,4 +1352,111 @@ describe("ArkadeSwaps", () => {
             });
         });
     });
+
+    // ==========================================
+    // Default wallet settings (VtxoManager enabled)
+    // ==========================================
+
+    describe("Default wallet settings (VtxoManager enabled)", () => {
+        it(
+            "should receive from Lightning with VtxoManager enabled",
+            { timeout: 15_000 },
+            async () => {
+                const defaultWallet = await Wallet.create({
+                    identity: SingleKey.fromPrivateKey(
+                        schnorr.utils.randomSecretKey()
+                    ),
+                    arkServerUrl: arkUrl,
+                    // no settlementConfig — VtxoManager enabled by default
+                });
+
+                try {
+                    const defaultSwaps = new ArkadeSwaps({
+                        wallet: defaultWallet,
+                        swapProvider,
+                        arkProvider: new RestArkProvider(arkUrl),
+                        indexerProvider: new RestIndexerProvider(arkUrl),
+                        swapManager: false,
+                    });
+
+                    const amount = 1000;
+                    const pendingSwap = await defaultSwaps.createReverseSwap({
+                        amount,
+                    });
+
+                    sleep(1000).then(() =>
+                        payInvoice(pendingSwap.response.invoice).catch(
+                            (err) =>
+                                console.error("Error paying invoice:", err)
+                        )
+                    );
+
+                    const result = await defaultSwaps.waitAndClaim(pendingSwap);
+                    expect(result).toHaveProperty("txid");
+                    expect(result.txid).toHaveLength(64);
+
+                    const balance = await defaultWallet.getBalance();
+                    expect(balance.available).toBeGreaterThan(0);
+                } finally {
+                    await defaultWallet.dispose();
+                }
+            }
+        );
+
+        it(
+            "should send to Lightning with VtxoManager enabled",
+            { timeout: 15_000 },
+            async () => {
+                // Use a tight vtxoThreshold so VtxoManager is fully active
+                // (subscriptions, boarding UTXO polling) but won't try to
+                // renew fresh VTXOs. In regtest, round lifetimes are very
+                // short so the default 3-day threshold would renew everything
+                // immediately — which doesn't match production behavior where
+                // fresh VTXOs have weeks until expiry.
+                const defaultWallet = await Wallet.create({
+                    identity: SingleKey.fromPrivateKey(
+                        schnorr.utils.randomSecretKey()
+                    ),
+                    arkServerUrl: arkUrl,
+                    settlementConfig: { vtxoThreshold: 1 },
+                });
+
+                try {
+                    const defaultSwaps = new ArkadeSwaps({
+                        wallet: defaultWallet,
+                        swapProvider,
+                        arkProvider: new RestArkProvider(arkUrl),
+                        indexerProvider: new RestIndexerProvider(arkUrl),
+                        swapManager: false,
+                    });
+
+                    // Fund the wallet via the shared funded wallet
+                    const amount = 1000;
+                    const fundAmount = amount + 10;
+                    await fundedWallet.sendBitcoin({
+                        address: await defaultWallet.getAddress(),
+                        amount: fundAmount,
+                    });
+                    await waitForBalance(
+                        () => defaultWallet.getBalance(),
+                        fundAmount,
+                        5_000
+                    );
+
+                    const { invoice } =
+                        await getNewLightningInvoice(amount);
+                    const result = await defaultSwaps.sendLightningPayment({
+                        invoice,
+                    });
+
+                    expect(result.txid).toHaveLength(64);
+
+                    const balance = await defaultWallet.getBalance();
+                    expect(balance.available).toBeLessThan(fundAmount);
+                } finally {
+                    await defaultWallet.dispose();
+                }
+            }
+        );
+    });
 });
