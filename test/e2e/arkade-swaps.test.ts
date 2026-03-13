@@ -1385,9 +1385,8 @@ describe("ArkadeSwaps", () => {
                     });
 
                     sleep(1000).then(() =>
-                        payInvoice(pendingSwap.response.invoice).catch(
-                            (err) =>
-                                console.error("Error paying invoice:", err)
+                        payInvoice(pendingSwap.response.invoice).catch((err) =>
+                            console.error("Error paying invoice:", err)
                         )
                     );
 
@@ -1405,20 +1404,18 @@ describe("ArkadeSwaps", () => {
 
         it(
             "should send to Lightning with VtxoManager enabled",
-            { timeout: 15_000 },
+            { timeout: 30_000 },
             async () => {
-                // Use a tight vtxoThreshold so VtxoManager is fully active
-                // (subscriptions, boarding UTXO polling) but won't try to
-                // renew fresh VTXOs. In regtest, round lifetimes are very
-                // short so the default 3-day threshold would renew everything
-                // immediately — which doesn't match production behavior where
-                // fresh VTXOs have weeks until expiry.
+                // When VtxoManager is enabled, its SSE subscription causes
+                // the ARK server to auto-include new VTXOs in the next
+                // scheduled round. We must let that round complete (by
+                // generating blocks) before spending the resulting VTXOs.
                 const defaultWallet = await Wallet.create({
                     identity: SingleKey.fromPrivateKey(
                         schnorr.utils.randomSecretKey()
                     ),
                     arkServerUrl: arkUrl,
-                    settlementConfig: { vtxoThreshold: 1 },
+                    // default settlementConfig — VtxoManager starts enabled
                 });
 
                 try {
@@ -1443,8 +1440,13 @@ describe("ArkadeSwaps", () => {
                         5_000
                     );
 
-                    const { invoice } =
-                        await getNewLightningInvoice(amount);
+                    // Let the server's scheduled round process the auto-
+                    // registered VTXO (ARKD_ROUND_INTERVAL=10 blocks).
+                    await sleep(1000);
+                    await generateBlocks(10);
+                    await sleep(3000);
+
+                    const { invoice } = await getNewLightningInvoice(amount);
                     const result = await defaultSwaps.sendLightningPayment({
                         invoice,
                     });
