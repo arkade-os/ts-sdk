@@ -65,7 +65,12 @@ import {
     hasBoardingTxExpired,
     isValidArkAddress,
 } from "../utils/arkTransaction";
-import { DEFAULT_RENEWAL_CONFIG } from "./vtxo-manager";
+import {
+    DEFAULT_RENEWAL_CONFIG,
+    DEFAULT_SETTLEMENT_CONFIG,
+    SettlementConfig,
+    VtxoManager,
+} from "./vtxo-manager";
 import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
@@ -868,6 +873,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         return manager;
     }
+
+    async dispose(): Promise<void> {
+        const manager =
+            this._contractManager ??
+            (this._contractManagerInitializing
+                ? await this._contractManagerInitializing.catch(() => undefined)
+                : undefined);
+
+        manager?.dispose();
+        this._contractManager = undefined;
+        this._contractManagerInitializing = undefined;
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
+    }
 }
 
 /**
@@ -908,12 +929,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     override readonly identity: Identity;
     private readonly _delegatorManager?: IDelegatorManager;
+    private _vtxoManager?: VtxoManager;
+    private _vtxoManagerInitializing?: Promise<VtxoManager>;
 
     private _walletAssetManager?: IAssetManager;
 
+    /** @deprecated Use settlementConfig instead */
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
     > & { enabled: boolean; thresholdMs: number };
+
+    public readonly settlementConfig: SettlementConfig | false;
 
     protected constructor(
         identity: Identity,
@@ -931,9 +957,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
+        /** @deprecated Use settlementConfig */
         renewalConfig?: WalletConfig["renewalConfig"],
         delegatorProvider?: DelegatorProvider,
-        watcherConfig?: WalletConfig["watcherConfig"]
+        watcherConfig?: WalletConfig["watcherConfig"],
+        settlementConfig?: WalletConfig["settlementConfig"]
     ) {
         super(
             identity,
@@ -950,11 +978,30 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             watcherConfig
         );
         this.identity = identity;
+
+        // Backwards-compatible: keep renewalConfig populated for any code reading it
         this.renewalConfig = {
             enabled: renewalConfig?.enabled ?? false,
             ...DEFAULT_RENEWAL_CONFIG,
             ...renewalConfig,
         };
+
+        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
+        if (settlementConfig !== undefined) {
+            this.settlementConfig = settlementConfig;
+        } else if (renewalConfig && this.renewalConfig.enabled) {
+            this.settlementConfig = {
+                vtxoThreshold: renewalConfig.thresholdMs
+                    ? renewalConfig.thresholdMs / 1000
+                    : undefined,
+            };
+        } else if (renewalConfig) {
+            // renewalConfig provided but not enabled → disabled
+            this.settlementConfig = false;
+        } else {
+            // No config at all → enabled by default
+            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
+        }
         this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
@@ -963,6 +1010,50 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     override get assetManager(): IAssetManager {
         this._walletAssetManager ??= new AssetManager(this);
         return this._walletAssetManager;
+    }
+
+    async getVtxoManager(): Promise<VtxoManager> {
+        if (this._vtxoManager) {
+            return this._vtxoManager;
+        }
+
+        if (this._vtxoManagerInitializing) {
+            return this._vtxoManagerInitializing;
+        }
+
+        this._vtxoManagerInitializing = Promise.resolve(
+            new VtxoManager(this, this.renewalConfig, this.settlementConfig)
+        );
+
+        try {
+            const manager = await this._vtxoManagerInitializing;
+            this._vtxoManager = manager;
+            return manager;
+        } catch (error) {
+            this._vtxoManagerInitializing = undefined;
+            throw error;
+        } finally {
+            this._vtxoManagerInitializing = undefined;
+        }
+    }
+
+    override async dispose(): Promise<void> {
+        const manager =
+            this._vtxoManager ??
+            (this._vtxoManagerInitializing
+                ? await this._vtxoManagerInitializing.catch(() => undefined)
+                : undefined);
+        try {
+            if (manager) {
+                await manager.dispose();
+            }
+        } catch {
+            // best-effort teardown; ensure super.dispose() still runs
+        } finally {
+            this._vtxoManager = undefined;
+            this._vtxoManagerInitializing = undefined;
+            await super.dispose();
+        }
     }
 
     static async create(config: WalletConfig): Promise<Wallet> {
@@ -991,7 +1082,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         );
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
-        return new Wallet(
+        const wallet = new Wallet(
             config.identity,
             setup.network,
             setup.networkName,
@@ -1009,8 +1100,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.contractRepository,
             config.renewalConfig,
             config.delegatorProvider,
-            config.watcherConfig
+            config.watcherConfig,
+            config.settlementConfig
         );
+
+        await wallet.getVtxoManager();
+
+        return wallet;
     }
 
     /**
@@ -1161,8 +1257,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const boardingTimelock = exitScript.params.timelock;
 
+            // For block-based timelocks, fetch the chain tip height
+            let chainTipHeight: number | undefined;
+            if (boardingTimelock.type === "blocks") {
+                const tip = await this.onchainProvider.getChainTip();
+                chainTipHeight = tip.height;
+            }
+
             const boardingUtxos = (await this.getBoardingUtxos()).filter(
-                (utxo) => !hasBoardingTxExpired(utxo, boardingTimelock)
+                (utxo) =>
+                    !hasBoardingTxExpired(
+                        utxo,
+                        boardingTimelock,
+                        chainTipHeight
+                    )
             );
 
             const filteredBoardingUtxos = [];

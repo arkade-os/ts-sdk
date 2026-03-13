@@ -262,6 +262,8 @@ export class ExpoWallet implements IWallet {
         } catch {
             // expo-background-task not installed — nothing to unregister
         }
+
+        await this.wallet.dispose();
     }
 
     // ── IWallet delegation ───────────────────────────────────────────

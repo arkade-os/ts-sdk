@@ -9,14 +9,16 @@ import {
     RestIndexerProvider,
     ArkAddress,
     IntentFeeConfig,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
 } from "../../src";
 import { execSync } from "child_process";
 import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
-export const arkdExec =
-    process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
+export const arkdExec = "docker exec -t arkd";
+// process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
 
 export interface TestArkWallet {
     wallet: Wallet;
@@ -57,6 +59,11 @@ export async function createTestArkWallet(): Promise<TestArkWallet> {
             forcePolling: true,
             pollingInterval: 2000,
         }),
+        storage: {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        },
+        settlementConfig: false,
     });
 
     return {
@@ -75,7 +82,12 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             forcePolling: true,
             pollingInterval: 2000,
         }),
+        storage: {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        },
         delegatorProvider: new RestDelegatorProvider("http://localhost:7002"),
+        settlementConfig: false,
     });
 
     return {
@@ -97,6 +109,11 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
             forcePolling: true,
             pollingInterval: 2000,
         }),
+        storage: {
+            walletRepository: new InMemoryWalletRepository(),
+            contractRepository: new InMemoryContractRepository(),
+        },
+        settlementConfig: false,
     });
 
     return {
@@ -165,7 +182,7 @@ export async function beforeEachFaucet(): Promise<void> {
     );
 
     if (offchainBalance <= 20_000) {
-        const noteStr = execCommand(`${arkdExec} arkd note --amount 100000`);
+        const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
         execCommand(
             `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
         );
