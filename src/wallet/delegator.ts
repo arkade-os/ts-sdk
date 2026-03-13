@@ -2,6 +2,7 @@ import { TransactionOutput } from "@scure/btc-signer/psbt";
 import {
     ArkAddress,
     ArkProvider,
+    Asset,
     decodeTapscript,
     DelegateInfo,
     Estimator,
@@ -12,8 +13,10 @@ import {
     isRecoverable,
     MultisigTapscript,
     Outpoint,
+    Recipient,
     SignedIntent,
     Transaction,
+    VirtualCoin,
     VtxoScript,
 } from "..";
 import { DelegatorProvider } from "../providers/delegator";
@@ -22,7 +25,10 @@ import { scriptFromTapLeafScript } from "../script/base";
 import { buildForfeitTxWithOutput } from "../forfeit";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils";
+import { equalBytes } from "@scure/btc-signer/utils.js";
 import { getNetwork, NetworkName } from "../networks";
+import { createAssetPacket } from "./asset";
+import { Extension } from "../extension";
 
 export interface IDelegatorManager {
     delegate(
@@ -284,7 +290,8 @@ async function delegate(
         outputs,
         [],
         [pubkey],
-        delegateAtSeconds
+        delegateAtSeconds,
+        destinationScript
     );
 
     const forfeitOutputScript = OutScript.encode(
@@ -367,8 +374,61 @@ async function makeSignedDelegateIntent(
     outputs: TransactionOutput[],
     onchainOutputsIndexes: number[],
     cosignerPubKeys: string[],
-    validAt: number
+    validAt: number,
+    destinationScript: Bytes
 ): Promise<SignedIntent<Intent.RegisterMessage>> {
+    // if some of the inputs hold assets, build the asset packet and append as output
+    // in the intent proof tx, there is a "fake" input at index 0
+    // so the real coin indices are offset by +1
+    const assetInputs = new Map<number, Asset[]>();
+    for (let i = 0; i < coins.length; i++) {
+        if ("assets" in coins[i]) {
+            const assets = (coins[i] as unknown as VirtualCoin).assets;
+            if (assets && assets.length > 0) {
+                assetInputs.set(i + 1, assets);
+            }
+        }
+    }
+
+    let outputAssets: Asset[] | undefined;
+
+    const assetOutputIndex = findDestinationOutputIndex(
+        outputs,
+        destinationScript
+    );
+
+    if (assetInputs.size > 0) {
+        if (assetOutputIndex === -1) {
+            throw new Error(
+                "Cannot assign assets: no output matches the destination address"
+            );
+        }
+        // collect all input assets and assign them to the first offchain output
+        const allAssets = new Map<string, bigint>();
+        for (const [, assets] of assetInputs) {
+            for (const asset of assets) {
+                const existing = allAssets.get(asset.assetId) ?? 0n;
+                allAssets.set(asset.assetId, existing + BigInt(asset.amount));
+            }
+        }
+
+        outputAssets = [];
+        for (const [assetId, amount] of allAssets) {
+            outputAssets.push({ assetId, amount: Number(amount) });
+        }
+    }
+
+    const recipients: Recipient[] = outputs.map((output, i) => ({
+        address: "", // not needed for asset packet creation
+        amount: Number(output.amount),
+        assets: i === assetOutputIndex ? outputAssets : undefined,
+    }));
+
+    if (outputAssets && outputAssets.length > 0) {
+        const assetPacket = createAssetPacket(assetInputs, recipients);
+        outputs.push(Extension.create([assetPacket]).txOut());
+    }
+
     const message: Intent.RegisterMessage = {
         type: "register",
         onchain_output_indexes: onchainOutputsIndexes,
@@ -384,6 +444,19 @@ async function makeSignedDelegateIntent(
         proof: base64.encode(signedProof.toPSBT()),
         message,
     };
+}
+
+/**
+ * Finds the index of the output whose script matches the destination script.
+ * Returns -1 if no match is found.
+ */
+export function findDestinationOutputIndex(
+    outputs: TransactionOutput[],
+    destinationScript: Bytes
+): number {
+    return outputs.findIndex(
+        (o) => o.script && equalBytes(o.script, destinationScript)
+    );
 }
 
 function getDayTimestamp(timestamp: number): number {

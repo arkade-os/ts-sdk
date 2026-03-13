@@ -82,7 +82,11 @@ import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
-import { IDelegatorManager, DelegatorManagerImpl } from "./delegator";
+import {
+    IDelegatorManager,
+    DelegatorManagerImpl,
+    findDestinationOutputIndex,
+} from "./delegator";
 import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
@@ -433,30 +437,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
         await this.walletRepository.saveVtxos(address, allExtended);
 
         return allExtended;
-    }
-
-    protected async getVirtualCoins(
-        filter: GetVtxosFilter = { withRecoverable: true, withUnrolled: false }
-    ): Promise<VirtualCoin[]> {
-        const scripts = [hex.encode(this.offchainTapscript.pkScript)];
-        const response = await this.indexerProvider.getVtxos({ scripts });
-        const allVtxos = response.vtxos;
-
-        let vtxos: VirtualCoin[] = allVtxos.filter(isSpendable);
-
-        // all recoverable vtxos are spendable by definition
-        if (!filter.withRecoverable) {
-            vtxos = vtxos.filter(
-                (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
-            );
-        }
-
-        if (filter.withUnrolled) {
-            const spentVtxos = allVtxos.filter((vtxo) => !isSpendable(vtxo));
-            vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
-        }
-
-        return vtxos;
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
@@ -1076,6 +1056,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return this._delegatorManager;
     }
 
+    /**
+     * @deprecated Use `send`
+     * @param params
+     */
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
@@ -1286,10 +1270,22 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         let outputAssets: Asset[] | undefined;
-        let assetOutputIndex: number | undefined; // where to send the assets
+
+        const destinationScript = ArkAddress.decode(
+            await this.getAddress()
+        ).pkScript;
+        const assetOutputIndex = findDestinationOutputIndex(
+            outputs,
+            destinationScript
+        );
 
         if (assetInputs.size > 0) {
-            // collect all input assets and assign them to the first offchain output
+            if (assetOutputIndex === -1) {
+                throw new Error(
+                    "Cannot assign assets: no output matches the destination address"
+                );
+            }
+            // collect all input assets and assign them to the destination output
             const allAssets = new Map<string, bigint>();
             for (const [, assets] of assetInputs) {
                 for (const asset of assets) {
@@ -1305,16 +1301,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             for (const [assetId, amount] of allAssets) {
                 outputAssets.push({ assetId, amount: Number(amount) });
             }
-
-            const firstOffchainIndex = params.outputs.findIndex(
-                (_, i) => !onchainOutputIndexes.includes(i)
-            );
-            if (firstOffchainIndex === -1) {
-                throw new Error(
-                    "Cannot settle assets without an offchain output"
-                );
-            }
-            assetOutputIndex = firstOffchainIndex;
         }
 
         const recipients: Recipient[] = params.outputs.map((output, i) => ({
@@ -1398,7 +1384,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const vtxos = await this.getVirtualCoins();
+        const vtxos = await this.getVtxos();
         let settlementPsbt = Transaction.fromPSBT(
             base64.decode(event.commitmentTx)
         );
@@ -1872,14 +1858,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const address = await this.getAddress();
         const outputAddress = ArkAddress.decode(address);
 
-        const virtualCoins = await this.getVirtualCoins({
+        const virtualCoins = await this.getVtxos({
             withRecoverable: false,
         });
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
 
-        let selectedCoins: VirtualCoin[] = [];
+        let selectedCoins: ExtendedVirtualCoin[] = [];
         let btcAmountToSelect = 0;
 
         for (const recipient of recipients) {
@@ -2100,20 +2086,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @returns The ark transaction id and server-signed checkpoint PSBTs (for bookkeeping)
      */
     async buildAndSubmitOffchainTx(
-        inputs: VirtualCoin[],
+        inputs: ExtendedVirtualCoin[],
         outputs: TransactionOutput[]
     ): Promise<{ arkTxid: string; signedCheckpointTxs: string[] }> {
-        const tapLeafScript = this.offchainTapscript.forfeit();
-        if (!tapLeafScript) {
-            throw new Error("Selected leaf not found");
-        }
-        const tapTree = this.offchainTapscript.encode();
         const offchainTx = buildOffchainTx(
-            inputs.map((input) => ({
-                ...input,
-                tapLeafScript,
-                tapTree,
-            })),
+            inputs.map((input) => {
+                return {
+                    ...input,
+                    tapLeafScript: input.forfeitTapLeafScript,
+                };
+            }),
             outputs,
             this.serverUnrollScript
         );
@@ -2328,10 +2310,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
  * @returns Selected coins and change amount
  */
 export function selectVirtualCoins(
-    coins: VirtualCoin[],
+    coins: ExtendedVirtualCoin[],
     targetAmount: number
 ): {
-    inputs: VirtualCoin[];
+    inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
     // Sort VTXOs by expiry (ascending) and amount (descending)
@@ -2347,7 +2329,7 @@ export function selectVirtualCoins(
         return b.value - a.value; // Larger amount first
     });
 
-    const selectedCoins: VirtualCoin[] = [];
+    const selectedCoins: ExtendedVirtualCoin[] = [];
     let selectedAmount = 0;
 
     // Select coins until we have enough
