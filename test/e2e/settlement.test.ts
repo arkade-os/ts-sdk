@@ -63,7 +63,7 @@ describe("Settlement - Auto-settle boarding UTXOs", () => {
 });
 
 describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
-    beforeEach(beforeEachFaucet, 20000);
+    beforeEach(beforeEachFaucet, 60000);
 
     it(
         "should auto-sweep an expired boarding UTXO via poll loop",
@@ -82,7 +82,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
                     pollingInterval: 2000,
                 }),
                 settlementConfig: false,
-                boardingTimelock: { type: "blocks", value: 5n },
+                boardingTimelock: { type: "blocks", value: 20n },
             });
 
             const boardingAddress = await setupWallet.getBoardingAddress();
@@ -97,7 +97,22 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
             const initialTxid = initialUtxos[0].txid;
 
             // Mine to expire the boarding UTXO
-            execCommand("nigiri rpc --generate 6");
+            execCommand("nigiri rpc --generate 21");
+
+            // Wait for esplora to index the new blocks so the chain tip
+            // is consistent when the wallet's poll loop starts.
+            const esplora = new EsploraProvider("http://localhost:3000", {
+                forcePolling: true,
+                pollingInterval: 2000,
+            });
+            const expectedHeight = initialUtxos[0].status.block_height! + 21;
+            await waitFor(
+                async () => {
+                    const tip = await esplora.getChainTip();
+                    return tip.height >= expectedHeight;
+                },
+                { timeout: 30000, interval: 1000 }
+            );
 
             await setupWallet.dispose();
 
@@ -110,7 +125,7 @@ describe("Settlement - Auto-sweep expired boarding UTXOs", () => {
                     forcePolling: true,
                     pollingInterval: 2000,
                 }),
-                boardingTimelock: { type: "blocks", value: 5n },
+                boardingTimelock: { type: "blocks", value: 20n },
                 settlementConfig: {
                     boardingUtxoSweep: true,
                     pollIntervalMs: 5000,
