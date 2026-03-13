@@ -85,6 +85,12 @@
                 "expectedPacketTypes": [0]
             },
             {
+                "name": "single introspector packet",
+                "hex": "6a0b41524b0106010000015100",
+                "expectedPacketCount": 1,
+                "expectedPacketTypes": [1]
+            },
+            {
                 "name": "unknown packet type",
                 "hex": "6a0941524bff04deadbeef",
                 "expectedPacketCount": 1,
@@ -95,6 +101,12 @@
                 "hex": "6a1941524b000e01020200000001010000c0de810aff04deadbeef",
                 "expectedPacketCount": 2,
                 "expectedPacketTypes": [0, 255]
+            },
+            {
+                "name": "asset and introspector packets",
+                "hex": "6a1b41524b000e01020200000001010000c0de810a0106010000015100",
+                "expectedPacketCount": 2,
+                "expectedPacketTypes": [0, 1]
             }
         ],
         "roundtrip": [

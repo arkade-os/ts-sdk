@@ -1,23 +1,15 @@
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
 import { equalBytes } from "@scure/btc-signer/utils.js";
-import { Packet } from "./asset/packet";
-import { BufferReader } from "./asset/utils";
-import {
-    IntrospectorPacket,
-    INTROSPECTOR_PACKET_TYPE,
-} from "./introspector/packet";
+import { Packet } from "./asset";
+import { BufferReader } from "./utils";
 import { ExtensionPacket, UnknownPacket } from "./packet";
 import type { TransactionOutput } from "@scure/btc-signer/psbt";
 import type { Transaction } from "../utils/transaction";
+import { IntrospectorPacket } from "./introspector";
 
 export type { ExtensionPacket } from "./packet";
 export { UnknownPacket } from "./packet";
-export {
-    IntrospectorPacket,
-    INTROSPECTOR_PACKET_TYPE,
-} from "./introspector/packet";
-export type { IntrospectorEntry } from "./introspector/packet";
 
 /**
  * ArkadeMagic is the 3-byte magic prefix ("ARK") that identifies an OP_RETURN
@@ -237,13 +229,14 @@ export class Extension {
  * parsePacket dispatches to a known packet type or falls back to UnknownPacket.
  */
 function parsePacket(packetType: number, data: Uint8Array): ExtensionPacket {
-    if (packetType === Packet.PACKET_TYPE) {
-        return Packet.fromBytes(data);
+    switch (packetType) {
+        case Packet.PACKET_TYPE:
+            return Packet.fromBytes(data);
+        case IntrospectorPacket.PACKET_TYPE:
+            return IntrospectorPacket.fromBytes(data);
+        default:
+            return new UnknownPacket(packetType, data);
     }
-    if (packetType === INTROSPECTOR_PACKET_TYPE) {
-        return IntrospectorPacket.fromBytes(data);
-    }
-    return new UnknownPacket(packetType, data);
 }
 
 /**

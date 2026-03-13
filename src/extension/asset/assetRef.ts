@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { AssetRefType } from "./types";
 import { AssetId } from "./assetId";
-import { BufferReader, BufferWriter } from "./utils";
+import { BufferReader, BufferWriter } from "../utils";
 
 type AssetRefByID = {
     type: AssetRefType.ByID;
