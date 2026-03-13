@@ -167,6 +167,12 @@ export function fromASM(asm: string): ArkadeScriptType {
             continue;
         }
 
+        // OP_TRUE → number 1
+        if (token === "OP_TRUE") {
+            out.push(1);
+            continue;
+        }
+
         // OP_1 through OP_16 → number
         const numMatch = token.match(/^OP_(\d+)$/);
         if (numMatch) {

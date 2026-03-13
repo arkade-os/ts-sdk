@@ -198,8 +198,3 @@ export function getOpcodeValue(name: string): number | undefined {
     // Check combined mappings
     return OPCODE_VALUES[name];
 }
-
-/**
- * List of all Arkade opcodes (for iteration)
- */
-export const ARKADE_OPCODES: number[] = Object.values(ARKADE_OP);

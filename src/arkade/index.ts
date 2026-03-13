@@ -24,7 +24,6 @@ export {
     ARKADE_OPCODE_VALUES,
     OPCODE_NAMES,
     OPCODE_VALUES,
-    ARKADE_OPCODES,
     getOpcodeName,
     getOpcodeValue,
 } from "./opcodes";

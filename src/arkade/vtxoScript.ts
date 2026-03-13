@@ -24,6 +24,7 @@ import { computeArkadeScriptPublicKey } from "./tweak";
 export type ArkadeLeaf = {
     arkadeScript: Uint8Array;
     tapscript: ArkTapscript<TapscriptType, any>;
+    introspectors: Uint8Array[];
 };
 
 export type ArkadeVtxoInput = ArkadeLeaf | Uint8Array;
@@ -33,7 +34,8 @@ function isArkadeLeaf(input: ArkadeVtxoInput): input is ArkadeLeaf {
         typeof input === "object" &&
         !(input instanceof Uint8Array) &&
         "arkadeScript" in input &&
-        "tapscript" in input
+        "tapscript" in input &&
+        "introspectors" in input
     );
 }
 
@@ -59,22 +61,21 @@ function reEncodeTapscript(
     }
 }
 
-function processScripts(
-    scripts: ArkadeVtxoInput[],
-    introspectorPubkey: Uint8Array
-): { processedScripts: Bytes[]; arkadeMap: Map<number, Uint8Array> } {
+function processScripts(scripts: ArkadeVtxoInput[]): {
+    processedScripts: Bytes[];
+    arkadeMap: Map<number, Uint8Array>;
+} {
     const processedScripts: Bytes[] = [];
     const arkadeMap = new Map<number, Uint8Array>();
 
     for (const input of scripts) {
         if (isArkadeLeaf(input)) {
-            const tweakedKey = computeArkadeScriptPublicKey(
-                introspectorPubkey,
-                input.arkadeScript
+            const tweakedKeys = input.introspectors.map((pk) =>
+                computeArkadeScriptPublicKey(pk, input.arkadeScript)
             );
             const params = {
                 ...input.tapscript.params,
-                pubkeys: [...input.tapscript.params.pubkeys, tweakedKey],
+                pubkeys: [...input.tapscript.params.pubkeys, ...tweakedKeys],
             };
             const modified = { ...input.tapscript, params };
             const leafIndex = processedScripts.length;
@@ -91,8 +92,8 @@ function processScripts(
 /**
  * VtxoScript subclass that supports Arkade-enhanced tapscript leaves.
  *
- * For each {@link ArkadeLeaf} in the constructor input, the introspector's
- * public key is tweaked with the arkade script hash and appended to the
+ * For each {@link ArkadeLeaf} in the constructor input, the introspectors'
+ * public keys are tweaked with the arkade script hash and appended to the
  * leaf's pubkey set before encoding into the taproot tree.
  * Plain `Uint8Array` leaves are passed through unchanged.
  *
@@ -112,21 +113,19 @@ function processScripts(
  * ]);
  *
  * // Create a VtxoScript with one arkade-enhanced multisig leaf and one CSV exit leaf
- * const vtxoScript = new ArkadeVtxoScript(
- *     [
- *         {
- *             arkadeScript: arkadeScriptBytes,
- *             tapscript: MultisigTapscript.encode({
- *                 pubkeys: [bobPubkey, serverPubkey],
- *             }),
- *         },
- *         CSVMultisigTapscript.encode({
- *             timelock: { type: "blocks", value: 5120n },
+ * const vtxoScript = new ArkadeVtxoScript([
+ *     {
+ *         arkadeScript: arkadeScriptBytes,
+ *         introspectors: [introspectorPubkey],
+ *         tapscript: MultisigTapscript.encode({
  *             pubkeys: [bobPubkey, serverPubkey],
- *         }).script,
- *     ],
- *     { introspectorPubkey }
- * );
+ *         }),
+ *     },
+ *     CSVMultisigTapscript.encode({
+ *         timelock: { type: "blocks", value: 5120n },
+ *         pubkeys: [bobPubkey, serverPubkey],
+ *     }).script,
+ * ]);
  *
  * // Derive the contract address
  * const address = vtxoScript.address(network.hrp, serverXOnlyPubkey).encode();
@@ -138,14 +137,8 @@ function processScripts(
 export class ArkadeVtxoScript extends VtxoScript {
     readonly arkadeScripts: ReadonlyMap<number, Uint8Array>;
 
-    constructor(
-        scripts: ArkadeVtxoInput[],
-        opts: { introspectorPubkey: Uint8Array }
-    ) {
-        const { processedScripts, arkadeMap } = processScripts(
-            scripts,
-            opts.introspectorPubkey
-        );
+    constructor(scripts: ArkadeVtxoInput[]) {
+        const { processedScripts, arkadeMap } = processScripts(scripts);
         super(processedScripts);
         this.arkadeScripts = arkadeMap;
     }

@@ -146,17 +146,15 @@ describe("arkade", () => {
         );
 
         // Create VtxoScript with arkade multisig
-        const vtxoScript = new arkade.ArkadeVtxoScript(
-            [
-                {
-                    arkadeScript: arkadeScriptBytes,
-                    tapscript: MultisigTapscript.encode({
-                        pubkeys: [bobPubkey, serverXOnlyPubkey],
-                    }),
-                },
-            ],
-            { introspectorPubkey }
-        );
+        const vtxoScript = new arkade.ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: MultisigTapscript.encode({
+                    pubkeys: [bobPubkey, serverXOnlyPubkey],
+                }),
+            },
+        ]);
         const contractAddress = vtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)
             .encode();
@@ -237,21 +235,19 @@ describe("arkade", () => {
         const arkadeScriptBytes = buildCheckOutputScript(0, aliceWP);
 
         // Create VtxoScript with arkade closure + CSV exit
-        const vtxoScript = new arkade.ArkadeVtxoScript(
-            [
-                {
-                    arkadeScript: arkadeScriptBytes,
-                    tapscript: MultisigTapscript.encode({
-                        pubkeys: [bobPubkey, serverXOnlyPubkey],
-                    }),
-                },
-                CSVMultisigTapscript.encode({
-                    timelock: { type: "blocks", value: BigInt(5120) },
+        const vtxoScript = new arkade.ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }).script,
-            ],
-            { introspectorPubkey }
-        );
+                }),
+            },
+            CSVMultisigTapscript.encode({
+                timelock: { type: "blocks", value: BigInt(5120) },
+                pubkeys: [bobPubkey, serverXOnlyPubkey],
+            }).script,
+        ]);
         const contractAddress = vtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)
             .encode();
@@ -385,24 +381,22 @@ describe("arkade", () => {
         const arkadeScriptBytes = buildCheckOutputScript(0, aliceWP);
 
         // Create boarding VtxoScript: arkade closure + bob-only CSV exit
-        const vtxoScript = new arkade.ArkadeVtxoScript(
-            [
-                {
-                    arkadeScript: arkadeScriptBytes,
-                    tapscript: MultisigTapscript.encode({
-                        pubkeys: [bobPubkey, serverXOnlyPubkey],
-                    }),
+        const vtxoScript = new arkade.ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: MultisigTapscript.encode({
+                    pubkeys: [bobPubkey, serverXOnlyPubkey],
+                }),
+            },
+            CSVMultisigTapscript.encode({
+                timelock: {
+                    type: "blocks",
+                    value: BigInt(boardingExitDelay),
                 },
-                CSVMultisigTapscript.encode({
-                    timelock: {
-                        type: "blocks",
-                        value: BigInt(boardingExitDelay),
-                    },
-                    pubkeys: [bobPubkey],
-                }).script,
-            ],
-            { introspectorPubkey }
-        );
+                pubkeys: [bobPubkey],
+            }).script,
+        ]);
 
         // Get onchain taproot address (regtest uses bcrt1 prefix)
         const btcSigner = await import("@scure/btc-signer");
@@ -567,17 +561,15 @@ describe("arkade", () => {
         ];
         const arkadeScriptBytes = arkade.ArkadeScript.encode(scriptOps);
 
-        const vtxoScript = new arkade.ArkadeVtxoScript(
-            [
-                {
-                    arkadeScript: arkadeScriptBytes,
-                    tapscript: MultisigTapscript.encode({
-                        pubkeys: [bobPubkey, serverXOnlyPubkey],
-                    }),
-                },
-            ],
-            { introspectorPubkey }
-        );
+        const vtxoScript = new arkade.ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: MultisigTapscript.encode({
+                    pubkeys: [bobPubkey, serverXOnlyPubkey],
+                }),
+            },
+        ]);
         const contractAddress = vtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)
             .encode();
@@ -684,21 +676,19 @@ describe("arkade", () => {
         const settleArkadeScript = arkade.ArkadeScript.encode(settleScriptOps);
 
         // Create settle contract VtxoScript with CSV exit
-        const settleVtxoScript = new arkade.ArkadeVtxoScript(
-            [
-                {
-                    arkadeScript: settleArkadeScript,
-                    tapscript: MultisigTapscript.encode({
-                        pubkeys: [bobPubkey, serverXOnlyPubkey],
-                    }),
-                },
-                CSVMultisigTapscript.encode({
-                    timelock: { type: "blocks", value: BigInt(5120) },
+        const settleVtxoScript = new arkade.ArkadeVtxoScript([
+            {
+                arkadeScript: settleArkadeScript,
+                introspectors: [introspectorPubkey],
+                tapscript: MultisigTapscript.encode({
                     pubkeys: [bobPubkey, serverXOnlyPubkey],
-                }).script,
-            ],
-            { introspectorPubkey }
-        );
+                }),
+            },
+            CSVMultisigTapscript.encode({
+                timelock: { type: "blocks", value: BigInt(5120) },
+                pubkeys: [bobPubkey, serverXOnlyPubkey],
+            }).script,
+        ]);
         const settleContractAddress = settleVtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)
             .encode();
@@ -723,17 +713,15 @@ describe("arkade", () => {
         ];
         const mintArkadeScript = arkade.ArkadeScript.encode(mintScriptOps);
 
-        const mintVtxoScript = new arkade.ArkadeVtxoScript(
-            [
-                {
-                    arkadeScript: mintArkadeScript,
-                    tapscript: MultisigTapscript.encode({
-                        pubkeys: [bobPubkey, serverXOnlyPubkey],
-                    }),
-                },
-            ],
-            { introspectorPubkey }
-        );
+        const mintVtxoScript = new arkade.ArkadeVtxoScript([
+            {
+                arkadeScript: mintArkadeScript,
+                introspectors: [introspectorPubkey],
+                tapscript: MultisigTapscript.encode({
+                    pubkeys: [bobPubkey, serverXOnlyPubkey],
+                }),
+            },
+        ]);
         const mintContractAddress = mintVtxoScript
             .address(networks.regtest.hrp, serverXOnlyPubkey)
             .encode();

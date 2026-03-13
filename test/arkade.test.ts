@@ -8,10 +8,11 @@
 
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
+import { Script, type ScriptType } from "@scure/btc-signer";
 import {
     OPCODE_NAMES,
     OPCODE_VALUES,
-    ARKADE_OPCODES,
+    ARKADE_OP,
     toASM,
     fromASM,
     ArkadeScript,
@@ -454,13 +455,10 @@ describe("ArkadeScript CoderType", () => {
         });
 
         it("should round-trip all Arkade opcodes", () => {
+            const arkadeKeys = new Set(Object.keys(ARKADE_OP));
             const allArkadeOps: ArkadeScriptType = Object.keys(
                 ARKADE_OPS
-            ).filter((k) => {
-                const v = ARKADE_OPS[k as keyof typeof ARKADE_OPS];
-                // Only include Arkade-range opcodes (0xc4+)
-                return v >= 0xc4;
-            }) as ArkadeScriptType;
+            ).filter((k) => arkadeKeys.has(k)) as ArkadeScriptType;
             const decoded = ArkadeScript.decode(
                 ArkadeScript.encode(allArkadeOps)
             );
@@ -470,8 +468,7 @@ describe("ArkadeScript CoderType", () => {
 
     describe("compatibility with @scure/btc-signer Script", () => {
         it("should produce identical bytes for standard Bitcoin scripts", () => {
-            const { Script } = require("@scure/btc-signer");
-            const script: ArkadeScriptType = [
+            const script: ScriptType = [
                 "DUP",
                 "HASH160",
                 hex.decode("aabbccdd"),
@@ -484,7 +481,6 @@ describe("ArkadeScript CoderType", () => {
         });
 
         it("should decode standard scripts identically to @scure", () => {
-            const { Script } = require("@scure/btc-signer");
             // P2PKH script: OP_DUP OP_HASH160 <20 bytes> OP_EQUALVERIFY OP_CHECKSIG
             const scriptHex =
                 "76a914aabbccddaabbccddaabbccddaabbccddaabbccdd88ac";
@@ -517,10 +513,13 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: multisig }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                tapscript: multisig,
+                introspectors: [introspectorPubkey],
+            },
+        ]);
         expect(vtxo).toBeInstanceOf(VtxoScript);
     });
 
@@ -528,10 +527,13 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: multisig }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                tapscript: multisig,
+                introspectors: [introspectorPubkey],
+            },
+        ]);
         const expectedTweaked = computeArkadeScriptPublicKey(
             introspectorPubkey,
             arkadeScriptBytes
@@ -549,10 +551,13 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: multisig }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                tapscript: multisig,
+                introspectors: [introspectorPubkey],
+            },
+        ]);
         expect(vtxo.arkadeScripts.size).toBe(1);
         expect(hex.encode(vtxo.arkadeScripts.get(0)!)).toBe(
             hex.encode(arkadeScriptBytes)
@@ -567,13 +572,14 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [
-                { arkadeScript: arkadeScriptBytes, tapscript: multisig },
-                csvExit.script,
-            ],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                tapscript: multisig,
+                introspectors: [introspectorPubkey],
+            },
+            csvExit.script,
+        ]);
         expect(vtxo.leaves).toHaveLength(2);
         expect(vtxo.arkadeScripts.has(0)).toBe(true);
         expect(vtxo.arkadeScripts.has(1)).toBe(false);
@@ -591,13 +597,14 @@ describe("ArkadeVtxoScript", () => {
             timelock: { type: "blocks", value: 5120n },
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [
-                { arkadeScript: arkadeScriptBytes, tapscript: multisig },
-                csvExit.script,
-            ],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                tapscript: multisig,
+                introspectors: [introspectorPubkey],
+            },
+            csvExit.script,
+        ]);
         const manualMultisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey, expectedTweaked],
         });
@@ -616,10 +623,13 @@ describe("ArkadeVtxoScript", () => {
             timelock: { type: "blocks", value: 100n },
             pubkeys: [userPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: csv }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                tapscript: csv,
+                introspectors: [introspectorPubkey],
+            },
+        ]);
         const expectedTweaked = computeArkadeScriptPublicKey(
             introspectorPubkey,
             arkadeScriptBytes
@@ -646,13 +656,18 @@ describe("ArkadeVtxoScript", () => {
         const multisig2 = MultisigTapscript.encode({
             pubkeys: [userPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [
-                { arkadeScript: arkadeScriptBytes, tapscript: multisig1 },
-                { arkadeScript: arkadeScript2, tapscript: multisig2 },
-            ],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                tapscript: multisig1,
+                introspectors: [introspectorPubkey],
+            },
+            {
+                arkadeScript: arkadeScript2,
+                tapscript: multisig2,
+                introspectors: [introspectorPubkey],
+            },
+        ]);
         expect(vtxo.leaves).toHaveLength(2);
         expect(vtxo.arkadeScripts.size).toBe(2);
         expect(hex.encode(vtxo.arkadeScripts.get(0)!)).toBe(
@@ -671,9 +686,7 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript([multisig.script, csvExit.script], {
-            introspectorPubkey,
-        });
+        const vtxo = new ArkadeVtxoScript([multisig.script, csvExit.script]);
         const manualVtxo = new VtxoScript([multisig.script, csvExit.script]);
         expect(hex.encode(vtxo.tweakedPublicKey)).toBe(
             hex.encode(manualVtxo.tweakedPublicKey)

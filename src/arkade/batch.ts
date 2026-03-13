@@ -194,7 +194,9 @@ export function createArkadeBatchHandler(
                     const connectorTxId = connectorLeaf.id;
                     const connectorOutput = connectorLeaf.getOutput(0);
                     if (!connectorOutput?.amount || !connectorOutput?.script) {
-                        continue;
+                        throw new Error(
+                            `Invalid connector output at index ${connectorIndex - 1}: missing amount or script`
+                        );
                     }
 
                     let forfeitTx = buildForfeitTx(
