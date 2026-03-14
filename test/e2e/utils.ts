@@ -1,3 +1,5 @@
+import { generateMnemonic } from "@scure/bip39";
+import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { hex } from "@scure/base";
 import {
     Wallet,
@@ -9,11 +11,9 @@ import {
     RestIndexerProvider,
     ArkAddress,
     IntentFeeConfig,
+    RestDelegatorProvider,
 } from "../../src";
 import { execSync } from "child_process";
-import { RestDelegatorProvider } from "../../src/providers/delegator";
-import { generateMnemonic } from "@scure/bip39";
-import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 export const arkdExec =
     process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";

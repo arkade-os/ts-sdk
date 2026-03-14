@@ -1,3 +1,4 @@
+import { hex, base64 } from "@scure/base";
 import { expect, describe, it, beforeEach } from "vitest";
 import {
     TxType,
@@ -18,6 +19,7 @@ import {
     EsploraProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    RestDelegatorProvider,
 } from "../../src";
 import {
     arkdExec,
@@ -34,8 +36,6 @@ import {
     setFees,
     waitFor,
 } from "./utils";
-import { RestDelegatorProvider } from "../../src/providers/delegator";
-import { hex, base64 } from "@scure/base";
 
 describe("Common", () => {
     beforeEach(beforeEachFaucet, 20000);

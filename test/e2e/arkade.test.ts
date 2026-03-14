@@ -16,8 +16,9 @@ import {
     Intent,
     Batch,
     RestIntrospectorProvider,
+    Extension,
+    IntrospectorPacket,
 } from "../../src";
-import { Extension, IntrospectorPacket } from "../../src/extension";
 import {
     beforeEachFaucet,
     createTestArkWallet,

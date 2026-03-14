@@ -210,8 +210,10 @@ import type { MigrationStatus } from "./repositories";
 import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
+export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+export * from "./extension/introspector";
 
 // Contracts
 import {
