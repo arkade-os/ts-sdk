@@ -6,6 +6,6 @@ export type {
     TaskProcessor,
     TaskDependencies,
     CreateTaskDependenciesOptions,
+    runTasks,
 } from "./taskRunner";
-export { runTasks, createTaskDependencies } from "./taskRunner";
 export { contractPollProcessor, CONTRACT_POLL_TASK_TYPE } from "./processors";

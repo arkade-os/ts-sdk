@@ -1,0 +1,62 @@
+{
+    "valid": [
+        {
+            "name": "single entry",
+            "encoded": "010000015100",
+            "entries": [{ "vin": 0, "script": "51", "witness": "" }]
+        },
+        {
+            "name": "single entry with witness",
+            "encoded": "01010002aabb01cc",
+            "entries": [{ "vin": 1, "script": "aabb", "witness": "cc" }]
+        },
+        {
+            "name": "multiple entries",
+            "encoded": "020000015100030002aabb04ccddeeff",
+            "entries": [
+                { "vin": 0, "script": "51", "witness": "" },
+                { "vin": 3, "script": "aabb", "witness": "ccddeeff" }
+            ]
+        },
+        {
+            "name": "large vin",
+            "encoded": "01ffff015100",
+            "entries": [{ "vin": 65535, "script": "51", "witness": "" }]
+        }
+    ],
+    "invalid": [
+        {
+            "name": "empty packet",
+            "entries": [],
+            "expectedError": "empty introspector packet"
+        },
+        {
+            "name": "empty packet from bytes",
+            "encoded": "00",
+            "expectedError": "empty introspector packet"
+        },
+        {
+            "name": "empty script",
+            "entries": [{ "vin": 0, "script": "", "witness": "" }],
+            "expectedError": "empty script for vin 0"
+        },
+        {
+            "name": "duplicate vin",
+            "entries": [
+                { "vin": 0, "script": "01", "witness": "" },
+                { "vin": 0, "script": "02", "witness": "" }
+            ],
+            "expectedError": "duplicate vin 0"
+        },
+        {
+            "name": "trailing bytes",
+            "encoded": "0000000101ff",
+            "expectedError": "trailing bytes"
+        },
+        {
+            "name": "truncated entry",
+            "encoded": "0100",
+            "expectedError": "unexpected end of buffer"
+        }
+    ]
+}

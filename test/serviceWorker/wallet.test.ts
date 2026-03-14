@@ -237,7 +237,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         ).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(
-            manager.getSpendablePaths({ contractScript: "c1" })
+            manager.getSpendablePaths({ contractScript: "c1" } as any)
         ).resolves.toEqual(paths);
         await expect(manager.isWatching()).resolves.toBe(true);
 

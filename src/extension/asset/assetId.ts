@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 import { TX_HASH_SIZE, ASSET_ID_SIZE } from "./types";
-import { BufferReader, BufferWriter, isZeroBytes } from "./utils";
+import { BufferReader, BufferWriter } from "../utils";
+import { isZeroBytes } from "./utils";
 
 /**
  * AssetId represents the id of an asset.

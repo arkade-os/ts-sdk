@@ -1,11 +1,12 @@
 import { hex } from "@scure/base";
 import { Script } from "@scure/btc-signer";
 import { equalBytes } from "@scure/btc-signer/utils.js";
-import { Packet } from "./asset/packet";
-import { BufferReader } from "./asset/utils";
+import { Packet } from "./asset";
+import { BufferReader } from "./utils";
 import { ExtensionPacket, UnknownPacket } from "./packet";
 import type { TransactionOutput } from "@scure/btc-signer/psbt";
 import type { Transaction } from "../utils/transaction";
+import { IntrospectorPacket } from "./introspector";
 
 export type { ExtensionPacket } from "./packet";
 export { UnknownPacket } from "./packet";
@@ -210,16 +211,32 @@ export class Extension {
         }
         return null;
     }
+
+    /**
+     * getIntrospectorPacket returns the embedded IntrospectorPacket, or null if not present.
+     */
+    getIntrospectorPacket(): IntrospectorPacket | null {
+        for (const p of this.packets) {
+            if (p instanceof IntrospectorPacket) {
+                return p;
+            }
+        }
+        return null;
+    }
 }
 
 /**
  * parsePacket dispatches to a known packet type or falls back to UnknownPacket.
  */
 function parsePacket(packetType: number, data: Uint8Array): ExtensionPacket {
-    if (packetType === Packet.PACKET_TYPE) {
-        return Packet.fromBytes(data);
+    switch (packetType) {
+        case Packet.PACKET_TYPE:
+            return Packet.fromBytes(data);
+        case IntrospectorPacket.PACKET_TYPE:
+            return IntrospectorPacket.fromBytes(data);
+        default:
+            return new UnknownPacket(packetType, data);
     }
-    return new UnknownPacket(packetType, data);
 }
 
 /**
