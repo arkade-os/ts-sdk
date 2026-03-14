@@ -7,6 +7,7 @@ import {
     IssuanceParams,
     IssuanceResult,
     ReissuanceParams,
+    ExtendedVirtualCoin,
 } from ".";
 import {
     AssetGroup,
@@ -41,10 +42,12 @@ export class AssetManager
     }
 
     /**
-     * Issue a new asset.
+     * Issue a new asset. Supports self-controlled assets (single-tx) and
+     * referencing an existing control asset.
      * @param params - Parameters for asset issuance
      * @param params.amount - Amount of asset units to issue
-     * @param params.controlAssetId - Optional control asset ID (for reissuable assets)
+     * @param params.controlAssetId - Optional existing control asset ID (for reissuable assets)
+     * @param params.selfControlled - If true, the issued asset controls itself (reissuable in one tx)
      * @param params.metadata - Optional metadata to attach to the asset
      * @returns Promise resolving to the ark transaction ID and asset ID
      *
@@ -54,12 +57,17 @@ export class AssetManager
      * const result = await wallet.assetManager.issue({ amount: 1000 });
      * console.log('Asset ID:', result.assetId);
      *
+     * // Issue a self-controlled reissuable asset (single transaction)
+     * const result = await wallet.assetManager.issue({
+     *   amount: 1000,
+     *   selfControlled: true
+     * });
+     *
      * // Issue a reissuable asset with an existing control asset
      * const result = await wallet.assetManager.issue({
      *   amount: 1000,
      *   controlAssetId: 'existingControlAssetId'
      * });
-     * console.log('Asset ID:', result.assetId);
      * ```
      */
     async issue(params: IssuanceParams): Promise<IssuanceResult> {
@@ -69,33 +77,82 @@ export class AssetManager
             );
         }
 
+        if (params.controlAssetId && params.selfControlled) {
+            throw new Error(
+                "controlAssetId and selfControlled are mutually exclusive"
+            );
+        }
+
         const metadata = castMetadata(params.metadata);
 
         const virtualCoins = await this.wallet.getVtxos({
             withRecoverable: false,
         });
 
-        const controlAssetRef = params.controlAssetId
-            ? AssetRef.fromId(AssetId.fromString(params.controlAssetId))
-            : null;
-
-        const coinSelection = selectVirtualCoins(
-            virtualCoins,
-            Number(this.wallet.dustAmount)
-        );
-        let totalBtcSelected = 0n;
+        // determine control asset reference
+        let controlAssetRef: AssetRef | null = null;
+        if (params.selfControlled) {
+            // self-controlled: the issuance group references itself (index 0)
+            controlAssetRef = AssetRef.fromGroupIndex(0);
+        } else if (params.controlAssetId) {
+            controlAssetRef = AssetRef.fromId(
+                AssetId.fromString(params.controlAssetId)
+            );
+        }
 
         // keep track of asset changes
         const assetChanges = new Map<string, bigint>();
 
-        for (const coin of coinSelection.inputs) {
-            totalBtcSelected += BigInt(coin.value);
-            if (!coin.assets) continue;
-            for (const { assetId, amount } of coin.assets) {
-                const existing = assetChanges.get(assetId) ?? 0n;
-                assetChanges.set(assetId, existing + BigInt(amount));
+        let selectedCoins: ExtendedVirtualCoin[] = [];
+
+        // when referencing an existing control asset, select its VTXO first
+        if (params.controlAssetId) {
+            const { selected: controlCoins } = selectCoinsWithAsset(
+                virtualCoins,
+                params.controlAssetId,
+                1n
+            );
+
+            for (const coin of controlCoins) {
+                selectedCoins.push(coin);
+                if (!coin.assets) continue;
+                for (const { assetId, amount } of coin.assets) {
+                    const existing = assetChanges.get(assetId) ?? 0n;
+                    assetChanges.set(assetId, existing + BigInt(amount));
+                }
             }
         }
+
+        // select enough BTC (at least dust) from remaining coins
+        let totalBtcSelected = selectedCoins.reduce(
+            (sum, c) => sum + c.value,
+            0
+        );
+        const minBtcNeeded = Number(this.wallet.dustAmount);
+
+        if (totalBtcSelected < minBtcNeeded) {
+            const remainingCoins = virtualCoins.filter(
+                (c) =>
+                    !selectedCoins.find(
+                        (sc) => sc.txid === c.txid && sc.vout === c.vout
+                    )
+            );
+            const additional = selectVirtualCoins(
+                remainingCoins,
+                minBtcNeeded - totalBtcSelected
+            );
+
+            for (const coin of additional.inputs) {
+                selectedCoins.push(coin);
+                if (!coin.assets) continue;
+                for (const { assetId, amount } of coin.assets) {
+                    const existing = assetChanges.get(assetId) ?? 0n;
+                    assetChanges.set(assetId, existing + BigInt(amount));
+                }
+            }
+        }
+
+        totalBtcSelected = selectedCoins.reduce((sum, c) => sum + c.value, 0);
 
         const groups: AssetGroup[] = [];
 
@@ -112,9 +169,7 @@ export class AssetManager
 
         // add asset groups for each asset change
         if (assetChanges.size > 0) {
-            const assetInputs = selectedCoinsToAssetInputs(
-                coinSelection.inputs
-            );
+            const assetInputs = selectedCoinsToAssetInputs(selectedCoins);
 
             for (const [assetId, amount] of assetChanges) {
                 const changeInputs: AssetInput[] = [];
@@ -154,7 +209,7 @@ export class AssetManager
         ];
 
         const { arkTxid } = await this.wallet.buildAndSubmitOffchainTx(
-            coinSelection.inputs,
+            selectedCoins,
             outputs
         );
         return {

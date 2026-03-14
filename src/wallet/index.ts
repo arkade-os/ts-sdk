@@ -186,6 +186,7 @@ export type AssetDetails = {
 export interface IssuanceParams {
     amount: number;
     controlAssetId?: string;
+    selfControlled?: boolean;
     metadata?: AssetMetadata;
 }
 

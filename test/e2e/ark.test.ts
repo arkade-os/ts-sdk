@@ -2104,6 +2104,120 @@ describe("Asset integration tests", () => {
     );
 
     it(
+        "should issue a self-controlled asset with a single VTXO",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+
+            // fund alice with a single small VTXO (just above dust)
+            const fundAmount = Number(alice.wallet.dustAmount) + 500;
+            faucetOffchain(aliceAddress!, fundAmount);
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                return v.length === 1;
+            });
+
+            // issue a self-controlled asset (single tx, no separate control token)
+            const issueResult = await alice.wallet.assetManager.issue({
+                amount: 1000,
+                selfControlled: true,
+            });
+
+            expect(issueResult.arkTxId).toBeDefined();
+            expect(issueResult.assetId).toBeDefined();
+
+            // wait for the asset to appear
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                return v.some((c) =>
+                    c.assets?.some((a) => a.assetId === issueResult.assetId)
+                );
+            });
+
+            const vtxos = await alice.wallet.getVtxos();
+            const assets = vtxos.flatMap((v) => v.assets ?? []);
+            const issued = assets.find(
+                (a) => a.assetId === issueResult.assetId
+            );
+            expect(issued).toBeDefined();
+            expect(issued!.amount).toBe(1000);
+
+            // verify the asset is reissuable using itself as control
+            const reissueResult = await alice.wallet.assetManager.reissue({
+                assetId: issueResult.assetId,
+                amount: 500,
+            });
+            expect(reissueResult).toBeDefined();
+        }
+    );
+
+    it(
+        "should issue an asset with existing control using a single VTXO",
+        { timeout: 60000 },
+        async () => {
+            const alice = await createTestArkWallet();
+            const aliceAddress = await alice.wallet.getAddress();
+
+            // fund alice with a single small VTXO (just above dust)
+            const fundAmount = Number(alice.wallet.dustAmount) + 500;
+            faucetOffchain(aliceAddress!, fundAmount);
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                return v.length === 1;
+            });
+
+            // first issuance to create a control asset
+            const controlResult = await alice.wallet.assetManager.issue({
+                amount: 1,
+            });
+
+            // wait for the control token to appear
+            await waitFor(async () => {
+                const v = await alice.wallet.getVtxos();
+                return v.some((c) =>
+                    c.assets?.some((a) => a.assetId === controlResult.assetId)
+                );
+            });
+
+            // second issuance using the control asset — this is the bug scenario:
+            // the only VTXO carries the control token, so issue() must select it
+            const issueResult = await alice.wallet.assetManager.issue({
+                amount: 500,
+                controlAssetId: controlResult.assetId,
+            });
+
+            expect(issueResult.arkTxId).toBeDefined();
+            expect(issueResult.assetId).toBeDefined();
+
+            // wait for both the issued asset and control asset to appear
+            let vtxos: Awaited<ReturnType<typeof alice.wallet.getVtxos>> = [];
+            await waitFor(async () => {
+                vtxos = await alice.wallet.getVtxos();
+                const assets = vtxos.flatMap((v) => v.assets ?? []);
+                return (
+                    assets.some((a) => a.assetId === issueResult.assetId) &&
+                    assets.some((a) => a.assetId === controlResult.assetId)
+                );
+            });
+
+            const allAssets = vtxos.flatMap((v) => v.assets ?? []);
+
+            const issuedAsset = allAssets.find(
+                (a) => a.assetId === issueResult.assetId
+            );
+            expect(issuedAsset).toBeDefined();
+            expect(issuedAsset!.amount).toBe(500);
+
+            const controlAsset = allAssets.find(
+                (a) => a.assetId === controlResult.assetId
+            );
+            expect(controlAsset).toBeDefined();
+            expect(controlAsset!.amount).toBe(1);
+        }
+    );
+
+    it(
         "should spend VTXOs with assets from both default and delegate contracts in a single send",
         { timeout: 120000 },
         async () => {
