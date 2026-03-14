@@ -1,17 +1,62 @@
 import {
+    ExtendedCoin,
     ExtendedVirtualCoin,
     IWallet,
+    IReadonlyWallet,
     isExpired,
     isRecoverable,
     isSpendable,
     isSubdust,
 } from ".";
 import { SettlementEvent } from "../providers/ark";
+import { hasBoardingTxExpired } from "../utils/arkTransaction";
+import { CSVMultisigTapscript } from "../script/tapscript";
+import { hex } from "@scure/base";
+import { getSequence } from "../script/base";
+import { Transaction } from "../utils/transaction";
+import { TxWeightEstimator } from "../utils/txSizeEstimator";
+import type { OnchainProvider } from "../providers/onchain";
+import type { Network } from "../networks";
+import type { DefaultVtxo } from "../script/default";
+
+/**
+ * Extended wallet interface for boarding UTXO sweep operations.
+ * These properties exist on the concrete Wallet class but not on IWallet.
+ */
+interface SweepCapableWallet extends IReadonlyWallet {
+    boardingTapscript: DefaultVtxo.Script;
+    onchainProvider: OnchainProvider;
+    network: Network;
+}
+
+/** Type guard to check if a wallet has the properties needed for sweep operations. */
+function isSweepCapable(
+    wallet: IWallet
+): wallet is IWallet & SweepCapableWallet {
+    return (
+        "boardingTapscript" in wallet &&
+        "onchainProvider" in wallet &&
+        "network" in wallet
+    );
+}
+
+/** Asserts that the wallet supports sweep operations, throwing a clear error if not. */
+function assertSweepCapable(
+    wallet: IWallet
+): asserts wallet is IWallet & SweepCapableWallet {
+    if (!isSweepCapable(wallet)) {
+        throw new Error(
+            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, and network"
+        );
+    }
+}
 
 export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+export const DEFAULT_THRESHOLD_SECONDS = 3 * 24 * 60 * 60; // 3 days
 
 /**
  * Configuration options for automatic VTXO renewal
+ * @deprecated Use SettlementConfig instead
  */
 export interface RenewalConfig {
     /**
@@ -24,18 +69,95 @@ export interface RenewalConfig {
      * Threshold in milliseconds to use as threshold for renewal
      * E.g., 86400000 means renew when 24 hours until expiry remains
      * @default 86400000 (24 hours)
+     * @deprecated Use SettlementConfig.vtxoThreshold (in seconds) instead
      */
     thresholdMs?: number;
 }
 
 /**
+ * Configuration for automatic settlement and renewal.
+ *
+ * Controls two behaviors:
+ * 1. **VTXO renewal**: Automatically renew VTXOs that are close to expiry
+ * 2. **Boarding UTXO sweep**: Sweep expired boarding UTXOs back to a fresh boarding address
+ *    via the unilateral exit path (on-chain self-spend to restart the timelock)
+ *
+ * Enabled by default when no config is provided.
+ * Pass `false` to explicitly disable all settlement behavior.
+ *
+ * @example
+ * ```typescript
+ * // Default behavior: VTXO renewal at 3 days + boarding sweep enabled
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('...'),
+ *   arkServerUrl: 'https://ark.example.com',
+ * });
+ *
+ * // Custom threshold
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('...'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   settlementConfig: {
+ *     vtxoThreshold: 86400, // 24 hours in seconds
+ *   },
+ * });
+ *
+ * // Explicitly disable
+ * const wallet = await Wallet.create({
+ *   identity: SingleKey.fromHex('...'),
+ *   arkServerUrl: 'https://ark.example.com',
+ *   settlementConfig: false,
+ * });
+ * ```
+ */
+export interface SettlementConfig {
+    /**
+     * Seconds before VTXO expiry to trigger renewal.
+     * @default 259200 (3 days)
+     */
+    vtxoThreshold?: number;
+
+    /**
+     * Sweep expired boarding UTXOs back to a fresh boarding address
+     * via the unilateral exit path (on-chain self-spend to restart the timelock).
+     *
+     * When enabled, expired boarding UTXOs are batched into a single on-chain transaction
+     * with multiple inputs and one output. A dust check ensures the sweep is only
+     * performed when the output after fees is above dust.
+     *
+     * @default true
+     */
+    boardingUtxoSweep?: boolean;
+
+    /**
+     * Polling interval in milliseconds for checking boarding UTXOs.
+     * The poll loop auto-settles new boarding UTXOs into Ark and
+     * sweeps expired ones (when boardingUtxoSweep is enabled).
+     *
+     * @default 60000 (1 minute)
+     */
+    pollIntervalMs?: number;
+}
+
+/**
  * Default renewal configuration values
+ * @deprecated Use DEFAULT_SETTLEMENT_CONFIG instead
  */
 export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
     {
         thresholdMs: DEFAULT_THRESHOLD_MS, // 3 days
     };
 
+/**
+ * Default settlement configuration values
+ */
+export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
+    vtxoThreshold: DEFAULT_THRESHOLD_SECONDS,
+    boardingUtxoSweep: true,
+    pollIntervalMs: 60_000,
+};
+
+/** Extracts the dust amount from the wallet, defaulting to 330 sats. */
 function getDustAmount(wallet: IWallet): bigint {
     return "dustAmount" in wallet ? (wallet.dustAmount as bigint) : 330n;
 }
@@ -228,11 +350,47 @@ export function getExpiringAndRecoverableVtxos(
  * }
  * ```
  */
-export class VtxoManager {
+export class VtxoManager implements AsyncDisposable {
+    readonly settlementConfig: SettlementConfig | false;
+    private contractEventsSubscription?: () => void;
+    private readonly contractEventsSubscriptionReady: Promise<
+        (() => void) | undefined
+    >;
+    private disposePromise?: Promise<void>;
+    private pollIntervalId?: ReturnType<typeof setInterval>;
+    private knownBoardingUtxos = new Set<string>();
+    private sweptBoardingUtxos = new Set<string>();
+    private pollInProgress = false;
+
     constructor(
         readonly wallet: IWallet,
-        readonly renewalConfig?: RenewalConfig
-    ) {}
+        /** @deprecated Use settlementConfig instead */
+        readonly renewalConfig?: RenewalConfig,
+        settlementConfig?: SettlementConfig | false
+    ) {
+        // Normalize: prefer settlementConfig, fall back to renewalConfig, default to enabled
+        if (settlementConfig !== undefined) {
+            this.settlementConfig = settlementConfig;
+        } else if (renewalConfig && renewalConfig.enabled) {
+            this.settlementConfig = {
+                vtxoThreshold: renewalConfig.thresholdMs
+                    ? renewalConfig.thresholdMs / 1000
+                    : undefined,
+            };
+        } else if (renewalConfig) {
+            // renewalConfig provided but not enabled → disabled
+            this.settlementConfig = false;
+        } else {
+            // No config at all → enabled by default
+            this.settlementConfig = { ...DEFAULT_SETTLEMENT_CONFIG };
+        }
+
+        this.contractEventsSubscriptionReady =
+            this.initializeSubscription().then((subscription) => {
+                this.contractEventsSubscription = subscription;
+                return subscription;
+            });
+    }
 
     // ========== Recovery Methods ==========
 
@@ -373,11 +531,28 @@ export class VtxoManager {
     async getExpiringVtxos(
         thresholdMs?: number
     ): Promise<ExtendedVirtualCoin[]> {
+        // If settlementConfig is explicitly false and no override provided, renewal is disabled
+        if (this.settlementConfig === false && thresholdMs === undefined) {
+            return [];
+        }
+
         const vtxos = await this.wallet.getVtxos({ withRecoverable: true });
-        const threshold =
-            thresholdMs ??
-            this.renewalConfig?.thresholdMs ??
-            DEFAULT_RENEWAL_CONFIG.thresholdMs;
+
+        // Resolve threshold: method param > settlementConfig (seconds→ms) > renewalConfig > default
+        let threshold: number;
+        if (thresholdMs !== undefined) {
+            threshold = thresholdMs;
+        } else if (
+            this.settlementConfig !== false &&
+            this.settlementConfig &&
+            this.settlementConfig.vtxoThreshold !== undefined
+        ) {
+            threshold = this.settlementConfig.vtxoThreshold * 1000;
+        } else {
+            threshold =
+                this.renewalConfig?.thresholdMs ??
+                DEFAULT_RENEWAL_CONFIG.thresholdMs;
+        }
 
         return getExpiringAndRecoverableVtxos(
             vtxos,
@@ -415,7 +590,13 @@ export class VtxoManager {
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
         // Get all VTXOs (including recoverable ones)
-        const vtxos = await this.getExpiringVtxos();
+        // Use default threshold to bypass settlementConfig gate (manual API should always work)
+        const vtxos = await this.getExpiringVtxos(
+            this.settlementConfig !== false &&
+                this.settlementConfig?.vtxoThreshold !== undefined
+                ? this.settlementConfig.vtxoThreshold * 1000
+                : DEFAULT_RENEWAL_CONFIG.thresholdMs
+        );
 
         if (vtxos.length === 0) {
             throw new Error("No VTXOs available to renew");
@@ -447,5 +628,377 @@ export class VtxoManager {
             },
             eventCallback
         );
+    }
+
+    // ========== Boarding UTXO Sweep Methods ==========
+
+    /**
+     * Get boarding UTXOs whose timelock has expired.
+     *
+     * These UTXOs can no longer be onboarded cooperatively via `settle()` and
+     * must be swept back to a fresh boarding address using the unilateral exit path.
+     *
+     * @returns Array of expired boarding UTXOs
+     *
+     * @example
+     * ```typescript
+     * const manager = new VtxoManager(wallet);
+     * const expired = await manager.getExpiredBoardingUtxos();
+     * if (expired.length > 0) {
+     *   console.log(`${expired.length} expired boarding UTXOs to sweep`);
+     * }
+     * ```
+     */
+    async getExpiredBoardingUtxos(): Promise<ExtendedCoin[]> {
+        const boardingUtxos = await this.wallet.getBoardingUtxos();
+        const boardingTimelock = this.getBoardingTimelock();
+
+        // For block-based timelocks, fetch the chain tip height
+        let chainTipHeight: number | undefined;
+        if (boardingTimelock.type === "blocks") {
+            const tip = await this.getOnchainProvider().getChainTip();
+            chainTipHeight = tip.height;
+        }
+
+        return boardingUtxos.filter((utxo) =>
+            hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
+        );
+    }
+
+    /**
+     * Sweep expired boarding UTXOs back to a fresh boarding address via
+     * the unilateral exit path (on-chain self-spend).
+     *
+     * This builds a raw on-chain transaction that:
+     * - Uses all expired boarding UTXOs as inputs (spent via the CSV exit script path)
+     * - Has a single output to the wallet's boarding address (restarts the timelock)
+     * - Batches multiple expired UTXOs into one transaction
+     * - Skips the sweep if the output after fees would be below dust
+     *
+     * No Ark server involvement is needed — this is a pure on-chain transaction.
+     *
+     * @returns The broadcast transaction ID
+     * @throws Error if no expired boarding UTXOs found
+     * @throws Error if output after fees is below dust (not economical to sweep)
+     * @throws Error if boarding UTXO sweep is not enabled in settlementConfig
+     *
+     * @example
+     * ```typescript
+     * const manager = new VtxoManager(wallet, undefined, {
+     *   boardingUtxoSweep: true,
+     * });
+     *
+     * try {
+     *   const txid = await manager.sweepExpiredBoardingUtxos();
+     *   console.log('Swept expired boarding UTXOs:', txid);
+     * } catch (e) {
+     *   console.log('No sweep needed or not economical');
+     * }
+     * ```
+     */
+    async sweepExpiredBoardingUtxos(): Promise<string> {
+        const sweepEnabled =
+            this.settlementConfig !== false &&
+            (this.settlementConfig?.boardingUtxoSweep ??
+                DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+        if (!sweepEnabled) {
+            throw new Error(
+                "Boarding UTXO sweep is not enabled in settlementConfig"
+            );
+        }
+
+        const allExpired = await this.getExpiredBoardingUtxos();
+        // Filter out UTXOs already swept (tx broadcast but not yet confirmed)
+        const expiredUtxos = allExpired.filter(
+            (u) => !this.sweptBoardingUtxos.has(`${u.txid}:${u.vout}`)
+        );
+        if (expiredUtxos.length === 0) {
+            throw new Error("No expired boarding UTXOs to sweep");
+        }
+
+        const boardingAddress = await this.wallet.getBoardingAddress();
+
+        // Get fee rate from onchain provider
+        const feeRate = (await this.getOnchainProvider().getFeeRate()) ?? 1;
+
+        // Get the exit tap leaf script for signing
+        const exitTapLeafScript = this.getBoardingExitLeaf();
+
+        // Estimate transaction size for fee calculation
+        const sequence = getSequence(exitTapLeafScript);
+
+        // TapLeafScript: [{version, internalKey, merklePath}, scriptWithVersion]
+        const leafScript = exitTapLeafScript[1];
+        const leafScriptSize = leafScript.length - 1; // minus version byte
+        const controlBlockSize = exitTapLeafScript[0].merklePath.length * 32;
+        // Exit path witness: 1 Schnorr signature (64 bytes)
+        const leafWitnessSize = 64;
+
+        const estimator = TxWeightEstimator.create();
+        for (const _ of expiredUtxos) {
+            estimator.addTapscriptInput(
+                leafWitnessSize,
+                leafScriptSize,
+                controlBlockSize
+            );
+        }
+        estimator.addOutputAddress(boardingAddress, this.getNetwork());
+
+        const fee = Math.ceil(Number(estimator.vsize().value) * feeRate);
+        const totalValue = expiredUtxos.reduce(
+            (sum, utxo) => sum + BigInt(utxo.value),
+            0n
+        );
+        const outputAmount = totalValue - BigInt(fee);
+
+        // Dust check: skip if output after fees is below dust
+        const dustAmount = getDustAmount(this.wallet);
+        if (outputAmount < dustAmount) {
+            throw new Error(
+                `Sweep not economical: output ${outputAmount} sats after ${fee} sats fee is below dust (${dustAmount} sats)`
+            );
+        }
+
+        // Build the raw transaction
+        const tx = new Transaction();
+
+        for (const utxo of expiredUtxos) {
+            tx.addInput({
+                txid: utxo.txid,
+                index: utxo.vout,
+                witnessUtxo: {
+                    script: this.getBoardingOutputScript(),
+                    amount: BigInt(utxo.value),
+                },
+                tapLeafScript: [exitTapLeafScript],
+                sequence,
+            });
+        }
+
+        tx.addOutputAddress(boardingAddress, outputAmount, this.getNetwork());
+
+        // Sign and finalize
+        const signedTx = await this.getIdentity().sign(tx);
+        signedTx.finalize();
+
+        // Broadcast
+        const txid = await this.getOnchainProvider().broadcastTransaction(
+            signedTx.hex
+        );
+
+        // Mark UTXOs as swept to prevent duplicate broadcasts on next poll
+        for (const u of expiredUtxos) {
+            this.sweptBoardingUtxos.add(`${u.txid}:${u.vout}`);
+        }
+
+        // Mark the sweep output as "known" so the next poll doesn't try to
+        // auto-settle it back into Ark (it lands at the same boarding address).
+        this.knownBoardingUtxos.add(`${txid}:0`);
+
+        return txid;
+    }
+
+    // ========== Private Helpers ==========
+
+    /** Asserts sweep capability and returns the typed wallet. */
+    private getSweepWallet(): IWallet & SweepCapableWallet {
+        assertSweepCapable(this.wallet);
+        return this.wallet;
+    }
+
+    /** Decodes the boarding tapscript exit path to extract the CSV timelock. */
+    private getBoardingTimelock() {
+        const wallet = this.getSweepWallet();
+        const exitScript = CSVMultisigTapscript.decode(
+            hex.decode(wallet.boardingTapscript.exitScript)
+        );
+        return exitScript.params.timelock;
+    }
+
+    /** Returns the TapLeafScript for the boarding tapscript's exit (CSV) path. */
+    private getBoardingExitLeaf() {
+        return this.getSweepWallet().boardingTapscript.exit();
+    }
+
+    /** Returns the pkScript (output script) of the boarding tapscript. */
+    private getBoardingOutputScript() {
+        return this.getSweepWallet().boardingTapscript.pkScript;
+    }
+
+    /** Returns the on-chain provider for fee estimation and broadcasting. */
+    private getOnchainProvider() {
+        return this.getSweepWallet().onchainProvider;
+    }
+
+    /** Returns the Bitcoin network configuration from the wallet. */
+    private getNetwork() {
+        return this.getSweepWallet().network;
+    }
+
+    /** Returns the wallet's identity for transaction signing. */
+    private getIdentity() {
+        return this.wallet.identity;
+    }
+
+    private async initializeSubscription(): Promise<(() => void) | undefined> {
+        if (this.settlementConfig === false) {
+            return undefined;
+        }
+
+        // Start polling for boarding UTXOs independently of contract manager
+        // SSE setup. Use a short delay to let the wallet finish construction.
+        setTimeout(() => this.startBoardingUtxoPoll(), 1000);
+
+        try {
+            const [delegatorManager, contractManager, destination] =
+                await Promise.all([
+                    this.wallet.getDelegatorManager(),
+                    this.wallet.getContractManager(),
+                    this.wallet.getAddress(),
+                ]);
+
+            const stopWatching = contractManager.onContractEvent((event) => {
+                if (event.type !== "vtxo_received") {
+                    return;
+                }
+
+                this.renewVtxos().catch((e) => {
+                    console.error("Error renewing VTXOs:", e);
+                });
+                delegatorManager
+                    ?.delegate(event.vtxos, destination)
+                    .catch((e) => {
+                        console.error("Error delegating VTXOs:", e);
+                    });
+            });
+
+            return stopWatching;
+        } catch (e) {
+            console.error("Error renewing VTXOs from VtxoManager", e);
+            return undefined;
+        }
+    }
+
+    /**
+     * Starts a polling loop that:
+     * 1. Auto-settles new boarding UTXOs into Ark
+     * 2. Sweeps expired boarding UTXOs (when boardingUtxoSweep is enabled)
+     */
+    private startBoardingUtxoPoll(): void {
+        if (this.settlementConfig === false) return;
+
+        const intervalMs =
+            this.settlementConfig.pollIntervalMs ??
+            DEFAULT_SETTLEMENT_CONFIG.pollIntervalMs;
+
+        // Run once immediately, then on interval
+        this.pollBoardingUtxos();
+        this.pollIntervalId = setInterval(
+            () => this.pollBoardingUtxos(),
+            intervalMs
+        );
+    }
+
+    private async pollBoardingUtxos(): Promise<void> {
+        // Guard: wallet must support boarding UTXO + sweep operations
+        if (!isSweepCapable(this.wallet)) return;
+        // Skip if a previous poll is still running
+        if (this.pollInProgress) return;
+        this.pollInProgress = true;
+
+        try {
+            // Settle new (unexpired) UTXOs first, then sweep expired ones.
+            // Sequential to avoid racing for the same UTXOs.
+            try {
+                await this.settleBoardingUtxos();
+            } catch (e) {
+                console.error("Error auto-settling boarding UTXOs:", e);
+            }
+
+            const sweepEnabled =
+                this.settlementConfig !== false &&
+                (this.settlementConfig?.boardingUtxoSweep ??
+                    DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+            if (sweepEnabled) {
+                try {
+                    await this.sweepExpiredBoardingUtxos();
+                } catch (e) {
+                    if (
+                        !(e instanceof Error) ||
+                        !e.message.includes("No expired boarding UTXOs")
+                    ) {
+                        console.error("Error auto-sweeping boarding UTXOs:", e);
+                    }
+                }
+            }
+        } finally {
+            this.pollInProgress = false;
+        }
+    }
+
+    /**
+     * Auto-settle new (unexpired) boarding UTXOs into the Ark.
+     * Skips UTXOs that are already expired (those are handled by sweep).
+     * Only settles UTXOs not already in-flight (tracked in knownBoardingUtxos).
+     * UTXOs are marked as known only after a successful settle, so failed
+     * attempts will be retried on the next poll.
+     */
+    private async settleBoardingUtxos(): Promise<void> {
+        const boardingUtxos = await this.wallet.getBoardingUtxos();
+
+        // Exclude expired UTXOs — those should be swept, not settled.
+        // If we can't determine expired status, bail out entirely to avoid
+        // accidentally settling expired UTXOs (which would conflict with sweep).
+        let expiredSet: Set<string>;
+        try {
+            const expired = await this.getExpiredBoardingUtxos();
+            expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
+        } catch {
+            return;
+        }
+
+        const unsettledUtxos = boardingUtxos.filter(
+            (u) =>
+                !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
+                !expiredSet.has(`${u.txid}:${u.vout}`)
+        );
+
+        if (unsettledUtxos.length === 0) return;
+
+        const dustAmount = getDustAmount(this.wallet);
+        const totalAmount = unsettledUtxos.reduce(
+            (sum, u) => sum + BigInt(u.value),
+            0n
+        );
+        if (totalAmount < dustAmount) return;
+
+        const arkAddress = await this.wallet.getAddress();
+        await this.wallet.settle({
+            inputs: unsettledUtxos,
+            outputs: [{ address: arkAddress, amount: totalAmount }],
+        });
+
+        // Mark as known only after successful settle
+        for (const u of unsettledUtxos) {
+            this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+        }
+    }
+
+    async dispose(): Promise<void> {
+        this.disposePromise ??= (async () => {
+            if (this.pollIntervalId) {
+                clearInterval(this.pollIntervalId);
+                this.pollIntervalId = undefined;
+            }
+            const subscription = await this.contractEventsSubscriptionReady;
+            this.contractEventsSubscription = undefined;
+            subscription?.();
+        })();
+
+        return this.disposePromise;
+    }
+
+    async [Symbol.asyncDispose](): Promise<void> {
+        await this.dispose();
     }
 }

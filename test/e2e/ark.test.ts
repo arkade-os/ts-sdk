@@ -1106,6 +1106,7 @@ describe("Delegator Lifecycle", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const addressA = await wallet1.getAddress();
@@ -1126,6 +1127,7 @@ describe("Delegator Lifecycle", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const addressB = await wallet2.getAddress();
@@ -1193,6 +1195,7 @@ describe("Delegator Lifecycle", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const manager3 = await wallet3.getContractManager();
@@ -1270,6 +1273,7 @@ describe("Cross-contract spending", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -1290,6 +1294,7 @@ describe("Cross-contract spending", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const delegateAddress = await wallet2.getAddress();
@@ -1394,6 +1399,7 @@ describe("Cross-contract spending", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -1408,6 +1414,7 @@ describe("Cross-contract spending", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             faucetOffchain(defaultAddress, 1_000);
@@ -1502,6 +1509,63 @@ describe("Cross-contract spending", () => {
 
 describe("Asset integration tests", () => {
     beforeEach(beforeEachFaucet, 20000);
+
+    it("collaborative exit", { timeout: 60000 }, async () => {
+        const alice = await createTestArkWallet();
+        const aliceAddress = await alice.wallet.getAddress();
+
+        const fundAmount = 20_000;
+        faucetOffchain(aliceAddress!, fundAmount);
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        // alice issues an asset
+        const issueAmount = 500;
+        const issueResult = await alice.wallet.assetManager.issue({
+            amount: issueAmount,
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        const vtxosBefore = await alice.wallet.getVtxos();
+        expect(vtxosBefore.length).toBeGreaterThan(0);
+        const assetVtxo = vtxosBefore.find((v) =>
+            v.assets?.some((a) => a.assetId === issueResult.assetId)
+        );
+        expect(assetVtxo).toBeDefined();
+
+        const exitAmount = 5000;
+        // settle with explicit inputs/outputs (includes asset packet)
+        const totalValue = vtxosBefore.reduce((sum, v) => sum + v.value, 0);
+
+        const settleTxid = await alice.wallet.settle({
+            inputs: vtxosBefore,
+            outputs: [
+                {
+                    address: aliceAddress!,
+                    amount: BigInt(totalValue - exitAmount),
+                },
+                {
+                    address: "bcrt1q7dn55unudcpmu3hg05rj9u2cn4m0r2yr0de3f6",
+                    amount: BigInt(exitAmount),
+                },
+            ],
+        });
+
+        expect(settleTxid).toBeDefined();
+
+        execCommand("nigiri rpc --generate 1");
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+
+        // verify the asset is still present on the settled vtxos
+        const vtxosAfter = await alice.wallet.getVtxos();
+        expect(vtxosAfter.length).toBeGreaterThan(0);
+
+        const allAssets = vtxosAfter.flatMap((v) => v.assets ?? []);
+        const assetTotal = allAssets
+            .filter((a) => a.assetId === issueResult.assetId)
+            .reduce((sum, a) => sum + a.amount, 0);
+        expect(assetTotal).toBe(issueAmount);
+    });
 
     it(
         "should issue an asset without control asset",
@@ -1900,6 +1964,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const addressA = await wallet1.getAddress();
@@ -1923,6 +1988,7 @@ describe("Asset integration tests", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const addressB = await wallet2.getAddress();
@@ -1995,6 +2061,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const manager3 = await wallet3.getContractManager();
@@ -2055,6 +2122,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -2078,6 +2146,7 @@ describe("Asset integration tests", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const delegateAddress = await wallet2.getAddress();
@@ -2161,6 +2230,7 @@ describe("Asset integration tests", () => {
                 arkServerUrl: "http://localhost:7070",
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
+                settlementConfig: false,
             });
 
             const defaultAddress = await wallet1.getAddress();
@@ -2175,6 +2245,7 @@ describe("Asset integration tests", () => {
                 delegatorProvider: new RestDelegatorProvider(
                     "http://localhost:7002"
                 ),
+                settlementConfig: false,
             });
 
             const delegateAddress = await wallet2.getAddress();

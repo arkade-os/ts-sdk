@@ -53,6 +53,7 @@ const createWalletStub = () => ({
     getDelegatorManager: vi.fn().mockResolvedValue({ id: "delegator" }),
     sendBitcoin: vi.fn().mockResolvedValue("send-txid"),
     settle: vi.fn().mockResolvedValue("settle-txid"),
+    dispose: vi.fn().mockResolvedValue(undefined),
 });
 
 class QueueWithConfig extends InMemoryTaskQueue {
@@ -107,6 +108,7 @@ describe("ExpoWallet", () => {
         );
 
         await wallet.dispose();
+        expect(walletStub.dispose).toHaveBeenCalledTimes(1);
     });
 
     it("foreground polling runs tasks, acknowledges results, and reseeds", async () => {
@@ -158,6 +160,7 @@ describe("ExpoWallet", () => {
         );
 
         await wallet.dispose();
+        expect(walletStub.dispose).toHaveBeenCalledTimes(1);
         const callsBefore = runTasksMock.mock.calls.length;
         await vi.advanceTimersByTimeAsync(1_000);
         expect(runTasksMock).toHaveBeenCalledTimes(callsBefore);
@@ -220,6 +223,7 @@ describe("ExpoWallet", () => {
         expect(walletStub.settle).toHaveBeenCalledTimes(1);
 
         await wallet.dispose();
+        expect(walletStub.dispose).toHaveBeenCalledTimes(1);
         expect(unregisterExpoBackgroundTaskMock).toHaveBeenCalledWith(
             "ark-delegation"
         );

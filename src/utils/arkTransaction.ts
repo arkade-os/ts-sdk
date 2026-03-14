@@ -180,11 +180,20 @@ function isSeconds(locktime: bigint): boolean {
 
 export function hasBoardingTxExpired(
     coin: ExtendedCoin,
-    boardingTimelock: RelativeTimelock
+    boardingTimelock: RelativeTimelock,
+    chainTipHeight?: number
 ) {
     if (!coin.status.block_time) return false;
     if (boardingTimelock.value === 0n) return true;
-    if (boardingTimelock.type === "blocks") return false; // TODO: handle get chain tip
+
+    if (boardingTimelock.type === "blocks") {
+        if (chainTipHeight === undefined || !coin.status.block_height)
+            return false;
+        return (
+            BigInt(chainTipHeight - coin.status.block_height) >=
+            boardingTimelock.value
+        );
+    }
 
     // validate expiry in terms of seconds
     const now = BigInt(Math.floor(Date.now() / 1000));
