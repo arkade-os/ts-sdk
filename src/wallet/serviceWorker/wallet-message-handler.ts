@@ -489,7 +489,31 @@ export class WalletMessageHandler
     }
 
     async stop() {
-        // optional cleanup and persistence
+        if (this.incomingFundsSubscription) {
+            this.incomingFundsSubscription();
+            this.incomingFundsSubscription = undefined;
+        }
+        if (this.contractEventsSubscription) {
+            this.contractEventsSubscription();
+            this.contractEventsSubscription = undefined;
+        }
+
+        // Dispose the wallet to stop VtxoManager background tasks
+        // (auto-renewal, boarding UTXO polling) and ContractWatcher.
+        try {
+            if (this.wallet) {
+                await this.wallet.dispose();
+            } else if (this.readonlyWallet) {
+                await this.readonlyWallet.dispose();
+            }
+        } catch (_) {
+            // best-effort teardown
+        }
+
+        this.wallet = undefined;
+        this.readonlyWallet = undefined;
+        this.arkProvider = undefined;
+        this.indexerProvider = undefined;
     }
 
     async tick(_now: number) {
