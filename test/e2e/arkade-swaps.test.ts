@@ -155,6 +155,24 @@ const waitForBalance = async (
     });
 };
 
+/**
+ * Wait until at least one VTXO from the given wallet is in `settled` state.
+ * This is used instead of a fixed sleep to avoid the race where a slow CI
+ * runner hasn't finished the round yet when we try to spend.
+ */
+const waitForSettled = async (
+    getVtxos: () => Promise<{ virtualStatus: { state: string } }[]>,
+    timeout = 15_000
+): Promise<void> => {
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline) {
+        const vtxos = await getVtxos();
+        if (vtxos.some((v) => v.virtualStatus.state === "settled")) return;
+        await sleep(500);
+    }
+    throw new Error("Timed out waiting for VTXO to reach settled state");
+};
+
 describe("ArkadeSwaps", () => {
     let indexerProvider: RestIndexerProvider;
     let swapProvider: BoltzSwapProvider;
@@ -1404,7 +1422,7 @@ describe("ArkadeSwaps", () => {
 
         it(
             "should send to Lightning with VtxoManager enabled",
-            { timeout: 30_000 },
+            { timeout: 45_000 },
             async () => {
                 // When VtxoManager is enabled, its SSE subscription causes
                 // the ARK server to auto-include new VTXOs in the next
@@ -1442,9 +1460,14 @@ describe("ArkadeSwaps", () => {
 
                     // Let the server's scheduled round process the auto-
                     // registered VTXO (ARKD_ROUND_INTERVAL=10 blocks).
+                    // We poll for settled state rather than sleeping a fixed
+                    // duration — on slow CI the round can take longer than
+                    // 3 s, leaving VTXOs preconfirmed and causing arkd to
+                    // reject the PSBT with INVALID_PSBT_INPUT (5): missing
+                    // tapscript spend sig.
                     await sleep(1000);
                     await generateBlocks(10);
-                    await sleep(3000);
+                    await waitForSettled(() => defaultWallet.getVtxos(), 15_000);
 
                     const { invoice } = await getNewLightningInvoice(amount);
                     const result = await defaultSwaps.sendLightningPayment({
