@@ -82,7 +82,7 @@ import {
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import type { SettlementConfig } from "./wallet/vtxo-manager";
+import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
@@ -464,6 +464,7 @@ export type {
     // Wallet types
     GetVtxosFilter,
     SettlementConfig,
+    IVtxoManager,
 
     // Asset types
     Asset,

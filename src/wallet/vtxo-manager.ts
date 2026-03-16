@@ -350,7 +350,32 @@ export function getExpiringAndRecoverableVtxos(
  * }
  * ```
  */
-export class VtxoManager implements AsyncDisposable {
+export interface IVtxoManager {
+    recoverVtxos(
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string>;
+
+    getRecoverableBalance(): Promise<{
+        recoverable: bigint;
+        subdust: bigint;
+        includesSubdust: boolean;
+        vtxoCount: number;
+    }>;
+
+    getExpiringVtxos(thresholdMs?: number): Promise<ExtendedVirtualCoin[]>;
+
+    renewVtxos(
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string>;
+
+    getExpiredBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+    sweepExpiredBoardingUtxos(): Promise<string>;
+
+    dispose(): Promise<void>;
+}
+
+export class VtxoManager implements AsyncDisposable, IVtxoManager {
     readonly settlementConfig: SettlementConfig | false;
     private contractEventsSubscription?: () => void;
     private readonly contractEventsSubscriptionReady: Promise<

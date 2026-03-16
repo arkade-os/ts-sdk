@@ -18,6 +18,7 @@ import {
     AssetDetails,
     BurnParams,
     ExtendedCoin,
+    ExtendedVirtualCoin,
     GetVtxosFilter,
     IssuanceParams,
     IssuanceResult,
@@ -319,6 +320,61 @@ export type ResponseGetDelegateInfo = ResponseEnvelope & {
     payload: { info: DelegateInfo };
 };
 
+// VtxoManager operations
+export type RequestRecoverVtxos = RequestEnvelope & {
+    type: "RECOVER_VTXOS";
+};
+export type ResponseRecoverVtxos = ResponseEnvelope & {
+    type: "RECOVER_VTXOS_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetRecoverableBalance = RequestEnvelope & {
+    type: "GET_RECOVERABLE_BALANCE";
+};
+export type ResponseGetRecoverableBalance = ResponseEnvelope & {
+    type: "RECOVERABLE_BALANCE";
+    payload: {
+        recoverable: string;
+        subdust: string;
+        includesSubdust: boolean;
+        vtxoCount: number;
+    };
+};
+
+export type RequestGetExpiringVtxos = RequestEnvelope & {
+    type: "GET_EXPIRING_VTXOS";
+    payload: { thresholdMs?: number };
+};
+export type ResponseGetExpiringVtxos = ResponseEnvelope & {
+    type: "EXPIRING_VTXOS";
+    payload: { vtxos: ExtendedVirtualCoin[] };
+};
+
+export type RequestRenewVtxos = RequestEnvelope & {
+    type: "RENEW_VTXOS";
+};
+export type ResponseRenewVtxos = ResponseEnvelope & {
+    type: "RENEW_VTXOS_SUCCESS";
+    payload: { txid: string };
+};
+
+export type RequestGetExpiredBoardingUtxos = RequestEnvelope & {
+    type: "GET_EXPIRED_BOARDING_UTXOS";
+};
+export type ResponseGetExpiredBoardingUtxos = ResponseEnvelope & {
+    type: "EXPIRED_BOARDING_UTXOS";
+    payload: { utxos: ExtendedCoin[] };
+};
+
+export type RequestSweepExpiredBoardingUtxos = RequestEnvelope & {
+    type: "SWEEP_EXPIRED_BOARDING_UTXOS";
+};
+export type ResponseSweepExpiredBoardingUtxos = ResponseEnvelope & {
+    type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS";
+    payload: { txid: string };
+};
+
 // WalletUpdater
 export type WalletUpdaterRequest =
     | RequestInitWallet
@@ -348,7 +404,13 @@ export type WalletUpdaterRequest =
     | RequestReissue
     | RequestBurn
     | RequestDelegate
-    | RequestGetDelegateInfo;
+    | RequestGetDelegateInfo
+    | RequestRecoverVtxos
+    | RequestGetRecoverableBalance
+    | RequestGetExpiringVtxos
+    | RequestRenewVtxos
+    | RequestGetExpiredBoardingUtxos
+    | RequestSweepExpiredBoardingUtxos;
 
 export type WalletUpdaterResponse = ResponseEnvelope &
     (
@@ -384,6 +446,12 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseBurn
         | ResponseDelegate
         | ResponseGetDelegateInfo
+        | ResponseRecoverVtxos
+        | ResponseGetRecoverableBalance
+        | ResponseGetExpiringVtxos
+        | ResponseRenewVtxos
+        | ResponseGetExpiredBoardingUtxos
+        | ResponseSweepExpiredBoardingUtxos
     );
 
 export class WalletMessageHandler
@@ -752,6 +820,73 @@ export class WalletMessageHandler
                         payload: { info },
                     });
                 }
+                case "RECOVER_VTXOS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const txid = await vtxoManager.recoverVtxos();
+                    return this.tagged({
+                        id,
+                        type: "RECOVER_VTXOS_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "GET_RECOVERABLE_BALANCE": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const balance = await vtxoManager.getRecoverableBalance();
+                    return this.tagged({
+                        id,
+                        type: "RECOVERABLE_BALANCE",
+                        payload: {
+                            recoverable: balance.recoverable.toString(),
+                            subdust: balance.subdust.toString(),
+                            includesSubdust: balance.includesSubdust,
+                            vtxoCount: balance.vtxoCount,
+                        },
+                    });
+                }
+                case "GET_EXPIRING_VTXOS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const vtxos = await vtxoManager.getExpiringVtxos(
+                        (message as RequestGetExpiringVtxos).payload.thresholdMs
+                    );
+                    return this.tagged({
+                        id,
+                        type: "EXPIRING_VTXOS",
+                        payload: { vtxos },
+                    });
+                }
+                case "RENEW_VTXOS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const txid = await vtxoManager.renewVtxos();
+                    return this.tagged({
+                        id,
+                        type: "RENEW_VTXOS_SUCCESS",
+                        payload: { txid },
+                    });
+                }
+                case "GET_EXPIRED_BOARDING_UTXOS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const utxos = await vtxoManager.getExpiredBoardingUtxos();
+                    return this.tagged({
+                        id,
+                        type: "EXPIRED_BOARDING_UTXOS",
+                        payload: { utxos },
+                    });
+                }
+                case "SWEEP_EXPIRED_BOARDING_UTXOS": {
+                    const wallet = this.requireWallet();
+                    const vtxoManager = await wallet.getVtxoManager();
+                    const txid = await vtxoManager.sweepExpiredBoardingUtxos();
+                    return this.tagged({
+                        id,
+                        type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS",
+                        payload: { txid },
+                    });
+                }
                 default:
                     console.error("Unknown message type", message);
                     throw new Error("Unknown message");
@@ -972,6 +1107,17 @@ export class WalletMessageHandler
             });
 
         await this.ensureContractEventBroadcasting();
+
+        // Eagerly start the VtxoManager so its background tasks (auto-renewal,
+        // boarding UTXO polling/sweep) run inside the service worker without
+        // waiting for a client to send a vtxo-manager message first.
+        if (this.wallet) {
+            try {
+                await this.wallet.getVtxoManager();
+            } catch (error) {
+                console.error("Error starting VtxoManager:", error);
+            }
+        }
     }
 
     private async handleSettle(message: RequestSettle) {

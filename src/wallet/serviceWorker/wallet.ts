@@ -82,6 +82,18 @@ import {
     ResponseDelegate,
     RequestGetDelegateInfo,
     ResponseGetDelegateInfo,
+    RequestRecoverVtxos,
+    ResponseRecoverVtxos,
+    RequestGetRecoverableBalance,
+    ResponseGetRecoverableBalance,
+    RequestGetExpiringVtxos,
+    ResponseGetExpiringVtxos,
+    RequestRenewVtxos,
+    ResponseRenewVtxos,
+    RequestGetExpiredBoardingUtxos,
+    ResponseGetExpiredBoardingUtxos,
+    RequestSweepExpiredBoardingUtxos,
+    ResponseSweepExpiredBoardingUtxos,
     DEFAULT_MESSAGE_TAG,
 } from "./wallet-message-handler";
 import type {
@@ -99,6 +111,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import type { IDelegatorManager } from "../delegator";
+import type { IVtxoManager } from "../vtxo-manager";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
 
@@ -1154,6 +1167,117 @@ export class ServiceWorkerWallet
                 } catch (e) {
                     throw new Error("Failed to get delegate info");
                 }
+            },
+        };
+
+        return manager;
+    }
+
+    async getVtxoManager(): Promise<IVtxoManager> {
+        const wallet = this;
+        const messageTag = this.messageTag;
+
+        const manager: IVtxoManager = {
+            async recoverVtxos(): Promise<string> {
+                const message: RequestRecoverVtxos = {
+                    tag: messageTag,
+                    type: "RECOVER_VTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseRecoverVtxos).payload.txid;
+                } catch (e) {
+                    throw new Error(`Failed to recover vtxos: ${e}`);
+                }
+            },
+
+            async getRecoverableBalance() {
+                const message: RequestGetRecoverableBalance = {
+                    tag: messageTag,
+                    type: "GET_RECOVERABLE_BALANCE",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    const payload = (response as ResponseGetRecoverableBalance)
+                        .payload;
+                    return {
+                        recoverable: BigInt(payload.recoverable),
+                        subdust: BigInt(payload.subdust),
+                        includesSubdust: payload.includesSubdust,
+                        vtxoCount: payload.vtxoCount,
+                    };
+                } catch (e) {
+                    throw new Error(`Failed to get recoverable balance: ${e}`);
+                }
+            },
+
+            async getExpiringVtxos(thresholdMs?) {
+                const message: RequestGetExpiringVtxos = {
+                    tag: messageTag,
+                    type: "GET_EXPIRING_VTXOS",
+                    id: getRandomId(),
+                    payload: { thresholdMs },
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetExpiringVtxos).payload.vtxos;
+                } catch (e) {
+                    throw new Error(`Failed to get expiring vtxos: ${e}`);
+                }
+            },
+
+            async renewVtxos(): Promise<string> {
+                const message: RequestRenewVtxos = {
+                    tag: messageTag,
+                    type: "RENEW_VTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseRenewVtxos).payload.txid;
+                } catch (e) {
+                    throw new Error(`Failed to renew vtxos: ${e}`);
+                }
+            },
+
+            async getExpiredBoardingUtxos() {
+                const message: RequestGetExpiredBoardingUtxos = {
+                    tag: messageTag,
+                    type: "GET_EXPIRED_BOARDING_UTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetExpiredBoardingUtxos).payload
+                        .utxos;
+                } catch (e) {
+                    throw new Error(
+                        `Failed to get expired boarding utxos: ${e}`
+                    );
+                }
+            },
+
+            async sweepExpiredBoardingUtxos(): Promise<string> {
+                const message: RequestSweepExpiredBoardingUtxos = {
+                    tag: messageTag,
+                    type: "SWEEP_EXPIRED_BOARDING_UTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseSweepExpiredBoardingUtxos)
+                        .payload.txid;
+                } catch (e) {
+                    throw new Error(
+                        `Failed to sweep expired boarding utxos: ${e}`
+                    );
+                }
+            },
+
+            async dispose(): Promise<void> {
+                return;
             },
         };
 
