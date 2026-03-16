@@ -357,10 +357,12 @@ export class VtxoManager implements AsyncDisposable {
         (() => void) | undefined
     >;
     private disposePromise?: Promise<void>;
-    private pollIntervalId?: ReturnType<typeof setInterval>;
+    private pollTimeoutId?: ReturnType<typeof setTimeout>;
     private knownBoardingUtxos = new Set<string>();
     private sweptBoardingUtxos = new Set<string>();
     private pollInProgress = false;
+    private consecutivePollFailures = 0;
+    private static readonly MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
 
     constructor(
         readonly wallet: IWallet,
@@ -890,24 +892,39 @@ export class VtxoManager implements AsyncDisposable {
         }
     }
 
+    /** Computes the next poll delay, applying exponential backoff on failures. */
+    private getNextPollDelay(): number {
+        if (this.settlementConfig === false) return 0;
+        const baseMs =
+            this.settlementConfig.pollIntervalMs ??
+            DEFAULT_SETTLEMENT_CONFIG.pollIntervalMs;
+        if (this.consecutivePollFailures === 0) return baseMs;
+        const backoff = Math.min(
+            baseMs * Math.pow(2, this.consecutivePollFailures),
+            VtxoManager.MAX_BACKOFF_MS
+        );
+        return backoff;
+    }
+
     /**
      * Starts a polling loop that:
      * 1. Auto-settles new boarding UTXOs into Ark
      * 2. Sweeps expired boarding UTXOs (when boardingUtxoSweep is enabled)
+     *
+     * Uses setTimeout chaining (not setInterval) so a slow/blocked poll
+     * cannot stack up and the next delay can incorporate backoff.
      */
     private startBoardingUtxoPoll(): void {
         if (this.settlementConfig === false) return;
 
-        const intervalMs =
-            this.settlementConfig.pollIntervalMs ??
-            DEFAULT_SETTLEMENT_CONFIG.pollIntervalMs;
-
-        // Run once immediately, then on interval
+        // Run once immediately, then schedule next
         this.pollBoardingUtxos();
-        this.pollIntervalId = setInterval(
-            () => this.pollBoardingUtxos(),
-            intervalMs
-        );
+    }
+
+    private schedulePoll(): void {
+        if (this.settlementConfig === false) return;
+        const delay = this.getNextPollDelay();
+        this.pollTimeoutId = setTimeout(() => this.pollBoardingUtxos(), delay);
     }
 
     private async pollBoardingUtxos(): Promise<void> {
@@ -917,12 +934,15 @@ export class VtxoManager implements AsyncDisposable {
         if (this.pollInProgress) return;
         this.pollInProgress = true;
 
+        let hadError = false;
+
         try {
             // Settle new (unexpired) UTXOs first, then sweep expired ones.
             // Sequential to avoid racing for the same UTXOs.
             try {
                 await this.settleBoardingUtxos();
             } catch (e) {
+                hadError = true;
                 console.error("Error auto-settling boarding UTXOs:", e);
             }
 
@@ -938,12 +958,19 @@ export class VtxoManager implements AsyncDisposable {
                         !(e instanceof Error) ||
                         !e.message.includes("No expired boarding UTXOs")
                     ) {
+                        hadError = true;
                         console.error("Error auto-sweeping boarding UTXOs:", e);
                     }
                 }
             }
         } finally {
+            if (hadError) {
+                this.consecutivePollFailures++;
+            } else {
+                this.consecutivePollFailures = 0;
+            }
             this.pollInProgress = false;
+            this.schedulePoll();
         }
     }
 
@@ -962,7 +989,15 @@ export class VtxoManager implements AsyncDisposable {
         // accidentally settling expired UTXOs (which would conflict with sweep).
         let expiredSet: Set<string>;
         try {
-            const expired = await this.getExpiredBoardingUtxos();
+            const boardingTimelock = this.getBoardingTimelock();
+            let chainTipHeight: number | undefined;
+            if (boardingTimelock.type === "blocks") {
+                const tip = await this.getOnchainProvider().getChainTip();
+                chainTipHeight = tip.height;
+            }
+            const expired = boardingUtxos.filter((utxo) =>
+                hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
+            );
             expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
         } catch {
             return;
@@ -997,9 +1032,9 @@ export class VtxoManager implements AsyncDisposable {
 
     async dispose(): Promise<void> {
         this.disposePromise ??= (async () => {
-            if (this.pollIntervalId) {
-                clearInterval(this.pollIntervalId);
-                this.pollIntervalId = undefined;
+            if (this.pollTimeoutId) {
+                clearTimeout(this.pollTimeoutId);
+                this.pollTimeoutId = undefined;
             }
             const subscription = await this.contractEventsSubscriptionReady;
             this.contractEventsSubscription = undefined;
