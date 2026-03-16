@@ -1467,7 +1467,10 @@ describe("ArkadeSwaps", () => {
                     // tapscript spend sig.
                     await sleep(1000);
                     await generateBlocks(10);
-                    await waitForSettled(() => defaultWallet.getVtxos(), 15_000);
+                    await waitForSettled(
+                        () => defaultWallet.getVtxos(),
+                        15_000
+                    );
 
                     const { invoice } = await getNewLightningInvoice(amount);
                     const result = await defaultSwaps.sendLightningPayment({
