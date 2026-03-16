@@ -863,6 +863,17 @@ export class VtxoManager implements AsyncDisposable {
                 }
 
                 this.renewVtxos().catch((e) => {
+                    if (e instanceof Error) {
+                        if (e.message.includes("No VTXOs available to renew")) {
+                            // Not an error, just no VTXO eligible for renewal.
+                            return;
+                        }
+                        if (e.message.includes("is below dust threshold")) {
+                            // Not an error, just below dust threshold.
+                            // As more VTXOs are received, the threshold will be raised.
+                            return;
+                        }
+                    }
                     console.error("Error renewing VTXOs:", e);
                 });
                 delegatorManager
