@@ -84,12 +84,14 @@ import {
     ResponseGetDelegateInfo,
     RequestRecoverVtxos,
     ResponseRecoverVtxos,
+    ResponseRecoverVtxosEvent,
     RequestGetRecoverableBalance,
     ResponseGetRecoverableBalance,
     RequestGetExpiringVtxos,
     ResponseGetExpiringVtxos,
     RequestRenewVtxos,
     ResponseRenewVtxos,
+    ResponseRenewVtxosEvent,
     RequestGetExpiredBoardingUtxos,
     ResponseGetExpiredBoardingUtxos,
     RequestSweepExpiredBoardingUtxos,
@@ -1178,15 +1180,54 @@ export class ServiceWorkerWallet
         const messageTag = this.messageTag;
 
         const manager: IVtxoManager = {
-            async recoverVtxos(): Promise<string> {
+            async recoverVtxos(
+                eventCallback?: (event: SettlementEvent) => void
+            ): Promise<string> {
                 const message: RequestRecoverVtxos = {
                     tag: messageTag,
                     type: "RECOVER_VTXOS",
                     id: getRandomId(),
                 };
                 try {
-                    const response = await wallet.sendMessage(message);
-                    return (response as ResponseRecoverVtxos).payload.txid;
+                    return await new Promise((resolve, reject) => {
+                        const messageHandler = (
+                            event: MessageEvent<WalletUpdaterResponse>
+                        ) => {
+                            const response = event.data;
+                            if (response.id !== message.id) return;
+                            if (response.error) {
+                                navigator.serviceWorker.removeEventListener(
+                                    "message",
+                                    messageHandler
+                                );
+                                reject(response.error);
+                                return;
+                            }
+                            switch (response.type) {
+                                case "RECOVER_VTXOS_EVENT":
+                                    eventCallback?.(
+                                        (response as ResponseRecoverVtxosEvent)
+                                            .payload
+                                    );
+                                    break;
+                                case "RECOVER_VTXOS_SUCCESS":
+                                    navigator.serviceWorker.removeEventListener(
+                                        "message",
+                                        messageHandler
+                                    );
+                                    resolve(
+                                        (response as ResponseRecoverVtxos)
+                                            .payload.txid
+                                    );
+                                    break;
+                            }
+                        };
+                        navigator.serviceWorker.addEventListener(
+                            "message",
+                            messageHandler
+                        );
+                        wallet.serviceWorker.postMessage(message);
+                    });
                 } catch (e) {
                     throw new Error(`Failed to recover vtxos: ${e}`);
                 }
@@ -1228,15 +1269,54 @@ export class ServiceWorkerWallet
                 }
             },
 
-            async renewVtxos(): Promise<string> {
+            async renewVtxos(
+                eventCallback?: (event: SettlementEvent) => void
+            ): Promise<string> {
                 const message: RequestRenewVtxos = {
                     tag: messageTag,
                     type: "RENEW_VTXOS",
                     id: getRandomId(),
                 };
                 try {
-                    const response = await wallet.sendMessage(message);
-                    return (response as ResponseRenewVtxos).payload.txid;
+                    return await new Promise((resolve, reject) => {
+                        const messageHandler = (
+                            event: MessageEvent<WalletUpdaterResponse>
+                        ) => {
+                            const response = event.data;
+                            if (response.id !== message.id) return;
+                            if (response.error) {
+                                navigator.serviceWorker.removeEventListener(
+                                    "message",
+                                    messageHandler
+                                );
+                                reject(response.error);
+                                return;
+                            }
+                            switch (response.type) {
+                                case "RENEW_VTXOS_EVENT":
+                                    eventCallback?.(
+                                        (response as ResponseRenewVtxosEvent)
+                                            .payload
+                                    );
+                                    break;
+                                case "RENEW_VTXOS_SUCCESS":
+                                    navigator.serviceWorker.removeEventListener(
+                                        "message",
+                                        messageHandler
+                                    );
+                                    resolve(
+                                        (response as ResponseRenewVtxos).payload
+                                            .txid
+                                    );
+                                    break;
+                            }
+                        };
+                        navigator.serviceWorker.addEventListener(
+                            "message",
+                            messageHandler
+                        );
+                        wallet.serviceWorker.postMessage(message);
+                    });
                 } catch (e) {
                     throw new Error(`Failed to renew vtxos: ${e}`);
                 }

@@ -230,6 +230,14 @@ export type ResponseSettleEvent = ResponseEnvelope & {
     type: "SETTLE_EVENT";
     payload: SettlementEvent;
 };
+export type ResponseRecoverVtxosEvent = ResponseEnvelope & {
+    type: "RECOVER_VTXOS_EVENT";
+    payload: SettlementEvent;
+};
+export type ResponseRenewVtxosEvent = ResponseEnvelope & {
+    type: "RENEW_VTXOS_EVENT";
+    payload: SettlementEvent;
+};
 export type ResponseUtxoUpdate = ResponseEnvelope & {
     broadcast: true;
     type: "UTXO_UPDATE";
@@ -447,9 +455,11 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseDelegate
         | ResponseGetDelegateInfo
         | ResponseRecoverVtxos
+        | ResponseRecoverVtxosEvent
         | ResponseGetRecoverableBalance
         | ResponseGetExpiringVtxos
         | ResponseRenewVtxos
+        | ResponseRenewVtxosEvent
         | ResponseGetExpiredBoardingUtxos
         | ResponseSweepExpiredBoardingUtxos
     );
@@ -847,7 +857,15 @@ export class WalletMessageHandler
                 case "RECOVER_VTXOS": {
                     const wallet = this.requireWallet();
                     const vtxoManager = await wallet.getVtxoManager();
-                    const txid = await vtxoManager.recoverVtxos();
+                    const txid = await vtxoManager.recoverVtxos((e) => {
+                        this.scheduleForNextTick(() =>
+                            this.tagged({
+                                id,
+                                type: "RECOVER_VTXOS_EVENT",
+                                payload: e,
+                            })
+                        );
+                    });
                     return this.tagged({
                         id,
                         type: "RECOVER_VTXOS_SUCCESS",
@@ -884,7 +902,15 @@ export class WalletMessageHandler
                 case "RENEW_VTXOS": {
                     const wallet = this.requireWallet();
                     const vtxoManager = await wallet.getVtxoManager();
-                    const txid = await vtxoManager.renewVtxos();
+                    const txid = await vtxoManager.renewVtxos((e) => {
+                        this.scheduleForNextTick(() =>
+                            this.tagged({
+                                id,
+                                type: "RENEW_VTXOS_EVENT",
+                                payload: e,
+                            })
+                        );
+                    });
                     return this.tagged({
                         id,
                         type: "RENEW_VTXOS_SUCCESS",
