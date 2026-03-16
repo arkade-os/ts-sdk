@@ -913,6 +913,7 @@ export type RestoredSubmarineSwap = {
     preimageHash: string;
     status: BoltzSwapStatus;
     refundDetails: Details;
+    invoice?: string;
 };
 
 export const isRestoredSubmarineSwap = (
@@ -928,7 +929,8 @@ export const isRestoredSubmarineSwap = (
         typeof data.createdAt === "number" &&
         typeof data.preimageHash === "string" &&
         typeof data.status === "string" &&
-        isDetails(data.refundDetails)
+        isDetails(data.refundDetails) &&
+        (data.invoice === undefined || typeof data.invoice === "string")
     );
 };
 
@@ -941,6 +943,7 @@ export type RestoredReverseSwap = {
     preimageHash: string;
     status: BoltzSwapStatus;
     claimDetails: Details;
+    invoice?: string;
 };
 
 export const isRestoredReverseSwap = (
@@ -956,7 +959,8 @@ export const isRestoredReverseSwap = (
         typeof data.createdAt === "number" &&
         typeof data.preimageHash === "string" &&
         typeof data.status === "string" &&
-        isDetails(data.claimDetails)
+        isDetails(data.claimDetails) &&
+        (data.invoice === undefined || typeof data.invoice === "string")
     );
 };
 

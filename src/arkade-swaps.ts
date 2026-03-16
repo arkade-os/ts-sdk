@@ -2082,7 +2082,7 @@ export class ArkadeSwaps {
                     },
                     response: {
                         id,
-                        invoice: "",
+                        invoice: swap.invoice ?? "",
                         onchainAmount: amount,
                         lockupAddress,
                         refundPublicKey: serverPublicKey,
@@ -2131,7 +2131,7 @@ export class ArkadeSwaps {
                     preimageHash: swap.preimageHash,
                     status,
                     request: {
-                        invoice: "",
+                        invoice: swap.invoice ?? "",
                         refundPublicKey: publicKey,
                     },
                     response: {
