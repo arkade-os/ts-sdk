@@ -10,6 +10,10 @@ import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
 } from "../../src/wallet/serviceWorker/wallet-message-handler";
+import {
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "../../src/worker/errors";
 
 type MessageHandler = (event: { data: any }) => void;
 
@@ -448,7 +452,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new Error("MessageBus not initialized"),
+                        error: new MessageBusNotInitializedError(),
                     };
                 }
                 if (message.type === "GET_ADDRESS") {
@@ -497,7 +501,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                 return {
                     id: message.id,
                     tag: message.tag ?? messageTag,
-                    error: new Error("MessageBus not initialized"),
+                    error: new MessageBusNotInitializedError(),
                 };
             });
 
@@ -539,7 +543,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new Error("MessageBus not initialized"),
+                        error: new MessageBusNotInitializedError(),
                     };
                 }
                 switch (message.type) {
@@ -1021,8 +1025,8 @@ describe("preflight ping", () => {
 
         // Attach rejection handler before advancing timers to
         // avoid unhandled-rejection warning
-        const assertion = expect(pingPromise).rejects.toThrow(
-            "Service worker ping timed out"
+        const assertion = expect(pingPromise).rejects.toBeInstanceOf(
+            ServiceWorkerTimeoutError
         );
         await vi.advanceTimersByTimeAsync(2_000);
         await assertion;

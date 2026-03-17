@@ -43,6 +43,27 @@ import {
 } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 
+export class WalletNotInitializedError extends Error {
+    constructor() {
+        super("Wallet handler not initialized");
+        this.name = "WalletNotInitializedError";
+    }
+}
+
+export class ReadonlyWalletError extends Error {
+    constructor() {
+        super("Read-only wallet: operation requires signing");
+        this.name = "ReadonlyWalletError";
+    }
+}
+
+export class DelegatorNotConfiguredError extends Error {
+    constructor() {
+        super("Delegator not configured");
+        this.name = "DelegatorNotConfiguredError";
+    }
+}
+
 export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 
 export type RequestInitWallet = RequestEnvelope & {
@@ -553,7 +574,7 @@ export class WalletMessageHandler
 
     private requireWallet(): Wallet {
         if (!this.wallet) {
-            throw new Error("Read-only wallet: operation requires signing");
+            throw new ReadonlyWalletError();
         }
         return this.wallet;
     }
@@ -579,7 +600,7 @@ export class WalletMessageHandler
         if (!this.readonlyWallet) {
             return this.tagged({
                 id,
-                error: new Error("Wallet handler not initialized"),
+                error: new WalletNotInitializedError(),
             });
         }
         try {
@@ -845,7 +866,7 @@ export class WalletMessageHandler
                     const wallet = this.requireWallet();
                     const delegatorManager = await wallet.getDelegatorManager();
                     if (!delegatorManager) {
-                        throw new Error("Delegator not configured");
+                        throw new DelegatorNotConfiguredError();
                     }
                     const info = await delegatorManager.getDelegateInfo();
                     return this.tagged({
@@ -1219,7 +1240,7 @@ export class WalletMessageHandler
         const wallet = this.requireWallet();
         const delegatorManager = await wallet.getDelegatorManager();
         if (!delegatorManager) {
-            throw new Error("Delegator not configured");
+            throw new DelegatorNotConfiguredError();
         }
 
         const { vtxoOutpoints, destination, delegateAt } = message.payload;
@@ -1258,7 +1279,7 @@ export class WalletMessageHandler
 
     private async handleGetVtxos(message: RequestGetVtxos) {
         if (!this.readonlyWallet) {
-            throw new Error("Wallet handler not initialized");
+            throw new WalletNotInitializedError();
         }
         const vtxos = await this.getSpendableVtxos();
         const dustAmount = this.readonlyWallet.dustAmount;

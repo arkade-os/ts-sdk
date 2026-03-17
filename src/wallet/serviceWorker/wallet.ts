@@ -118,6 +118,10 @@ import type { IDelegatorManager } from "../delegator";
 import type { IVtxoManager } from "../vtxo-manager";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
+import {
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "../../worker/errors";
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
@@ -309,7 +313,7 @@ const initializeMessageBus = (
 
         const timeoutId = setTimeout(() => {
             cleanup();
-            reject(new Error("MessageBus timed out!"));
+            reject(new ServiceWorkerTimeoutError("MessageBus timed out"));
         }, timeoutMs);
 
         navigator.serviceWorker.addEventListener("message", onMessage);
@@ -476,7 +480,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             const timeoutId = setTimeout(() => {
                 cleanup();
                 reject(
-                    new Error(
+                    new ServiceWorkerTimeoutError(
                         `Service worker message timed out (${request.type})`
                     )
                 );
@@ -519,7 +523,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 timeoutId = setTimeout(() => {
                     cleanup();
                     reject(
-                        new Error(
+                        new ServiceWorkerTimeoutError(
                             `Service worker message timed out (${request.type})`
                         )
                     );
@@ -597,7 +601,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
             const timeoutId = setTimeout(() => {
                 cleanup();
-                reject(new Error("Service worker ping timed out"));
+                reject(
+                    new ServiceWorkerTimeoutError(
+                        "Service worker ping timed out"
+                    )
+                );
             }, 2_000);
 
             const onMessage = (event: MessageEvent) => {
@@ -636,8 +644,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 return await this.sendMessageDirect(request);
             } catch (error: any) {
                 const isNotInitialized =
-                    typeof error?.message === "string" &&
-                    error.message.includes("MessageBus not initialized");
+                    error instanceof MessageBusNotInitializedError;
 
                 if (!isNotInitialized || attempt >= maxRetries) {
                     throw error;
@@ -665,8 +672,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 );
             } catch (error: any) {
                 const isNotInitialized =
-                    typeof error?.message === "string" &&
-                    error.message.includes("MessageBus not initialized");
+                    error instanceof MessageBusNotInitializedError;
 
                 if (!isNotInitialized || attempt >= maxRetries) {
                     throw error;

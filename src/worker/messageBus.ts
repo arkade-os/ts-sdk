@@ -11,6 +11,10 @@ import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import { hex } from "@scure/base";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { getRandomId } from "../wallet/utils";
+import {
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "./errors";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -360,7 +364,7 @@ export class MessageBus {
             event.source?.postMessage({
                 id,
                 tag: tag ?? "unknown",
-                error: new Error("MessageBus not initialized"),
+                error: new MessageBusNotInitializedError(),
             });
             return;
         }
@@ -453,7 +457,7 @@ export class MessageBus {
         return new Promise((resolve, reject) => {
             const timer = self.setTimeout(() => {
                 reject(
-                    new Error(
+                    new ServiceWorkerTimeoutError(
                         `Message handler timed out after ${this.messageTimeoutMs}ms (${label})`
                     )
                 );
