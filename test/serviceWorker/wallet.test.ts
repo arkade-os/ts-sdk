@@ -17,6 +17,20 @@ import {
 
 type MessageHandler = (event: { data: any }) => void;
 
+// Simulate the structured clone algorithm that postMessage uses: Error
+// subclasses lose their prototype chain and arrive as plain Error objects,
+// but name and message are preserved as own properties.
+function structuredCloneError(error: Error): Error {
+    const cloned = new Error(error.message);
+    cloned.name = error.name;
+    return cloned;
+}
+
+function structuredCloneResponse(response: any): any {
+    if (!response || !response.error) return response;
+    return { ...response, error: structuredCloneError(response.error) };
+}
+
 const createServiceWorkerHarness = (
     responder?: (message: any) => any,
     options?: { handlePing?: boolean }
@@ -46,12 +60,14 @@ const createServiceWorkerHarness = (
             if (!responder) return;
             const response = responder(message);
             if (!response) return;
-            listeners.forEach((handler) => handler({ data: response }));
+            const cloned = structuredCloneResponse(response);
+            listeners.forEach((handler) => handler({ data: cloned }));
         }),
     };
 
     const emit = (data: any) => {
-        listeners.forEach((handler) => handler({ data }));
+        const cloned = structuredCloneResponse(data);
+        listeners.forEach((handler) => handler({ data: cloned }));
     };
 
     return { navigatorServiceWorker, serviceWorker, emit, listeners };
@@ -426,6 +442,16 @@ describe("sendMessage reinitialize on SW restart", () => {
         return wallet;
     };
 
+    const createSWWalletWithConfig = (
+        serviceWorker: ServiceWorker,
+        tag = messageTag
+    ) => {
+        const wallet = createSWWallet(serviceWorker, tag);
+        (wallet as any).initConfig = stubConfig.initConfig;
+        (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
+        return wallet;
+    };
+
     afterEach(() => {
         vi.unstubAllGlobals();
     });
@@ -618,6 +644,57 @@ describe("sendMessage reinitialize on SW restart", () => {
             ([msg]: any) => msg.type === "GET_ADDRESS"
         );
         expect(addressCalls).toHaveLength(1);
+    });
+
+    it("retries streaming operations (settle) after dead-SW reinitialize", async () => {
+        let swInitialized = false;
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                    swInitialized = true;
+                    return {
+                        id: message.id,
+                        tag: "INITIALIZE_MESSAGE_BUS",
+                    };
+                }
+                if (message.type === "INIT_WALLET") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "WALLET_INITIALIZED",
+                    };
+                }
+                if (!swInitialized) {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        error: new MessageBusNotInitializedError(),
+                    };
+                }
+                if (message.type === "SETTLE") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "SETTLE_SUCCESS",
+                        payload: { txid: "txid-after-reinit" },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWalletWithConfig(serviceWorker as any);
+        const txid = await wallet.settle();
+
+        expect(txid).toBe("txid-after-reinit");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: "INITIALIZE_MESSAGE_BUS",
+            })
+        );
     });
 });
 

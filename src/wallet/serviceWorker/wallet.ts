@@ -118,10 +118,16 @@ import type { IDelegatorManager } from "../delegator";
 import type { IVtxoManager } from "../vtxo-manager";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
-import {
-    MessageBusNotInitializedError,
-    ServiceWorkerTimeoutError,
-} from "../../worker/errors";
+import { ServiceWorkerTimeoutError } from "../../worker/errors";
+
+// Check by error name instead of instanceof because postMessage uses the
+// structured clone algorithm which strips the prototype chain — the page
+// receives a plain Error, not the original MessageBusNotInitializedError.
+function isMessageBusNotInitializedError(error: unknown): boolean {
+    return (
+        error instanceof Error && error.name === "MessageBusNotInitializedError"
+    );
+}
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
@@ -643,10 +649,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             try {
                 return await this.sendMessageDirect(request);
             } catch (error: any) {
-                const isNotInitialized =
-                    error instanceof MessageBusNotInitializedError;
-
-                if (!isNotInitialized || attempt >= maxRetries) {
+                if (
+                    !isMessageBusNotInitializedError(error) ||
+                    attempt >= maxRetries
+                ) {
                     throw error;
                 }
 
@@ -662,6 +668,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         onEvent: (response: WalletUpdaterResponse) => void,
         isComplete: (response: WalletUpdaterResponse) => boolean
     ): Promise<WalletUpdaterResponse> {
+        try {
+            await this.pingServiceWorker();
+        } catch {
+            await this.reinitialize();
+        }
+
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
@@ -671,10 +683,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     isComplete
                 );
             } catch (error: any) {
-                const isNotInitialized =
-                    error instanceof MessageBusNotInitializedError;
-
-                if (!isNotInitialized || attempt >= maxRetries) {
+                if (
+                    !isMessageBusNotInitializedError(error) ||
+                    attempt >= maxRetries
+                ) {
                     throw error;
                 }
 
