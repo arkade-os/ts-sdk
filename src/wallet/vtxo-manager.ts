@@ -386,7 +386,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private knownBoardingUtxos = new Set<string>();
     private sweptBoardingUtxos = new Set<string>();
     private pollInProgress = false;
+    private disposed = false;
     private consecutivePollFailures = 0;
+    private startupPollTimeoutId?: ReturnType<typeof setTimeout>;
     private static readonly MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
 
     // Guards against renewal feedback loop: when renewVtxos() settles, the
@@ -887,7 +889,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Start polling for boarding UTXOs independently of contract manager
         // SSE setup. Use a short delay to let the wallet finish construction.
-        setTimeout(() => this.startBoardingUtxoPoll(), 1000);
+        this.startupPollTimeoutId = setTimeout(() => {
+            if (this.disposed) return;
+            this.startBoardingUtxoPoll();
+        }, 1000);
 
         try {
             const [delegatorManager, contractManager, destination] =
@@ -984,7 +989,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     private schedulePoll(): void {
-        if (this.settlementConfig === false) return;
+        if (this.disposed || this.settlementConfig === false) return;
         const delay = this.getNextPollDelay();
         this.pollTimeoutId = setTimeout(() => this.pollBoardingUtxos(), delay);
     }
@@ -1061,8 +1066,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
             );
             expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
-        } catch {
-            return;
+        } catch (e) {
+            throw e instanceof Error ? e : new Error(String(e));
         }
 
         const unsettledUtxos = boardingUtxos.filter(
@@ -1094,6 +1099,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     async dispose(): Promise<void> {
         this.disposePromise ??= (async () => {
+            this.disposed = true;
+            if (this.startupPollTimeoutId) {
+                clearTimeout(this.startupPollTimeoutId);
+                this.startupPollTimeoutId = undefined;
+            }
             if (this.pollTimeoutId) {
                 clearTimeout(this.pollTimeoutId);
                 this.pollTimeoutId = undefined;
