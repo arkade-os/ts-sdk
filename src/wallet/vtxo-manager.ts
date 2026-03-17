@@ -900,6 +900,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             // As more VTXOs are received, the threshold will be raised.
                             return;
                         }
+                        if (
+                            e.message.includes("VTXO_ALREADY_REGISTERED") ||
+                            e.message.includes("duplicated input")
+                        ) {
+                            // VTXO is already being used in a concurrent
+                            // user-initiated operation. Skip silently — the
+                            // wallet's tx lock serializes these, but the
+                            // renewal will retry on the next cycle.
+                            return;
+                        }
                     }
                     console.error("Error renewing VTXOs:", e);
                 });

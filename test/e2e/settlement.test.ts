@@ -7,7 +7,7 @@ import {
     InMemoryContractRepository,
 } from "../../src";
 import { RestDelegatorProvider } from "../../src/providers/delegator";
-import { beforeEachFaucet, execCommand, waitFor } from "./utils";
+import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
 
 describe("Settlement - Auto-settle boarding UTXOs", () => {
     beforeEach(beforeEachFaucet, 20000);
@@ -459,6 +459,306 @@ describe("Settlement - VtxoManager Lifecycle", () => {
             );
 
             await wallet.dispose();
+        }
+    );
+});
+
+describe("Settlement - VtxoManager concurrent operations", () => {
+    beforeEach(beforeEachFaucet, 20000);
+
+    it(
+        "should send offchain while VtxoManager background activity is running",
+        { timeout: 120000 },
+        async () => {
+            // Wallet A: VtxoManager enabled (SSE subscription + poll loop active)
+            const identityA = SingleKey.fromRandomBytes();
+            const walletA = await Wallet.create({
+                identity: identityA,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: {
+                    pollIntervalMs: 5000,
+                },
+            });
+
+            // Wallet B: settlement disabled, used as counterparty
+            const identityB = SingleKey.fromRandomBytes();
+            const walletB = await Wallet.create({
+                identity: identityB,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: false,
+            });
+
+            const addressB = await walletB.getAddress();
+
+            // Fund wallet A via boarding and let VtxoManager auto-settle it
+            const boardingAddress = await walletA.getBoardingAddress();
+            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+
+            // Wait for VtxoManager poll to auto-settle the boarding UTXO
+            await waitFor(
+                async () => {
+                    const vtxos = await walletA.getVtxos();
+                    return (
+                        vtxos.length > 0 &&
+                        vtxos[0].virtualStatus.state === "settled"
+                    );
+                },
+                { timeout: 60000, interval: 2000 }
+            );
+
+            const vtxosBefore = await walletA.getVtxos();
+            expect(vtxosBefore.length).toBeGreaterThan(0);
+            const balanceBefore = vtxosBefore.reduce(
+                (sum, v) => sum + v.value,
+                0
+            );
+
+            // Now send from A to B while VtxoManager's SSE + poll loop are active.
+            // This is the race-prone scenario: VtxoManager may try to renewVtxos()
+            // in the background at the same time as this user-initiated send().
+            const sendAmount = 5000;
+            const sendTxid = await walletA.send({
+                address: addressB,
+                amount: sendAmount,
+            });
+            expect(sendTxid).toHaveLength(64);
+
+            // Verify wallet B received funds
+            await waitFor(
+                async () => {
+                    const vtxos = await walletB.getVtxos();
+                    return vtxos.length > 0;
+                },
+                { timeout: 15000, interval: 1000 }
+            );
+
+            const balanceB = await walletB.getBalance();
+            expect(balanceB.total).toBe(sendAmount);
+
+            // Verify wallet A has change
+            const balanceA = await walletA.getBalance();
+            expect(balanceA.total).toBeLessThan(balanceBefore);
+            expect(balanceA.total).toBeGreaterThan(0);
+
+            await walletA.dispose();
+            await walletB.dispose();
+        }
+    );
+
+    it(
+        "should receive offchain VTXO and immediately send while VtxoManager reacts to vtxo_received",
+        { timeout: 120000 },
+        async () => {
+            // This test targets the specific race: VtxoManager's SSE subscription
+            // fires vtxo_received → background renewVtxos() → settle(), while the
+            // user simultaneously calls send() with the same VTXOs.
+
+            const identityA = SingleKey.fromRandomBytes();
+            const walletA = await Wallet.create({
+                identity: identityA,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                // VtxoManager enabled with fast polling
+                settlementConfig: {
+                    pollIntervalMs: 5000,
+                },
+            });
+
+            const identityB = SingleKey.fromRandomBytes();
+            const walletB = await Wallet.create({
+                identity: identityB,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: false,
+            });
+
+            const addressA = await walletA.getAddress();
+            const addressB = await walletB.getAddress();
+
+            // Fund wallet A via arkd faucet (creates a preconfirmed VTXO directly)
+            const fundAmount = 21_000;
+            execCommand(
+                `${arkdExec} ark send --to ${addressA} --amount ${fundAmount} --password secret`
+            );
+
+            // Wait for VTXO to appear — VtxoManager's SSE subscription should
+            // fire vtxo_received around the same time
+            await waitFor(
+                async () => {
+                    const vtxos = await walletA.getVtxos();
+                    return vtxos.length > 0;
+                },
+                { timeout: 15000, interval: 500 }
+            );
+
+            // Settle the preconfirmed VTXO so it becomes spendable for send()
+            const vtxos = await walletA.getVtxos();
+            const settledTxid = await walletA.settle({
+                inputs: vtxos,
+                outputs: [
+                    {
+                        address: addressA,
+                        amount: BigInt(
+                            vtxos.reduce((sum, v) => sum + v.value, 0)
+                        ),
+                    },
+                ],
+            });
+            expect(settledTxid).toHaveLength(64);
+
+            // Wait for the settled VTXO to appear
+            await waitFor(
+                async () => {
+                    const v = await walletA.getVtxos();
+                    return (
+                        v.length > 0 &&
+                        v.some((c) => c.virtualStatus.state === "settled")
+                    );
+                },
+                { timeout: 15000, interval: 1000 }
+            );
+
+            // Now send while VtxoManager is actively running in the background.
+            // VtxoManager's SSE subscription may fire vtxo_received for the
+            // settle output and try to renewVtxos() concurrently with this send.
+            const sendAmount = 5000;
+            const sendTxid = await walletA.send({
+                address: addressB,
+                amount: sendAmount,
+            });
+            expect(sendTxid).toHaveLength(64);
+
+            // Verify receipt
+            await waitFor(
+                async () => {
+                    const v = await walletB.getVtxos();
+                    return v.length > 0;
+                },
+                { timeout: 15000, interval: 1000 }
+            );
+
+            const balanceB = await walletB.getBalance();
+            expect(balanceB.total).toBe(sendAmount);
+
+            await walletA.dispose();
+            await walletB.dispose();
+        }
+    );
+
+    it(
+        "should handle multiple rapid sends while VtxoManager is active",
+        { timeout: 120000 },
+        async () => {
+            // Stress test: multiple sequential sends while VtxoManager's
+            // background poll + SSE are active, to surface race conditions
+            // in VTXO selection / double-spend.
+
+            const identityA = SingleKey.fromRandomBytes();
+            const walletA = await Wallet.create({
+                identity: identityA,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: {
+                    pollIntervalMs: 5000,
+                },
+            });
+
+            const identityB = SingleKey.fromRandomBytes();
+            const walletB = await Wallet.create({
+                identity: identityB,
+                arkServerUrl: "http://localhost:7070",
+                onchainProvider: new EsploraProvider("http://localhost:3000", {
+                    forcePolling: true,
+                    pollingInterval: 2000,
+                }),
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: false,
+            });
+
+            const addressB = await walletB.getAddress();
+
+            // Fund via boarding and let VtxoManager auto-settle
+            const boardingAddress = await walletA.getBoardingAddress();
+            execCommand(`nigiri faucet ${boardingAddress} 0.001`);
+
+            await waitFor(
+                async () => {
+                    const vtxos = await walletA.getVtxos();
+                    return (
+                        vtxos.length > 0 &&
+                        vtxos[0].virtualStatus.state === "settled"
+                    );
+                },
+                { timeout: 60000, interval: 2000 }
+            );
+
+            // Rapid sequential sends while VtxoManager is active
+            const sendAmount = 2000;
+            for (let i = 0; i < 3; i++) {
+                const txid = await walletA.send({
+                    address: addressB,
+                    amount: sendAmount,
+                });
+                expect(txid).toHaveLength(64);
+
+                // Small delay between sends to let state propagate
+                await new Promise((r) => setTimeout(r, 2000));
+            }
+
+            // Wait for all sends to be visible to B
+            await waitFor(
+                async () => {
+                    const balance = await walletB.getBalance();
+                    return balance.total >= sendAmount * 3;
+                },
+                { timeout: 30000, interval: 2000 }
+            );
+
+            const balanceB = await walletB.getBalance();
+            expect(balanceB.total).toBe(sendAmount * 3);
+
+            await walletA.dispose();
+            await walletB.dispose();
         }
     );
 });
