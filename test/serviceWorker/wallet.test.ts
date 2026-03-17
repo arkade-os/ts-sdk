@@ -604,3 +604,219 @@ describe("sendMessage reinitialize on SW restart", () => {
         expect(addressCalls).toHaveLength(1);
     });
 });
+
+describe("in-flight request deduplication", () => {
+    const handler = new WalletMessageHandler();
+    const messageTag = handler.messageTag;
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    it("deduplicates concurrent identical reads", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_BALANCE") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "BALANCE",
+                        payload: {
+                            onchain: { confirmed: 100, unconfirmed: 0 },
+                            offchain: {
+                                settled: 0,
+                                preconfirmed: 0,
+                                recoverable: 0,
+                            },
+                            total: 100,
+                        },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const [b1, b2] = await Promise.all([
+            wallet.getBalance(),
+            wallet.getBalance(),
+        ]);
+
+        expect(b1.total).toBe(100);
+        expect(b2.total).toBe(100);
+
+        const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_BALANCE"
+        );
+        expect(balanceCalls).toHaveLength(1);
+    });
+
+    it("does not dedup state-mutating requests", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "SEND_BITCOIN") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "BITCOIN_SENT",
+                        payload: { txid: "tx-" + message.id },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createSWWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
+            wallet.sendBitcoin({ address: "addr", amount: 1000 }),
+        ]);
+
+        const sendCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "SEND_BITCOIN"
+        );
+        expect(sendCalls).toHaveLength(2);
+    });
+
+    it("deduplicates requests with identical payloads", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_VTXOS") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "VTXOS",
+                        payload: { vtxos: [] },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.getVtxos({ withRecoverable: true }),
+            wallet.getVtxos({ withRecoverable: true }),
+        ]);
+
+        const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_VTXOS"
+        );
+        expect(vtxoCalls).toHaveLength(1);
+    });
+
+    it("does NOT dedup different payloads", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_VTXOS") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "VTXOS",
+                        payload: { vtxos: [] },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await Promise.all([
+            wallet.getVtxos({ withRecoverable: true }),
+            wallet.getVtxos({ withRecoverable: false }),
+        ]);
+
+        const vtxoCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_VTXOS"
+        );
+        expect(vtxoCalls).toHaveLength(2);
+    });
+
+    it("cache clears after settlement so sequential calls hit SW", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_BALANCE") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "BALANCE",
+                        payload: {
+                            onchain: { confirmed: 0, unconfirmed: 0 },
+                            offchain: {
+                                settled: 0,
+                                preconfirmed: 0,
+                                recoverable: 0,
+                            },
+                            total: 0,
+                        },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+
+        await wallet.getBalance();
+        await wallet.getBalance();
+
+        const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_BALANCE"
+        );
+        expect(balanceCalls).toHaveLength(2);
+    });
+
+    it("shares error across deduped callers", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_BALANCE") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        error: new Error("server exploded"),
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const results = await Promise.allSettled([
+            wallet.getBalance(),
+            wallet.getBalance(),
+        ]);
+
+        expect(results[0].status).toBe("rejected");
+        expect(results[1].status).toBe("rejected");
+        expect(
+            (results[0] as PromiseRejectedResult).reason.message
+        ).toContain("server exploded");
+        expect(
+            (results[1] as PromiseRejectedResult).reason.message
+        ).toContain("server exploded");
+
+        const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_BALANCE"
+        );
+        expect(balanceCalls).toHaveLength(1);
+    });
+});

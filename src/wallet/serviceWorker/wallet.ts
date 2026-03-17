@@ -119,6 +119,32 @@ import type { IVtxoManager } from "../vtxo-manager";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
 
+const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
+    "GET_ADDRESS",
+    "GET_BALANCE",
+    "GET_BOARDING_ADDRESS",
+    "GET_BOARDING_UTXOS",
+    "GET_STATUS",
+    "GET_TRANSACTION_HISTORY",
+    "IS_CONTRACT_MANAGER_WATCHING",
+    "GET_DELEGATE_INFO",
+    "GET_RECOVERABLE_BALANCE",
+    "GET_EXPIRED_BOARDING_UTXOS",
+    "GET_VTXOS",
+    "GET_CONTRACTS",
+    "GET_CONTRACTS_WITH_VTXOS",
+    "GET_SPENDABLE_PATHS",
+    "GET_ALL_SPENDING_PATHS",
+    "GET_ASSET_DETAILS",
+    "GET_EXPIRING_VTXOS",
+    "RELOAD_WALLET",
+]);
+
+function getRequestDedupKey(request: WalletUpdaterRequest): string {
+    const { id, tag, ...rest } = request;
+    return JSON.stringify(rest);
+}
+
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
 const isPrivateKeyIdentity = (
@@ -300,6 +326,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
     protected messageBusTimeoutMs?: number;
     private reinitPromise: Promise<void> | null = null;
+    private inflightRequests = new Map<
+        string,
+        Promise<WalletUpdaterResponse>
+    >();
 
     get assetManager(): IReadonlyAssetManager {
         return this._readonlyAssetManager;
@@ -532,9 +562,27 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         });
     }
 
+    protected async sendMessage(
+        request: WalletUpdaterRequest
+    ): Promise<WalletUpdaterResponse> {
+        if (!DEDUPABLE_REQUEST_TYPES.has(request.type)) {
+            return this.sendMessageWithRetry(request);
+        }
+
+        const key = getRequestDedupKey(request);
+        const existing = this.inflightRequests.get(key);
+        if (existing) return existing;
+
+        const promise = this.sendMessageWithRetry(request).finally(() => {
+            this.inflightRequests.delete(key);
+        });
+        this.inflightRequests.set(key, promise);
+        return promise;
+    }
+
     // send a message, retrying up to 2 times if the service worker was
     // killed and restarted by the OS (mobile browsers do this aggressively)
-    protected async sendMessage(
+    private async sendMessageWithRetry(
         request: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
         const maxRetries = 2;
