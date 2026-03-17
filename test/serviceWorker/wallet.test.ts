@@ -13,7 +13,11 @@ import {
 
 type MessageHandler = (event: { data: any }) => void;
 
-const createServiceWorkerHarness = (responder?: (message: any) => any) => {
+const createServiceWorkerHarness = (
+    responder?: (message: any) => any,
+    options?: { handlePing?: boolean }
+) => {
+    const handlePing = options?.handlePing ?? true;
     const listeners = new Set<MessageHandler>();
 
     const navigatorServiceWorker = {
@@ -27,6 +31,14 @@ const createServiceWorkerHarness = (responder?: (message: any) => any) => {
 
     const serviceWorker = {
         postMessage: vi.fn((message: any) => {
+            if (handlePing && message.tag === "PING") {
+                listeners.forEach((handler) =>
+                    handler({
+                        data: { id: message.id, tag: "PONG" },
+                    })
+                );
+                return;
+            }
             if (!responder) return;
             const response = responder(message);
             if (!response) return;
@@ -807,16 +819,212 @@ describe("in-flight request deduplication", () => {
 
         expect(results[0].status).toBe("rejected");
         expect(results[1].status).toBe("rejected");
-        expect(
-            (results[0] as PromiseRejectedResult).reason.message
-        ).toContain("server exploded");
-        expect(
-            (results[1] as PromiseRejectedResult).reason.message
-        ).toContain("server exploded");
+        expect((results[0] as PromiseRejectedResult).reason.message).toContain(
+            "server exploded"
+        );
+        expect((results[1] as PromiseRejectedResult).reason.message).toContain(
+            "server exploded"
+        );
 
         const balanceCalls = serviceWorker.postMessage.mock.calls.filter(
             ([msg]: any) => msg.type === "GET_BALANCE"
         );
         expect(balanceCalls).toHaveLength(1);
+    });
+});
+
+describe("preflight ping", () => {
+    const handler = new WalletMessageHandler();
+    const messageTag = handler.messageTag;
+
+    const stubConfig = {
+        initConfig: {
+            wallet: { publicKey: "deadbeef" },
+            arkServer: { url: "https://ark.test" },
+        },
+        initWalletPayload: {
+            key: { publicKey: "deadbeef" },
+            arkServerUrl: "https://ark.test",
+        },
+    };
+
+    const createWalletWithConfig = (
+        serviceWorker: ServiceWorker,
+        tag = messageTag
+    ) => {
+        const wallet = createWallet(serviceWorker, tag);
+        (wallet as any).initConfig = stubConfig.initConfig;
+        (wallet as any).initWalletPayload = stubConfig.initWalletPayload;
+        return wallet;
+    };
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+    });
+
+    it("ping succeeds → request proceeds normally", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_BALANCE") {
+                    return {
+                        id: message.id,
+                        tag: messageTag,
+                        type: "BALANCE",
+                        payload: {
+                            onchain: {
+                                confirmed: 42,
+                                unconfirmed: 0,
+                            },
+                            offchain: {
+                                settled: 0,
+                                preconfirmed: 0,
+                                recoverable: 0,
+                            },
+                            total: 42,
+                        },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const balance = await wallet.getBalance();
+
+        expect(balance.total).toBe(42);
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ tag: "PING" })
+        );
+    });
+
+    it("reinitializes when ping fails (dead SW)", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness(
+                (message) => {
+                    if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+                        return {
+                            id: message.id,
+                            tag: "INITIALIZE_MESSAGE_BUS",
+                        };
+                    }
+                    if (message.type === "INIT_WALLET") {
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "WALLET_INITIALIZED",
+                        };
+                    }
+                    if (message.type === "GET_ADDRESS") {
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "ADDRESS",
+                            payload: {
+                                address: "bc1-revived",
+                            },
+                        };
+                    }
+                    return null;
+                },
+                { handlePing: false }
+            );
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWalletWithConfig(serviceWorker as any);
+        const addressPromise = wallet.getAddress();
+
+        // Advance past the 2s ping timeout
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        const address = await addressPromise;
+        expect(address).toBe("bc1-revived");
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                tag: "INITIALIZE_MESSAGE_BUS",
+            })
+        );
+    });
+
+    it("deduplicates concurrent pings", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                switch (message.type) {
+                    case "GET_ADDRESS":
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "ADDRESS",
+                            payload: {
+                                address: "bc1-dedup",
+                            },
+                        };
+                    case "GET_BALANCE":
+                        return {
+                            id: message.id,
+                            tag: messageTag,
+                            type: "BALANCE",
+                            payload: {
+                                onchain: {
+                                    confirmed: 0,
+                                    unconfirmed: 0,
+                                },
+                                offchain: {
+                                    settled: 0,
+                                    preconfirmed: 0,
+                                    recoverable: 0,
+                                },
+                                total: 0,
+                            },
+                        };
+                    default:
+                        return null;
+                }
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        await Promise.all([wallet.getAddress(), wallet.getBalance()]);
+
+        const pingCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.tag === "PING"
+        );
+        expect(pingCalls).toHaveLength(1);
+    });
+
+    it("ping times out after 2s, not 30s", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness(undefined, {
+                handlePing: false,
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const wallet = createWallet(serviceWorker as any, messageTag);
+        const pingPromise = (wallet as any).pingServiceWorker();
+
+        // Attach rejection handler before advancing timers to
+        // avoid unhandled-rejection warning
+        const assertion = expect(pingPromise).rejects.toThrow(
+            "Service worker ping timed out"
+        );
+        await vi.advanceTimersByTimeAsync(2_000);
+        await assertion;
     });
 });

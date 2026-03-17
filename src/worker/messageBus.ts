@@ -327,6 +327,11 @@ export class MessageBus {
     private async processMessage(event: ExtendableMessageEvent) {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
 
+        if (tag === "PING") {
+            event.source?.postMessage({ id, tag: "PONG" });
+            return;
+        }
+
         if (tag === "INITIALIZE_MESSAGE_BUS") {
             if (this.debug) {
                 console.log("Init Command received");

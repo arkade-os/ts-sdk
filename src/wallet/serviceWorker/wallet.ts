@@ -326,6 +326,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
     protected messageBusTimeoutMs?: number;
     private reinitPromise: Promise<void> | null = null;
+    private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<
         string,
         Promise<WalletUpdaterResponse>
@@ -580,11 +581,55 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         return promise;
     }
 
+    private pingServiceWorker(): Promise<void> {
+        if (this.pingPromise) return this.pingPromise;
+
+        this.pingPromise = new Promise<void>((resolve, reject) => {
+            const pingId = getRandomId();
+
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                navigator.serviceWorker.removeEventListener(
+                    "message",
+                    onMessage
+                );
+            };
+
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(new Error("Service worker ping timed out"));
+            }, 2_000);
+
+            const onMessage = (event: MessageEvent) => {
+                if (event.data?.id === pingId && event.data?.tag === "PONG") {
+                    cleanup();
+                    resolve();
+                }
+            };
+
+            navigator.serviceWorker.addEventListener("message", onMessage);
+            this.serviceWorker.postMessage({
+                id: pingId,
+                tag: "PING",
+            });
+        }).finally(() => {
+            this.pingPromise = null;
+        });
+
+        return this.pingPromise;
+    }
+
     // send a message, retrying up to 2 times if the service worker was
     // killed and restarted by the OS (mobile browsers do this aggressively)
     private async sendMessageWithRetry(
         request: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
+        try {
+            await this.pingServiceWorker();
+        } catch {
+            await this.reinitialize();
+        }
+
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
