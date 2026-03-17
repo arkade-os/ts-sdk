@@ -154,6 +154,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly delegatorProvider?: DelegatorProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"]
     ) {
+        // Guard: detect identity/server network mismatch for descriptor-based identities.
+        // This duplicates the check in setupWalletConfig() so that subclasses
+        // bypassing the factory still get the safety net.
+        if ("descriptor" in identity) {
+            const descriptor = identity.descriptor as string;
+            const identityIsMainnet = !descriptor.includes("tpub");
+            const serverIsMainnet = network.bech32 === "bc";
+            if (identityIsMainnet !== serverIsMainnet) {
+                throw new Error(
+                    `Network mismatch: identity uses ${identityIsMainnet ? "mainnet" : "testnet"} derivation ` +
+                        `but wallet network is ${serverIsMainnet ? "mainnet" : "testnet"}. ` +
+                        `Create identity with { isMainnet: ${serverIsMainnet} } to match.`
+                );
+            }
+        }
         this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
     }
