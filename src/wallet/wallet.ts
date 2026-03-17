@@ -934,6 +934,28 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     private _walletAssetManager?: IAssetManager;
 
+    /**
+     * Async mutex that serializes all operations submitting VTXOs to the Ark
+     * server (`settle`, `send`, `sendBitcoin`). This prevents VtxoManager's
+     * background renewal from racing with user-initiated transactions for the
+     * same VTXO inputs.
+     */
+    private _txLock: Promise<void> = Promise.resolve();
+
+    private _withTxLock<T>(fn: () => Promise<T>): Promise<T> {
+        let release!: () => void;
+        const lock = new Promise<void>((r) => (release = r));
+        const prev = this._txLock;
+        this._txLock = lock;
+        return prev.then(async () => {
+            try {
+                return await fn();
+            } finally {
+                release();
+            }
+        });
+    }
+
     /** @deprecated Use settlementConfig instead */
     public readonly renewalConfig: Required<
         Omit<WalletConfig["renewalConfig"], "enabled">
@@ -1166,58 +1188,65 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         if (params.selectedVtxos && params.selectedVtxos.length > 0) {
-            const selectedVtxoSum = params.selectedVtxos
-                .map((v) => v.value)
-                .reduce((a, b) => a + b, 0);
-            if (selectedVtxoSum < params.amount) {
-                throw new Error("Selected VTXOs do not cover specified amount");
-            }
-            const changeAmount = selectedVtxoSum - params.amount;
+            return this._withTxLock(async () => {
+                const selectedVtxoSum = params
+                    .selectedVtxos!.map((v) => v.value)
+                    .reduce((a, b) => a + b, 0);
+                if (selectedVtxoSum < params.amount) {
+                    throw new Error(
+                        "Selected VTXOs do not cover specified amount"
+                    );
+                }
+                const changeAmount = selectedVtxoSum - params.amount;
 
-            const selected = {
-                inputs: params.selectedVtxos,
-                changeAmount: BigInt(changeAmount),
-            };
+                const selected = {
+                    inputs: params.selectedVtxos!,
+                    changeAmount: BigInt(changeAmount),
+                };
 
-            const outputAddress = ArkAddress.decode(params.address);
-            const outputScript =
-                BigInt(params.amount) < this.dustAmount
-                    ? outputAddress.subdustPkScript
-                    : outputAddress.pkScript;
+                const outputAddress = ArkAddress.decode(params.address);
+                const outputScript =
+                    BigInt(params.amount) < this.dustAmount
+                        ? outputAddress.subdustPkScript
+                        : outputAddress.pkScript;
 
-            const outputs: TransactionOutput[] = [
-                {
-                    script: outputScript,
-                    amount: BigInt(params.amount),
-                },
-            ];
+                const outputs: TransactionOutput[] = [
+                    {
+                        script: outputScript,
+                        amount: BigInt(params.amount),
+                    },
+                ];
 
-            // add change output if needed
-            if (selected.changeAmount > 0n) {
-                const changeOutputScript =
-                    selected.changeAmount < this.dustAmount
-                        ? this.arkAddress.subdustPkScript
-                        : this.arkAddress.pkScript;
+                // add change output if needed
+                if (selected.changeAmount > 0n) {
+                    const changeOutputScript =
+                        selected.changeAmount < this.dustAmount
+                            ? this.arkAddress.subdustPkScript
+                            : this.arkAddress.pkScript;
 
-                outputs.push({
-                    script: changeOutputScript,
-                    amount: BigInt(selected.changeAmount),
-                });
-            }
+                    outputs.push({
+                        script: changeOutputScript,
+                        amount: BigInt(selected.changeAmount),
+                    });
+                }
 
-            const { arkTxid, signedCheckpointTxs } =
-                await this.buildAndSubmitOffchainTx(selected.inputs, outputs);
+                const { arkTxid, signedCheckpointTxs } =
+                    await this.buildAndSubmitOffchainTx(
+                        selected.inputs,
+                        outputs
+                    );
 
-            await this.updateDbAfterOffchainTx(
-                selected.inputs,
-                arkTxid,
-                signedCheckpointTxs,
-                params.amount,
-                selected.changeAmount,
-                selected.changeAmount > 0n ? outputs.length - 1 : 0
-            );
+                await this.updateDbAfterOffchainTx(
+                    selected.inputs,
+                    arkTxid,
+                    signedCheckpointTxs,
+                    params.amount,
+                    selected.changeAmount,
+                    selected.changeAmount > 0n ? outputs.length - 1 : 0
+                );
 
-            return arkTxid;
+                return arkTxid;
+            });
         }
 
         return this.send({
@@ -1227,6 +1256,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     async settle(
+        params?: SettleParams,
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string> {
+        return this._withTxLock(() => this._settleImpl(params, eventCallback));
+    }
+
+    private async _settleImpl(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
@@ -1956,6 +1992,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * ```
      */
     async send(...args: Recipient[]): Promise<string> {
+        return this._withTxLock(() => this._sendImpl(...args));
+    }
+
+    private async _sendImpl(...args: Recipient[]): Promise<string> {
         if (args.length === 0) {
             throw new Error("At least one receiver is required");
         }
