@@ -84,7 +84,7 @@
     "author": "Arkade-OS",
     "license": "MIT",
     "dependencies": {
-        "@arkade-os/sdk": "0.4.7",
+        "@arkade-os/sdk": "0.4.8",
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1",
