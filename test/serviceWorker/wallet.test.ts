@@ -755,7 +755,7 @@ describe("in-flight request deduplication", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        type: "BITCOIN_SENT",
+                        type: "SEND_BITCOIN_SUCCESS",
                         payload: { txid: "tx-" + message.id },
                     };
                 }
@@ -974,7 +974,7 @@ describe("preflight ping", () => {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
-        const wallet = createWallet(serviceWorker as any, messageTag);
+        const wallet = createWalletWithConfig(serviceWorker as any);
         const balance = await wallet.getBalance();
 
         expect(balance.total).toBe(42);
@@ -1076,7 +1076,7 @@ describe("preflight ping", () => {
             serviceWorker: navigatorServiceWorker,
         } as any);
 
-        const wallet = createWallet(serviceWorker as any, messageTag);
+        const wallet = createWalletWithConfig(serviceWorker as any);
         await Promise.all([wallet.getAddress(), wallet.getBalance()]);
 
         const pingCalls = serviceWorker.postMessage.mock.calls.filter(

@@ -638,10 +638,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     private async sendMessageWithRetry(
         request: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
-        try {
-            await this.pingServiceWorker();
-        } catch {
-            await this.reinitialize();
+        // Skip the preflight ping during the initial INIT_WALLET call:
+        // create() hasn't set initConfig yet, so reinitialize() would throw.
+        if (this.initConfig) {
+            try {
+                await this.pingServiceWorker();
+            } catch {
+                await this.reinitialize();
+            }
         }
 
         const maxRetries = 2;
@@ -668,10 +672,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         onEvent: (response: WalletUpdaterResponse) => void,
         isComplete: (response: WalletUpdaterResponse) => boolean
     ): Promise<WalletUpdaterResponse> {
-        try {
-            await this.pingServiceWorker();
-        } catch {
-            await this.reinitialize();
+        if (this.initConfig) {
+            try {
+                await this.pingServiceWorker();
+            } catch {
+                await this.reinitialize();
+            }
         }
 
         const maxRetries = 2;
