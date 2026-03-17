@@ -104,6 +104,10 @@ import {
     ExplorerTransaction,
 } from "./providers/onchain";
 import {
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
+} from "./providers/electrum";
+import {
     RestArkProvider,
     ArkProvider,
     SettlementEvent,
@@ -279,6 +283,8 @@ export {
     // Providers
     ESPLORA_URL,
     EsploraProvider,
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
     RestArkProvider,
     RestIndexerProvider,
 
