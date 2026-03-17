@@ -186,6 +186,14 @@ describe("SeedIdentity", () => {
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
             expect(identity.descriptor).toMatch(/\/86'\/0'\/0'\]/);
         });
+
+        it("should default to mainnet when isMainnet is omitted", () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const explicit = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            const defaulted = SeedIdentity.fromSeed(seed, {});
+            expect(defaulted.descriptor).toBe(explicit.descriptor);
+            expect(defaulted.descriptor).toMatch(/\/86'\/0'\/0'\]/);
+        });
     });
 });
 
@@ -239,6 +247,20 @@ describe("MnemonicIdentity", () => {
             const pubKey2 = await withPassphrase.xOnlyPublicKey();
 
             expect(Array.from(pubKey1)).not.toEqual(Array.from(pubKey2));
+        });
+
+        it("should default to mainnet when isMainnet is omitted", async () => {
+            const explicit = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            const defaulted = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {});
+
+            const explicitPubKey = await explicit.xOnlyPublicKey();
+            const defaultedPubKey = await defaulted.xOnlyPublicKey();
+
+            expect(Array.from(defaultedPubKey)).toEqual(
+                Array.from(explicitPubKey)
+            );
         });
 
         it("should throw for invalid mnemonic", () => {

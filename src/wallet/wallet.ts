@@ -196,6 +196,29 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const network = getNetwork(info.network as NetworkName);
 
+        // Guard: detect identity/server network mismatch for seed-based identities.
+        // A mainnet descriptor (xpub, coin type 0) connected to a testnet server
+        // (or vice versa) means wrong derivation path → wrong keys → potential fund loss.
+        if ("descriptor" in config.identity) {
+            const descriptor = config.identity.descriptor as string;
+            const identityIsMainnet = !descriptor.includes("tpub");
+            const serverIsMainnet = info.network === "bitcoin";
+            if (identityIsMainnet && !serverIsMainnet) {
+                throw new Error(
+                    `Network mismatch: identity uses mainnet derivation (coin type 0) ` +
+                        `but Ark server is on ${info.network}. ` +
+                        `Create identity with { isMainnet: false } to use testnet derivation.`
+                );
+            }
+            if (!identityIsMainnet && serverIsMainnet) {
+                throw new Error(
+                    `Network mismatch: identity uses testnet derivation (coin type 1) ` +
+                        `but Ark server is on mainnet. ` +
+                        `Create identity with { isMainnet: true } or omit isMainnet (defaults to mainnet).`
+                );
+            }
+        }
+
         // Extract esploraUrl from provider if not explicitly provided
         const esploraUrl =
             config.esploraUrl || ESPLORA_URL[info.network as NetworkName];
