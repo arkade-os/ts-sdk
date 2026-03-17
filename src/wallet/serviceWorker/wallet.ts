@@ -118,6 +118,42 @@ import type { IDelegatorManager } from "../delegator";
 import type { IVtxoManager } from "../vtxo-manager";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
+import { ServiceWorkerTimeoutError } from "../../worker/errors";
+
+// Check by error name instead of instanceof because postMessage uses the
+// structured clone algorithm which strips the prototype chain — the page
+// receives a plain Error, not the original MessageBusNotInitializedError.
+function isMessageBusNotInitializedError(error: unknown): boolean {
+    return (
+        error instanceof Error && error.name === "MessageBusNotInitializedError"
+    );
+}
+
+const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
+    "GET_ADDRESS",
+    "GET_BALANCE",
+    "GET_BOARDING_ADDRESS",
+    "GET_BOARDING_UTXOS",
+    "GET_STATUS",
+    "GET_TRANSACTION_HISTORY",
+    "IS_CONTRACT_MANAGER_WATCHING",
+    "GET_DELEGATE_INFO",
+    "GET_RECOVERABLE_BALANCE",
+    "GET_EXPIRED_BOARDING_UTXOS",
+    "GET_VTXOS",
+    "GET_CONTRACTS",
+    "GET_CONTRACTS_WITH_VTXOS",
+    "GET_SPENDABLE_PATHS",
+    "GET_ALL_SPENDING_PATHS",
+    "GET_ASSET_DETAILS",
+    "GET_EXPIRING_VTXOS",
+    "RELOAD_WALLET",
+]);
+
+function getRequestDedupKey(request: WalletUpdaterRequest): string {
+    const { id, tag, ...rest } = request;
+    return JSON.stringify(rest);
+}
 
 type PrivateKeyIdentity = Identity & { toHex(): string };
 
@@ -283,7 +319,7 @@ const initializeMessageBus = (
 
         const timeoutId = setTimeout(() => {
             cleanup();
-            reject(new Error("MessageBus timed out!"));
+            reject(new ServiceWorkerTimeoutError("MessageBus timed out"));
         }, timeoutMs);
 
         navigator.serviceWorker.addEventListener("message", onMessage);
@@ -300,6 +336,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
     protected messageBusTimeoutMs?: number;
     private reinitPromise: Promise<void> | null = null;
+    private pingPromise: Promise<void> | null = null;
+    private inflightRequests = new Map<
+        string,
+        Promise<WalletUpdaterResponse>
+    >();
 
     get assetManager(): IReadonlyAssetManager {
         return this._readonlyAssetManager;
@@ -445,7 +486,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             const timeoutId = setTimeout(() => {
                 cleanup();
                 reject(
-                    new Error(
+                    new ServiceWorkerTimeoutError(
                         `Service worker message timed out (${request.type})`
                     )
                 );
@@ -488,7 +529,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 timeoutId = setTimeout(() => {
                     cleanup();
                     reject(
-                        new Error(
+                        new ServiceWorkerTimeoutError(
                             `Service worker message timed out (${request.type})`
                         )
                     );
@@ -532,21 +573,90 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         });
     }
 
-    // send a message, retrying up to 2 times if the service worker was
-    // killed and restarted by the OS (mobile browsers do this aggressively)
     protected async sendMessage(
         request: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
+        if (!DEDUPABLE_REQUEST_TYPES.has(request.type)) {
+            return this.sendMessageWithRetry(request);
+        }
+
+        const key = getRequestDedupKey(request);
+        const existing = this.inflightRequests.get(key);
+        if (existing) return existing;
+
+        const promise = this.sendMessageWithRetry(request).finally(() => {
+            this.inflightRequests.delete(key);
+        });
+        this.inflightRequests.set(key, promise);
+        return promise;
+    }
+
+    private pingServiceWorker(): Promise<void> {
+        if (this.pingPromise) return this.pingPromise;
+
+        this.pingPromise = new Promise<void>((resolve, reject) => {
+            const pingId = getRandomId();
+
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                navigator.serviceWorker.removeEventListener(
+                    "message",
+                    onMessage
+                );
+            };
+
+            const timeoutId = setTimeout(() => {
+                cleanup();
+                reject(
+                    new ServiceWorkerTimeoutError(
+                        "Service worker ping timed out"
+                    )
+                );
+            }, 2_000);
+
+            const onMessage = (event: MessageEvent) => {
+                if (event.data?.id === pingId && event.data?.tag === "PONG") {
+                    cleanup();
+                    resolve();
+                }
+            };
+
+            navigator.serviceWorker.addEventListener("message", onMessage);
+            this.serviceWorker.postMessage({
+                id: pingId,
+                tag: "PING",
+            });
+        }).finally(() => {
+            this.pingPromise = null;
+        });
+
+        return this.pingPromise;
+    }
+
+    // send a message, retrying up to 2 times if the service worker was
+    // killed and restarted by the OS (mobile browsers do this aggressively)
+    private async sendMessageWithRetry(
+        request: WalletUpdaterRequest
+    ): Promise<WalletUpdaterResponse> {
+        // Skip the preflight ping during the initial INIT_WALLET call:
+        // create() hasn't set initConfig yet, so reinitialize() would throw.
+        if (this.initConfig) {
+            try {
+                await this.pingServiceWorker();
+            } catch {
+                await this.reinitialize();
+            }
+        }
+
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
                 return await this.sendMessageDirect(request);
             } catch (error: any) {
-                const isNotInitialized =
-                    typeof error?.message === "string" &&
-                    error.message.includes("MessageBus not initialized");
-
-                if (!isNotInitialized || attempt >= maxRetries) {
+                if (
+                    !isMessageBusNotInitializedError(error) ||
+                    attempt >= maxRetries
+                ) {
                     throw error;
                 }
 
@@ -562,6 +672,14 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         onEvent: (response: WalletUpdaterResponse) => void,
         isComplete: (response: WalletUpdaterResponse) => boolean
     ): Promise<WalletUpdaterResponse> {
+        if (this.initConfig) {
+            try {
+                await this.pingServiceWorker();
+            } catch {
+                await this.reinitialize();
+            }
+        }
+
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
@@ -571,11 +689,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     isComplete
                 );
             } catch (error: any) {
-                const isNotInitialized =
-                    typeof error?.message === "string" &&
-                    error.message.includes("MessageBus not initialized");
-
-                if (!isNotInitialized || attempt >= maxRetries) {
+                if (
+                    !isMessageBusNotInitializedError(error) ||
+                    attempt >= maxRetries
+                ) {
                     throw error;
                 }
 
