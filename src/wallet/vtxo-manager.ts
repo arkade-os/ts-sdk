@@ -389,6 +389,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private consecutivePollFailures = 0;
     private static readonly MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
 
+    // Guards against renewal feedback loop: when renewVtxos() settles, the
+    // server emits new VTXOs → vtxo_received → renewVtxos() again → infinite loop.
+    private renewalInProgress = false;
+    private lastRenewalTimestamp = 0;
+    private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
+
     constructor(
         readonly wallet: IWallet,
         /** @deprecated Use settlementConfig instead */
@@ -643,18 +649,25 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const arkAddress = await this.wallet.getAddress();
 
-        return this.wallet.settle(
-            {
-                inputs: vtxos,
-                outputs: [
-                    {
-                        address: arkAddress,
-                        amount: BigInt(totalAmount),
-                    },
-                ],
-            },
-            eventCallback
-        );
+        this.renewalInProgress = true;
+        try {
+            const txid = await this.wallet.settle(
+                {
+                    inputs: vtxos,
+                    outputs: [
+                        {
+                            address: arkAddress,
+                            amount: BigInt(totalAmount),
+                        },
+                    ],
+                },
+                eventCallback
+            );
+            this.lastRenewalTimestamp = Date.now();
+            return txid;
+        } finally {
+            this.renewalInProgress = false;
+        }
     }
 
     // ========== Boarding UTXO Sweep Methods ==========
@@ -886,6 +899,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
             const stopWatching = contractManager.onContractEvent((event) => {
                 if (event.type !== "vtxo_received") {
+                    return;
+                }
+
+                // Guard: skip if a renewal is already in flight to prevent
+                // re-entrant loops (settle → vtxo_received → settle → …).
+                if (this.renewalInProgress) {
+                    return;
+                }
+
+                // Guard: skip if we just completed a renewal — the received
+                // VTXOs are most likely the output of our own settlement.
+                const msSinceLastRenewal =
+                    Date.now() - this.lastRenewalTimestamp;
+                if (msSinceLastRenewal < VtxoManager.RENEWAL_COOLDOWN_MS) {
                     return;
                 }
 
