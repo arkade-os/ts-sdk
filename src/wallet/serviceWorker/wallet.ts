@@ -47,6 +47,8 @@ import {
     RequestReloadWallet,
     RequestSendBitcoin,
     RequestSettle,
+    ResponseSettle,
+    ResponseSettleEvent,
     RequestUpdateContract,
     ResponseGetAddress,
     ResponseGetBalance,
@@ -82,6 +84,20 @@ import {
     ResponseDelegate,
     RequestGetDelegateInfo,
     ResponseGetDelegateInfo,
+    RequestRecoverVtxos,
+    ResponseRecoverVtxos,
+    ResponseRecoverVtxosEvent,
+    RequestGetRecoverableBalance,
+    ResponseGetRecoverableBalance,
+    RequestGetExpiringVtxos,
+    ResponseGetExpiringVtxos,
+    RequestRenewVtxos,
+    ResponseRenewVtxos,
+    ResponseRenewVtxosEvent,
+    RequestGetExpiredBoardingUtxos,
+    ResponseGetExpiredBoardingUtxos,
+    RequestSweepExpiredBoardingUtxos,
+    ResponseSweepExpiredBoardingUtxos,
     DEFAULT_MESSAGE_TAG,
 } from "./wallet-message-handler";
 import type {
@@ -99,6 +115,7 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import type { IDelegatorManager } from "../delegator";
+import type { IVtxoManager } from "../vtxo-manager";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
 
@@ -455,6 +472,66 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         });
     }
 
+    // Like sendMessageDirect but supports streaming responses: intermediate
+    // messages are forwarded via onEvent while the promise resolves on the
+    // first response for which isComplete returns true. The timeout resets
+    // on every intermediate event so long-running but progressing operations
+    // don't time out prematurely.
+    private sendMessageStreaming(
+        request: WalletUpdaterRequest,
+        onEvent: (response: WalletUpdaterResponse) => void,
+        isComplete: (response: WalletUpdaterResponse) => boolean
+    ): Promise<WalletUpdaterResponse> {
+        return new Promise((resolve, reject) => {
+            const resetTimeout = () => {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => {
+                    cleanup();
+                    reject(
+                        new Error(
+                            `Service worker message timed out (${request.type})`
+                        )
+                    );
+                }, 30_000);
+            };
+
+            const cleanup = () => {
+                clearTimeout(timeoutId);
+                navigator.serviceWorker.removeEventListener(
+                    "message",
+                    messageHandler
+                );
+            };
+
+            let timeoutId: ReturnType<typeof setTimeout>;
+            resetTimeout();
+
+            const messageHandler = (
+                event: MessageEvent<WalletUpdaterResponse>
+            ) => {
+                const response = event.data;
+                if (request.id !== response.id) return;
+
+                if (response.error) {
+                    cleanup();
+                    reject(response.error);
+                    return;
+                }
+
+                if (isComplete(response)) {
+                    cleanup();
+                    resolve(response);
+                } else {
+                    resetTimeout();
+                    onEvent(response);
+                }
+            };
+
+            navigator.serviceWorker.addEventListener("message", messageHandler);
+            this.serviceWorker.postMessage(request);
+        });
+    }
+
     // send a message, retrying up to 2 times if the service worker was
     // killed and restarted by the OS (mobile browsers do this aggressively)
     protected async sendMessage(
@@ -464,6 +541,35 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         for (let attempt = 0; ; attempt++) {
             try {
                 return await this.sendMessageDirect(request);
+            } catch (error: any) {
+                const isNotInitialized =
+                    typeof error?.message === "string" &&
+                    error.message.includes("MessageBus not initialized");
+
+                if (!isNotInitialized || attempt >= maxRetries) {
+                    throw error;
+                }
+
+                await this.reinitialize();
+            }
+        }
+    }
+
+    // Like sendMessage but for streaming responses — retries with
+    // reinitialize when the service worker has been killed/restarted.
+    protected async sendMessageWithEvents(
+        request: WalletUpdaterRequest,
+        onEvent: (response: WalletUpdaterResponse) => void,
+        isComplete: (response: WalletUpdaterResponse) => boolean
+    ): Promise<WalletUpdaterResponse> {
+        const maxRetries = 2;
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await this.sendMessageStreaming(
+                    request,
+                    onEvent,
+                    isComplete
+                );
             } catch (error: any) {
                 const isNotInitialized =
                     typeof error?.message === "string" &&
@@ -1038,50 +1144,12 @@ export class ServiceWorkerWallet
         };
 
         try {
-            return new Promise((resolve, reject) => {
-                const messageHandler = (
-                    event: MessageEvent<WalletUpdaterResponse>
-                ) => {
-                    const response = event.data;
-                    if (response.id !== message.id) {
-                        return;
-                    }
-
-                    if (response.error) {
-                        navigator.serviceWorker.removeEventListener(
-                            "message",
-                            messageHandler
-                        );
-                        reject(response.error);
-                        return;
-                    }
-
-                    switch (response.type) {
-                        case "SETTLE_EVENT":
-                            if (callback) {
-                                callback(response.payload);
-                            }
-                            break;
-                        case "SETTLE_SUCCESS":
-                            navigator.serviceWorker.removeEventListener(
-                                "message",
-                                messageHandler
-                            );
-                            resolve(response.payload.txid);
-                            break;
-                        default:
-                            console.error(
-                                `Unexpected response type for SETTLE request: ${response.type}`
-                            );
-                    }
-                };
-
-                navigator.serviceWorker.addEventListener(
-                    "message",
-                    messageHandler
-                );
-                this.serviceWorker.postMessage(message);
-            });
+            const response = await this.sendMessageWithEvents(
+                message,
+                (resp) => callback?.((resp as ResponseSettleEvent).payload),
+                (resp) => resp.type === "SETTLE_SUCCESS"
+            );
+            return (response as ResponseSettle).payload.txid;
         } catch (error) {
             throw new Error(`Settlement failed: ${error}`);
         }
@@ -1154,6 +1222,135 @@ export class ServiceWorkerWallet
                 } catch (e) {
                     throw new Error("Failed to get delegate info");
                 }
+            },
+        };
+
+        return manager;
+    }
+
+    async getVtxoManager(): Promise<IVtxoManager> {
+        const wallet = this;
+        const messageTag = this.messageTag;
+
+        const manager: IVtxoManager = {
+            async recoverVtxos(
+                eventCallback?: (event: SettlementEvent) => void
+            ): Promise<string> {
+                const message: RequestRecoverVtxos = {
+                    tag: messageTag,
+                    type: "RECOVER_VTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessageWithEvents(
+                        message,
+                        (resp) =>
+                            eventCallback?.(
+                                (resp as ResponseRecoverVtxosEvent).payload
+                            ),
+                        (resp) => resp.type === "RECOVER_VTXOS_SUCCESS"
+                    );
+                    return (response as ResponseRecoverVtxos).payload.txid;
+                } catch (e) {
+                    throw new Error(`Failed to recover vtxos: ${e}`);
+                }
+            },
+
+            async getRecoverableBalance() {
+                const message: RequestGetRecoverableBalance = {
+                    tag: messageTag,
+                    type: "GET_RECOVERABLE_BALANCE",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    const payload = (response as ResponseGetRecoverableBalance)
+                        .payload;
+                    return {
+                        recoverable: BigInt(payload.recoverable),
+                        subdust: BigInt(payload.subdust),
+                        includesSubdust: payload.includesSubdust,
+                        vtxoCount: payload.vtxoCount,
+                    };
+                } catch (e) {
+                    throw new Error(`Failed to get recoverable balance: ${e}`);
+                }
+            },
+
+            async getExpiringVtxos(thresholdMs?) {
+                const message: RequestGetExpiringVtxos = {
+                    tag: messageTag,
+                    type: "GET_EXPIRING_VTXOS",
+                    id: getRandomId(),
+                    payload: { thresholdMs },
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetExpiringVtxos).payload.vtxos;
+                } catch (e) {
+                    throw new Error(`Failed to get expiring vtxos: ${e}`);
+                }
+            },
+
+            async renewVtxos(
+                eventCallback?: (event: SettlementEvent) => void
+            ): Promise<string> {
+                const message: RequestRenewVtxos = {
+                    tag: messageTag,
+                    type: "RENEW_VTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessageWithEvents(
+                        message,
+                        (resp) =>
+                            eventCallback?.(
+                                (resp as ResponseRenewVtxosEvent).payload
+                            ),
+                        (resp) => resp.type === "RENEW_VTXOS_SUCCESS"
+                    );
+                    return (response as ResponseRenewVtxos).payload.txid;
+                } catch (e) {
+                    throw new Error(`Failed to renew vtxos: ${e}`);
+                }
+            },
+
+            async getExpiredBoardingUtxos() {
+                const message: RequestGetExpiredBoardingUtxos = {
+                    tag: messageTag,
+                    type: "GET_EXPIRED_BOARDING_UTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseGetExpiredBoardingUtxos).payload
+                        .utxos;
+                } catch (e) {
+                    throw new Error(
+                        `Failed to get expired boarding utxos: ${e}`
+                    );
+                }
+            },
+
+            async sweepExpiredBoardingUtxos(): Promise<string> {
+                const message: RequestSweepExpiredBoardingUtxos = {
+                    tag: messageTag,
+                    type: "SWEEP_EXPIRED_BOARDING_UTXOS",
+                    id: getRandomId(),
+                };
+                try {
+                    const response = await wallet.sendMessage(message);
+                    return (response as ResponseSweepExpiredBoardingUtxos)
+                        .payload.txid;
+                } catch (e) {
+                    throw new Error(
+                        `Failed to sweep expired boarding utxos: ${e}`
+                    );
+                }
+            },
+
+            async dispose(): Promise<void> {
+                return;
             },
         };
 

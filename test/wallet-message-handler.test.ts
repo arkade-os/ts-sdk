@@ -689,6 +689,336 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(response.error?.message).toBe("Delegator not configured");
     });
 
+    it("handles RECOVER_VTXOS messages", async () => {
+        const vtxoManager = {
+            recoverVtxos: vi.fn().mockResolvedValue("recover-txid"),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RECOVER_VTXOS",
+        } as any);
+
+        expect(vtxoManager.recoverVtxos).toHaveBeenCalledWith(
+            expect.any(Function)
+        );
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "RECOVER_VTXOS_SUCCESS",
+            payload: { txid: "recover-txid" },
+        });
+    });
+
+    it("RECOVER_VTXOS forwards settlement events via tick", async () => {
+        const event = { type: "batch_started", id: "b1" };
+        const vtxoManager = {
+            recoverVtxos: vi.fn().mockImplementation(async (cb: any) => {
+                cb(event);
+                return "recover-txid";
+            }),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        await updater.handleMessage({
+            ...baseMessage("r1"),
+            type: "RECOVER_VTXOS",
+        } as any);
+
+        const tickResponses = await updater.tick(Date.now());
+        expect(tickResponses).toEqual([
+            {
+                tag: updater.messageTag,
+                id: "r1",
+                type: "RECOVER_VTXOS_EVENT",
+                payload: event,
+            },
+        ]);
+    });
+
+    it("handles GET_RECOVERABLE_BALANCE messages", async () => {
+        const balance = {
+            recoverable: 5000n,
+            subdust: 100n,
+            includesSubdust: true,
+            vtxoCount: 3,
+        };
+        const vtxoManager = {
+            getRecoverableBalance: vi.fn().mockResolvedValue(balance),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_RECOVERABLE_BALANCE",
+        } as any);
+
+        expect(vtxoManager.getRecoverableBalance).toHaveBeenCalled();
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "RECOVERABLE_BALANCE",
+            payload: {
+                recoverable: "5000",
+                subdust: "100",
+                includesSubdust: true,
+                vtxoCount: 3,
+            },
+        });
+    });
+
+    it("handles GET_EXPIRING_VTXOS messages", async () => {
+        const vtxos = [{ txid: "v1", vout: 0, value: 1000 }];
+        const vtxoManager = {
+            getExpiringVtxos: vi.fn().mockResolvedValue(vtxos),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_EXPIRING_VTXOS",
+            payload: { thresholdMs: 86400000 },
+        } as any);
+
+        expect(vtxoManager.getExpiringVtxos).toHaveBeenCalledWith(86400000);
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "EXPIRING_VTXOS",
+            payload: { vtxos },
+        });
+    });
+
+    it("handles GET_EXPIRING_VTXOS without thresholdMs", async () => {
+        const vtxoManager = {
+            getExpiringVtxos: vi.fn().mockResolvedValue([]),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_EXPIRING_VTXOS",
+            payload: {},
+        } as any);
+
+        expect(vtxoManager.getExpiringVtxos).toHaveBeenCalledWith(undefined);
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "EXPIRING_VTXOS",
+            payload: { vtxos: [] },
+        });
+    });
+
+    it("handles RENEW_VTXOS messages", async () => {
+        const vtxoManager = {
+            renewVtxos: vi.fn().mockResolvedValue("renew-txid"),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RENEW_VTXOS",
+        } as any);
+
+        expect(vtxoManager.renewVtxos).toHaveBeenCalledWith(
+            expect.any(Function)
+        );
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "RENEW_VTXOS_SUCCESS",
+            payload: { txid: "renew-txid" },
+        });
+    });
+
+    it("RENEW_VTXOS forwards settlement events via tick", async () => {
+        const event = { type: "batch_finalized", id: "b2" };
+        const vtxoManager = {
+            renewVtxos: vi.fn().mockImplementation(async (cb: any) => {
+                cb(event);
+                return "renew-txid";
+            }),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        await updater.handleMessage({
+            ...baseMessage("n1"),
+            type: "RENEW_VTXOS",
+        } as any);
+
+        const tickResponses = await updater.tick(Date.now());
+        expect(tickResponses).toEqual([
+            {
+                tag: updater.messageTag,
+                id: "n1",
+                type: "RENEW_VTXOS_EVENT",
+                payload: event,
+            },
+        ]);
+    });
+
+    it("handles GET_EXPIRED_BOARDING_UTXOS messages", async () => {
+        const utxos = [
+            { txid: "tx1", vout: 0, value: 5000, status: { confirmed: true } },
+        ];
+        const vtxoManager = {
+            getExpiredBoardingUtxos: vi.fn().mockResolvedValue(utxos),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_EXPIRED_BOARDING_UTXOS",
+        } as any);
+
+        expect(vtxoManager.getExpiredBoardingUtxos).toHaveBeenCalled();
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "EXPIRED_BOARDING_UTXOS",
+            payload: { utxos },
+        });
+    });
+
+    it("handles SWEEP_EXPIRED_BOARDING_UTXOS messages", async () => {
+        const vtxoManager = {
+            sweepExpiredBoardingUtxos: vi.fn().mockResolvedValue("sweep-txid"),
+        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue(vtxoManager),
+        };
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SWEEP_EXPIRED_BOARDING_UTXOS",
+        } as any);
+
+        expect(vtxoManager.sweepExpiredBoardingUtxos).toHaveBeenCalled();
+        expect(response).toMatchObject({
+            tag: updater.messageTag,
+            type: "SWEEP_EXPIRED_BOARDING_UTXOS_SUCCESS",
+            payload: { txid: "sweep-txid" },
+        });
+    });
+
+    it("eagerly starts VtxoManager on wallet initialization", async () => {
+        const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
+        (updater as any).readonlyWallet = {
+            getWalletScripts: vi.fn().mockResolvedValue([]),
+            getAddress: vi.fn().mockResolvedValue("bc1-test"),
+            getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+            getTransactionHistory: vi.fn().mockResolvedValue([]),
+            onchainProvider: {
+                getCoins: vi.fn().mockResolvedValue([]),
+            },
+            notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
+            getContractManager: vi.fn().mockResolvedValue({
+                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+            }),
+        };
+        (updater as any).wallet = {
+            getVtxoManager: getVtxoManagerSpy,
+            finalizePendingTxs: vi
+                .fn()
+                .mockResolvedValue({ pending: [], finalized: [] }),
+        };
+        (updater as any).arkProvider = {};
+        (updater as any).indexerProvider = {
+            getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+        };
+        (updater as any).walletRepository = {
+            saveVtxos: vi.fn().mockResolvedValue(undefined),
+            saveUtxos: vi.fn().mockResolvedValue(undefined),
+            saveTransactions: vi.fn().mockResolvedValue(undefined),
+        };
+
+        await (updater as any).onWalletInitialized();
+
+        expect(getVtxoManagerSpy).toHaveBeenCalled();
+    });
+
+    it("does not start VtxoManager for readonly wallets", async () => {
+        (updater as any).readonlyWallet = {
+            getWalletScripts: vi.fn().mockResolvedValue([]),
+            getAddress: vi.fn().mockResolvedValue("bc1-test"),
+            getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
+            getTransactionHistory: vi.fn().mockResolvedValue([]),
+            onchainProvider: {
+                getCoins: vi.fn().mockResolvedValue([]),
+            },
+            notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
+            getContractManager: vi.fn().mockResolvedValue({
+                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+            }),
+        };
+        // wallet is NOT set — readonly only
+        (updater as any).arkProvider = {};
+        (updater as any).indexerProvider = {
+            getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+        };
+        (updater as any).walletRepository = {
+            saveVtxos: vi.fn().mockResolvedValue(undefined),
+            saveUtxos: vi.fn().mockResolvedValue(undefined),
+            saveTransactions: vi.fn().mockResolvedValue(undefined),
+        };
+
+        // Should not throw — just skips VtxoManager startup
+        await (updater as any).onWalletInitialized();
+    });
+
+    it("vtxo manager operations fail with readonly wallet only", async () => {
+        (updater as any).readonlyWallet = {};
+        // wallet is NOT set — readonly only
+
+        const recoverRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RECOVER_VTXOS",
+        } as any);
+        expect(recoverRes.error).toBeInstanceOf(Error);
+        expect(recoverRes.error?.message).toBe(
+            "Read-only wallet: operation requires signing"
+        );
+
+        const renewRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "RENEW_VTXOS",
+        } as any);
+        expect(renewRes.error).toBeInstanceOf(Error);
+        expect(renewRes.error?.message).toBe(
+            "Read-only wallet: operation requires signing"
+        );
+
+        const sweepRes = await updater.handleMessage({
+            ...baseMessage(),
+            type: "SWEEP_EXPIRED_BOARDING_UTXOS",
+        } as any);
+        expect(sweepRes.error).toBeInstanceOf(Error);
+        expect(sweepRes.error?.message).toBe(
+            "Read-only wallet: operation requires signing"
+        );
+    });
+
     it("signing operations fail with readonly wallet only", async () => {
         (updater as any).readonlyWallet = {};
         // wallet is NOT set — readonly only
@@ -722,5 +1052,43 @@ describe("WalletMessageHandler handleMessage", () => {
         expect(signRes.error?.message).toBe(
             "Read-only wallet: operation requires signing"
         );
+    });
+
+    it("stop() disposes the wallet and clears references", async () => {
+        const disposeSpy = vi.fn().mockResolvedValue(undefined);
+        const unsubIncoming = vi.fn();
+        const unsubContract = vi.fn();
+        (updater as any).wallet = { dispose: disposeSpy };
+        (updater as any).readonlyWallet = {};
+        (updater as any).arkProvider = {};
+        (updater as any).indexerProvider = {};
+        (updater as any).incomingFundsSubscription = unsubIncoming;
+        (updater as any).contractEventsSubscription = unsubContract;
+
+        await updater.stop();
+
+        expect(unsubIncoming).toHaveBeenCalled();
+        expect(unsubContract).toHaveBeenCalled();
+        expect(disposeSpy).toHaveBeenCalled();
+        expect((updater as any).wallet).toBeUndefined();
+        expect((updater as any).readonlyWallet).toBeUndefined();
+        expect((updater as any).arkProvider).toBeUndefined();
+        expect((updater as any).indexerProvider).toBeUndefined();
+        expect((updater as any).incomingFundsSubscription).toBeUndefined();
+        expect((updater as any).contractEventsSubscription).toBeUndefined();
+    });
+
+    it("stop() disposes readonly wallet when no signing wallet", async () => {
+        const disposeSpy = vi.fn().mockResolvedValue(undefined);
+        (updater as any).readonlyWallet = { dispose: disposeSpy };
+
+        await updater.stop();
+
+        expect(disposeSpy).toHaveBeenCalled();
+        expect((updater as any).readonlyWallet).toBeUndefined();
+    });
+
+    it("stop() is safe to call when not initialized", async () => {
+        await expect(updater.stop()).resolves.toBeUndefined();
     });
 });
