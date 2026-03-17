@@ -399,61 +399,128 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     async getTxOutspends(
         txid: string
     ): Promise<{ spent: boolean; txid: string }[]> {
-        // Get the raw transaction to find its outputs
+        // Step 1: fetch the creating tx to get its output scripts (1 round trip)
         const [txResult] = await this.chain.fetchTransactions([txid]);
         const tx = Transaction.fromRaw(hex.decode(txResult.hex), {
             allowUnknownOutputs: true,
         });
 
-        const results: { spent: boolean; txid: string }[] = [];
-
-        for (let i = 0; i < tx.outputsLength; i++) {
+        const outputCount = tx.outputsLength;
+        const outputScriptHashes: (string | undefined)[] = [];
+        for (let i = 0; i < outputCount; i++) {
             const output = tx.getOutput(i);
-            if (!output.script) {
-                results.push({ spent: false, txid: "" });
-                continue;
-            }
-
-            const outScriptHash = toScriptHash(output.script);
-            const history = await this.ws.request<TransactionHistory[]>(
-                GetHistoryMethod,
-                outScriptHash
+            outputScriptHashes.push(
+                output.script ? toScriptHash(output.script) : undefined
             );
+        }
 
-            // Find a spending tx: any tx in the history that is NOT the original tx
-            // and spends this output
-            let spentByTxid = "";
-            let isSpent = false;
+        const validScriptHashes = outputScriptHashes.filter(
+            (h): h is string => h !== undefined
+        );
 
-            for (const entry of history) {
-                if (entry.tx_hash === txid) continue;
-                // Fetch this tx and check if it spends our output
-                const [spenderResult] = await this.chain.fetchTransactions([
-                    entry.tx_hash,
-                ]);
-                const spenderTx = Transaction.fromRaw(
-                    hex.decode(spenderResult.hex),
-                    {
-                        allowUnknownOutputs: true,
-                        allowUnknownInputs: true,
-                    }
-                );
-                for (let j = 0; j < spenderTx.inputsLength; j++) {
-                    const input = spenderTx.getInput(j);
-                    if (
-                        input.txid &&
-                        hex.encode(input.txid) === txid &&
-                        input.index === i
-                    ) {
-                        isSpent = true;
-                        spentByTxid = entry.tx_hash;
-                        break;
-                    }
+        const results: { spent: boolean; txid: string }[] = Array.from(
+            { length: outputCount },
+            () => ({ spent: false, txid: "" })
+        );
+
+        if (validScriptHashes.length === 0) return results;
+
+        // Step 2: batch listunspent for all output scripthashes (1 round trip)
+        // This tells us exactly which txid:vout pairs are still unspent.
+        const unspentBatch = await this.ws.batchRequest<UnspentElectrum[][]>(
+            ...validScriptHashes.map((sh) => ({
+                method: ListUnspentMethod,
+                params: [sh],
+            }))
+        );
+
+        const unspentSet = new Set<string>();
+        let validIdx = 0;
+        for (let i = 0; i < outputCount; i++) {
+            if (outputScriptHashes[i] !== undefined) {
+                for (const u of unspentBatch[validIdx]) {
+                    unspentSet.add(`${u.tx_hash}:${u.tx_pos}`);
                 }
-                if (isSpent) break;
+                validIdx++;
             }
+        }
 
-            results.push({ spent: isSpent, txid: spentByTxid });
+        // Step 3: batch get_history only for spent outputs (1 round trip)
+        const spentIndices: number[] = [];
+        const spentScriptHashes: string[] = [];
+        for (let i = 0; i < outputCount; i++) {
+            const sh = outputScriptHashes[i];
+            if (sh && !unspentSet.has(`${txid}:${i}`)) {
+                spentIndices.push(i);
+                spentScriptHashes.push(sh);
+            }
+        }
+
+        if (spentIndices.length === 0) return results;
+
+        const histories = await this.ws.batchRequest<TransactionHistory[][]>(
+            ...spentScriptHashes.map((sh) => ({
+                method: GetHistoryMethod,
+                params: [sh],
+            }))
+        );
+
+        // For each spent output find the spender in its history.
+        // Common case: history has exactly 2 entries (creating + spending tx).
+        // Ambiguous case (same script reused): batch-fetch all candidates at once.
+        const ambiguousIndices: number[] = [];
+        const ambiguousCandidates: string[][] = [];
+
+        for (let j = 0; j < spentIndices.length; j++) {
+            const i = spentIndices[j];
+            const candidates = histories[j]
+                .map((h) => h.tx_hash)
+                .filter((hash) => hash !== txid);
+
+            if (candidates.length === 1) {
+                // Fast path: one candidate = the spender
+                results[i] = { spent: true, txid: candidates[0] };
+            } else if (candidates.length > 1) {
+                ambiguousIndices.push(i);
+                ambiguousCandidates.push(candidates);
+            }
+            // candidates.length === 0 → mempool eviction, treat as unspent
+        }
+
+        // Step 4 (rare): batch-fetch all ambiguous candidate txs at once
+        if (ambiguousIndices.length > 0) {
+            const allCandidateTxids = [
+                ...new Set(ambiguousCandidates.flat()),
+            ];
+            const fetched =
+                await this.chain.fetchTransactions(allCandidateTxids);
+            const txMap = new Map(fetched.map((t) => [t.txID, t.hex]));
+
+            for (let j = 0; j < ambiguousIndices.length; j++) {
+                const i = ambiguousIndices[j];
+                for (const candidateTxid of ambiguousCandidates[j]) {
+                    const rawHex = txMap.get(candidateTxid);
+                    if (!rawHex) continue;
+                    const candidateTx = Transaction.fromRaw(
+                        hex.decode(rawHex),
+                        { allowUnknownOutputs: true, allowUnknownInputs: true }
+                    );
+                    let found = false;
+                    for (let k = 0; k < candidateTx.inputsLength; k++) {
+                        const input = candidateTx.getInput(k);
+                        if (
+                            input.txid &&
+                            hex.encode(input.txid) === txid &&
+                            input.index === i
+                        ) {
+                            results[i] = { spent: true, txid: candidateTxid };
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (found) break;
+                }
+            }
         }
 
         return results;
