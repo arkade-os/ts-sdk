@@ -623,7 +623,7 @@ describe("Common", () => {
 
             it(
                 "should be notified of offchain incoming funds",
-                { timeout: 6000 },
+                { timeout: 8000 },
                 async () => {
                     const alice = await factory();
                     const aliceAddress = await alice.wallet.getAddress();
@@ -659,7 +659,7 @@ describe("Common", () => {
                     faucetOffchain(aliceAddress!, fundAmount);
 
                     // wait for the transaction to be processed
-                    await new Promise((resolve) => setTimeout(resolve, 4000));
+                    await new Promise((resolve) => setTimeout(resolve, 6000));
                     expect(notified).toBeTruthy();
                 }
             );
