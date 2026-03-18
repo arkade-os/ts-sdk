@@ -115,7 +115,8 @@ import type {
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import type { IDelegatorManager } from "../delegator";
-import type { IVtxoManager } from "../vtxo-manager";
+import type { IVtxoManager, SettlementConfig } from "../vtxo-manager";
+import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
 import { ServiceWorkerTimeoutError } from "../../worker/errors";
@@ -256,6 +257,7 @@ class ServiceWorkerAssetManager
 interface ServiceWorkerWalletOptions {
     arkServerPublicKey?: string;
     arkServerUrl: string;
+    indexerUrl?: string;
     esploraUrl?: string;
     storage?: StorageConfig;
     identity: ReadonlyIdentity | Identity;
@@ -263,6 +265,8 @@ interface ServiceWorkerWalletOptions {
     // Override the default tag for the messages sent and received from the SW
     walletUpdaterTag?: string;
     messageBusTimeoutMs?: number;
+    settlementConfig?: SettlementConfig | false;
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -286,7 +290,11 @@ type MessageBusInitConfig = {
         publicKey?: string;
     };
     delegatorUrl?: string;
+    indexerUrl?: string;
+    esploraUrl?: string;
     timeoutMs?: number;
+    settlementConfig?: SettlementConfig | false;
+    watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
 };
 
 const initializeMessageBus = (
@@ -405,7 +413,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     publicKey: initConfig.arkServerPublicKey,
                 },
                 delegatorUrl: initConfig.delegatorUrl,
+                indexerUrl: options.indexerUrl,
+                esploraUrl: options.esploraUrl,
                 timeoutMs: options.messageBusTimeoutMs,
+                watcherConfig: options.watcherConfig,
             },
             options.messageBusTimeoutMs
         );
@@ -427,6 +438,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 publicKey: initConfig.arkServerPublicKey,
             },
             delegatorUrl: initConfig.delegatorUrl,
+            indexerUrl: options.indexerUrl,
+            esploraUrl: options.esploraUrl,
+            watcherConfig: options.watcherConfig,
         };
         wallet.initWalletPayload = initConfig;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
@@ -1167,7 +1181,11 @@ export class ServiceWorkerWallet
                     publicKey: initConfig.arkServerPublicKey,
                 },
                 delegatorUrl: initConfig.delegatorUrl,
+                indexerUrl: options.indexerUrl,
+                esploraUrl: options.esploraUrl,
                 timeoutMs: options.messageBusTimeoutMs,
+                settlementConfig: options.settlementConfig,
+                watcherConfig: options.watcherConfig,
             },
             options.messageBusTimeoutMs
         );
@@ -1189,6 +1207,10 @@ export class ServiceWorkerWallet
                 publicKey: initConfig.arkServerPublicKey,
             },
             delegatorUrl: initConfig.delegatorUrl,
+            indexerUrl: options.indexerUrl,
+            esploraUrl: options.esploraUrl,
+            settlementConfig: options.settlementConfig,
+            watcherConfig: options.watcherConfig,
         };
         wallet.initWalletPayload = initConfig;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
