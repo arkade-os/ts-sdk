@@ -618,7 +618,7 @@ export class ContractManager implements IContractManager {
             case "vtxo_spent":
                 await this.fetchContractVxosFromIndexer([event.contract], true);
                 break;
-            case "connection_reset":
+            case "connection_reset": {
                 // Refetch all VTXOs (including spent/swept) for all active
                 // contracts so the repo stays consistent with bootstrap state
                 const activeWatchedContracts =
@@ -628,6 +628,7 @@ export class ContractManager implements IContractManager {
                     true
                 );
                 break;
+            }
             case "contract_expired":
                 // just update DB
                 await this.config.contractRepository.saveContract(
