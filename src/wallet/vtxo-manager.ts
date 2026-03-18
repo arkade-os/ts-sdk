@@ -624,35 +624,43 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     async renewVtxos(
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        // Get all VTXOs (including recoverable ones)
-        // Use default threshold to bypass settlementConfig gate (manual API should always work)
-        const vtxos = await this.getExpiringVtxos(
-            this.settlementConfig !== false &&
-                this.settlementConfig?.vtxoThreshold !== undefined
-                ? this.settlementConfig.vtxoThreshold * 1000
-                : DEFAULT_RENEWAL_CONFIG.thresholdMs
-        );
-
-        if (vtxos.length === 0) {
-            throw new Error("No VTXOs available to renew");
+        if (this.renewalInProgress) {
+            throw new Error("Renewal already in progress");
         }
-
-        const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
-
-        // Get dust amount from wallet
-        const dustAmount = getDustAmount(this.wallet);
-
-        // Check if total amount is above dust threshold
-        if (BigInt(totalAmount) < dustAmount) {
-            throw new Error(
-                `Total amount ${totalAmount} is below dust threshold ${dustAmount}`
-            );
-        }
-
-        const arkAddress = await this.wallet.getAddress();
 
         this.renewalInProgress = true;
+
         try {
+            // Get all VTXOs (including recoverable ones)
+            // Use default threshold to bypass settlementConfig gate (manual API should always work)
+            const vtxos = await this.getExpiringVtxos(
+                this.settlementConfig !== false &&
+                    this.settlementConfig?.vtxoThreshold !== undefined
+                    ? this.settlementConfig.vtxoThreshold * 1000
+                    : DEFAULT_RENEWAL_CONFIG.thresholdMs
+            );
+
+            if (vtxos.length === 0) {
+                throw new Error("No VTXOs available to renew");
+            }
+
+            const totalAmount = vtxos.reduce(
+                (sum, vtxo) => sum + vtxo.value,
+                0
+            );
+
+            // Get dust amount from wallet
+            const dustAmount = getDustAmount(this.wallet);
+
+            // Check if total amount is above dust threshold
+            if (BigInt(totalAmount) < dustAmount) {
+                throw new Error(
+                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`
+                );
+            }
+
+            const arkAddress = await this.wallet.getAddress();
+
             const txid = await this.wallet.settle(
                 {
                     inputs: vtxos,
