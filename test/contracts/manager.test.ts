@@ -168,13 +168,17 @@ describe("ContractManager", () => {
     });
 
     it("should fetch full VTXO history (not spendable-only) on bootstrap", async () => {
-        // Pre-populate repo with a contract
-        const contract = await manager.createContract({
+        // Pre-populate repo with a contract via createContract
+        await manager.createContract({
             type: "default",
             params: createDefaultContractParams(),
             script: TEST_DEFAULT_SCRIPT,
             address: "address",
         });
+
+        // Clear mock calls from createContract so we only inspect
+        // calls made during the subsequent ContractManager.create()
+        (mockIndexer.getVtxos as any).mockClear();
 
         // Mock indexer to return a mix of settled and spent VTXOs
         const settledVtxo = createMockVtxo({
@@ -201,6 +205,7 @@ describe("ContractManager", () => {
 
         // The bootstrap call should NOT have used spendableOnly
         const calls = (mockIndexer.getVtxos as any).mock.calls;
+        expect(calls.length).toBeGreaterThan(0);
         const bootstrapCall = calls.find(
             (c: any) => c[0].scripts?.[0] === TEST_DEFAULT_SCRIPT
         );
