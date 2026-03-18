@@ -1208,12 +1208,8 @@ export class WalletMessageHandler
      */
     private async reloadWallet() {
         if (!this.readonlyWallet) return;
-        try {
-            const manager = await this.readonlyWallet.getContractManager();
-            await manager.refreshVtxos();
-        } catch (error) {
-            console.error("Error refreshing VTXOs on reload:", error);
-        }
+        const manager = await this.readonlyWallet.getContractManager();
+        await manager.refreshVtxos();
         await this.onWalletInitialized();
     }
 
