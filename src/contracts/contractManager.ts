@@ -135,6 +135,12 @@ export interface IContractManager extends Disposable {
     onContractEvent(callback: ContractEventCallback): () => void;
 
     /**
+     * Force a full VTXO refresh from the indexer for all contracts.
+     * Populates the wallet repository with complete VTXO history.
+     */
+    refreshVtxos(): Promise<void>;
+
+    /**
      * Whether the underlying watcher is currently active.
      */
     isWatching(): Promise<boolean>;
@@ -574,6 +580,15 @@ export class ContractManager implements IContractManager {
     }
 
     /**
+     * Force a full VTXO refresh from the indexer for all contracts.
+     * Populates the wallet repository with complete VTXO history.
+     */
+    async refreshVtxos(): Promise<void> {
+        const contracts = await this.config.contractRepository.getContracts();
+        await this.fetchContractVxosFromIndexer(contracts, true);
+    }
+
+    /**
      * Check if currently watching.
      */
     async isWatching(): Promise<boolean> {
@@ -604,12 +619,13 @@ export class ContractManager implements IContractManager {
                 await this.fetchContractVxosFromIndexer([event.contract], true);
                 break;
             case "connection_reset":
-                // Refetch all VTXOs for all active contracts
+                // Refetch all VTXOs (including spent/swept) for all active
+                // contracts so the repo stays consistent with bootstrap state
                 const activeWatchedContracts =
                     this.watcher.getActiveContracts();
                 await this.fetchContractVxosFromIndexer(
                     activeWatchedContracts,
-                    false
+                    true
                 );
                 break;
             case "contract_expired":

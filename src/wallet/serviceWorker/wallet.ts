@@ -1045,6 +1045,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
             },
 
+            async refreshVtxos(): Promise<void> {
+                // Refresh is handled server-side via RELOAD_WALLET.
+                // From the client proxy this is a no-op; the service worker
+                // calls refreshVtxos() directly on the real ContractManager.
+                return;
+            },
+
             async isWatching(): Promise<boolean> {
                 const message: RequestIsContractManagerWatching = {
                     type: "IS_CONTRACT_MANAGER_WATCHING",
