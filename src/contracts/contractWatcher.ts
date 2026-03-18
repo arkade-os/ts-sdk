@@ -565,11 +565,25 @@ export class ContractWatcher {
             return;
         }
 
-        this.subscriptionId =
-            await this.config.indexerProvider.subscribeForScripts(
-                scriptsToWatch,
-                this.subscriptionId
-            );
+        try {
+            this.subscriptionId =
+                await this.config.indexerProvider.subscribeForScripts(
+                    scriptsToWatch,
+                    this.subscriptionId
+                );
+        } catch (error) {
+            // If we sent a stale subscription ID that the server no longer
+            // recognises, clear it and retry to create a fresh subscription.
+            if (this.subscriptionId) {
+                this.subscriptionId = undefined;
+                this.subscriptionId =
+                    await this.config.indexerProvider.subscribeForScripts(
+                        scriptsToWatch
+                    );
+            } else {
+                throw error;
+            }
+        }
     }
 
     /**
