@@ -1378,22 +1378,13 @@ export class WalletMessageHandler
         };
 
         // Aggregate VTXOs from all contract addresses
-        try {
-            const manager = await this.readonlyWallet.getContractManager();
-            const contracts = await manager.getContracts();
-            for (const contract of contracts) {
-                const vtxos = await this.walletRepository.getVtxos(
-                    contract.address
-                );
-                addVtxos(vtxos);
-            }
-        } catch (error) {
-            // Contract manager may not be initialized yet on first boot.
-            // Log unexpected errors so they are not silently swallowed.
-            console.warn(
-                "getVtxosFromRepo: could not read contract VTXOs:",
-                error
+        const manager = await this.readonlyWallet.getContractManager();
+        const contracts = await manager.getContracts();
+        for (const contract of contracts) {
+            const vtxos = await this.walletRepository.getVtxos(
+                contract.address
             );
+            addVtxos(vtxos);
         }
 
         // Also check the wallet's primary address
