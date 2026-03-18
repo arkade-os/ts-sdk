@@ -251,6 +251,35 @@ describe("ContractManager", () => {
         expect(states).toContain("swept");
     });
 
+    it("should use spendable-only filter for getContractsWithVtxos", async () => {
+        const contract = await manager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+        });
+
+        // Mock indexer to return both spendable and spent VTXOs
+        const spendable = createMockVtxo({
+            txid: "aa".repeat(32),
+            isSpent: false,
+        });
+        const spent = createMockVtxo({
+            txid: "bb".repeat(32),
+            isSpent: true,
+        });
+        (mockIndexer.getVtxos as any).mockResolvedValue({
+            vtxos: [spendable, spent],
+        });
+
+        const result = await manager.getContractsWithVtxos();
+
+        // getContractsWithVtxos uses getVtxosForContracts which passes
+        // includeSpent=false, so the indexer call should have spendableOnly
+        const lastCall = (mockIndexer.getVtxos as any).mock.calls.at(-1);
+        expect(lastCall[0].spendableOnly).toBe(true);
+    });
+
     it("should force VTXOs refresh from indexer when received a `connection_reset` event", async () => {
         (mockIndexer.subscribeForScripts as any).mockImplementationOnce(() => {
             throw new Error("Connection refused");

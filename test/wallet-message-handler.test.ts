@@ -1348,6 +1348,62 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(vtxos).toHaveLength(1);
     });
 
+    it("finalizePendingTxs receives repo-backed VTXOs filtered by state", async () => {
+        setupHandler();
+        const preconfirmed = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "preconfirmed" },
+        });
+        const settled = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 30000,
+            virtualStatus: { state: "settled" },
+        });
+        const swept = createMockExtendedVtxo({
+            txid: "cc".repeat(32),
+            value: 20000,
+            virtualStatus: { state: "swept" },
+        });
+        await walletRepo.saveVtxos("wallet-address", [
+            preconfirmed,
+            settled,
+            swept,
+        ]);
+
+        const finalizeSpy = vi
+            .fn()
+            .mockResolvedValue({ pending: [], finalized: [] });
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: finalizeSpy,
+        };
+
+        await (updater as any).onWalletInitialized();
+
+        expect(finalizeSpy).toHaveBeenCalledOnce();
+        const vtxosArg = finalizeSpy.mock.calls[0][0];
+        // Should exclude swept and settled VTXOs
+        expect(vtxosArg).toHaveLength(1);
+        expect(vtxosArg[0].txid).toBe("aa".repeat(32));
+    });
+
+    it("boarding UTXO fetch via onchainProvider is unaffected", async () => {
+        setupHandler();
+        const getCoinsSpy = (updater as any).readonlyWallet.onchainProvider
+            .getCoins;
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: vi
+                .fn()
+                .mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        await (updater as any).onWalletInitialized();
+
+        expect(getCoinsSpy).toHaveBeenCalledWith("boarding-address");
+    });
+
     it("onWalletInitialized does not call indexerProvider.getVtxos", async () => {
         setupHandler();
         (updater as any).wallet = {
