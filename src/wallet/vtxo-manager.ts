@@ -386,8 +386,16 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private knownBoardingUtxos = new Set<string>();
     private sweptBoardingUtxos = new Set<string>();
     private pollInProgress = false;
+    private disposed = false;
     private consecutivePollFailures = 0;
+    private startupPollTimeoutId?: ReturnType<typeof setTimeout>;
     private static readonly MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
+
+    // Guards against renewal feedback loop: when renewVtxos() settles, the
+    // server emits new VTXOs → vtxo_received → renewVtxos() again → infinite loop.
+    private renewalInProgress = false;
+    private lastRenewalTimestamp = 0;
+    private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
 
     constructor(
         readonly wallet: IWallet,
@@ -616,45 +624,60 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     async renewVtxos(
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        // Get all VTXOs (including recoverable ones)
-        // Use default threshold to bypass settlementConfig gate (manual API should always work)
-        const vtxos = await this.getExpiringVtxos(
-            this.settlementConfig !== false &&
-                this.settlementConfig?.vtxoThreshold !== undefined
-                ? this.settlementConfig.vtxoThreshold * 1000
-                : DEFAULT_RENEWAL_CONFIG.thresholdMs
-        );
-
-        if (vtxos.length === 0) {
-            throw new Error("No VTXOs available to renew");
+        if (this.renewalInProgress) {
+            throw new Error("Renewal already in progress");
         }
 
-        const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+        this.renewalInProgress = true;
 
-        // Get dust amount from wallet
-        const dustAmount = getDustAmount(this.wallet);
-
-        // Check if total amount is above dust threshold
-        if (BigInt(totalAmount) < dustAmount) {
-            throw new Error(
-                `Total amount ${totalAmount} is below dust threshold ${dustAmount}`
+        try {
+            // Get all VTXOs (including recoverable ones)
+            // Use default threshold to bypass settlementConfig gate (manual API should always work)
+            const vtxos = await this.getExpiringVtxos(
+                this.settlementConfig !== false &&
+                    this.settlementConfig?.vtxoThreshold !== undefined
+                    ? this.settlementConfig.vtxoThreshold * 1000
+                    : DEFAULT_RENEWAL_CONFIG.thresholdMs
             );
+
+            if (vtxos.length === 0) {
+                throw new Error("No VTXOs available to renew");
+            }
+
+            const totalAmount = vtxos.reduce(
+                (sum, vtxo) => sum + vtxo.value,
+                0
+            );
+
+            // Get dust amount from wallet
+            const dustAmount = getDustAmount(this.wallet);
+
+            // Check if total amount is above dust threshold
+            if (BigInt(totalAmount) < dustAmount) {
+                throw new Error(
+                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`
+                );
+            }
+
+            const arkAddress = await this.wallet.getAddress();
+
+            const txid = await this.wallet.settle(
+                {
+                    inputs: vtxos,
+                    outputs: [
+                        {
+                            address: arkAddress,
+                            amount: BigInt(totalAmount),
+                        },
+                    ],
+                },
+                eventCallback
+            );
+            this.lastRenewalTimestamp = Date.now();
+            return txid;
+        } finally {
+            this.renewalInProgress = false;
         }
-
-        const arkAddress = await this.wallet.getAddress();
-
-        return this.wallet.settle(
-            {
-                inputs: vtxos,
-                outputs: [
-                    {
-                        address: arkAddress,
-                        amount: BigInt(totalAmount),
-                    },
-                ],
-            },
-            eventCallback
-        );
     }
 
     // ========== Boarding UTXO Sweep Methods ==========
@@ -874,7 +897,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         // Start polling for boarding UTXOs independently of contract manager
         // SSE setup. Use a short delay to let the wallet finish construction.
-        setTimeout(() => this.startBoardingUtxoPoll(), 1000);
+        this.startupPollTimeoutId = setTimeout(() => {
+            if (this.disposed) return;
+            this.startBoardingUtxoPoll();
+        }, 1000);
 
         try {
             const [delegatorManager, contractManager, destination] =
@@ -889,30 +915,42 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     return;
                 }
 
-                this.renewVtxos().catch((e) => {
-                    if (e instanceof Error) {
-                        if (e.message.includes("No VTXOs available to renew")) {
-                            // Not an error, just no VTXO eligible for renewal.
-                            return;
+                const msSinceLastRenewal =
+                    Date.now() - this.lastRenewalTimestamp;
+                const shouldRenew =
+                    !this.renewalInProgress &&
+                    msSinceLastRenewal >= VtxoManager.RENEWAL_COOLDOWN_MS;
+
+                if (shouldRenew) {
+                    this.renewVtxos().catch((e) => {
+                        if (e instanceof Error) {
+                            if (
+                                e.message.includes(
+                                    "No VTXOs available to renew"
+                                )
+                            ) {
+                                // Not an error, just no VTXO eligible for renewal.
+                                return;
+                            }
+                            if (e.message.includes("is below dust threshold")) {
+                                // Not an error, just below dust threshold.
+                                // As more VTXOs are received, the threshold will be raised.
+                                return;
+                            }
+                            if (
+                                e.message.includes("VTXO_ALREADY_REGISTERED") ||
+                                e.message.includes("duplicated input")
+                            ) {
+                                // VTXO is already being used in a concurrent
+                                // user-initiated operation. Skip silently — the
+                                // wallet's tx lock serializes these, but the
+                                // renewal will retry on the next cycle.
+                                return;
+                            }
                         }
-                        if (e.message.includes("is below dust threshold")) {
-                            // Not an error, just below dust threshold.
-                            // As more VTXOs are received, the threshold will be raised.
-                            return;
-                        }
-                        if (
-                            e.message.includes("VTXO_ALREADY_REGISTERED") ||
-                            e.message.includes("duplicated input")
-                        ) {
-                            // VTXO is already being used in a concurrent
-                            // user-initiated operation. Skip silently — the
-                            // wallet's tx lock serializes these, but the
-                            // renewal will retry on the next cycle.
-                            return;
-                        }
-                    }
-                    console.error("Error renewing VTXOs:", e);
-                });
+                        console.error("Error renewing VTXOs:", e);
+                    });
+                }
                 delegatorManager
                     ?.delegate(event.vtxos, destination)
                     .catch((e) => {
@@ -957,7 +995,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     private schedulePoll(): void {
-        if (this.settlementConfig === false) return;
+        if (this.disposed || this.settlementConfig === false) return;
         const delay = this.getNextPollDelay();
         this.pollTimeoutId = setTimeout(() => this.pollBoardingUtxos(), delay);
     }
@@ -1034,8 +1072,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
             );
             expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
-        } catch {
-            return;
+        } catch (e) {
+            throw e instanceof Error ? e : new Error(String(e));
         }
 
         const unsettledUtxos = boardingUtxos.filter(
@@ -1067,6 +1105,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     async dispose(): Promise<void> {
         this.disposePromise ??= (async () => {
+            this.disposed = true;
+            if (this.startupPollTimeoutId) {
+                clearTimeout(this.startupPollTimeoutId);
+                this.startupPollTimeoutId = undefined;
+            }
             if (this.pollTimeoutId) {
                 clearTimeout(this.pollTimeoutId);
                 this.pollTimeoutId = undefined;
