@@ -445,35 +445,35 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
         const allExtended: ExtendedVirtualCoin[] = [];
 
-        // Query each script separately so we can extend VTXOs with the correct tapscript
-        for (const [scriptHex, vtxoScript] of scriptMap) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts: [scriptHex],
+        // Batch all scripts into a single indexer call
+        const allScripts = [...scriptMap.keys()];
+        const response = await this.indexerProvider.getVtxos({
+            scripts: allScripts,
+        });
+
+        for (const vtxo of response.vtxos) {
+            const vtxoScript = vtxo.script
+                ? scriptMap.get(vtxo.script)
+                : undefined;
+            if (!vtxoScript) continue;
+
+            if (isSpendable(vtxo)) {
+                if (
+                    !f.withRecoverable &&
+                    (isRecoverable(vtxo) || isExpired(vtxo))
+                ) {
+                    continue;
+                }
+            } else {
+                if (!f.withUnrolled || !vtxo.isUnrolled) continue;
+            }
+
+            allExtended.push({
+                ...vtxo,
+                forfeitTapLeafScript: vtxoScript.forfeit(),
+                intentTapLeafScript: vtxoScript.forfeit(),
+                tapTree: vtxoScript.encode(),
             });
-
-            let vtxos: VirtualCoin[] = response.vtxos.filter(isSpendable);
-
-            if (!f.withRecoverable) {
-                vtxos = vtxos.filter(
-                    (vtxo) => !isRecoverable(vtxo) && !isExpired(vtxo)
-                );
-            }
-
-            if (f.withUnrolled) {
-                const spentVtxos = response.vtxos.filter(
-                    (vtxo) => !isSpendable(vtxo)
-                );
-                vtxos.push(...spentVtxos.filter((vtxo) => vtxo.isUnrolled));
-            }
-
-            for (const vtxo of vtxos) {
-                allExtended.push({
-                    ...vtxo,
-                    forfeitTapLeafScript: vtxoScript.forfeit(),
-                    intentTapLeafScript: vtxoScript.forfeit(),
-                    tapTree: vtxoScript.encode(),
-                });
-            }
         }
 
         // Update cache with fresh data
@@ -1942,30 +1942,36 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const MAX_INPUTS_PER_INTENT = 20;
 
         if (!vtxos || vtxos.length === 0) {
-            // Query per-script so each VTXO is extended with the correct tapscript
+            // Batch all scripts into a single indexer call
             const scriptMap = await this.getScriptMap();
             const allExtended: ExtendedVirtualCoin[] = [];
 
-            for (const [scriptHex, vtxoScript] of scriptMap) {
-                const { vtxos: fetchedVtxos } =
-                    await this.indexerProvider.getVtxos({
-                        scripts: [scriptHex],
-                    });
-
-                const pending = fetchedVtxos.filter(
-                    (vtxo) =>
-                        vtxo.virtualStatus.state !== "swept" &&
-                        vtxo.virtualStatus.state !== "settled"
-                );
-
-                for (const vtxo of pending) {
-                    allExtended.push({
-                        ...vtxo,
-                        forfeitTapLeafScript: vtxoScript.forfeit(),
-                        intentTapLeafScript: vtxoScript.forfeit(),
-                        tapTree: vtxoScript.encode(),
-                    });
+            const allScripts = [...scriptMap.keys()];
+            const { vtxos: fetchedVtxos } = await this.indexerProvider.getVtxos(
+                {
+                    scripts: allScripts,
                 }
+            );
+
+            for (const vtxo of fetchedVtxos) {
+                const vtxoScript = vtxo.script
+                    ? scriptMap.get(vtxo.script)
+                    : undefined;
+                if (!vtxoScript) continue;
+
+                if (
+                    vtxo.virtualStatus.state === "swept" ||
+                    vtxo.virtualStatus.state === "settled"
+                ) {
+                    continue;
+                }
+
+                allExtended.push({
+                    ...vtxo,
+                    forfeitTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.forfeit(),
+                    tapTree: vtxoScript.encode(),
+                });
             }
 
             if (allExtended.length === 0) {

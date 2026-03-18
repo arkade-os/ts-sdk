@@ -676,17 +676,59 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         includeSpent: boolean
     ): Promise<Map<string, ContractVtxo[]>> {
-        const result = new Map<string, ContractVtxo[]>();
+        if (contracts.length === 0) {
+            return new Map();
+        }
 
-        await Promise.all(
-            contracts.map(async (contract) => {
-                const vtxos = await this.fetchContractVtxosPaginated(
-                    contract,
-                    includeSpent
-                );
-                result.set(contract.script, vtxos);
-            })
+        // For a single contract, use the paginated path directly.
+        if (contracts.length === 1) {
+            const contract = contracts[0];
+            const vtxos = await this.fetchContractVtxosPaginated(
+                contract,
+                includeSpent
+            );
+            return new Map([[contract.script, vtxos]]);
+        }
+
+        // For multiple contracts, batch all scripts into a single indexer call
+        // per page to minimise round-trips.  Results are keyed by script so we
+        // can distribute them back to the correct contract afterwards.
+        const scriptToContract = new Map<string, Contract>(
+            contracts.map((c) => [c.script, c])
         );
+        const result = new Map<string, ContractVtxo[]>(
+            contracts.map((c) => [c.script, []])
+        );
+
+        const scripts = contracts.map((c) => c.script);
+        const pageSize = 100;
+        const opts = includeSpent ? {} : { spendableOnly: true };
+        let pageIndex = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+            const { vtxos, page } = await this.config.indexerProvider.getVtxos({
+                scripts,
+                ...opts,
+                pageIndex,
+                pageSize,
+            });
+
+            for (const vtxo of vtxos) {
+                // Match the VTXO back to its contract via the script field
+                // populated by the indexer.
+                if (!vtxo.script) continue;
+                const contract = scriptToContract.get(vtxo.script);
+                if (!contract) continue;
+                result.get(contract.script)!.push({
+                    ...extendVtxoFromContract(vtxo, contract),
+                    contractScript: contract.script,
+                });
+            }
+
+            hasMore = page ? vtxos.length === pageSize : false;
+            pageIndex++;
+        }
 
         return result;
     }

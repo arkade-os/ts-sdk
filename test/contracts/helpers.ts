@@ -102,5 +102,10 @@ export const createMockContractVtxo = (
 ): ContractVtxo => ({
     ...createMockExtendedVtxo(),
     contractScript,
+    // The bulk fetch path in fetchContractVtxosBulk routes VTXOs back to
+    // their contract via vtxo.script, mirroring what convertVtxo() sets from
+    // the real indexer response. Mocks must include this field so the bulk
+    // path doesn't silently drop VTXOs.
+    script: contractScript,
     ...overrides,
 });

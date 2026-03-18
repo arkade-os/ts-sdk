@@ -242,6 +242,8 @@ export interface VirtualCoin extends Coin {
     isUnrolled: boolean;
     isSpent?: boolean;
     assets?: Asset[];
+    /** The scriptPubKey (hex) locking this VTXO, as returned by the indexer. */
+    script?: string;
 }
 
 export enum TxType {
