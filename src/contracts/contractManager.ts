@@ -279,9 +279,10 @@ export class ContractManager implements IContractManager {
         // Load persisted contracts
         const contracts = await this.config.contractRepository.getContracts();
 
-        // fetch latest VTXOs for all contracts, ensure cache is up to date
+        // fetch all VTXOs (including spent/swept) for all contracts,
+        // so the repository has full history for transaction history and balance
         // TODO: what if the user has 1k contracts?
-        await this.getVtxosForContracts(contracts);
+        await this.fetchContractVxosFromIndexer(contracts, true);
 
         // add all contracts to the watcher
         const now = Date.now();
@@ -363,8 +364,8 @@ export class ContractManager implements IContractManager {
         // Persist
         await this.config.contractRepository.saveContract(contract);
 
-        // ensure we have the latest VTXOs for this contract
-        await this.getVtxosForContracts([contract]);
+        // fetch all VTXOs (including spent/swept) for this contract
+        await this.fetchContractVxosFromIndexer([contract], true);
 
         // Add to watcher
         await this.watcher.addContract(contract);
