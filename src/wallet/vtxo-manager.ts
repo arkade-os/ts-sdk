@@ -907,44 +907,42 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     return;
                 }
 
-                // Guard: skip if a renewal is already in flight to prevent
-                // re-entrant loops (settle → vtxo_received → settle → …).
-                if (this.renewalInProgress) {
-                    return;
-                }
-
-                // Guard: skip if we just completed a renewal — the received
-                // VTXOs are most likely the output of our own settlement.
                 const msSinceLastRenewal =
                     Date.now() - this.lastRenewalTimestamp;
-                if (msSinceLastRenewal < VtxoManager.RENEWAL_COOLDOWN_MS) {
-                    return;
-                }
+                const shouldRenew =
+                    !this.renewalInProgress &&
+                    msSinceLastRenewal >= VtxoManager.RENEWAL_COOLDOWN_MS;
 
-                this.renewVtxos().catch((e) => {
-                    if (e instanceof Error) {
-                        if (e.message.includes("No VTXOs available to renew")) {
-                            // Not an error, just no VTXO eligible for renewal.
-                            return;
+                if (shouldRenew) {
+                    this.renewVtxos().catch((e) => {
+                        if (e instanceof Error) {
+                            if (
+                                e.message.includes(
+                                    "No VTXOs available to renew"
+                                )
+                            ) {
+                                // Not an error, just no VTXO eligible for renewal.
+                                return;
+                            }
+                            if (e.message.includes("is below dust threshold")) {
+                                // Not an error, just below dust threshold.
+                                // As more VTXOs are received, the threshold will be raised.
+                                return;
+                            }
+                            if (
+                                e.message.includes("VTXO_ALREADY_REGISTERED") ||
+                                e.message.includes("duplicated input")
+                            ) {
+                                // VTXO is already being used in a concurrent
+                                // user-initiated operation. Skip silently — the
+                                // wallet's tx lock serializes these, but the
+                                // renewal will retry on the next cycle.
+                                return;
+                            }
                         }
-                        if (e.message.includes("is below dust threshold")) {
-                            // Not an error, just below dust threshold.
-                            // As more VTXOs are received, the threshold will be raised.
-                            return;
-                        }
-                        if (
-                            e.message.includes("VTXO_ALREADY_REGISTERED") ||
-                            e.message.includes("duplicated input")
-                        ) {
-                            // VTXO is already being used in a concurrent
-                            // user-initiated operation. Skip silently — the
-                            // wallet's tx lock serializes these, but the
-                            // renewal will retry on the next cycle.
-                            return;
-                        }
-                    }
-                    console.error("Error renewing VTXOs:", e);
-                });
+                        console.error("Error renewing VTXOs:", e);
+                    });
+                }
                 delegatorManager
                     ?.delegate(event.vtxos, destination)
                     .catch((e) => {
