@@ -237,6 +237,13 @@ export type ResponseIsContractManagerWatching = ResponseEnvelope & {
     payload: { isWatching: boolean };
 };
 
+export type RequestRefreshVtxos = RequestEnvelope & {
+    type: "REFRESH_VTXOS";
+};
+export type ResponseRefreshVtxos = ResponseEnvelope & {
+    type: "REFRESH_VTXOS_SUCCESS";
+};
+
 export type RequestGetAllSpendingPaths = RequestEnvelope & {
     type: "GET_ALL_SPENDING_PATHS";
     payload: { options: GetAllSpendingPathsOptions };
@@ -428,6 +435,7 @@ export type WalletUpdaterRequest =
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
     | RequestIsContractManagerWatching
+    | RequestRefreshVtxos
     | RequestSend
     | RequestGetAssetDetails
     | RequestIssue
@@ -468,6 +476,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
         | ResponseIsContractManagerWatching
+        | ResponseRefreshVtxos
         | ResponseContractEvent
         | ResponseSend
         | ResponseGetAssetDetails
@@ -801,6 +810,15 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACT_WATCHING",
                         payload: { isWatching },
+                    });
+                }
+                case "REFRESH_VTXOS": {
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
+                    await manager.refreshVtxos();
+                    return this.tagged({
+                        id,
+                        type: "REFRESH_VTXOS_SUCCESS",
                     });
                 }
                 case "SEND": {

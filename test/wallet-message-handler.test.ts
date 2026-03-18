@@ -327,6 +327,7 @@ describe("WalletMessageHandler handleMessage", () => {
             deleteContract: vi.fn().mockResolvedValue(undefined),
             getSpendablePaths: vi.fn().mockResolvedValue(paths),
             isWatching: vi.fn().mockResolvedValue(true),
+            refreshVtxos: vi.fn().mockResolvedValue(undefined),
         };
         (updater as any).readonlyWallet = {
             getContractManager: vi.fn().mockResolvedValue(manager),
@@ -406,6 +407,16 @@ describe("WalletMessageHandler handleMessage", () => {
             tag: updater.messageTag,
             type: "CONTRACT_WATCHING",
             payload: { isWatching: true },
+        });
+
+        const refreshResponse = await updater.handleMessage({
+            ...baseMessage("r"),
+            type: "REFRESH_VTXOS",
+        } as any);
+        expect(manager.refreshVtxos).toHaveBeenCalled();
+        expect(refreshResponse).toMatchObject({
+            tag: updater.messageTag,
+            type: "REFRESH_VTXOS_SUCCESS",
         });
     });
 
