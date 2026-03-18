@@ -1417,19 +1417,22 @@ export class WalletMessageHandler
         // getTxCreatedAt resolves the creation timestamp of a transaction.
         // buildTransactionHistory calls this for spent-offchain VTXOs with
         // no change outputs to determine the time of the sending tx.
-        // The vout:0 lookup in the fallback mirrors the pre-existing
+        // Returns undefined on miss so buildTransactionHistory uses its
+        // own fallback (vtxo.createdAt + 1) rather than epoch 0.
+        // The vout:0 lookup in the indexer fallback mirrors the pre-existing
         // convention in ReadonlyWallet.getTransactionHistory().
-        const getTxCreatedAt = async (txid: string): Promise<number> => {
+        const getTxCreatedAt = async (
+            txid: string
+        ): Promise<number | undefined> => {
             const cached = vtxoCreatedAt.get(txid);
             if (cached !== undefined) return cached;
-            // Fallback to indexer for uncached transactions
             if (this.indexerProvider) {
                 const res = await this.indexerProvider.getVtxos({
                     outpoints: [{ txid, vout: 0 }],
                 });
-                return res.vtxos[0]?.createdAt.getTime() || 0;
+                return res.vtxos[0]?.createdAt.getTime();
             }
-            return 0;
+            return undefined;
         };
 
         return buildTransactionHistory(
