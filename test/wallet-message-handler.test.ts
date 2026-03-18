@@ -925,15 +925,18 @@ describe("WalletMessageHandler handleMessage", () => {
     it("eagerly starts VtxoManager on wallet initialization", async () => {
         const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
         (updater as any).readonlyWallet = {
-            getWalletScripts: vi.fn().mockResolvedValue([]),
             getAddress: vi.fn().mockResolvedValue("bc1-test"),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
-            getTransactionHistory: vi.fn().mockResolvedValue([]),
+            getBoardingTxs: vi.fn().mockResolvedValue({
+                boardingTxs: [],
+                commitmentsToIgnore: new Set(),
+            }),
             onchainProvider: {
                 getCoins: vi.fn().mockResolvedValue([]),
             },
             notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
             getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             }),
         };
@@ -944,10 +947,9 @@ describe("WalletMessageHandler handleMessage", () => {
                 .mockResolvedValue({ pending: [], finalized: [] }),
         };
         (updater as any).arkProvider = {};
-        (updater as any).indexerProvider = {
-            getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
-        };
+        (updater as any).indexerProvider = {};
         (updater as any).walletRepository = {
+            getVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
@@ -960,24 +962,26 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("does not start VtxoManager for readonly wallets", async () => {
         (updater as any).readonlyWallet = {
-            getWalletScripts: vi.fn().mockResolvedValue([]),
             getAddress: vi.fn().mockResolvedValue("bc1-test"),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
-            getTransactionHistory: vi.fn().mockResolvedValue([]),
+            getBoardingTxs: vi.fn().mockResolvedValue({
+                boardingTxs: [],
+                commitmentsToIgnore: new Set(),
+            }),
             onchainProvider: {
                 getCoins: vi.fn().mockResolvedValue([]),
             },
             notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
             getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
                 onContractEvent: vi.fn().mockReturnValue(vi.fn()),
             }),
         };
         // wallet is NOT set — readonly only
         (updater as any).arkProvider = {};
-        (updater as any).indexerProvider = {
-            getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
-        };
+        (updater as any).indexerProvider = {};
         (updater as any).walletRepository = {
+            getVtxos: vi.fn().mockResolvedValue([]),
             saveVtxos: vi.fn().mockResolvedValue(undefined),
             saveUtxos: vi.fn().mockResolvedValue(undefined),
             saveTransactions: vi.fn().mockResolvedValue(undefined),
