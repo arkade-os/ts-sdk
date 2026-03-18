@@ -4,6 +4,11 @@ import {
     DEFAULT_MESSAGE_TAG,
     WalletMessageHandler,
 } from "../src/wallet/serviceWorker/wallet-message-handler";
+import { InMemoryWalletRepository } from "../src";
+import {
+    createMockExtendedVtxo,
+    createMockIndexerProvider,
+} from "./contracts/helpers";
 const baseMessage = (id: string = "1") => ({
     id,
     tag: DEFAULT_MESSAGE_TAG,
@@ -1105,5 +1110,288 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("stop() is safe to call when not initialized", async () => {
         await expect(updater.stop()).resolves.toBeUndefined();
+    });
+});
+
+describe("WalletMessageHandler repo-backed reads", () => {
+    let updater: WalletMessageHandler;
+    let walletRepo: InMemoryWalletRepository;
+    let mockIndexer: ReturnType<typeof createMockIndexerProvider>;
+
+    const baseMessage = (id: string = "1") => ({
+        id,
+        tag: DEFAULT_MESSAGE_TAG,
+    });
+
+    const setupHandler = (contracts: any[] = []) => {
+        mockIndexer = createMockIndexerProvider();
+        walletRepo = new InMemoryWalletRepository();
+
+        (updater as any).readonlyWallet = {
+            getAddress: vi.fn().mockResolvedValue("wallet-address"),
+            getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
+            getBoardingUtxos: vi.fn().mockResolvedValue([]),
+            getBoardingTxs: vi.fn().mockResolvedValue({
+                boardingTxs: [],
+                commitmentsToIgnore: new Set(),
+            }),
+            dustAmount: 546n,
+            getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue(contracts),
+                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+            }),
+            onchainProvider: {
+                getCoins: vi.fn().mockResolvedValue([]),
+            },
+            notifyIncomingFunds: vi.fn().mockResolvedValue(vi.fn()),
+        };
+        (updater as any).arkProvider = {};
+        (updater as any).indexerProvider = mockIndexer;
+        (updater as any).walletRepository = walletRepo;
+    };
+
+    beforeEach(() => {
+        updater = new WalletMessageHandler();
+    });
+
+    it("GET_VTXOS reads from repository, not indexer", async () => {
+        setupHandler();
+        const vtxo = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+        });
+        await walletRepo.saveVtxos("wallet-address", [vtxo]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_VTXOS",
+            payload: { filter: { withRecoverable: true } },
+        } as any);
+
+        expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
+        expect(response).toMatchObject({
+            type: "VTXOS",
+            payload: {
+                vtxos: expect.arrayContaining([
+                    expect.objectContaining({
+                        txid: "aa".repeat(32),
+                    }),
+                ]),
+            },
+        });
+    });
+
+    it("GET_VTXOS filters out recoverable/expired/dust by default", async () => {
+        setupHandler();
+        const settled = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+        });
+        const recoverable = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "swept" },
+        });
+        await walletRepo.saveVtxos("wallet-address", [settled, recoverable]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_VTXOS",
+            payload: { filter: { withRecoverable: false } },
+        } as any);
+
+        const vtxos = (response as any).payload.vtxos;
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0].txid).toBe("aa".repeat(32));
+    });
+
+    it("GET_BALANCE reads from repository, not indexer", async () => {
+        setupHandler();
+        const settled = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 100000,
+            virtualStatus: { state: "settled" },
+        });
+        const preconfirmed = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "preconfirmed" },
+        });
+        await walletRepo.saveVtxos("wallet-address", [settled, preconfirmed]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 100000,
+                preconfirmed: 50000,
+                available: 150000,
+            },
+        });
+    });
+
+    it("GET_TRANSACTION_HISTORY reads from repository, not indexer", async () => {
+        setupHandler();
+        const vtxo = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+            createdAt: new Date(),
+        });
+        await walletRepo.saveVtxos("wallet-address", [vtxo]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_TRANSACTION_HISTORY",
+        } as any);
+
+        expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
+        expect(response).toMatchObject({
+            type: "TRANSACTION_HISTORY",
+            payload: { transactions: expect.any(Array) },
+        });
+    });
+
+    it("GET_VTXOS aggregates across contract addresses", async () => {
+        const contracts = [
+            { address: "contract-1", script: "s1" },
+            { address: "contract-2", script: "s2" },
+        ];
+        setupHandler(contracts);
+
+        const vtxo1 = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 10000,
+            virtualStatus: { state: "settled" },
+        });
+        const vtxo2 = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 20000,
+            virtualStatus: { state: "settled" },
+        });
+        await walletRepo.saveVtxos("contract-1", [vtxo1]);
+        await walletRepo.saveVtxos("contract-2", [vtxo2]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_VTXOS",
+            payload: { filter: { withRecoverable: true } },
+        } as any);
+
+        const vtxos = (response as any).payload.vtxos;
+        expect(vtxos).toHaveLength(2);
+    });
+
+    it("GET_BALANCE accounts for VTXOs from all contracts", async () => {
+        const contracts = [
+            { address: "contract-1", script: "s1" },
+            { address: "contract-2", script: "s2" },
+        ];
+        setupHandler(contracts);
+
+        await walletRepo.saveVtxos("contract-1", [
+            createMockExtendedVtxo({
+                txid: "aa".repeat(32),
+                value: 10000,
+                virtualStatus: { state: "settled" },
+            }),
+        ]);
+        await walletRepo.saveVtxos("contract-2", [
+            createMockExtendedVtxo({
+                txid: "bb".repeat(32),
+                value: 20000,
+                virtualStatus: { state: "settled" },
+            }),
+        ]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 30000,
+                available: 30000,
+            },
+        });
+    });
+
+    it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {
+        const contracts = [{ address: "wallet-address", script: "s1" }];
+        setupHandler(contracts);
+
+        const vtxo = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 50000,
+            virtualStatus: { state: "settled" },
+        });
+        // Save same VTXO under both keys (contract address = wallet address)
+        await walletRepo.saveVtxos("wallet-address", [vtxo]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_VTXOS",
+            payload: { filter: { withRecoverable: true } },
+        } as any);
+
+        // Should not appear twice
+        const vtxos = (response as any).payload.vtxos;
+        expect(vtxos).toHaveLength(1);
+    });
+
+    it("onWalletInitialized does not call indexerProvider.getVtxos", async () => {
+        setupHandler();
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: vi
+                .fn()
+                .mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        await (updater as any).onWalletInitialized();
+
+        // indexerProvider.getVtxos should NOT have been called directly
+        // (contract manager calls it during its own init, but the SW
+        // bootstrap should not make additional calls)
+        expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
+    });
+
+    it("subscription updates are reflected in subsequent reads", async () => {
+        setupHandler();
+        const initial = createMockExtendedVtxo({
+            txid: "aa".repeat(32),
+            value: 10000,
+            virtualStatus: { state: "settled" },
+        });
+        await walletRepo.saveVtxos("wallet-address", [initial]);
+
+        // Simulate subscription update by saving new VTXOs
+        const newVtxo = createMockExtendedVtxo({
+            txid: "bb".repeat(32),
+            value: 20000,
+            virtualStatus: { state: "settled" },
+        });
+        await walletRepo.saveVtxos("wallet-address", [newVtxo]);
+
+        const response = await updater.handleMessage({
+            ...baseMessage(),
+            type: "GET_BALANCE",
+        } as any);
+
+        expect(response).toMatchObject({
+            type: "BALANCE",
+            payload: {
+                settled: 30000,
+            },
+        });
     });
 });
