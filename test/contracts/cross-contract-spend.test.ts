@@ -168,8 +168,10 @@ describe("Cross-contract spending", () => {
             (opts: { scripts?: string[] }) => {
                 const scripts = opts?.scripts ?? [];
                 const vtxos = scripts.flatMap((s: string) => {
-                    if (s === defaultContract.script) return [defaultVtxo];
-                    if (s === delegateContract.script) return [delegateVtxo];
+                    if (s === defaultContract.script)
+                        return [{ ...defaultVtxo, script: s }];
+                    if (s === delegateContract.script)
+                        return [{ ...delegateVtxo, script: s }];
                     return [];
                 });
                 return Promise.resolve({ vtxos });

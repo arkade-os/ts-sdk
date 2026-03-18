@@ -94,8 +94,7 @@ describe("Wallet", () => {
             // Setup mocks in the correct order based on actual call sequence:
             // 1. getInfo() call during wallet creation
             // 2. getBoardingUtxos() -> getCoins() call
-            // 3. getVtxos() -> first vtxos call (spendable)
-            // 4. getVtxos() -> second vtxos call (recoverable)
+            // 3. getVtxos() -> batched vtxos call
 
             mockFetch
                 .mockResolvedValueOnce({
@@ -118,13 +117,16 @@ describe("Wallet", () => {
                     ok: true,
                     json: () => Promise.resolve(mockUTXOs),
                 })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockServerResponse),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
+                .mockImplementationOnce((url: string) => {
+                    // Extract the script from the request URL so the
+                    // mock response matches the wallet's actual script.
+                    const params = new URLSearchParams(url.split("?")[1]);
+                    const script = params.getAll("scripts")[0];
+                    mockServerResponse.vtxos[0].script = script;
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve(mockServerResponse),
+                    });
                 });
 
             const wallet = await Wallet.create({
