@@ -230,9 +230,11 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("handles GET_TRANSACTION_HISTORY messages", async () => {
         const transactions = [{ txid: "tx" }];
-        (updater as any).readonlyWallet = {
-            getTransactionHistory: vi.fn().mockResolvedValue(transactions),
-        };
+        (updater as any).readonlyWallet = {};
+        (updater as any).buildTransactionHistoryFromCache = vi
+            .fn()
+            .mockResolvedValue(transactions);
+        (updater as any).getVtxosFromRepo = vi.fn().mockResolvedValue([]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -449,10 +451,19 @@ describe("WalletMessageHandler handleMessage", () => {
         (updater as any).readonlyWallet = {
             getAddress: vi.fn().mockResolvedValue("bc1-readonly"),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
-            getTransactionHistory: vi.fn().mockResolvedValue([]),
+            getBoardingTxs: vi.fn().mockResolvedValue({
+                boardingTxs: [],
+                commitmentsToIgnore: new Set(),
+            }),
+            getContractManager: vi.fn().mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
+            }),
             identity: {
                 xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array([1])),
             },
+        };
+        (updater as any).walletRepository = {
+            getVtxos: vi.fn().mockResolvedValue([]),
         };
         // wallet is NOT set — readonly only
 

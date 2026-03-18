@@ -664,8 +664,11 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_TRANSACTION_HISTORY": {
+                    const allVtxos = await this.getVtxosFromRepo();
                     const transactions =
-                        await this.readonlyWallet.getTransactionHistory();
+                        (await this.buildTransactionHistoryFromCache(
+                            allVtxos
+                        )) ?? [];
                     return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
@@ -976,10 +979,9 @@ export class WalletMessageHandler
     }
 
     private async handleGetBalance() {
-        const [boardingUtxos, spendableVtxos, sweptVtxos] = await Promise.all([
+        const [boardingUtxos, allVtxos] = await Promise.all([
             this.getAllBoardingUtxos(),
-            this.getSpendableVtxos(),
-            this.getSweptVtxos(),
+            this.getVtxosFromRepo(),
         ]);
 
         // boarding
@@ -993,7 +995,12 @@ export class WalletMessageHandler
             }
         }
 
-        // offchain
+        // offchain — split spendable vs swept from single repo read
+        const spendableVtxos = allVtxos.filter(isSpendable);
+        const sweptVtxos = allVtxos.filter(
+            (vtxo) => vtxo.virtualStatus.state === "swept"
+        );
+
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
@@ -1046,21 +1053,11 @@ export class WalletMessageHandler
         return this.readonlyWallet.getBoardingUtxos();
     }
     /**
-     * Get spendable vtxos for the current wallet address
+     * Get spendable vtxos from the repository
      */
     private async getSpendableVtxos() {
-        if (!this.readonlyWallet) return [];
-        const vtxos = await this.readonlyWallet.getVtxos();
+        const vtxos = await this.getVtxosFromRepo();
         return vtxos.filter(isSpendable);
-    }
-
-    /**
-     * Get swept vtxos for the current wallet address
-     */
-    private async getSweptVtxos() {
-        if (!this.readonlyWallet) return [];
-        const vtxos = await this.readonlyWallet.getVtxos();
-        return vtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
     }
 
     private async onWalletInitialized() {
