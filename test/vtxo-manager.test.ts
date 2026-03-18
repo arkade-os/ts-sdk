@@ -1532,3 +1532,184 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         });
     });
 });
+
+describe("VtxoManager - Renewal loop prevention", () => {
+    it("should not trigger concurrent renewals (re-entrancy guard)", async () => {
+        const now = Date.now();
+        const createdAt = new Date(now - 100_000);
+        const vtxos = [
+            {
+                txid: "tx1",
+                vout: 0,
+                value: 5000,
+                createdAt,
+                virtualStatus: {
+                    state: "settled",
+                    batchExpiry: now + 5000,
+                },
+                status: { confirmed: true },
+                isUnrolled: false,
+                isSpent: false,
+            } as any,
+        ];
+
+        // settle() that takes a while to complete, giving us time to
+        // trigger the event listener while a renewal is in flight
+        let resolveSettle!: (v: string) => void;
+        const settlePromise = new Promise<string>((r) => (resolveSettle = r));
+
+        let eventHandler: ((event: any) => void) | undefined;
+        const contractManager = {
+            onContractEvent: vi.fn().mockImplementation((handler) => {
+                eventHandler = handler;
+                return () => {};
+            }),
+        };
+
+        const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+            contractManager,
+        });
+        (wallet.settle as any).mockReturnValue(settlePromise);
+
+        new VtxoManager(wallet, undefined, {});
+
+        // Wait for initialization
+        await flushMicrotasks();
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(eventHandler).toBeDefined();
+
+        // First vtxo_received triggers renewVtxos
+        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        await flushMicrotasks();
+
+        // settle() was called once
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+        // Second vtxo_received while first renewal in flight → should be skipped
+        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        await flushMicrotasks();
+
+        // Still only one settle call
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+        // Complete the first renewal
+        resolveSettle("mock-txid");
+        await flushMicrotasks();
+    });
+
+    it("should suppress renewal during cooldown after successful renewal", async () => {
+        const now = Date.now();
+        const createdAt = new Date(now - 100_000);
+        const vtxos = [
+            {
+                txid: "tx1",
+                vout: 0,
+                value: 5000,
+                createdAt,
+                virtualStatus: {
+                    state: "settled",
+                    batchExpiry: now + 5000,
+                },
+                status: { confirmed: true },
+                isUnrolled: false,
+                isSpent: false,
+            } as any,
+        ];
+
+        let eventHandler: ((event: any) => void) | undefined;
+        const contractManager = {
+            onContractEvent: vi.fn().mockImplementation((handler) => {
+                eventHandler = handler;
+                return () => {};
+            }),
+        };
+
+        const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+            contractManager,
+        });
+
+        new VtxoManager(wallet, undefined, {});
+
+        await flushMicrotasks();
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(eventHandler).toBeDefined();
+
+        // First vtxo_received triggers renewal successfully
+        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+        // Immediately after, another vtxo_received (from our own settlement output)
+        // should be suppressed by the cooldown
+        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("should set renewalInProgress flag correctly even on error", async () => {
+        const now = Date.now();
+        const createdAt = new Date(now - 100_000);
+        const vtxos = [
+            {
+                txid: "tx1",
+                vout: 0,
+                value: 5000,
+                createdAt,
+                virtualStatus: {
+                    state: "settled",
+                    batchExpiry: now + 5000,
+                },
+                status: { confirmed: true },
+                isUnrolled: false,
+                isSpent: false,
+            } as any,
+        ];
+
+        let eventHandler: ((event: any) => void) | undefined;
+        const contractManager = {
+            onContractEvent: vi.fn().mockImplementation((handler) => {
+                eventHandler = handler;
+                return () => {};
+            }),
+        };
+
+        const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+            contractManager,
+        });
+        // First settle fails, second should succeed
+        (wallet.settle as any)
+            .mockRejectedValueOnce(new Error("round failed"))
+            .mockResolvedValueOnce("mock-txid-2");
+
+        new VtxoManager(wallet, undefined, {});
+
+        await flushMicrotasks();
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(eventHandler).toBeDefined();
+
+        // First call → error (but renewalInProgress should be reset)
+        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+        // Second call should work because flag was cleared in finally block,
+        // and there's no cooldown since the renewal failed (lastRenewalTimestamp unchanged)
+        eventHandler!({ type: "vtxo_received", vtxos: [] });
+        await flushMicrotasks();
+        await flushMicrotasks();
+
+        expect(wallet.settle).toHaveBeenCalledTimes(2);
+    });
+});
