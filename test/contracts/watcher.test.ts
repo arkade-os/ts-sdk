@@ -127,4 +127,90 @@ describe("ContractWatcher", () => {
             type: "connection_reset",
         });
     });
+
+    it("should clear stale subscription ID and create a fresh subscription on reconnect", async () => {
+        vi.useFakeTimers();
+
+        try {
+            const contract: Contract = {
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+            await watcher.addContract(contract);
+
+            // getSubscription returns an async iterator that immediately
+            // rejects, simulating the SSE stream dying after the server
+            // drops the subscription due to inactivity
+            (mockIndexer.getSubscription as any).mockImplementation(() => ({
+                [Symbol.asyncIterator]: () => ({
+                    next: () => Promise.reject(new Error("stream died")),
+                }),
+            }));
+
+            const callback = vi.fn();
+            await watcher.startWatching(callback);
+            // connect() succeeded: subscriptionId = "mock-subscription-id"
+            // listenLoop() started in background (will fail immediately)
+
+            // Reset subscribe mock to track only reconnection calls.
+            // Reject when called with the stale ID (server cleaned it up),
+            // succeed when called without an ID (fresh subscription).
+            const subscribeMock = mockIndexer.subscribeForScripts as ReturnType<
+                typeof vi.fn
+            >;
+            subscribeMock.mockReset();
+            subscribeMock.mockImplementation(
+                (scripts: string[], existingId?: string) => {
+                    if (existingId) {
+                        return Promise.reject(
+                            new Error(`subscription ${existingId} not found`)
+                        );
+                    }
+                    return Promise.resolve("fresh-subscription-id");
+                }
+            );
+
+            // After successful reconnection, make getSubscription hang
+            // so we don't trigger another reconnect cycle
+            (mockIndexer.getSubscription as any).mockImplementation(() => ({
+                [Symbol.asyncIterator]: () => ({
+                    next: () => new Promise(() => {}),
+                }),
+            }));
+
+            // Flush microtasks: listenLoop rejects → scheduleReconnect()
+            await vi.advanceTimersByTimeAsync(0);
+
+            // Advance past the reconnect delay (1s default)
+            await vi.advanceTimersByTimeAsync(1000);
+            // Flush microtasks so connect() resolves
+            await vi.advanceTimersByTimeAsync(0);
+
+            // subscribeForScripts should have been called twice:
+            // 1st: with the stale ID → server rejects "not found"
+            // 2nd: without ID → fresh subscription created
+            //
+            // Without the fix the 2nd call never happens — the error
+            // propagates, connect() catches it, and it retries forever
+            // with the same stale ID.
+            expect(subscribeMock).toHaveBeenCalledTimes(2);
+            expect(subscribeMock).toHaveBeenNthCalledWith(
+                1,
+                [contract.script],
+                "mock-subscription-id"
+            );
+            expect(subscribeMock).toHaveBeenNthCalledWith(2, [contract.script]);
+
+            // Watcher recovered — not stuck in a reconnect loop
+            expect(watcher.getConnectionState()).toBe("connected");
+
+            await watcher.stopWatching();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
 });
