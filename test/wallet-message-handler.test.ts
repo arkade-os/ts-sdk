@@ -1444,6 +1444,13 @@ describe("WalletMessageHandler repo-backed reads", () => {
         // (contract manager calls it during its own init, but the SW
         // bootstrap should not make additional calls)
         expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
+
+        // Second call with contractEventsSubscription already set —
+        // ensureContractEventBroadcasting short-circuits, but the
+        // reload path should still not hit the indexer directly.
+        (updater as any).contractEventsSubscription = {};
+        await (updater as any).onWalletInitialized();
+        expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
     });
 
     it("subscription updates are reflected in subsequent reads", async () => {
