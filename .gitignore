@@ -5,7 +5,9 @@ docs/
 .idea
 .claude/
 *.sqlite
+*.har
 
 # AI
 CLAUDE.md
 TASKS.md
+*.agents.md

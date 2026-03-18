@@ -42,6 +42,7 @@ import {
     ResponseEnvelope,
 } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
+import { buildTransactionHistory } from "../../utils/transactionHistory";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -236,6 +237,13 @@ export type ResponseIsContractManagerWatching = ResponseEnvelope & {
     payload: { isWatching: boolean };
 };
 
+export type RequestRefreshVtxos = RequestEnvelope & {
+    type: "REFRESH_VTXOS";
+};
+export type ResponseRefreshVtxos = ResponseEnvelope & {
+    type: "REFRESH_VTXOS_SUCCESS";
+};
+
 export type RequestGetAllSpendingPaths = RequestEnvelope & {
     type: "GET_ALL_SPENDING_PATHS";
     payload: { options: GetAllSpendingPathsOptions };
@@ -427,6 +435,7 @@ export type WalletUpdaterRequest =
     | RequestGetSpendablePaths
     | RequestGetAllSpendingPaths
     | RequestIsContractManagerWatching
+    | RequestRefreshVtxos
     | RequestSend
     | RequestGetAssetDetails
     | RequestIssue
@@ -467,6 +476,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetSpendablePaths
         | ResponseGetAllSpendingPaths
         | ResponseIsContractManagerWatching
+        | ResponseRefreshVtxos
         | ResponseContractEvent
         | ResponseSend
         | ResponseGetAssetDetails
@@ -663,8 +673,11 @@ export class WalletMessageHandler
                     });
                 }
                 case "GET_TRANSACTION_HISTORY": {
+                    const allVtxos = await this.getVtxosFromRepo();
                     const transactions =
-                        await this.readonlyWallet.getTransactionHistory();
+                        (await this.buildTransactionHistoryFromCache(
+                            allVtxos
+                        )) ?? [];
                     return this.tagged({
                         id,
                         type: "TRANSACTION_HISTORY",
@@ -692,7 +705,7 @@ export class WalletMessageHandler
                     });
                 }
                 case "RELOAD_WALLET": {
-                    await this.onWalletInitialized();
+                    await this.reloadWallet();
                     return this.tagged({
                         id,
                         type: "RELOAD_SUCCESS",
@@ -797,6 +810,15 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACT_WATCHING",
                         payload: { isWatching },
+                    });
+                }
+                case "REFRESH_VTXOS": {
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
+                    await manager.refreshVtxos();
+                    return this.tagged({
+                        id,
+                        type: "REFRESH_VTXOS_SUCCESS",
                     });
                 }
                 case "SEND": {
@@ -975,10 +997,9 @@ export class WalletMessageHandler
     }
 
     private async handleGetBalance() {
-        const [boardingUtxos, spendableVtxos, sweptVtxos] = await Promise.all([
+        const [boardingUtxos, allVtxos] = await Promise.all([
             this.getAllBoardingUtxos(),
-            this.getSpendableVtxos(),
-            this.getSweptVtxos(),
+            this.getVtxosFromRepo(),
         ]);
 
         // boarding
@@ -992,7 +1013,12 @@ export class WalletMessageHandler
             }
         }
 
-        // offchain
+        // offchain — split spendable vs swept from single repo read
+        const spendableVtxos = allVtxos.filter(isSpendable);
+        const sweptVtxos = allVtxos.filter(
+            (vtxo) => vtxo.virtualStatus.state === "swept"
+        );
+
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
@@ -1045,21 +1071,11 @@ export class WalletMessageHandler
         return this.readonlyWallet.getBoardingUtxos();
     }
     /**
-     * Get spendable vtxos for the current wallet address
+     * Get spendable vtxos from the repository
      */
     private async getSpendableVtxos() {
-        if (!this.readonlyWallet) return [];
-        const vtxos = await this.readonlyWallet.getVtxos();
+        const vtxos = await this.getVtxosFromRepo();
         return vtxos.filter(isSpendable);
-    }
-
-    /**
-     * Get swept vtxos for the current wallet address
-     */
-    private async getSweptVtxos() {
-        if (!this.readonlyWallet) return [];
-        const vtxos = await this.readonlyWallet.getVtxos();
-        return vtxos.filter((vtxo) => vtxo.virtualStatus.state === "swept");
     }
 
     private async onWalletInitialized() {
@@ -1072,12 +1088,12 @@ export class WalletMessageHandler
             return;
         }
 
-        // Get all wallet scripts (current + historical delegate/non-delegate)
-        const scripts = await this.readonlyWallet.getWalletScripts();
-        const response = await this.indexerProvider.getVtxos({ scripts });
-        const vtxos = response.vtxos.map((vtxo) =>
-            extendVirtualCoin(this.readonlyWallet!, vtxo)
-        );
+        // Initialize contract manager FIRST — this populates the repository
+        // with full VTXO history for all contracts (one indexer call per contract)
+        await this.ensureContractEventBroadcasting();
+
+        // Read VTXOs from repository (now populated by contract manager)
+        const vtxos = await this.getVtxosFromRepo();
 
         if (this.wallet) {
             try {
@@ -1098,10 +1114,6 @@ export class WalletMessageHandler
             }
         }
 
-        // Get wallet address and save vtxos using unified repository
-        const address = await this.readonlyWallet.getAddress();
-        await this.walletRepository.saveVtxos(address, vtxos);
-
         // Fetch boarding utxos and save using unified repository
         const boardingAddress = await this.readonlyWallet.getBoardingAddress();
         const coins =
@@ -1111,8 +1123,9 @@ export class WalletMessageHandler
             coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo))
         );
 
-        // Get transaction history to cache boarding txs
-        const txs = await this.readonlyWallet.getTransactionHistory();
+        // Build transaction history from cached VTXOs (no indexer call)
+        const address = await this.readonlyWallet.getAddress();
+        const txs = await this.buildTransactionHistoryFromCache(vtxos);
         if (txs) await this.walletRepository.saveTransactions(address, txs);
 
         // unsubscribe previous subscription if any
@@ -1177,8 +1190,6 @@ export class WalletMessageHandler
                 }
             });
 
-        await this.ensureContractEventBroadcasting();
-
         // Eagerly start the VtxoManager so its background tasks (auto-renewal,
         // boarding UTXO polling/sweep) run inside the service worker without
         // waiting for a client to send a vtxo-manager message first.
@@ -1189,6 +1200,17 @@ export class WalletMessageHandler
                 console.error("Error starting VtxoManager:", error);
             }
         }
+    }
+
+    /**
+     * Force a full VTXO refresh from the indexer, then re-run bootstrap.
+     * Used by RELOAD_WALLET to ensure fresh data.
+     */
+    private async reloadWallet() {
+        if (!this.readonlyWallet) return;
+        const manager = await this.readonlyWallet.getContractManager();
+        await manager.refreshVtxos();
+        await this.onWalletInitialized();
     }
 
     private async handleSettle(message: RequestSettle) {
@@ -1334,6 +1356,96 @@ export class WalletMessageHandler
         this.readonlyWallet = undefined;
         this.arkProvider = undefined;
         this.indexerProvider = undefined;
+    }
+
+    /**
+     * Read all VTXOs from the repository, aggregated across all contract
+     * addresses and the wallet's primary address, with deduplication.
+     */
+    private async getVtxosFromRepo(): Promise<ExtendedVirtualCoin[]> {
+        if (!this.walletRepository || !this.readonlyWallet) return [];
+        const seen = new Set<string>();
+        const allVtxos: ExtendedVirtualCoin[] = [];
+
+        const addVtxos = (vtxos: ExtendedVirtualCoin[]) => {
+            for (const vtxo of vtxos) {
+                const key = `${vtxo.txid}:${vtxo.vout}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    allVtxos.push(vtxo);
+                }
+            }
+        };
+
+        // Aggregate VTXOs from all contract addresses
+        const manager = await this.readonlyWallet.getContractManager();
+        const contracts = await manager.getContracts();
+        for (const contract of contracts) {
+            const vtxos = await this.walletRepository.getVtxos(
+                contract.address
+            );
+            addVtxos(vtxos);
+        }
+
+        // Also check the wallet's primary address
+        const walletAddress = await this.readonlyWallet.getAddress();
+        const walletVtxos = await this.walletRepository.getVtxos(walletAddress);
+        addVtxos(walletVtxos);
+
+        return allVtxos;
+    }
+
+    /**
+     * Build transaction history from cached VTXOs without hitting the indexer.
+     * Falls back to indexer only for uncached transaction timestamps.
+     */
+    private async buildTransactionHistoryFromCache(
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<ArkTransaction[] | null> {
+        if (!this.readonlyWallet) return null;
+
+        const { boardingTxs, commitmentsToIgnore } =
+            await this.readonlyWallet.getBoardingTxs();
+
+        // Build a lookup for cached VTXO timestamps, keyed by txid.
+        // Multiple VTXOs can share a txid (different vouts) — we keep the
+        // earliest createdAt so the history ordering is stable.
+        const vtxoCreatedAt = new Map<string, number>();
+        for (const vtxo of vtxos) {
+            const existing = vtxoCreatedAt.get(vtxo.txid);
+            const ts = vtxo.createdAt.getTime();
+            if (existing === undefined || ts < existing) {
+                vtxoCreatedAt.set(vtxo.txid, ts);
+            }
+        }
+
+        // getTxCreatedAt resolves the creation timestamp of a transaction.
+        // buildTransactionHistory calls this for spent-offchain VTXOs with
+        // no change outputs to determine the time of the sending tx.
+        // Returns undefined on miss so buildTransactionHistory uses its
+        // own fallback (vtxo.createdAt + 1) rather than epoch 0.
+        // The vout:0 lookup in the indexer fallback mirrors the pre-existing
+        // convention in ReadonlyWallet.getTransactionHistory().
+        const getTxCreatedAt = async (
+            txid: string
+        ): Promise<number | undefined> => {
+            const cached = vtxoCreatedAt.get(txid);
+            if (cached !== undefined) return cached;
+            if (this.indexerProvider) {
+                const res = await this.indexerProvider.getVtxos({
+                    outpoints: [{ txid, vout: 0 }],
+                });
+                return res.vtxos[0]?.createdAt.getTime();
+            }
+            return undefined;
+        };
+
+        return buildTransactionHistory(
+            vtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            getTxCreatedAt
+        );
     }
 
     private async ensureContractEventBroadcasting() {

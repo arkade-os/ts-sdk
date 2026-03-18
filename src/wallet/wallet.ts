@@ -492,7 +492,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const getTxCreatedAt = (txid: string) =>
             this.indexerProvider
                 .getVtxos({ outpoints: [{ txid, vout: 0 }] })
-                .then((res) => res.vtxos[0]?.createdAt.getTime() || 0);
+                .then((res) => res.vtxos[0]?.createdAt.getTime());
 
         return buildTransactionHistory(
             response.vtxos,

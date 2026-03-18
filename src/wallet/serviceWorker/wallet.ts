@@ -44,6 +44,7 @@ import {
     RequestGetVtxos,
     RequestInitWallet,
     RequestIsContractManagerWatching,
+    RequestRefreshVtxos,
     RequestReloadWallet,
     RequestSendBitcoin,
     RequestSettle,
@@ -1057,6 +1058,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                         messageHandler
                     );
                 };
+            },
+
+            async refreshVtxos(): Promise<void> {
+                const message: RequestRefreshVtxos = {
+                    type: "REFRESH_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                };
+                await sendContractMessage(message);
             },
 
             async isWatching(): Promise<boolean> {

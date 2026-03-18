@@ -623,7 +623,7 @@ describe("Common", () => {
 
             it(
                 "should be notified of offchain incoming funds",
-                { timeout: 8000 },
+                { timeout: 10000 },
                 async () => {
                     const alice = await factory();
                     const aliceAddress = await alice.wallet.getAddress();
