@@ -460,7 +460,7 @@ describe("ArkadeSwaps", () => {
             identity,
             arkProvider, // Add arkProvider to wallet
             indexerProvider, // Add indexerProvider to wallet
-            sendBitcoin: vi.fn(),
+            send: vi.fn(),
             getAddress: vi.fn().mockResolvedValue("mock-address"),
         } as any;
 
@@ -861,9 +861,7 @@ describe("ArkadeSwaps", () => {
             it("should send a Lightning payment", async () => {
                 // arrange
                 const pendingSwap = mockSubmarineSwap;
-                vi.spyOn(wallet, "sendBitcoin").mockResolvedValueOnce(
-                    mock.txid
-                );
+                vi.spyOn(wallet, "send").mockResolvedValueOnce(mock.txid);
                 vi.spyOn(swaps, "createSubmarineSwap").mockResolvedValueOnce(
                     pendingSwap
                 );
@@ -875,7 +873,7 @@ describe("ArkadeSwaps", () => {
                     invoice: mock.invoice.address,
                 });
                 // assert
-                expect(wallet.sendBitcoin).toHaveBeenCalledWith({
+                expect(wallet.send).toHaveBeenCalledWith({
                     address: mock.address.ark,
                     amount: mock.invoice.amount,
                 });

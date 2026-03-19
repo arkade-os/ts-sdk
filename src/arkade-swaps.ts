@@ -657,7 +657,7 @@ export class ArkadeSwaps {
         // save pending swap to storage
         await this.savePendingSubmarineSwap(pendingSwap);
         // send funds to the swap address
-        const txid = await this.wallet.sendBitcoin({
+        const txid = await this.wallet.send({
             address: pendingSwap.response.address,
             amount: pendingSwap.response.expectedAmount,
         });

@@ -188,7 +188,7 @@ describe("ArkadeSwaps", () => {
     const arkUrl = "http://localhost:7070";
 
     const fundWallet = async (amount: number): Promise<void> => {
-        await fundedWallet.sendBitcoin({
+        await fundedWallet.send({
             address: await wallet.getAddress(),
             amount,
         });
@@ -648,7 +648,7 @@ describe("ArkadeSwaps", () => {
                     invoice,
                 });
 
-                await wallet.sendBitcoin({
+                await wallet.send({
                     address: pendingSwap.response.address,
                     amount: pendingSwap.response.expectedAmount,
                 });
@@ -705,7 +705,7 @@ describe("ArkadeSwaps", () => {
                         invoice: res.invoice,
                     });
 
-                    await wallet.sendBitcoin({
+                    await wallet.send({
                         address: pendingSwap.response.address,
                         amount: pendingSwap.response.expectedAmount,
                     });
@@ -842,7 +842,7 @@ describe("ArkadeSwaps", () => {
                             btcAddress,
                         });
 
-                    await wallet.sendBitcoin({
+                    await wallet.send({
                         address: arkAddress,
                         amount: amountToPay,
                     });
@@ -892,7 +892,7 @@ describe("ArkadeSwaps", () => {
                             btcAddress,
                         });
 
-                    await wallet.sendBitcoin({
+                    await wallet.send({
                         address: arkAddress,
                         amount: amountToPay,
                     });
@@ -930,7 +930,7 @@ describe("ArkadeSwaps", () => {
                         toAddress,
                     });
 
-                    await wallet.sendBitcoin({
+                    await wallet.send({
                         address: swap.response.lockupDetails.lockupAddress,
                         amount: swap.response.lockupDetails.amount,
                     });
@@ -972,7 +972,7 @@ describe("ArkadeSwaps", () => {
                         toAddress,
                     });
 
-                    await wallet.sendBitcoin({
+                    await wallet.send({
                         address: swap.response.lockupDetails.lockupAddress,
                         amount: swap.response.lockupDetails.amount,
                     });
@@ -1016,7 +1016,7 @@ describe("ArkadeSwaps", () => {
                         toAddress,
                     });
 
-                    await wallet.sendBitcoin({
+                    await wallet.send({
                         address: swap.response.lockupDetails.lockupAddress,
                         amount: sendAmount,
                     });
@@ -1448,7 +1448,7 @@ describe("ArkadeSwaps", () => {
                     // Fund the wallet via the shared funded wallet
                     const amount = 1000;
                     const fundAmount = amount + 10;
-                    await fundedWallet.sendBitcoin({
+                    await fundedWallet.send({
                         address: await defaultWallet.getAddress(),
                         amount: fundAmount,
                     });

@@ -326,14 +326,14 @@ async function setupBoltz() {
 
         console.log("\nGenerating Fulmine seed...");
         const seedResponse = execSync(
-            "curl -s http://localhost:7003/api/v1/wallet/genseed"
+            "curl -s http://localhost:7001/api/v1/wallet/genseed"
         );
         const seed = JSON.parse(seedResponse).hex;
         console.log(`  Seed: ${seed}`);
 
         console.log("\nCreating Fulmine wallet...");
         await execCommand(
-            `curl -s -X POST http://localhost:7003/api/v1/wallet/create -H "Content-Type: application/json" -d '{"private_key": "${seed}", "password": "secret", "server_url": "http://arkd:7070"}'`,
+            `curl -s -X POST http://localhost:7001/api/v1/wallet/create -H "Content-Type: application/json" -d '{"private_key": "${seed}", "password": "secret", "server_url": "http://arkd:7070"}'`,
             true
         );
         console.log("  ✔ Wallet created");
@@ -342,7 +342,7 @@ async function setupBoltz() {
 
         console.log("\nUnlocking Fulmine wallet...");
         await execCommand(
-            `curl -s -X POST http://localhost:7003/api/v1/wallet/unlock -H "Content-Type: application/json" -d '{"password": "secret"}'`,
+            `curl -s -X POST http://localhost:7001/api/v1/wallet/unlock -H "Content-Type: application/json" -d '{"password": "secret"}'`,
             true
         );
         console.log("  ✔ Wallet unlocked");
@@ -351,7 +351,7 @@ async function setupBoltz() {
 
         console.log("\nGetting Fulmine address...");
         const fulmineAddressResponse = execSync(
-            "curl -s -X GET http://localhost:7003/api/v1/address",
+            "curl -s -X GET http://localhost:7001/api/v1/address",
             { encoding: "utf8" }
         );
         const fulmineAddress = JSON.parse(fulmineAddressResponse)
@@ -364,7 +364,7 @@ async function setupBoltz() {
 
         console.log("\nSettling funds in Fulmine...");
         await execCommand(
-            "curl -s -X GET http://localhost:7003/api/v1/settle",
+            "curl -s -X GET http://localhost:7001/api/v1/settle",
             true
         );
         console.log("  ✔ Funds settled");

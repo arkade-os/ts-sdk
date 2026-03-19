@@ -8,18 +8,20 @@ import {
     Identity,
     Intent,
     networks,
-    TapLeafScript,
     VHTLC,
     VtxoScript,
     VtxoTaprootTree,
     CSVMultisigTapscript,
     combineTapscriptSigs,
+    Transaction,
+    TapLeafScript,
 } from "@arkade-os/sdk";
 import { logger } from "../logger";
 import { hex, base64 } from "@scure/base";
 import { createVHTLCBatchHandler } from "../batch";
 import { ripemd160 } from "@noble/hashes/legacy.js";
-import { Address, OutScript, Transaction } from "@scure/btc-signer";
+import { Address, OutScript } from "@scure/btc-signer";
+import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { normalizeToXOnlyKey, verifySignatures } from "./signatures";
 import { TransactionOutput, TransactionInput } from "@scure/btc-signer/psbt.js";
 
@@ -260,19 +262,32 @@ export const claimVHTLCwithOffchainTx = async (
             checkpoints.map((c) => base64.encode(c.toPSBT()))
         );
 
-    // verify the server signed the transaction with correct key
-    if (
-        !validFinalArkTx(finalArkTx, serverXOnlyPublicKey, vhtlcScript.leaves)
-    ) {
-        throw new Error("Invalid final Ark transaction");
+    // verify the server signed the transaction with correct key on the claim leaf
+    const finalTx = Transaction.fromPSBT(base64.decode(finalArkTx));
+    const serverPubkeyHex = hex.encode(serverXOnlyPublicKey);
+    const claimLeafHash = tapLeafHash(
+        scriptFromTapLeafScript(vhtlcScript.claim())
+    );
+    for (let i = 0; i < finalTx.inputsLength; i++) {
+        if (!verifySignatures(finalTx, i, [serverPubkeyHex], claimLeafHash)) {
+            throw new Error("Invalid final Ark transaction");
+        }
     }
 
-    // sign the checkpoint transactions pre signed by the server
+    // verify and sign the checkpoint transactions pre signed by the server
     const finalCheckpoints = await Promise.all(
-        signedCheckpointTxs.map(async (c) => {
-            const tx = Transaction.fromPSBT(base64.decode(c), {
-                allowUnknown: true,
-            });
+        signedCheckpointTxs.map(async (c, idx) => {
+            const tx = Transaction.fromPSBT(base64.decode(c));
+            const checkpointLeaf =
+                checkpoints[idx].getInput(0).tapLeafScript![0];
+            const cpLeafHash = tapLeafHash(
+                scriptFromTapLeafScript(checkpointLeaf)
+            );
+            if (!verifySignatures(tx, 0, [serverPubkeyHex], cpLeafHash)) {
+                throw new Error(
+                    "Invalid server signature in checkpoint transaction"
+                );
+            }
             const signedCheckpoint = await identity.sign(tx, [0]);
             return base64.encode(signedCheckpoint.toPSBT());
         })
@@ -340,11 +355,30 @@ export const refundVHTLCwithOffchainTx = async (
 
     // Verify Boltz signatures before combining
     const boltzXOnlyPublicKeyHex = hex.encode(boltzXOnlyPublicKey);
-    if (!verifySignatures(boltzSignedRefundTx, 0, [boltzXOnlyPublicKeyHex])) {
+    const refundLeafHash = tapLeafHash(
+        scriptFromTapLeafScript(input.tapLeafScript)
+    );
+    if (
+        !verifySignatures(
+            boltzSignedRefundTx,
+            0,
+            [boltzXOnlyPublicKeyHex],
+            refundLeafHash
+        )
+    ) {
         throw new Error("Invalid Boltz signature in refund transaction");
     }
+    const checkpointLeaf = unsignedCheckpointTx.getInput(0).tapLeafScript![0];
+    const checkpointLeafHash = tapLeafHash(
+        scriptFromTapLeafScript(checkpointLeaf)
+    );
     if (
-        !verifySignatures(boltzSignedCheckpointTx, 0, [boltzXOnlyPublicKeyHex])
+        !verifySignatures(
+            boltzSignedCheckpointTx,
+            0,
+            [boltzXOnlyPublicKeyHex],
+            checkpointLeafHash
+        )
     ) {
         throw new Error("Invalid Boltz signature in checkpoint transaction");
     }
@@ -379,7 +413,7 @@ export const refundVHTLCwithOffchainTx = async (
         hex.encode(serverXOnlyPublicKey),
     ];
 
-    if (!verifySignatures(tx, inputIndex, requiredSigners)) {
+    if (!verifySignatures(tx, inputIndex, requiredSigners, refundLeafHash)) {
         throw new Error("Invalid refund transaction");
     }
 
@@ -390,10 +424,21 @@ export const refundVHTLCwithOffchainTx = async (
         );
     }
 
-    // combine the checkpoint signatures
+    // verify and combine the checkpoint signatures
     const serverSignedCheckpointTx = Transaction.fromPSBT(
         base64.decode(signedCheckpointTxs[0])
     );
+    const serverPubkeyHex = hex.encode(serverXOnlyPublicKey);
+    if (
+        !verifySignatures(
+            serverSignedCheckpointTx,
+            0,
+            [serverPubkeyHex],
+            checkpointLeafHash
+        )
+    ) {
+        throw new Error("Invalid server signature in checkpoint transaction");
+    }
 
     const finalCheckpointTx = combineTapscriptSigs(
         combinedSignedCheckpointTx,
@@ -406,34 +451,6 @@ export const refundVHTLCwithOffchainTx = async (
     ]);
 };
 
-/**
- * Validates the final Ark transaction.
- * checks that all inputs have a signature for the given pubkey
- * and the signature is correct for the given tapscript leaf
- * TODO: This is a simplified check, we should verify the actual signatures
- * @param finalArkTx The final Ark transaction in PSBT format.
- * @param _pubkey The public key of the user.
- * @param _tapLeaves The taproot script leaves.
- * @returns True if the final Ark transaction is valid, false otherwise.
- */
-export const validFinalArkTx = (
-    finalArkTx: string,
-    _pubkey: Uint8Array,
-    _tapLeaves: TapLeafScript[]
-): boolean => {
-    // decode the final Ark transaction
-    const tx = Transaction.fromPSBT(base64.decode(finalArkTx), {
-        allowUnknown: true,
-    });
-    if (!tx) return false;
-
-    // push all inputs to an array
-    const inputs: TransactionInput[] = [];
-    for (let i = 0; i < tx.inputsLength; i++) {
-        inputs.push(tx.getInput(i));
-    }
-
-    // basic check that all inputs have a witnessUtxo
-    // this is a simplified check, we should verify the actual signatures
-    return inputs.every((input) => input.witnessUtxo);
-};
+function scriptFromTapLeafScript(leaf: TapLeafScript): Uint8Array {
+    return leaf[1].subarray(0, leaf[1].length - 1); // remove the version byte
+}
