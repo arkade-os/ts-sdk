@@ -478,7 +478,9 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new MessageBusNotInitializedError(),
+                        // Across the ServiceWorker boundary the custom error is transformed in a primitive Error type
+                        // and `name` is lost
+                        error: new Error("MessageBus not initialized"),
                     };
                 }
                 if (message.type === "GET_ADDRESS") {
@@ -527,7 +529,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                 return {
                     id: message.id,
                     tag: message.tag ?? messageTag,
-                    error: new MessageBusNotInitializedError(),
+                    error: new Error("MessageBus not initialized"),
                 };
             });
 
@@ -569,7 +571,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new MessageBusNotInitializedError(),
+                        error: new Error("MessageBus not initialized"),
                     };
                 }
                 switch (message.type) {
@@ -668,7 +670,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new MessageBusNotInitializedError(),
+                        error: new Error("MessageBus not initialized"),
                     };
                 }
                 if (message.type === "SETTLE") {
