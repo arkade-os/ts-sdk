@@ -67,11 +67,10 @@ import type { Actions, SwapManagerClient } from "../swap-manager";
 // Check by error message content instead of instanceof because postMessage uses the
 // structured clone algorithm which strips the prototype chain — the page
 // receives a plain Error, not the original MessageBusNotInitializedError.
-function isNotInitializedError(error: unknown): boolean {
+function isMessageBusNotInitializedError(error: unknown): boolean {
     return (
         error instanceof Error &&
-        (error.message.includes(MESSAGE_BUS_NOT_INITIALIZED) ||
-            error.message.includes("handler not initialized"))
+        error.message.includes(MESSAGE_BUS_NOT_INITIALIZED)
     );
 }
 
@@ -1085,7 +1084,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             try {
                 return await this.sendMessageDirect(request);
             } catch (error: any) {
-                if (!isNotInitializedError(error) || attempt >= maxRetries) {
+                if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
                     throw error;
                 }
 
