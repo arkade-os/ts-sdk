@@ -120,14 +120,18 @@ import type { IVtxoManager, SettlementConfig } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
-import { ServiceWorkerTimeoutError } from "../../worker/errors";
+import {
+    MESSAGE_BUS_NOT_INITIALIZED,
+    ServiceWorkerTimeoutError,
+} from "../../worker/errors";
 
-// Check by error name instead of instanceof because postMessage uses the
+// Check by error message content instead of instanceof because postMessage uses the
 // structured clone algorithm which strips the prototype chain — the page
 // receives a plain Error, not the original MessageBusNotInitializedError.
 function isMessageBusNotInitializedError(error: unknown): boolean {
     return (
-        error instanceof Error && error.name === "MessageBusNotInitializedError"
+        error instanceof Error &&
+        error.message.includes(MESSAGE_BUS_NOT_INITIALIZED)
     );
 }
 

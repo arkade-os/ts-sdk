@@ -11,6 +11,7 @@ import {
     DEFAULT_MESSAGE_TAG,
 } from "../../src/wallet/serviceWorker/wallet-message-handler";
 import {
+    MESSAGE_BUS_NOT_INITIALIZED,
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
 } from "../../src/worker/errors";
@@ -269,7 +270,7 @@ describe("ServiceWorkerReadonlyWallet", () => {
         ).resolves.toEqual(contract);
         await expect(manager.deleteContract("c1")).resolves.toBeUndefined();
         await expect(
-            manager.getSpendablePaths({ contractScript: "c1" })
+            manager.getSpendablePaths({ contractScript: "c1" } as any)
         ).resolves.toEqual(paths);
         await expect(manager.isWatching()).resolves.toBe(true);
 
@@ -478,7 +479,9 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new MessageBusNotInitializedError(),
+                        // Across the ServiceWorker boundary the custom error is transformed in a primitive Error type
+                        // and `name` is lost
+                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
                     };
                 }
                 if (message.type === "GET_ADDRESS") {
@@ -527,7 +530,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                 return {
                     id: message.id,
                     tag: message.tag ?? messageTag,
-                    error: new MessageBusNotInitializedError(),
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
                 };
             });
 
@@ -537,7 +540,7 @@ describe("sendMessage reinitialize on SW restart", () => {
 
         const wallet = createWalletWithConfig(serviceWorker as any);
         await expect(wallet.getAddress()).rejects.toThrow(
-            "MessageBus not initialized"
+            MESSAGE_BUS_NOT_INITIALIZED
         );
 
         // Should have tried 3 times (1 initial + 2 retries)
@@ -569,7 +572,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new MessageBusNotInitializedError(),
+                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
                     };
                 }
                 switch (message.type) {
@@ -668,7 +671,7 @@ describe("sendMessage reinitialize on SW restart", () => {
                     return {
                         id: message.id,
                         tag: messageTag,
-                        error: new MessageBusNotInitializedError(),
+                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
                     };
                 }
                 if (message.type === "SETTLE") {
