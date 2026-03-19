@@ -1084,7 +1084,10 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             try {
                 return await this.sendMessageDirect(request);
             } catch (error: any) {
-                if (!isMessageBusNotInitializedError(error) || attempt >= maxRetries) {
+                if (
+                    !isMessageBusNotInitializedError(error) ||
+                    attempt >= maxRetries
+                ) {
                     throw error;
                 }
 
