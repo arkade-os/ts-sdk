@@ -20,6 +20,7 @@ import { CSVMultisigTapscript } from "../script/tapscript";
 import { setArkPsbtField, VtxoTaprootTree } from "./unknownFields";
 import { Transaction } from "./transaction";
 import { ArkAddress } from "../script/address";
+import { Extension } from "../extension";
 
 export type ArkTxInput = {
     // the script used to spend the vtxo
@@ -49,13 +50,13 @@ export function buildOffchainTx(
     outputs: TransactionOutput[],
     serverUnrollScript: CSVMultisigTapscript.Type
 ): OffchainTx {
-    let hasOpReturn = false;
+    let hasExtensionOutput = false;
     for (const [index, output] of outputs.entries()) {
         if (!output.script) throw new Error(`missing output script ${index}`);
-        const isOpReturn = Script.decode(output.script)[0] === "RETURN";
-        if (!isOpReturn) continue;
-        if (hasOpReturn) throw new Error("multiple OP_RETURN outputs");
-        hasOpReturn = true;
+        const isExtension = Extension.isExtension(output.script);
+        if (!isExtension) continue;
+        if (hasExtensionOutput) throw new Error("multiple extension outputs");
+        hasExtensionOutput = true;
     }
 
     const checkpoints = inputs.map((input) =>
