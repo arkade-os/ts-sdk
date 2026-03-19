@@ -50,13 +50,28 @@ export function buildOffchainTx(
     outputs: TransactionOutput[],
     serverUnrollScript: CSVMultisigTapscript.Type
 ): OffchainTx {
+    // TODO: use arkd /info
+    const MAX_OP_RETURN = 2;
+
+    let countOpReturn = 0;
     let hasExtensionOutput = false;
     for (const [index, output] of outputs.entries()) {
         if (!output.script) throw new Error(`missing output script ${index}`);
         const isExtension = Extension.isExtension(output.script);
+        const isOpReturn =
+            isExtension || Script.decode(output.script)[0] === "RETURN";
+        if (isOpReturn) {
+            countOpReturn++;
+        }
         if (!isExtension) continue;
         if (hasExtensionOutput) throw new Error("multiple extension outputs");
         hasExtensionOutput = true;
+    }
+
+    if (countOpReturn > MAX_OP_RETURN) {
+        throw new Error(
+            `too many OP_RETURN outputs: ${countOpReturn} > ${MAX_OP_RETURN}`
+        );
     }
 
     const checkpoints = inputs.map((input) =>
