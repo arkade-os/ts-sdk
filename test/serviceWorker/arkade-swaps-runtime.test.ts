@@ -1,11 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ServiceWorkerArkadeSwaps } from "../../src/serviceWorker/arkade-swaps-runtime";
-import { DEFAULT_MESSAGE_TAG } from "../../src/serviceWorker/arkade-swaps-message-handler";
+import {
+    DEFAULT_MESSAGE_TAG,
+    type RequestInitArkSwaps,
+} from "../../src/serviceWorker/arkade-swaps-message-handler";
 import type { PendingReverseSwap, PendingSubmarineSwap } from "../../src/types";
 import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
 import { decodeInvoice } from "../../src/utils/decoding";
+import {
+    MESSAGE_BUS_NOT_INITIALIZED,
+    ServiceWorkerTimeoutError,
+} from "@arkade-os/sdk";
 
 class FakeServiceWorker {
     listeners: ((e: MessageEvent) => void)[] = [];
@@ -273,5 +280,599 @@ describe("SwArkadeSwapsRuntime enrich methods", () => {
         expect(() =>
             runtime.enrichSubmarineSwapInvoice(swap, "not-a-lightning-invoice")
         ).toThrow(/Invalid Lightning invoice/);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Harness helpers for reinitialize / dedup / ping tests
+// ---------------------------------------------------------------------------
+
+type MessageHandler = (event: { data: any }) => void;
+
+function structuredCloneError(error: Error): Error {
+    const cloned = new Error(error.message);
+    cloned.name = error.name;
+    return cloned;
+}
+
+function structuredCloneResponse(response: any): any {
+    if (!response || !response.error) return response;
+    return { ...response, error: structuredCloneError(response.error) };
+}
+
+const createServiceWorkerHarness = (
+    responder?: (message: any) => any,
+    options?: { handlePing?: boolean }
+) => {
+    const handlePing = options?.handlePing ?? true;
+    const listeners = new Set<MessageHandler>();
+
+    const navigatorServiceWorker = {
+        addEventListener: vi.fn((type: string, handler: MessageHandler) => {
+            if (type === "message") listeners.add(handler);
+        }),
+        removeEventListener: vi.fn((type: string, handler: MessageHandler) => {
+            if (type === "message") listeners.delete(handler);
+        }),
+    };
+
+    const serviceWorker = {
+        postMessage: vi.fn((message: any) => {
+            if (handlePing && message.tag === "PING") {
+                listeners.forEach((handler) =>
+                    handler({
+                        data: { id: message.id, tag: "PONG" },
+                    })
+                );
+                return;
+            }
+            if (!responder) return;
+            const response = responder(message);
+            if (!response) return;
+            const cloned = structuredCloneResponse(response);
+            listeners.forEach((handler) => handler({ data: cloned }));
+        }),
+    };
+
+    const emit = (data: any) => {
+        const cloned = structuredCloneResponse(data);
+        listeners.forEach((handler) => handler({ data: cloned }));
+    };
+
+    return { navigatorServiceWorker, serviceWorker, emit, listeners };
+};
+
+const stubInitPayload: RequestInitArkSwaps["payload"] = {
+    network: "regtest",
+    arkServerUrl: "https://ark.test",
+    swapProvider: { baseUrl: "https://boltz.test" },
+};
+
+const createRuntimeWithConfig = (
+    serviceWorker: ServiceWorker,
+    tag = TAG
+): ServiceWorkerArkadeSwaps => {
+    const runtime = new (ServiceWorkerArkadeSwaps as any)(
+        tag,
+        serviceWorker,
+        {} as any, // swapRepository — not needed for messaging tests
+        false // withSwapManager
+    ) as ServiceWorkerArkadeSwaps;
+    (runtime as any).initPayload = stubInitPayload;
+    return runtime;
+};
+
+// ---------------------------------------------------------------------------
+// sendMessage reinitialize on SW restart
+// ---------------------------------------------------------------------------
+
+describe("sendMessage reinitialize on SW restart", () => {
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("retries after re-initializing when SW returns 'MessageBus not initialized'", async () => {
+        let handlerInitialized = false;
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "INIT_ARKADE_SWAPS") {
+                    handlerInitialized = true;
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "ARKADE_SWAPS_INITIALIZED",
+                    };
+                }
+                if (!handlerInitialized) {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                    };
+                }
+                if (message.type === "GET_FEES") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "FEES",
+                        payload: { minerFees: 100 },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const fees = await runtime.getFees();
+
+        expect(fees).toEqual({ minerFees: 100 });
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "INIT_ARKADE_SWAPS" })
+        );
+    });
+
+    it("throws after exhausting retries", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "INIT_ARKADE_SWAPS") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "ARKADE_SWAPS_INITIALIZED",
+                    };
+                }
+                // Always return not-initialized (simulates persistent failure)
+                return {
+                    id: message.id,
+                    tag: TAG,
+                    error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                };
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        // refreshSwapsStatus doesn't wrap errors, so we see the raw message
+        await expect(runtime.refreshSwapsStatus()).rejects.toThrow(
+            MESSAGE_BUS_NOT_INITIALIZED
+        );
+
+        // Should have tried 3 times (1 initial + 2 retries)
+        const refreshCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "REFRESH_SWAPS_STATUS"
+        );
+        expect(refreshCalls).toHaveLength(3);
+    });
+
+    it("deduplicates concurrent reinitializations", async () => {
+        let handlerInitialized = false;
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "INIT_ARKADE_SWAPS") {
+                    handlerInitialized = true;
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "ARKADE_SWAPS_INITIALIZED",
+                    };
+                }
+                if (!handlerInitialized) {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        error: new Error(MESSAGE_BUS_NOT_INITIALIZED),
+                    };
+                }
+                switch (message.type) {
+                    case "GET_FEES":
+                        return {
+                            id: message.id,
+                            tag: TAG,
+                            type: "FEES",
+                            payload: { minerFees: 50 },
+                        };
+                    case "GET_LIMITS":
+                        return {
+                            id: message.id,
+                            tag: TAG,
+                            type: "LIMITS",
+                            payload: { min: 100 },
+                        };
+                    default:
+                        return null;
+                }
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+
+        // Both fail simultaneously, triggering concurrent reinit
+        const [fees, limits] = await Promise.all([
+            runtime.getFees(),
+            runtime.getLimits(),
+        ]);
+
+        expect(fees).toEqual({ minerFees: 50 });
+        expect(limits).toEqual({ min: 100 });
+
+        // INIT_ARKADE_SWAPS should have been sent only once
+        const initCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "INIT_ARKADE_SWAPS"
+        );
+        expect(initCalls).toHaveLength(1);
+    });
+
+    it("does not retry for errors other than 'not initialized'", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => ({
+                id: message.id,
+                tag: TAG,
+                error: new Error("something else went wrong"),
+            }));
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        // refreshSwapsStatus doesn't wrap errors, so we see the raw message
+        await expect(runtime.refreshSwapsStatus()).rejects.toThrow(
+            "something else went wrong"
+        );
+
+        // Should have tried only once (no retry for unrelated errors)
+        const refreshCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "REFRESH_SWAPS_STATUS"
+        );
+        expect(refreshCalls).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// In-flight request deduplication
+// ---------------------------------------------------------------------------
+
+describe("in-flight request deduplication", () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
+    it("deduplicates concurrent identical reads", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_FEES") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "FEES",
+                        payload: { minerFees: 200 },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const [f1, f2] = await Promise.all([
+            runtime.getFees(),
+            runtime.getFees(),
+        ]);
+
+        expect(f1).toEqual({ minerFees: 200 });
+        expect(f2).toEqual({ minerFees: 200 });
+
+        const feesCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_FEES"
+        );
+        expect(feesCalls).toHaveLength(1);
+    });
+
+    it("does not dedup state-mutating requests", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "CREATE_REVERSE_SWAP") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "REVERSE_SWAP_CREATED",
+                        payload: { id: "swap-" + message.id },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const args = { amountSats: 10_000 } as any;
+        await Promise.all([
+            runtime.createReverseSwap(args),
+            runtime.createReverseSwap(args),
+        ]);
+
+        const createCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "CREATE_REVERSE_SWAP"
+        );
+        expect(createCalls).toHaveLength(2);
+    });
+
+    it("deduplicates requests with identical payloads", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_SWAP_STATUS") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "SWAP_STATUS",
+                        payload: { status: "swap.created" },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await Promise.all([
+            runtime.getSwapStatus("swap-123"),
+            runtime.getSwapStatus("swap-123"),
+        ]);
+
+        const statusCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_SWAP_STATUS"
+        );
+        expect(statusCalls).toHaveLength(1);
+    });
+
+    it("does NOT dedup different payloads", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_SWAP_STATUS") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "SWAP_STATUS",
+                        payload: { status: "swap.created" },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await Promise.all([
+            runtime.getSwapStatus("swap-aaa"),
+            runtime.getSwapStatus("swap-bbb"),
+        ]);
+
+        const statusCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_SWAP_STATUS"
+        );
+        expect(statusCalls).toHaveLength(2);
+    });
+
+    it("cache clears after settlement so sequential calls hit SW", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_FEES") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "FEES",
+                        payload: { minerFees: 0 },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+
+        await runtime.getFees();
+        await runtime.getFees();
+
+        const feesCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_FEES"
+        );
+        expect(feesCalls).toHaveLength(2);
+    });
+
+    it("shares error across deduped callers", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_FEES") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        error: new Error("server exploded"),
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const results = await Promise.allSettled([
+            runtime.getFees(),
+            runtime.getFees(),
+        ]);
+
+        expect(results[0].status).toBe("rejected");
+        expect(results[1].status).toBe("rejected");
+        // getFees wraps errors — the original is in cause
+        const cause0 = (results[0] as PromiseRejectedResult).reason.cause;
+        const cause1 = (results[1] as PromiseRejectedResult).reason.cause;
+        expect(cause0.message).toContain("server exploded");
+        expect(cause1.message).toContain("server exploded");
+
+        const feesCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_FEES"
+        );
+        expect(feesCalls).toHaveLength(1);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Preflight ping
+// ---------------------------------------------------------------------------
+
+describe("preflight ping", () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+    });
+
+    it("ping succeeds → request proceeds normally", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "GET_FEES") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "FEES",
+                        payload: { minerFees: 42 },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const fees = await runtime.getFees();
+
+        expect(fees).toEqual({ minerFees: 42 });
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ tag: "PING" })
+        );
+    });
+
+    it("reinitializes when ping fails (dead SW)", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness(
+                (message) => {
+                    if (message.type === "INIT_ARKADE_SWAPS") {
+                        return {
+                            id: message.id,
+                            tag: TAG,
+                            type: "ARKADE_SWAPS_INITIALIZED",
+                        };
+                    }
+                    if (message.type === "GET_FEES") {
+                        return {
+                            id: message.id,
+                            tag: TAG,
+                            type: "FEES",
+                            payload: { minerFees: 99 },
+                        };
+                    }
+                    return null;
+                },
+                { handlePing: false }
+            );
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const feesPromise = runtime.getFees();
+
+        // Advance past the 2s ping timeout
+        await vi.advanceTimersByTimeAsync(2_000);
+
+        const fees = await feesPromise;
+        expect(fees).toEqual({ minerFees: 99 });
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "INIT_ARKADE_SWAPS" })
+        );
+    });
+
+    it("deduplicates concurrent pings", async () => {
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                switch (message.type) {
+                    case "GET_FEES":
+                        return {
+                            id: message.id,
+                            tag: TAG,
+                            type: "FEES",
+                            payload: { minerFees: 0 },
+                        };
+                    case "GET_LIMITS":
+                        return {
+                            id: message.id,
+                            tag: TAG,
+                            type: "LIMITS",
+                            payload: { min: 0 },
+                        };
+                    default:
+                        return null;
+                }
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        await Promise.all([runtime.getFees(), runtime.getLimits()]);
+
+        const pingCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.tag === "PING"
+        );
+        expect(pingCalls).toHaveLength(1);
+    });
+
+    it("ping times out after 2s, not 30s", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness(undefined, {
+                handlePing: false,
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const pingPromise = (runtime as any).pingServiceWorker();
+
+        const assertion = expect(pingPromise).rejects.toBeInstanceOf(
+            ServiceWorkerTimeoutError
+        );
+        await vi.advanceTimersByTimeAsync(2_000);
+        await assertion;
     });
 });
