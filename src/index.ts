@@ -86,7 +86,9 @@ import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
+    DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
+import type { MessageTimeouts } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -298,6 +300,7 @@ export {
     ServiceWorkerTimeoutError,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
+    DEFAULT_MESSAGE_TIMEOUTS,
 
     // Tapscript
     decodeTapscript,
@@ -533,6 +536,7 @@ export type {
     MessageHandler,
     RequestEnvelope,
     ResponseEnvelope,
+    MessageTimeouts,
 
     // Delegator types
     IDelegatorManager,

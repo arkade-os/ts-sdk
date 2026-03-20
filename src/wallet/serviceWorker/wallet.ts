@@ -135,6 +135,55 @@ function isMessageBusNotInitializedError(error: unknown): boolean {
     );
 }
 
+type RequestType = WalletUpdaterRequest["type"];
+
+export type MessageTimeouts = Partial<Record<RequestType, number>>;
+
+export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
+    // Fast reads — fail quickly
+    GET_ADDRESS: 10_000,
+    GET_BALANCE: 10_000,
+    GET_BOARDING_ADDRESS: 10_000,
+    GET_STATUS: 10_000,
+    GET_DELEGATE_INFO: 10_000,
+    IS_CONTRACT_MANAGER_WATCHING: 10_000,
+
+    // Medium reads — may involve indexer queries
+    GET_VTXOS: 20_000,
+    GET_BOARDING_UTXOS: 20_000,
+    GET_TRANSACTION_HISTORY: 20_000,
+    GET_CONTRACTS: 20_000,
+    GET_CONTRACTS_WITH_VTXOS: 20_000,
+    GET_SPENDABLE_PATHS: 20_000,
+    GET_ALL_SPENDING_PATHS: 20_000,
+    GET_ASSET_DETAILS: 20_000,
+    GET_EXPIRING_VTXOS: 20_000,
+    GET_EXPIRED_BOARDING_UTXOS: 20_000,
+    GET_RECOVERABLE_BALANCE: 20_000,
+    RELOAD_WALLET: 20_000,
+
+    // Transactions — need more headroom
+    SEND_BITCOIN: 50_000,
+    SEND: 50_000,
+    SETTLE: 50_000,
+    ISSUE: 50_000,
+    REISSUE: 50_000,
+    BURN: 50_000,
+    DELEGATE: 50_000,
+    RECOVER_VTXOS: 50_000,
+    RENEW_VTXOS: 50_000,
+    SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+
+    // Misc writes
+    INIT_WALLET: 30_000,
+    CLEAR: 10_000,
+    SIGN_TRANSACTION: 30_000,
+    CREATE_CONTRACT: 30_000,
+    UPDATE_CONTRACT: 30_000,
+    DELETE_CONTRACT: 10_000,
+    REFRESH_VTXOS: 30_000,
+};
+
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
     "GET_BALANCE",
@@ -272,6 +321,7 @@ interface ServiceWorkerWalletOptions {
     messageBusTimeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    messageTimeouts?: MessageTimeouts;
 }
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
     serviceWorker: ServiceWorker;
@@ -348,6 +398,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected initConfig: MessageBusInitConfig | null = null;
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
     protected messageBusTimeoutMs?: number;
+    protected messageTimeouts: Record<RequestType, number> =
+        DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>;
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<
@@ -373,6 +425,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             (msg) => this.sendMessage(msg),
             messageTag
         );
+    }
+
+    private getTimeoutForRequest(request: WalletUpdaterRequest): number {
+        return this.messageTimeouts[request.type] ?? 30_000;
     }
 
     static async create(
@@ -449,6 +505,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         };
         wallet.initWalletPayload = initConfig;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
+        if (options.messageTimeouts) {
+            wallet.messageTimeouts = {
+                ...DEFAULT_MESSAGE_TIMEOUTS,
+                ...options.messageTimeouts,
+            } as Record<RequestType, number>;
+        }
 
         return wallet;
     }
@@ -491,7 +553,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     private sendMessageDirect(
-        request: WalletUpdaterRequest
+        request: WalletUpdaterRequest,
+        timeoutMs: number
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const cleanup = () => {
@@ -509,7 +572,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                         `Service worker message timed out (${request.type})`
                     )
                 );
-            }, 30_000);
+            }, timeoutMs);
 
             const messageHandler = (
                 event: MessageEvent<WalletUpdaterResponse>
@@ -540,7 +603,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     private sendMessageStreaming(
         request: WalletUpdaterRequest,
         onEvent: (response: WalletUpdaterResponse) => void,
-        isComplete: (response: WalletUpdaterResponse) => boolean
+        isComplete: (response: WalletUpdaterResponse) => boolean,
+        timeoutMs: number
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const resetTimeout = () => {
@@ -552,7 +616,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                             `Service worker message timed out (${request.type})`
                         )
                     );
-                }, 30_000);
+                }, timeoutMs);
             };
 
             const cleanup = () => {
@@ -667,10 +731,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             }
         }
 
+        const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
-                return await this.sendMessageDirect(request);
+                return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
                 if (
                     !isMessageBusNotInitializedError(error) ||
@@ -699,13 +764,15 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             }
         }
 
+        const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
                 return await this.sendMessageStreaming(
                     request,
                     onEvent,
-                    isComplete
+                    isComplete,
+                    timeoutMs
                 );
             } catch (error: any) {
                 if (
@@ -741,7 +808,10 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 payload: this.initWalletPayload,
             };
 
-            await this.sendMessageDirect(initMessage);
+            await this.sendMessageDirect(
+                initMessage,
+                this.getTimeoutForRequest(initMessage)
+            );
         })().finally(() => {
             this.reinitPromise = null;
         });
@@ -1228,6 +1298,12 @@ export class ServiceWorkerWallet
         };
         wallet.initWalletPayload = initConfig;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
+        if (options.messageTimeouts) {
+            wallet.messageTimeouts = {
+                ...DEFAULT_MESSAGE_TIMEOUTS,
+                ...options.messageTimeouts,
+            } as Record<RequestType, number>;
+        }
 
         return wallet;
     }
