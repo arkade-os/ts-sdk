@@ -386,7 +386,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private knownBoardingUtxos = new Set<string>();
     private sweptBoardingUtxos = new Set<string>();
     private pollInProgress = false;
-    private pollDone?: { resolve: () => void; promise: Promise<void> };
+    private pollDone?: { promise: Promise<void>; resolve: () => void };
     private disposed = false;
     private consecutivePollFailures = 0;
     private startupPollTimeoutId?: ReturnType<typeof setTimeout>;
@@ -1010,11 +1010,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         this.pollInProgress = true;
 
         // Create a promise that dispose() can await
-        let resolvePollDone: () => void;
-        this.pollDone = {
-            resolve: () => resolvePollDone(),
-            promise: new Promise((r) => (resolvePollDone = r)),
-        };
+        let resolve: () => void;
+        const promise = new Promise<void>((r) => (resolve = r));
+        this.pollDone = { promise, resolve: resolve! };
 
         let hadError = false;
 
@@ -1125,8 +1123,15 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 clearTimeout(this.pollTimeoutId);
                 this.pollTimeoutId = undefined;
             }
-            // Wait for any in-flight poll to finish
-            await this.pollDone?.promise;
+            // Wait for any in-flight poll to finish (with timeout to avoid hanging)
+            if (this.pollDone) {
+                let timer: ReturnType<typeof setTimeout>;
+                const timeout = new Promise<void>(
+                    (r) => (timer = setTimeout(r, 30_000))
+                );
+                await Promise.race([this.pollDone.promise, timeout]);
+                clearTimeout(timer!);
+            }
             const subscription = await this.contractEventsSubscriptionReady;
             this.contractEventsSubscription = undefined;
             subscription?.();
