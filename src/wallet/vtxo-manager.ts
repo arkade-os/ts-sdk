@@ -386,6 +386,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private knownBoardingUtxos = new Set<string>();
     private sweptBoardingUtxos = new Set<string>();
     private pollInProgress = false;
+    private pollDone?: { resolve: () => void; promise: Promise<void> };
     private disposed = false;
     private consecutivePollFailures = 0;
     private startupPollTimeoutId?: ReturnType<typeof setTimeout>;
@@ -1003,9 +1004,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private async pollBoardingUtxos(): Promise<void> {
         // Guard: wallet must support boarding UTXO + sweep operations
         if (!isSweepCapable(this.wallet)) return;
-        // Skip if a previous poll is still running
+        // Skip if disposed or a previous poll is still running
+        if (this.disposed) return;
         if (this.pollInProgress) return;
         this.pollInProgress = true;
+
+        // Create a promise that dispose() can await
+        let resolvePollDone: () => void;
+        this.pollDone = {
+            resolve: () => resolvePollDone(),
+            promise: new Promise((r) => (resolvePollDone = r)),
+        };
 
         let hadError = false;
 
@@ -1043,6 +1052,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 this.consecutivePollFailures = 0;
             }
             this.pollInProgress = false;
+            this.pollDone.resolve();
+            this.pollDone = undefined;
             this.schedulePoll();
         }
     }
@@ -1114,6 +1125,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 clearTimeout(this.pollTimeoutId);
                 this.pollTimeoutId = undefined;
             }
+            // Wait for any in-flight poll to finish
+            await this.pollDone?.promise;
             const subscription = await this.contractEventsSubscriptionReady;
             this.contractEventsSubscription = undefined;
             subscription?.();
