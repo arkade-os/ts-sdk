@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/boltz-swap",
-    "version": "0.3.7",
+    "version": "0.3.8",
     "type": "module",
     "description": "A production-ready TypeScript package that brings Boltz submarine-swaps to Arkade.",
     "main": "./dist/index.js",
