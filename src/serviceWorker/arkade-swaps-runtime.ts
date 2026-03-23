@@ -948,6 +948,11 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
+    async reset(): Promise<void> {
+        await this.dispose();
+        await this.swapRepository.clear();
+    }
+
     async dispose(): Promise<void> {
         if (this.withSwapManager) {
             await this.stopSwapManager().catch(() => {});

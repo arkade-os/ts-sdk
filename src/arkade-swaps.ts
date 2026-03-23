@@ -328,6 +328,14 @@ export class ArkadeSwaps {
      * Dispose of resources (stops SwapManager and cleans up).
      * Can be called manually or automatically with `await using` syntax (TypeScript 5.2+).
      */
+    /**
+     * Reset all swap state: stops the SwapManager and clears the swap repository.
+     */
+    async reset(): Promise<void> {
+        await this.dispose();
+        await this.swapRepository.clear();
+    }
+
     async dispose(): Promise<void> {
         if (this.swapManager) {
             await this.stopSwapManager();
@@ -2338,5 +2346,6 @@ export interface IArkadeSwaps extends AsyncDisposable {
         swap: PendingSubmarineSwap,
         invoice: string
     ): PendingSubmarineSwap;
+    reset(): Promise<void>;
     dispose(): Promise<void>;
 }

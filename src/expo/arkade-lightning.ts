@@ -210,6 +210,11 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
     // ── Lifecycle ────────────────────────────────────────────────────
 
+    async reset(): Promise<void> {
+        await this.dispose();
+        await this.inner.swapRepository.clear();
+    }
+
     async dispose(): Promise<void> {
         if (this.foregroundIntervalId) {
             clearInterval(this.foregroundIntervalId);
