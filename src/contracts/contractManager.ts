@@ -728,6 +728,7 @@ export class ContractManager implements IContractManager {
 
             hasMore = page ? vtxos.length === pageSize : false;
             pageIndex++;
+            if (hasMore) await new Promise((r) => setTimeout(r, 500));
         }
 
         return result;
@@ -761,6 +762,7 @@ export class ContractManager implements IContractManager {
 
             hasMore = page ? vtxos.length === pageSize : false;
             pageIndex++;
+            if (hasMore) await new Promise((r) => setTimeout(r, 500));
         }
 
         return allVtxos;
