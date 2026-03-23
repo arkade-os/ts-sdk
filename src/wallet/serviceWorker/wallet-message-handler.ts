@@ -1092,44 +1092,13 @@ export class WalletMessageHandler
         // with full VTXO history for all contracts (one indexer call per contract)
         await this.ensureContractEventBroadcasting();
 
-        // Read VTXOs from repository (now populated by contract manager)
-        const vtxos = await this.getVtxosFromRepo();
-
-        if (this.wallet) {
-            try {
-                // recover pending transactions if possible
-                const { pending, finalized } =
-                    await this.wallet.finalizePendingTxs(
-                        vtxos.filter(
-                            (vtxo) =>
-                                vtxo.virtualStatus.state !== "swept" &&
-                                vtxo.virtualStatus.state !== "settled"
-                        )
-                    );
-                console.info(
-                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
-                );
-            } catch (error: unknown) {
-                console.error("Error recovering pending transactions:", error);
-            }
-        }
-
-        // Fetch boarding utxos and save using unified repository
-        const boardingAddress = await this.readonlyWallet.getBoardingAddress();
-        const coins =
-            await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
-        await this.walletRepository.saveUtxos(
-            boardingAddress,
-            coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo))
-        );
-
-        // Build transaction history from cached VTXOs (no indexer call)
-        const address = await this.readonlyWallet.getAddress();
-        const txs = await this.buildTransactionHistoryFromCache(vtxos);
-        if (txs) await this.walletRepository.saveTransactions(address, txs);
+        // Refresh cached data (VTXOs, boarding UTXOs, tx history)
+        await this.refreshCachedData();
 
         // unsubscribe previous subscription if any
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
+
+        const address = await this.readonlyWallet.getAddress();
 
         // subscribe for incoming funds and notify all clients when new funds arrive
         this.incomingFundsSubscription =
@@ -1203,14 +1172,62 @@ export class WalletMessageHandler
     }
 
     /**
-     * Force a full VTXO refresh from the indexer, then re-run bootstrap.
-     * Used by RELOAD_WALLET to ensure fresh data.
+     * Refresh VTXOs, boarding UTXOs, and transaction history from cache.
+     * Shared by onWalletInitialized (full bootstrap) and reloadWallet
+     * (post-refresh), avoiding duplicate subscriptions and VtxoManager restarts.
+     */
+    private async refreshCachedData() {
+        if (!this.readonlyWallet || !this.walletRepository) {
+            return;
+        }
+
+        // Read VTXOs from repository (now populated by contract manager)
+        const vtxos = await this.getVtxosFromRepo();
+
+        if (this.wallet) {
+            try {
+                // recover pending transactions if possible
+                const { pending, finalized } =
+                    await this.wallet.finalizePendingTxs(
+                        vtxos.filter(
+                            (vtxo) =>
+                                vtxo.virtualStatus.state !== "swept" &&
+                                vtxo.virtualStatus.state !== "settled"
+                        )
+                    );
+                console.info(
+                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
+                );
+            } catch (error: unknown) {
+                console.error("Error recovering pending transactions:", error);
+            }
+        }
+
+        // Fetch boarding utxos and save using unified repository
+        const boardingAddress = await this.readonlyWallet.getBoardingAddress();
+        const coins =
+            await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
+        await this.walletRepository.saveUtxos(
+            boardingAddress,
+            coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo))
+        );
+
+        // Build transaction history from cached VTXOs (no indexer call)
+        const address = await this.readonlyWallet.getAddress();
+        const txs = await this.buildTransactionHistoryFromCache(vtxos);
+        if (txs) await this.walletRepository.saveTransactions(address, txs);
+    }
+
+    /**
+     * Force a full VTXO refresh from the indexer, then refresh cached data.
+     * Used by RELOAD_WALLET to ensure fresh data without re-subscribing
+     * to incoming funds or restarting the VtxoManager.
      */
     private async reloadWallet() {
         if (!this.readonlyWallet) return;
         const manager = await this.readonlyWallet.getContractManager();
         await manager.refreshVtxos();
-        await this.onWalletInitialized();
+        await this.refreshCachedData();
     }
 
     private async handleSettle(message: RequestSettle) {

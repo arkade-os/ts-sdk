@@ -1440,6 +1440,46 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(refreshSpy).toHaveBeenCalled();
     });
 
+    it("RELOAD_WALLET does not re-subscribe or restart VtxoManager", async () => {
+        setupHandler();
+        const notifyFundsSpy = (updater as any).readonlyWallet
+            .notifyIncomingFunds;
+        const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
+        const refreshSpy = vi.fn().mockResolvedValue(undefined);
+        (updater as any).readonlyWallet.getContractManager = vi
+            .fn()
+            .mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
+                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                refreshVtxos: refreshSpy,
+            });
+        (updater as any).wallet = {
+            getVtxoManager: getVtxoManagerSpy,
+            finalizePendingTxs: vi
+                .fn()
+                .mockResolvedValue({ pending: [], finalized: [] }),
+        };
+
+        // First: full init (sets up subscriptions + VtxoManager)
+        await (updater as any).onWalletInitialized();
+        expect(notifyFundsSpy).toHaveBeenCalledOnce();
+        expect(getVtxoManagerSpy).toHaveBeenCalledOnce();
+
+        // Reset spies to track only reloadWallet calls
+        notifyFundsSpy.mockClear();
+        getVtxoManagerSpy.mockClear();
+
+        // Second: reload should NOT re-subscribe or restart VtxoManager
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "RELOAD_WALLET",
+        } as any);
+
+        expect(refreshSpy).toHaveBeenCalled();
+        expect(notifyFundsSpy).not.toHaveBeenCalled();
+        expect(getVtxoManagerSpy).not.toHaveBeenCalled();
+    });
+
     it("onWalletInitialized does not call indexerProvider.getVtxos", async () => {
         setupHandler();
         (updater as any).wallet = {
