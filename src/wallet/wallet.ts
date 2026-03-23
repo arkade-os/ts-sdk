@@ -1980,41 +1980,59 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             vtxos = allExtended;
         }
+        const batches: ExtendedVirtualCoin[][] = [];
+        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_INTENT) {
+            batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_INTENT));
+        }
+
+        const results = await Promise.all(
+            batches.map(async (batch) => {
+                const batchFinalized: string[] = [];
+                const batchPending: string[] = [];
+
+                const intent =
+                    await this.makeGetPendingTxIntentSignature(batch);
+                const pendingTxs = await this.arkProvider.getPendingTxs(intent);
+
+                for (const pendingTx of pendingTxs) {
+                    batchPending.push(pendingTx.arkTxid);
+                    try {
+                        const finalCheckpoints = await Promise.all(
+                            pendingTx.signedCheckpointTxs.map(async (c) => {
+                                const tx = Transaction.fromPSBT(
+                                    base64.decode(c)
+                                );
+                                const signedCheckpoint =
+                                    await this.identity.sign(tx);
+                                return base64.encode(signedCheckpoint.toPSBT());
+                            })
+                        );
+
+                        await this.arkProvider.finalizeTx(
+                            pendingTx.arkTxid,
+                            finalCheckpoints
+                        );
+                        batchFinalized.push(pendingTx.arkTxid);
+                    } catch (error) {
+                        console.error(
+                            `Failed to finalize transaction ${pendingTx.arkTxid}:`,
+                            error
+                        );
+                    }
+                }
+
+                return {
+                    finalized: batchFinalized,
+                    pending: batchPending,
+                };
+            })
+        );
+
         const finalized: string[] = [];
         const pending: string[] = [];
-
-        for (let i = 0; i < vtxos.length; i += MAX_INPUTS_PER_INTENT) {
-            const batch = vtxos.slice(i, i + MAX_INPUTS_PER_INTENT);
-            const intent = await this.makeGetPendingTxIntentSignature(batch);
-            const pendingTxs = await this.arkProvider.getPendingTxs(intent);
-
-            // finalize each transaction by signing the checkpoints
-            for (const pendingTx of pendingTxs) {
-                pending.push(pendingTx.arkTxid);
-                try {
-                    // sign the checkpoints
-                    const finalCheckpoints = await Promise.all(
-                        pendingTx.signedCheckpointTxs.map(async (c) => {
-                            const tx = Transaction.fromPSBT(base64.decode(c));
-                            const signedCheckpoint =
-                                await this.identity.sign(tx);
-                            return base64.encode(signedCheckpoint.toPSBT());
-                        })
-                    );
-
-                    await this.arkProvider.finalizeTx(
-                        pendingTx.arkTxid,
-                        finalCheckpoints
-                    );
-                    finalized.push(pendingTx.arkTxid);
-                } catch (error) {
-                    console.error(
-                        `Failed to finalize transaction ${pendingTx.arkTxid}:`,
-                        error
-                    );
-                    // continue with other transactions even if one fails
-                }
-            }
+        for (const result of results) {
+            finalized.push(...result.finalized);
+            pending.push(...result.pending);
         }
 
         return { finalized, pending };
