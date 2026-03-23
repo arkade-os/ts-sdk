@@ -1274,10 +1274,7 @@ export class SwapManager implements SwapManagerClient {
                             }
                         }, 2000);
                     } else {
-                        logger.error(
-                            `Failed to poll swap ${swap.id}:`,
-                            error
-                        );
+                        logger.error(`Failed to poll swap ${swap.id}:`, error);
                     }
                 }
             }

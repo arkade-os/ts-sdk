@@ -2241,4 +2241,169 @@ describe("ArkadeSwaps", () => {
             });
         });
     });
+
+    describe("restoreSwaps", () => {
+        const mockLeaf = { version: 0, output: "" };
+        const mockTree = {
+            claimLeaf: mockLeaf,
+            refundLeaf: mockLeaf,
+            refundWithoutBoltzLeaf: mockLeaf,
+            unilateralClaimLeaf: mockLeaf,
+            unilateralRefundLeaf: mockLeaf,
+            unilateralRefundWithoutBoltzLeaf: mockLeaf,
+        };
+        const mockDetails = {
+            tree: mockTree,
+            amount: 50000,
+            keyIndex: 0,
+            lockupAddress: "mock-lockup",
+            serverPublicKey: compressedPubkeys.boltz,
+            timeoutBlockHeight: 100,
+        };
+
+        const pendingReverse = {
+            id: "rev-pending",
+            type: "reverse" as const,
+            to: "ARK" as const,
+            from: "BTC" as const,
+            status: "swap.created",
+            createdAt: 1000,
+            preimageHash: hex.encode(sha256(randomBytes(32))),
+            claimDetails: mockDetails,
+        };
+
+        const finalReverse = {
+            ...pendingReverse,
+            id: "rev-final",
+            status: "invoice.settled",
+        };
+
+        const pendingSubmarine = {
+            id: "sub-pending",
+            type: "submarine" as const,
+            to: "BTC" as const,
+            from: "ARK" as const,
+            status: "transaction.mempool",
+            createdAt: 2000,
+            preimageHash: hex.encode(sha256(randomBytes(32))),
+            refundDetails: mockDetails,
+        };
+
+        const finalSubmarine = {
+            ...pendingSubmarine,
+            id: "sub-final",
+            status: "transaction.claimed",
+        };
+
+        const pendingChain = {
+            id: "chain-pending",
+            type: "chain" as const,
+            to: "BTC" as const,
+            from: "ARK" as const,
+            status: "transaction.server.mempool",
+            createdAt: 3000,
+            preimageHash: hex.encode(sha256(randomBytes(32))),
+            refundDetails: {
+                ...mockDetails,
+                tree: mockTree,
+            },
+        };
+
+        const finalChain = {
+            ...pendingChain,
+            id: "chain-final",
+            status: "transaction.claimed",
+        };
+
+        it("should skip swaps in a final status", async () => {
+            const restoreSpy = vi
+                .spyOn(swapProvider, "restoreSwaps")
+                .mockResolvedValueOnce([
+                    finalReverse,
+                    finalSubmarine,
+                    finalChain,
+                ]);
+            const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
+            const getFeesSpy = vi
+                .spyOn(swapProvider, "getFees")
+                .mockResolvedValueOnce({} as any);
+
+            const result = await swaps.restoreSwaps();
+
+            expect(restoreSpy).toHaveBeenCalledOnce();
+            expect(getPreimageSpy).not.toHaveBeenCalled();
+            expect(result.reverseSwaps).toHaveLength(0);
+            expect(result.submarineSwaps).toHaveLength(0);
+            expect(result.chainSwaps).toHaveLength(0);
+        });
+
+        const mockFees = {
+            submarine: { percentage: 0.1, minerFees: 100 },
+            reverse: {
+                percentage: 0.25,
+                minerFees: { lockup: 50, claim: 50 },
+            },
+        };
+
+        it("should restore swaps that are still pending", async () => {
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
+                pendingReverse,
+                pendingSubmarine,
+                pendingChain,
+            ]);
+            vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
+                preimage: hex.encode(randomBytes(32)),
+            });
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(
+                mockFees as any
+            );
+
+            const result = await swaps.restoreSwaps();
+
+            expect(result.reverseSwaps).toHaveLength(1);
+            expect(result.reverseSwaps[0].id).toBe("rev-pending");
+            expect(result.submarineSwaps).toHaveLength(1);
+            expect(result.submarineSwaps[0].id).toBe("sub-pending");
+            expect(result.chainSwaps).toHaveLength(1);
+            expect(result.chainSwaps[0].id).toBe("chain-pending");
+        });
+
+        it("should only restore pending swaps from a mixed set", async () => {
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
+                finalReverse,
+                pendingReverse,
+                finalSubmarine,
+                pendingSubmarine,
+                finalChain,
+                pendingChain,
+            ]);
+            vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
+                preimage: hex.encode(randomBytes(32)),
+            });
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(
+                mockFees as any
+            );
+
+            const result = await swaps.restoreSwaps();
+
+            expect(result.reverseSwaps).toHaveLength(1);
+            expect(result.reverseSwaps[0].id).toBe("rev-pending");
+            expect(result.submarineSwaps).toHaveLength(1);
+            expect(result.submarineSwaps[0].id).toBe("sub-pending");
+            expect(result.chainSwaps).toHaveLength(1);
+            expect(result.chainSwaps[0].id).toBe("chain-pending");
+        });
+
+        it("should not call getSwapPreimage for final submarine swaps", async () => {
+            const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
+            vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
+                finalSubmarine,
+            ]);
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce({} as any);
+
+            await swaps.restoreSwaps();
+
+            expect(getPreimageSpy).not.toHaveBeenCalled();
+        });
+    });
 });
