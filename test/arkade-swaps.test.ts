@@ -2315,7 +2315,15 @@ describe("ArkadeSwaps", () => {
             status: "transaction.claimed",
         };
 
-        it("should skip swaps in a final status", async () => {
+        const mockFees = {
+            submarine: { percentage: 0.1, minerFees: 100 },
+            reverse: {
+                percentage: 0.25,
+                minerFees: { lockup: 50, claim: 50 },
+            },
+        };
+
+        it("should include terminal swaps in results without extra API fetches", async () => {
             const restoreSpy = vi
                 .spyOn(swapProvider, "restoreSwaps")
                 .mockResolvedValueOnce([
@@ -2324,26 +2332,20 @@ describe("ArkadeSwaps", () => {
                     finalChain,
                 ]);
             const getPreimageSpy = vi.spyOn(swapProvider, "getSwapPreimage");
-            const getFeesSpy = vi
-                .spyOn(swapProvider, "getFees")
-                .mockResolvedValueOnce({} as any);
+            vi.spyOn(swapProvider, "getFees").mockResolvedValueOnce(
+                mockFees as any
+            );
 
             const result = await swaps.restoreSwaps();
 
             expect(restoreSpy).toHaveBeenCalledOnce();
+            // Terminal submarine swaps should NOT trigger a preimage fetch
             expect(getPreimageSpy).not.toHaveBeenCalled();
-            expect(result.reverseSwaps).toHaveLength(0);
-            expect(result.submarineSwaps).toHaveLength(0);
-            expect(result.chainSwaps).toHaveLength(0);
+            // Terminal swaps are still returned so callers can rebuild full history
+            expect(result.reverseSwaps).toHaveLength(1);
+            expect(result.submarineSwaps).toHaveLength(1);
+            expect(result.chainSwaps).toHaveLength(1);
         });
-
-        const mockFees = {
-            submarine: { percentage: 0.1, minerFees: 100 },
-            reverse: {
-                percentage: 0.25,
-                minerFees: { lockup: 50, claim: 50 },
-            },
-        };
 
         it("should restore swaps that are still pending", async () => {
             vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
@@ -2368,7 +2370,7 @@ describe("ArkadeSwaps", () => {
             expect(result.chainSwaps[0].id).toBe("chain-pending");
         });
 
-        it("should only restore pending swaps from a mixed set", async () => {
+        it("should restore both terminal and pending swaps from a mixed set", async () => {
             vi.spyOn(swapProvider, "restoreSwaps").mockResolvedValueOnce([
                 finalReverse,
                 pendingReverse,
@@ -2377,6 +2379,7 @@ describe("ArkadeSwaps", () => {
                 finalChain,
                 pendingChain,
             ]);
+            // Only pendingSubmarine triggers a preimage fetch (finalSubmarine is terminal)
             vi.spyOn(swapProvider, "getSwapPreimage").mockResolvedValueOnce({
                 preimage: hex.encode(randomBytes(32)),
             });
@@ -2386,12 +2389,23 @@ describe("ArkadeSwaps", () => {
 
             const result = await swaps.restoreSwaps();
 
-            expect(result.reverseSwaps).toHaveLength(1);
-            expect(result.reverseSwaps[0].id).toBe("rev-pending");
-            expect(result.submarineSwaps).toHaveLength(1);
-            expect(result.submarineSwaps[0].id).toBe("sub-pending");
-            expect(result.chainSwaps).toHaveLength(1);
-            expect(result.chainSwaps[0].id).toBe("chain-pending");
+            expect(result.reverseSwaps).toHaveLength(2);
+            expect(result.reverseSwaps.map((s) => s.id)).toContain("rev-final");
+            expect(result.reverseSwaps.map((s) => s.id)).toContain(
+                "rev-pending"
+            );
+            expect(result.submarineSwaps).toHaveLength(2);
+            expect(result.submarineSwaps.map((s) => s.id)).toContain(
+                "sub-final"
+            );
+            expect(result.submarineSwaps.map((s) => s.id)).toContain(
+                "sub-pending"
+            );
+            expect(result.chainSwaps).toHaveLength(2);
+            expect(result.chainSwaps.map((s) => s.id)).toContain("chain-final");
+            expect(result.chainSwaps.map((s) => s.id)).toContain(
+                "chain-pending"
+            );
         });
 
         it("should not call getSwapPreimage for final submarine swaps", async () => {

@@ -2072,18 +2072,6 @@ export class ArkadeSwaps {
         for (const swap of restoredSwaps) {
             const { id, createdAt, status } = swap;
 
-            // Skip swaps that have already reached a terminal state — there is
-            // nothing actionable and fetching extra data (e.g. preimage) just
-            // wastes API calls and can trigger 429s.
-            if (
-                (isRestoredReverseSwap(swap) && isReverseFinalStatus(status)) ||
-                (isRestoredSubmarineSwap(swap) &&
-                    isSubmarineFinalStatus(status)) ||
-                (isRestoredChainSwap(swap) && isChainFinalStatus(status))
-            ) {
-                continue;
-            }
-
             if (isRestoredReverseSwap(swap)) {
                 const {
                     amount,
@@ -2132,16 +2120,20 @@ export class ArkadeSwaps {
                     swap.refundDetails;
 
                 let preimage = "";
-                try {
-                    const data = await this.swapProvider.getSwapPreimage(
-                        swap.id
-                    );
-                    preimage = data.preimage;
-                } catch (error) {
-                    logger.warn(
-                        `Failed to restore preimage for submarine swap ${id}`,
-                        error
-                    );
+                // Skip preimage fetch for terminal swaps — nothing actionable
+                // and it avoids unnecessary API calls / 429s.
+                if (!isSubmarineFinalStatus(status)) {
+                    try {
+                        const data = await this.swapProvider.getSwapPreimage(
+                            swap.id
+                        );
+                        preimage = data.preimage;
+                    } catch (error) {
+                        logger.warn(
+                            `Failed to restore preimage for submarine swap ${id}`,
+                            error
+                        );
+                    }
                 }
 
                 submarineSwaps.push({
