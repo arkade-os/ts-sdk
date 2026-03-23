@@ -188,6 +188,7 @@ export class SwapManager implements SwapManagerClient {
     private initialSwaps = new Map<string, PendingSwap>(); // All swaps passed to start(), including completed ones
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    private initialPollTimer: ReturnType<typeof setTimeout> | null = null;
     private isRunning = false;
     private currentReconnectDelay: number;
     private currentPollRetryDelay: number;
@@ -432,6 +433,11 @@ export class SwapManager implements SwapManagerClient {
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
+        }
+
+        if (this.initialPollTimer) {
+            clearTimeout(this.initialPollTimer);
+            this.initialPollTimer = null;
         }
     }
 
@@ -691,8 +697,16 @@ export class SwapManager implements SwapManagerClient {
                     this.subscribeToSwap(swapId);
                 }
 
-                // CRITICAL: Poll all swaps AFTER WebSocket connects
-                this.pollAllSwaps();
+                // Poll all swaps after WebSocket connects to catch any
+                // status changes missed while disconnected. Delayed to avoid
+                // hitting Boltz rate limits when other API calls (e.g. swap
+                // restoration) fire during startup.
+                this.initialPollTimer = setTimeout(() => {
+                    this.initialPollTimer = null;
+                    if (this.isRunning) {
+                        this.pollAllSwaps();
+                    }
+                }, 2000);
 
                 // Start regular polling interval
                 this.startPolling();
@@ -1230,7 +1244,41 @@ export class SwapManager implements SwapManagerClient {
                         );
                     }
                 } catch (error) {
-                    logger.error(`Failed to poll swap ${swap.id}:`, error);
+                    // On 429 (rate-limited), schedule a single retry for this
+                    // swap rather than waiting the full poll interval. This
+                    // avoids a 30s gap in status tracking after a burst.
+                    if (
+                        error instanceof NetworkError &&
+                        error.statusCode === 429
+                    ) {
+                        logger.warn(
+                            `Rate-limited polling swap ${swap.id}, retrying in 2s`
+                        );
+                        setTimeout(async () => {
+                            try {
+                                const retry =
+                                    await this.swapProvider.getSwapStatus(
+                                        swap.id
+                                    );
+                                if (retry.status !== swap.status) {
+                                    await this.handleSwapStatusUpdate(
+                                        swap,
+                                        retry.status
+                                    );
+                                }
+                            } catch (retryError) {
+                                logger.error(
+                                    `Retry poll for swap ${swap.id} also failed:`,
+                                    retryError
+                                );
+                            }
+                        }, 2000);
+                    } else {
+                        logger.error(
+                            `Failed to poll swap ${swap.id}:`,
+                            error
+                        );
+                    }
                 }
             }
         );
