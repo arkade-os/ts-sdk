@@ -701,7 +701,7 @@ export class ContractManager implements IContractManager {
         );
 
         const scripts = contracts.map((c) => c.script);
-        const pageSize = 100;
+        const pageSize = 200;
         const opts = includeSpent ? {} : { spendableOnly: true };
         let pageIndex = 0;
         let hasMore = true;
@@ -737,7 +737,7 @@ export class ContractManager implements IContractManager {
         contract: Contract,
         includeSpent: boolean
     ): Promise<ContractVtxo[]> {
-        const pageSize = 100;
+        const pageSize = 200;
         const allVtxos: ContractVtxo[] = [];
         let pageIndex = 0;
         let hasMore = true;
