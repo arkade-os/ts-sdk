@@ -511,12 +511,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const boardingAddress = await this.getBoardingAddress();
         const txs = await this.onchainProvider.getTransactions(boardingAddress);
 
+        const outspendCache = new Map<
+            string,
+            Awaited<ReturnType<typeof this.onchainProvider.getTxOutspends>>
+        >();
+
         for (const tx of txs) {
             for (let i = 0; i < tx.vout.length; i++) {
                 const vout = tx.vout[i];
                 if (vout.scriptpubkey_address === boardingAddress) {
-                    const spentStatuses =
-                        await this.onchainProvider.getTxOutspends(tx.txid);
+                    let spentStatuses = outspendCache.get(tx.txid);
+                    if (!spentStatuses) {
+                        spentStatuses =
+                            await this.onchainProvider.getTxOutspends(tx.txid);
+                        outspendCache.set(tx.txid, spentStatuses);
+                    }
                     const spentStatus = spentStatuses[i];
 
                     if (spentStatus?.spent) {
