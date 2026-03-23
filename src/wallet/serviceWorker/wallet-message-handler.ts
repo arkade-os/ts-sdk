@@ -1436,25 +1436,38 @@ export class WalletMessageHandler
             }
         }
 
-        // getTxCreatedAt resolves the creation timestamp of a transaction.
-        // buildTransactionHistory calls this for spent-offchain VTXOs with
-        // no change outputs to determine the time of the sending tx.
-        // Returns undefined on miss so buildTransactionHistory uses its
-        // own fallback (vtxo.createdAt + 1) rather than epoch 0.
-        // The vout:0 lookup in the indexer fallback mirrors the pre-existing
-        // convention in ReadonlyWallet.getTransactionHistory().
+        // Pre-fetch uncached timestamps in a single batched indexer call.
+        // buildTransactionHistory needs these for spent-offchain VTXOs with
+        // no change outputs (i.e. arkTxId is set but no VTXO has txid === arkTxId).
+        if (this.indexerProvider) {
+            const uncachedTxids = new Set<string>();
+            for (const vtxo of vtxos) {
+                if (
+                    vtxo.isSpent &&
+                    vtxo.arkTxId &&
+                    !vtxoCreatedAt.has(vtxo.arkTxId) &&
+                    !vtxos.some((v) => v.txid === vtxo.arkTxId)
+                ) {
+                    uncachedTxids.add(vtxo.arkTxId);
+                }
+            }
+
+            if (uncachedTxids.size > 0) {
+                const outpoints = [...uncachedTxids].map((txid) => ({
+                    txid,
+                    vout: 0,
+                }));
+                const res = await this.indexerProvider.getVtxos({ outpoints });
+                for (const v of res.vtxos) {
+                    vtxoCreatedAt.set(v.txid, v.createdAt.getTime());
+                }
+            }
+        }
+
         const getTxCreatedAt = async (
             txid: string
         ): Promise<number | undefined> => {
-            const cached = vtxoCreatedAt.get(txid);
-            if (cached !== undefined) return cached;
-            if (this.indexerProvider) {
-                const res = await this.indexerProvider.getVtxos({
-                    outpoints: [{ txid, vout: 0 }],
-                });
-                return res.vtxos[0]?.createdAt.getTime();
-            }
-            return undefined;
+            return vtxoCreatedAt.get(txid);
         };
 
         return buildTransactionHistory(
