@@ -1460,9 +1460,14 @@ export class WalletMessageHandler
                     txid,
                     vout: 0,
                 }));
-                const res = await this.indexerProvider.getVtxos({ outpoints });
-                for (const v of res.vtxos) {
-                    vtxoCreatedAt.set(v.txid, v.createdAt.getTime());
+                const BATCH_SIZE = 100;
+                for (let i = 0; i < outpoints.length; i += BATCH_SIZE) {
+                    const res = await this.indexerProvider.getVtxos({
+                        outpoints: outpoints.slice(i, i + BATCH_SIZE),
+                    });
+                    for (const v of res.vtxos) {
+                        vtxoCreatedAt.set(v.txid, v.createdAt.getTime());
+                    }
                 }
             }
         }
