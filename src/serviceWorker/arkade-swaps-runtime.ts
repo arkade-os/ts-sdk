@@ -948,6 +948,17 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
+    /**
+     * Reset all swap state: stops the SwapManager and clears the swap repository.
+     *
+     * **Destructive** — any swap in a non-terminal state will lose its
+     * refund/claim path. Intended for wallet-reset / dev / test scenarios only.
+     */
+    async reset(): Promise<void> {
+        await this.dispose();
+        await this.swapRepository.clear();
+    }
+
     async dispose(): Promise<void> {
         if (this.withSwapManager) {
             await this.stopSwapManager().catch(() => {});

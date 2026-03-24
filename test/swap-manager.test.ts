@@ -150,7 +150,10 @@ describe("SwapManager", () => {
         });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        // Stop the manager to clean up any pending timers (e.g. the
+        // delayed initial poll) and prevent leaking into subsequent tests.
+        await swapManager?.stop();
         vi.clearAllMocks();
     });
 
@@ -449,6 +452,11 @@ describe("SwapManager", () => {
             onSwapCompleted = vi.fn();
             onActionExecuted = vi.fn();
 
+            // Reset mock swap statuses — tests may mutate them via
+            // handleSwapStatusUpdate (which sets swap.status in place).
+            mockReverseSwap.status = "swap.created";
+            mockSubmarineSwap.status = "swap.created";
+
             swapManager = new SwapManager(swapProvider, {
                 ...swapManagerConfig,
                 events: {
@@ -712,8 +720,9 @@ describe("SwapManager", () => {
                 mockWebSocket.onopen();
             }
 
-            // Give async operations time to complete (including initial poll)
-            await sleep(100);
+            // Initial poll is delayed 2s after WebSocket connect to avoid
+            // hitting Boltz rate limits during startup bursts.
+            await sleep(2100);
 
             expect(global.fetch).toHaveBeenCalled();
         });

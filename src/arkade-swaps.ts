@@ -328,6 +328,17 @@ export class ArkadeSwaps {
      * Dispose of resources (stops SwapManager and cleans up).
      * Can be called manually or automatically with `await using` syntax (TypeScript 5.2+).
      */
+    /**
+     * Reset all swap state: stops the SwapManager and clears the swap repository.
+     *
+     * **Destructive** — any swap in a non-terminal state will lose its
+     * refund/claim path. Intended for wallet-reset / dev / test scenarios only.
+     */
+    async reset(): Promise<void> {
+        await this.dispose();
+        await this.swapRepository.clear();
+    }
+
     async dispose(): Promise<void> {
         if (this.swapManager) {
             await this.stopSwapManager();
@@ -2063,6 +2074,7 @@ export class ArkadeSwaps {
 
         for (const swap of restoredSwaps) {
             const { id, createdAt, status } = swap;
+
             if (isRestoredReverseSwap(swap)) {
                 const {
                     amount,
@@ -2111,16 +2123,20 @@ export class ArkadeSwaps {
                     swap.refundDetails;
 
                 let preimage = "";
-                try {
-                    const data = await this.swapProvider.getSwapPreimage(
-                        swap.id
-                    );
-                    preimage = data.preimage;
-                } catch (error) {
-                    logger.warn(
-                        `Failed to restore preimage for submarine swap ${id}`,
-                        error
-                    );
+                // Skip preimage fetch for terminal swaps — nothing actionable
+                // and it avoids unnecessary API calls / 429s.
+                if (!isSubmarineFinalStatus(status)) {
+                    try {
+                        const data = await this.swapProvider.getSwapPreimage(
+                            swap.id
+                        );
+                        preimage = data.preimage;
+                    } catch (error) {
+                        logger.warn(
+                            `Failed to restore preimage for submarine swap ${id}`,
+                            error
+                        );
+                    }
                 }
 
                 submarineSwaps.push({
@@ -2325,5 +2341,12 @@ export interface IArkadeSwaps extends AsyncDisposable {
         swap: PendingSubmarineSwap,
         invoice: string
     ): PendingSubmarineSwap;
+    /**
+     * Reset all swap state: stops the SwapManager and clears the swap repository.
+     *
+     * **Destructive** — any swap in a non-terminal state will lose its
+     * refund/claim path. Intended for wallet-reset / dev / test scenarios only.
+     */
+    reset(): Promise<void>;
     dispose(): Promise<void>;
 }
