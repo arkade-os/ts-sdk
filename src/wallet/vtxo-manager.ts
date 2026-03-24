@@ -1052,6 +1052,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     }
                 }
             }
+        } catch (e) {
+            hadError = true;
+            console.error("Error fetching boarding UTXOs:", e);
         } finally {
             if (hadError) {
                 this.consecutivePollFailures++;
