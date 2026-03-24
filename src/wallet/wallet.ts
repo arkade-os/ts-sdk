@@ -101,6 +101,7 @@ import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 import {
     advanceSyncCursors,
+    clearSyncCursors,
     computeSyncWindow,
     getAllSyncCursors,
     SAFETY_LAG_MS,
@@ -559,6 +560,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
         ]);
 
         return { isDelta: !!window, fetchedExtended, address };
+    }
+
+    /**
+     * Clear all VTXO sync cursors, forcing a full re-bootstrap on next sync.
+     * Useful for recovery after indexer reprocessing or debugging.
+     */
+    async clearSyncCursors(): Promise<void> {
+        await clearSyncCursors(this.walletRepository);
     }
 
     async getBoardingTxs(): Promise<{

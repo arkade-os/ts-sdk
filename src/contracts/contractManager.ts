@@ -17,6 +17,13 @@ import { contractHandlers } from "./handlers";
 import { VirtualCoin } from "../wallet";
 import { extendVtxoFromContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
+import {
+    advanceSyncCursors,
+    clearSyncCursors,
+    computeSyncWindow,
+    getAllSyncCursors,
+    SAFETY_LAG_MS,
+} from "../utils/syncCursors";
 
 const DEFAULT_PAGE_SIZE = 500;
 
@@ -287,10 +294,9 @@ export class ContractManager implements IContractManager {
         // Load persisted contracts
         const contracts = await this.config.contractRepository.getContracts();
 
-        // fetch all VTXOs (including spent/swept) for all contracts,
-        // so the repository has full history for transaction history and balance
-        // TODO: what if the user has 1k contracts?
-        await this.fetchContractVxosFromIndexer(contracts, true);
+        // Delta-sync: fetch only VTXOs that changed since the last cursor,
+        // falling back to a full bootstrap for scripts seen for the first time.
+        await this.deltaSyncContracts(contracts);
 
         // Reconcile the pending frontier: fetch all not-yet-finalized VTXOs
         // to catch any that the delta window may have missed.
@@ -592,9 +598,10 @@ export class ContractManager implements IContractManager {
 
     /**
      * Force a full VTXO refresh from the indexer for all contracts.
-     * Populates the wallet repository with complete VTXO history.
+     * Clears sync cursors first so the next delta sync re-bootstraps.
      */
     async refreshVtxos(pageSize?: number): Promise<void> {
+        await clearSyncCursors(this.config.walletRepository);
         const contracts = await this.config.contractRepository.getContracts();
         await this.fetchContractVxosFromIndexer(contracts, true, pageSize);
     }
