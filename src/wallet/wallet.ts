@@ -2056,8 +2056,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             pending.push(...result.pending);
         }
 
-        // Clear the flag — recovery complete (or nothing was pending on the server)
-        await this.setPendingTxFlag(false);
+        // Only clear the flag if every discovered pending tx was finalized;
+        // if any failed, keep it so recovery retries on next startup.
+        if (finalized.length === pending.length) {
+            await this.setPendingTxFlag(false);
+        }
 
         return { finalized, pending };
     }
