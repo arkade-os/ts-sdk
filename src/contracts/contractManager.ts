@@ -292,6 +292,12 @@ export class ContractManager implements IContractManager {
         // TODO: what if the user has 1k contracts?
         await this.fetchContractVxosFromIndexer(contracts, true);
 
+        // Reconcile the pending frontier: fetch all not-yet-finalized VTXOs
+        // to catch any that the delta window may have missed.
+        if (contracts.length > 0) {
+            await this.reconcilePendingFrontier(contracts);
+        }
+
         // add all contracts to the watcher
         const now = Date.now();
         for (const contract of contracts) {
@@ -724,6 +730,46 @@ export class ContractManager implements IContractManager {
         }
 
         return result;
+    }
+
+    /**
+     * Fetch all pending (not-yet-finalized) VTXOs and upsert them into the
+     * repository. This catches VTXOs whose state changed outside the delta
+     * window (e.g. a spend that hasn't settled yet).
+     */
+    private async reconcilePendingFrontier(
+        contracts: Contract[]
+    ): Promise<void> {
+        const scripts = contracts.map((c) => c.script);
+        const scriptToContract = new Map<string, Contract>(
+            contracts.map((c) => [c.script, c])
+        );
+
+        const { vtxos } = await this.config.indexerProvider.getVtxos({
+            scripts,
+            pendingOnly: true,
+        });
+
+        // Group by contract and upsert.
+        const byContract = new Map<string, ContractVtxo[]>();
+        for (const vtxo of vtxos) {
+            if (!vtxo.script) continue;
+            const contract = scriptToContract.get(vtxo.script);
+            if (!contract) continue;
+            let arr = byContract.get(contract.address);
+            if (!arr) {
+                arr = [];
+                byContract.set(contract.address, arr);
+            }
+            arr.push({
+                ...extendVtxoFromContract(vtxo, contract),
+                contractScript: contract.script,
+            });
+        }
+
+        for (const [addr, contractVtxos] of byContract) {
+            await this.config.walletRepository.saveVtxos(addr, contractVtxos);
+        }
     }
 
     private async fetchContractVxosFromIndexer(
