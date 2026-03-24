@@ -313,7 +313,9 @@ export class ContractManager implements IContractManager {
 
         // Start watching automatically
         this.stopWatcherFn = await this.watcher.startWatching((event) => {
-            this.handleContractEvent(event);
+            this.handleContractEvent(event).catch((error) => {
+                console.error("Error handling contract event:", error);
+            });
         });
     }
 

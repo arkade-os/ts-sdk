@@ -99,6 +99,12 @@ import {
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
+import {
+    advanceSyncCursors,
+    computeSyncWindow,
+    getAllSyncCursors,
+    SAFETY_LAG_MS,
+} from "../utils/syncCursors";
 
 export type IncomingFunds =
     | {
@@ -441,45 +447,80 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const address = await this.getAddress();
-        const scriptMap = await this.getScriptMap();
+        // Batch cursor read with script map to avoid extra async hops
+        // before the fetch (background operations may run between hops).
+        const [scriptMap, cursors] = await Promise.all([
+            this.getScriptMap(),
+            getAllSyncCursors(this.walletRepository),
+        ]);
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
-        const allExtended: ExtendedVirtualCoin[] = [];
 
-        // Batch all scripts into a single indexer call
+        // Delta sync: fetch only VTXOs that changed since the last cursor.
         const allScripts = [...scriptMap.keys()];
+
+        // If any script has no cursor yet, fall back to a full bootstrap.
+        let needsBootstrap = false;
+        let minCursor = Infinity;
+        for (const s of allScripts) {
+            const c = cursors[s];
+            if (c === undefined) {
+                needsBootstrap = true;
+                break;
+            }
+            if (c < minCursor) minCursor = c;
+        }
+
+        const window = !needsBootstrap
+            ? computeSyncWindow(minCursor)
+            : undefined;
+
         const response = await this.indexerProvider.getVtxos({
             scripts: allScripts,
+            ...(window ? { after: window.after, before: window.before } : {}),
         });
 
+        // Extend every fetched VTXO and upsert into the cache.
+        const fetchedExtended: ExtendedVirtualCoin[] = [];
         for (const vtxo of response.vtxos) {
             const vtxoScript = vtxo.script
                 ? scriptMap.get(vtxo.script)
                 : undefined;
             if (!vtxoScript) continue;
-
-            if (isSpendable(vtxo)) {
-                if (
-                    !f.withRecoverable &&
-                    (isRecoverable(vtxo) || isExpired(vtxo))
-                ) {
-                    continue;
-                }
-            } else {
-                if (!f.withUnrolled || !vtxo.isUnrolled) continue;
-            }
-
-            allExtended.push({
+            fetchedExtended.push({
                 ...vtxo,
                 forfeitTapLeafScript: vtxoScript.forfeit(),
                 intentTapLeafScript: vtxoScript.forfeit(),
                 tapTree: vtxoScript.encode(),
             });
         }
+        // Save VTXOs and advance cursors concurrently.
+        const cutoff = window?.before ?? Date.now() - SAFETY_LAG_MS;
+        await Promise.all([
+            this.walletRepository.saveVtxos(address, fetchedExtended),
+            advanceSyncCursors(
+                this.walletRepository,
+                Object.fromEntries(allScripts.map((s) => [s, cutoff]))
+            ),
+        ]);
 
-        // Update cache with fresh data
-        await this.walletRepository.saveVtxos(address, allExtended);
+        // For delta syncs, read the full merged set from cache so old
+        // VTXOs that weren't in the delta are still returned.
+        const vtxos = window
+            ? await this.walletRepository.getVtxos(address)
+            : fetchedExtended;
 
-        return allExtended;
+        return vtxos.filter((vtxo) => {
+            if (isSpendable(vtxo)) {
+                if (
+                    !f.withRecoverable &&
+                    (isRecoverable(vtxo) || isExpired(vtxo))
+                ) {
+                    return false;
+                }
+                return true;
+            }
+            return !!(f.withUnrolled && vtxo.isUnrolled);
+        });
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {

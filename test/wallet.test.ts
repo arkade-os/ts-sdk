@@ -8,6 +8,7 @@ import {
     ReadonlyWallet,
 } from "../src";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
+import { IndexedDBWalletRepository } from "../src/repositories";
 import type { Coin } from "../src/wallet";
 
 // Mock fetch
@@ -23,6 +24,10 @@ const MockEventSource = vi.fn().mockImplementation((url: string) => ({
 }));
 vi.stubGlobal("EventSource", MockEventSource);
 
+// Shared IndexedDB repo — cleared between tests so cached VTXOs and
+// sync cursors from one test don't leak into the next.
+const sharedRepo = new IndexedDBWalletRepository();
+
 describe("Wallet", () => {
     // Test vector from BIP340
     const mockPrivKeyHex =
@@ -32,8 +37,9 @@ describe("Wallet", () => {
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     const mockIdentity = SingleKey.fromHex(mockPrivKeyHex);
 
-    beforeEach(() => {
+    beforeEach(async () => {
         mockFetch.mockReset();
+        await sharedRepo.clear();
     });
 
     describe("getBalance", () => {
@@ -634,6 +640,10 @@ describe("Wallet", () => {
             });
 
             const readonlyWallet = await wallet.toReadonly();
+
+            // Dispose the full wallet to stop its background VtxoManager/
+            // ContractManager operations that would consume fetch mocks.
+            await wallet.dispose();
 
             // Should be able to get balance
             mockFetch
