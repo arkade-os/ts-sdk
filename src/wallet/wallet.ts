@@ -2000,6 +2000,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             batches.push(vtxos.slice(i, i + MAX_INPUTS_PER_INTENT));
         }
 
+        // Track seen arkTxids so parallel batches don't finalize the same tx twice
+        const seen = new Set<string>();
+
         const results = await Promise.all(
             batches.map(async (batch) => {
                 const batchFinalized: string[] = [];
@@ -2010,6 +2013,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 const pendingTxs = await this.arkProvider.getPendingTxs(intent);
 
                 for (const pendingTx of pendingTxs) {
+                    if (seen.has(pendingTx.arkTxid)) continue;
+                    seen.add(pendingTx.arkTxid);
+
                     batchPending.push(pendingTx.arkTxid);
                     try {
                         const finalCheckpoints = await Promise.all(
