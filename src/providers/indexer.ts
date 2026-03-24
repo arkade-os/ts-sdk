@@ -539,9 +539,8 @@ export class RestIndexerProvider implements IndexerProvider {
                 params.append("pendingOnly", opts.pendingOnly.toString());
             if (opts.after !== undefined)
                 params.append("after", opts.after.toString());
-            if (opts.before !== undefined) {
+            if (opts.before !== undefined)
                 params.append("before", opts.before.toString());
-            }
             if (opts.pageIndex !== undefined)
                 params.append("page.index", opts.pageIndex.toString());
             if (opts.pageSize !== undefined)
