@@ -700,8 +700,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * }
      * ```
      */
-    async getExpiredBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const boardingUtxos = await this.wallet.getBoardingUtxos();
+    async getExpiredBoardingUtxos(
+        prefetchedUtxos?: ExtendedCoin[]
+    ): Promise<ExtendedCoin[]> {
+        const boardingUtxos =
+            prefetchedUtxos ?? (await this.wallet.getBoardingUtxos());
         const boardingTimelock = this.getBoardingTimelock();
 
         // For block-based timelocks, fetch the chain tip height
@@ -747,7 +750,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * }
      * ```
      */
-    async sweepExpiredBoardingUtxos(): Promise<string> {
+    async sweepExpiredBoardingUtxos(
+        prefetchedUtxos?: ExtendedCoin[]
+    ): Promise<string> {
         const sweepEnabled =
             this.settlementConfig !== false &&
             (this.settlementConfig?.boardingUtxoSweep ??
@@ -758,7 +763,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             );
         }
 
-        const allExpired = await this.getExpiredBoardingUtxos();
+        const allExpired = await this.getExpiredBoardingUtxos(prefetchedUtxos);
         // Filter out UTXOs already swept (tx broadcast but not yet confirmed)
         const expiredUtxos = allExpired.filter(
             (u) => !this.sweptBoardingUtxos.has(`${u.txid}:${u.vout}`)
@@ -1017,10 +1022,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         let hadError = false;
 
         try {
+            // Fetch boarding UTXOs once for the entire poll cycle so that
+            // settle and sweep don't each hit the network independently.
+            const boardingUtxos = await this.wallet.getBoardingUtxos();
+
             // Settle new (unexpired) UTXOs first, then sweep expired ones.
             // Sequential to avoid racing for the same UTXOs.
             try {
-                await this.settleBoardingUtxos();
+                await this.settleBoardingUtxos(boardingUtxos);
             } catch (e) {
                 hadError = true;
                 console.error("Error auto-settling boarding UTXOs:", e);
@@ -1032,7 +1041,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
             if (sweepEnabled) {
                 try {
-                    await this.sweepExpiredBoardingUtxos();
+                    await this.sweepExpiredBoardingUtxos(boardingUtxos);
                 } catch (e) {
                     if (
                         !(e instanceof Error) ||
@@ -1063,9 +1072,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * UTXOs are marked as known only after a successful settle, so failed
      * attempts will be retried on the next poll.
      */
-    private async settleBoardingUtxos(): Promise<void> {
-        const boardingUtxos = await this.wallet.getBoardingUtxos();
-
+    private async settleBoardingUtxos(
+        boardingUtxos: ExtendedCoin[]
+    ): Promise<void> {
         // Exclude expired UTXOs — those should be swept, not settled.
         // If we can't determine expired status, bail out entirely to avoid
         // accidentally settling expired UTXOs (which would conflict with sweep).
