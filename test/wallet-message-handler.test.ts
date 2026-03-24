@@ -1480,6 +1480,33 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(getVtxoManagerSpy).not.toHaveBeenCalled();
     });
 
+    it("RELOAD_WALLET does not call finalizePendingTxs", async () => {
+        setupHandler();
+        const finalizeSpy = vi
+            .fn()
+            .mockResolvedValue({ pending: [], finalized: [] });
+        const refreshSpy = vi.fn().mockResolvedValue(undefined);
+        (updater as any).readonlyWallet.getContractManager = vi
+            .fn()
+            .mockResolvedValue({
+                getContracts: vi.fn().mockResolvedValue([]),
+                onContractEvent: vi.fn().mockReturnValue(vi.fn()),
+                refreshVtxos: refreshSpy,
+            });
+        (updater as any).wallet = {
+            getVtxoManager: vi.fn().mockResolvedValue({}),
+            finalizePendingTxs: finalizeSpy,
+        };
+
+        await updater.handleMessage({
+            ...baseMessage(),
+            type: "RELOAD_WALLET",
+        } as any);
+
+        expect(refreshSpy).toHaveBeenCalled();
+        expect(finalizeSpy).not.toHaveBeenCalled();
+    });
+
     it("onWalletInitialized does not call indexerProvider.getVtxos", async () => {
         setupHandler();
         (updater as any).wallet = {

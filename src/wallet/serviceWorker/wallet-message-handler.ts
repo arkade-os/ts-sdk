@@ -1095,6 +1095,27 @@ export class WalletMessageHandler
         // Refresh cached data (VTXOs, boarding UTXOs, tx history)
         await this.refreshCachedData();
 
+        // Recover pending transactions (init-only, not on reload).
+        // Pending txs only exist if a send was interrupted mid-finalization.
+        if (this.wallet) {
+            try {
+                const vtxos = await this.getVtxosFromRepo();
+                const { pending, finalized } =
+                    await this.wallet.finalizePendingTxs(
+                        vtxos.filter(
+                            (vtxo) =>
+                                vtxo.virtualStatus.state !== "swept" &&
+                                vtxo.virtualStatus.state !== "settled"
+                        )
+                    );
+                console.info(
+                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
+                );
+            } catch (error: unknown) {
+                console.error("Error recovering pending transactions:", error);
+            }
+        }
+
         // unsubscribe previous subscription if any
         if (this.incomingFundsSubscription) this.incomingFundsSubscription();
 
@@ -1183,25 +1204,6 @@ export class WalletMessageHandler
 
         // Read VTXOs from repository (now populated by contract manager)
         const vtxos = await this.getVtxosFromRepo();
-
-        if (this.wallet) {
-            try {
-                // recover pending transactions if possible
-                const { pending, finalized } =
-                    await this.wallet.finalizePendingTxs(
-                        vtxos.filter(
-                            (vtxo) =>
-                                vtxo.virtualStatus.state !== "swept" &&
-                                vtxo.virtualStatus.state !== "settled"
-                        )
-                    );
-                console.info(
-                    `Recovered ${finalized.length}/${pending.length} pending transactions: ${finalized.join(", ")}`
-                );
-            } catch (error: unknown) {
-                console.error("Error recovering pending transactions:", error);
-            }
-        }
 
         // Fetch boarding utxos and save using unified repository
         const boardingAddress = await this.readonlyWallet.getBoardingAddress();

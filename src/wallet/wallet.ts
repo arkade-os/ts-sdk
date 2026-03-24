@@ -1942,12 +1942,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     /**
      * Finalizes pending transactions by retrieving them from the server and finalizing each one.
+     * Skips the server check entirely when no send was interrupted (no pending tx flag set).
      * @param vtxos - Optional list of VTXOs to use instead of retrieving them from the server
      * @returns Array of transaction IDs that were finalized
      */
     async finalizePendingTxs(
         vtxos?: ExtendedVirtualCoin[]
     ): Promise<{ finalized: string[]; pending: string[] }> {
+        const hasPending = await this.hasPendingTxFlag();
+        if (!hasPending) {
+            return { finalized: [], pending: [] };
+        }
+
         const MAX_INPUTS_PER_INTENT = 20;
 
         if (!vtxos || vtxos.length === 0) {
@@ -2044,7 +2050,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             pending.push(...result.pending);
         }
 
+        // Clear the flag — recovery complete (or nothing was pending on the server)
+        await this.setPendingTxFlag(false);
+
         return { finalized, pending };
+    }
+
+    private async hasPendingTxFlag(): Promise<boolean> {
+        const state = await this.walletRepository.getWalletState();
+        return state?.settings?.hasPendingTx === true;
+    }
+
+    private async setPendingTxFlag(value: boolean): Promise<void> {
+        const state = (await this.walletRepository.getWalletState()) ?? {};
+        await this.walletRepository.saveWalletState({
+            ...state,
+            settings: { ...state.settings, hasPendingTx: value },
+        });
     }
 
     /**
@@ -2319,6 +2341,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.serverUnrollScript
         );
         const signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
+
+        // Mark pending before submitting — if we crash between submit and
+        // finalize, the next init will recover via finalizePendingTxs.
+        await this.setPendingTxFlag(true);
+
         const { arkTxid, signedCheckpointTxs } =
             await this.arkProvider.submitTx(
                 base64.encode(signedVirtualTx.toPSBT()),
@@ -2332,6 +2359,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             })
         );
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+
+        await this.setPendingTxFlag(false);
+
         return { arkTxid, signedCheckpointTxs };
     }
 
