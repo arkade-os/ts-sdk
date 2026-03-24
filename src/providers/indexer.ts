@@ -119,15 +119,16 @@ export interface SubscriptionEvent extends SubscriptionResponse {
 }
 
 export type GetVtxosOptions = PaginationOptions & {
-    scripts?: string[];
-    outpoints?: Outpoint[];
     spendableOnly?: boolean;
     spentOnly?: boolean;
     recoverableOnly?: boolean;
     pendingOnly?: boolean;
     after?: number;
     before?: number;
-};
+} & (
+        | { scripts: string[]; outpoints?: never }
+        | { outpoints: Outpoint[]; scripts?: never }
+    );
 
 export interface IndexerProvider {
     getVtxoTree(
@@ -163,7 +164,7 @@ export interface IndexerProvider {
         opts?: PaginationOptions
     ): Promise<VtxoChain>;
     getVtxos(
-        opts?: GetVtxosOptions
+        opts: GetVtxosOptions
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }>;
     getAssetDetails(assetId: string): Promise<AssetDetails>;
     subscribeForScripts(
@@ -470,7 +471,7 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getVtxos(
-        opts?: GetVtxosOptions
+        opts: GetVtxosOptions
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {
         const hasScripts = (opts?.scripts?.length ?? 0) > 0;
         const hasOutpoints = (opts?.outpoints?.length ?? 0) > 0;
@@ -512,14 +513,14 @@ export class RestIndexerProvider implements IndexerProvider {
 
         // Handle scripts with multi collection format
         if (hasScripts) {
-            opts.scripts.forEach((script) => {
+            opts.scripts!.forEach((script) => {
                 params.append("scripts", script);
             });
         }
 
         // Handle outpoints with multi collection format
         if (hasOutpoints) {
-            opts.outpoints.forEach((outpoint) => {
+            opts.outpoints!.forEach((outpoint) => {
                 params.append("outpoints", `${outpoint.txid}:${outpoint.vout}`);
             });
         }

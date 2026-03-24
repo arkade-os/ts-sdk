@@ -76,6 +76,7 @@ describe("RestIndexerProvider", () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 
             await expect(
+                // @ts-expect-error scripts and outpoints are mutually exclusive
                 provider.getVtxos({
                     scripts: ["script-a"],
                     outpoints: [{ txid: "txid-1", vout: 0 }],
@@ -90,6 +91,7 @@ describe("RestIndexerProvider", () => {
         it("rejects requests without scripts or outpoints", async () => {
             const provider = new RestIndexerProvider("http://localhost:7070");
 
+            // @ts-expect-error either scripts or outpoints must be provided
             await expect(provider.getVtxos({})).rejects.toThrow(
                 "Either scripts or outpoints must be provided"
             );
