@@ -616,14 +616,13 @@ export class ContractManager implements IContractManager {
      */
     private async handleContractEvent(event: ContractEvent) {
         switch (event.type) {
-            // Every time there is a VTXO event for a contract, refresh all its VTXOs
+            // Delta-sync only the changed VTXOs for this contract.
             case "vtxo_received":
             case "vtxo_spent":
-                await this.fetchContractVxosFromIndexer([event.contract], true);
+                await this.deltaSyncContracts([event.contract]);
                 break;
             case "connection_reset": {
-                // Refetch all VTXOs (including spent/swept) for all active
-                // contracts so the repo stays consistent with bootstrap state
+                // After a reconnect we don't know what we missed — full refetch.
                 const activeWatchedContracts =
                     this.watcher.getActiveContracts();
                 await this.fetchContractVxosFromIndexer(
@@ -658,15 +657,84 @@ export class ContractManager implements IContractManager {
         );
     }
 
+    /**
+     * Incrementally sync VTXOs for the given contracts.
+     * Uses per-script cursors to fetch only what changed since the last sync.
+     * Scripts without a cursor are bootstrapped with a full fetch.
+     */
+    private async deltaSyncContracts(
+        contracts: Contract[]
+    ): Promise<Map<string, ContractVtxo[]>> {
+        if (contracts.length === 0) return new Map();
+
+        const cursors = await getAllSyncCursors(this.config.walletRepository);
+
+        // Partition into bootstrap (no cursor) and delta (has cursor) groups.
+        const bootstrap: Contract[] = [];
+        const delta: Contract[] = [];
+        for (const c of contracts) {
+            if (cursors[c.script] !== undefined) {
+                delta.push(c);
+            } else {
+                bootstrap.push(c);
+            }
+        }
+
+        const result = new Map<string, ContractVtxo[]>();
+        const cursorUpdates: Record<string, number> = {};
+
+        // Full bootstrap for new scripts.
+        if (bootstrap.length > 0) {
+            const fetched = await this.fetchContractVxosFromIndexer(
+                bootstrap,
+                true
+            );
+            const cutoff = Date.now() - SAFETY_LAG_MS;
+            for (const [script, vtxos] of fetched) {
+                result.set(script, vtxos);
+                cursorUpdates[script] = cutoff;
+            }
+        }
+
+        // Delta sync for scripts with an existing cursor.
+        if (delta.length > 0) {
+            // Use the oldest cursor so the shared window covers every script.
+            const minCursor = Math.min(...delta.map((c) => cursors[c.script]));
+            const window = computeSyncWindow(minCursor);
+            if (window) {
+                const fetched = await this.fetchContractVxosFromIndexer(
+                    delta,
+                    true,
+                    window
+                );
+                for (const [script, vtxos] of fetched) {
+                    result.set(script, vtxos);
+                    cursorUpdates[script] = window.before;
+                }
+            }
+        }
+
+        if (Object.keys(cursorUpdates).length > 0) {
+            await advanceSyncCursors(
+                this.config.walletRepository,
+                cursorUpdates
+            );
+        }
+
+        return result;
+    }
+
     private async fetchContractVxosFromIndexer(
         contracts: Contract[],
         includeSpent: boolean,
-        pageSize?: number
+        pageSize?: number     ,
+        syncWindow?: { after: number; before: number }
     ): Promise<Map<string, ContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
             includeSpent,
-            pageSize
+            pageSize,
+            syncWindow
         );
         const result = new Map<string, ContractVtxo[]>();
         for (const [contractScript, vtxos] of fetched) {
@@ -685,7 +753,8 @@ export class ContractManager implements IContractManager {
     private async fetchContractVtxosBulk(
         contracts: Contract[],
         includeSpent: boolean,
-        pageSize: number = DEFAULT_PAGE_SIZE
+        pageSize: number = DEFAULT_PAGE_SIZE,
+        syncWindow?: { after: number; before: number }
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) {
             return new Map();
@@ -697,7 +766,8 @@ export class ContractManager implements IContractManager {
             const vtxos = await this.fetchContractVtxosPaginated(
                 contract,
                 includeSpent,
-                pageSize
+                pageSize,
+                syncWindow
             );
             return new Map([[contract.script, vtxos]]);
         }
@@ -713,8 +783,10 @@ export class ContractManager implements IContractManager {
         );
 
         const scripts = contracts.map((c) => c.script);
-        const pageSize = 500;
         const opts = includeSpent ? {} : { spendableOnly: true };
+        const windowOpts = syncWindow
+            ? { after: syncWindow.after, before: syncWindow.before }
+            : {};
         let pageIndex = 0;
         let hasMore = true;
 
@@ -722,6 +794,7 @@ export class ContractManager implements IContractManager {
             const { vtxos, page } = await this.config.indexerProvider.getVtxos({
                 scripts,
                 ...opts,
+                ...windowOpts,
                 pageIndex,
                 pageSize,
             });
@@ -749,19 +822,23 @@ export class ContractManager implements IContractManager {
     private async fetchContractVtxosPaginated(
         contract: Contract,
         includeSpent: boolean,
-        pageSize: number = DEFAULT_PAGE_SIZE
+        pageSize: number = DEFAULT_PAGE_SIZE,
+        syncWindow?: { after: number; before: number }
     ): Promise<ContractVtxo[]> {
-        const pageSize = 500;
         const allVtxos: ContractVtxo[] = [];
         let pageIndex = 0;
         let hasMore = true;
 
         const opts = includeSpent ? {} : { spendableOnly: true };
+        const windowOpts = syncWindow
+            ? { after: syncWindow.after, before: syncWindow.before }
+            : {};
 
         while (hasMore) {
             const { vtxos, page } = await this.config.indexerProvider.getVtxos({
                 scripts: [contract.script],
                 ...opts,
+                ...windowOpts,
                 pageIndex,
                 pageSize,
             });
