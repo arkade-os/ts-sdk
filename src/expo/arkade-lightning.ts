@@ -210,6 +210,12 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
     // ── Lifecycle ────────────────────────────────────────────────────
 
+    /**
+     * Reset all swap state: stops polling and clears the swap repository.
+     *
+     * **Destructive** — any swap in a non-terminal state will lose its
+     * refund/claim path. Intended for wallet-reset / dev / test scenarios only.
+     */
     async reset(): Promise<void> {
         await this.dispose();
         await this.inner.swapRepository.clear();

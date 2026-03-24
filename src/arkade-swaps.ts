@@ -330,6 +330,9 @@ export class ArkadeSwaps {
      */
     /**
      * Reset all swap state: stops the SwapManager and clears the swap repository.
+     *
+     * **Destructive** — any swap in a non-terminal state will lose its
+     * refund/claim path. Intended for wallet-reset / dev / test scenarios only.
      */
     async reset(): Promise<void> {
         await this.dispose();
@@ -2338,6 +2341,12 @@ export interface IArkadeSwaps extends AsyncDisposable {
         swap: PendingSubmarineSwap,
         invoice: string
     ): PendingSubmarineSwap;
+    /**
+     * Reset all swap state: stops the SwapManager and clears the swap repository.
+     *
+     * **Destructive** — any swap in a non-terminal state will lose its
+     * refund/claim path. Intended for wallet-reset / dev / test scenarios only.
+     */
     reset(): Promise<void>;
     dispose(): Promise<void>;
 }
