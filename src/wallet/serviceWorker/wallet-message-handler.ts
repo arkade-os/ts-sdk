@@ -1209,6 +1209,7 @@ export class WalletMessageHandler
         const boardingAddress = await this.readonlyWallet.getBoardingAddress();
         const coins =
             await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
+        await this.walletRepository.deleteUtxos(boardingAddress);
         await this.walletRepository.saveUtxos(
             boardingAddress,
             coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo))
