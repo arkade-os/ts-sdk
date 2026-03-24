@@ -446,6 +446,63 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
+        const { isDelta, fetchedExtended, address } = await this.syncVtxos();
+        const f = filter ?? { withRecoverable: true, withUnrolled: false };
+
+        // For delta syncs, read the full merged set from cache so old
+        // VTXOs that weren't in the delta are still returned.
+        const vtxos = isDelta
+            ? await this.walletRepository.getVtxos(address)
+            : fetchedExtended;
+
+        return vtxos.filter((vtxo) => {
+            if (isSpendable(vtxo)) {
+                if (
+                    !f.withRecoverable &&
+                    (isRecoverable(vtxo) || isExpired(vtxo))
+                ) {
+                    return false;
+                }
+                return true;
+            }
+            return !!(f.withUnrolled && vtxo.isUnrolled);
+        });
+    }
+
+    async getTransactionHistory(): Promise<ArkTransaction[]> {
+        // Delta-sync VTXOs into cache, then build history from the cache.
+        const { isDelta, fetchedExtended, address } = await this.syncVtxos();
+
+        const allVtxos = isDelta
+            ? await this.walletRepository.getVtxos(address)
+            : fetchedExtended;
+
+        const { boardingTxs, commitmentsToIgnore } =
+            await this.getBoardingTxs();
+
+        const getTxCreatedAt = (txid: string) =>
+            this.indexerProvider
+                .getVtxos({ outpoints: [{ txid, vout: 0 }] })
+                .then((res) => res.vtxos[0]?.createdAt.getTime());
+
+        return buildTransactionHistory(
+            allVtxos,
+            boardingTxs,
+            commitmentsToIgnore,
+            getTxCreatedAt
+        );
+    }
+
+    /**
+     * Delta-sync wallet VTXOs: fetch only changed VTXOs since the last
+     * cursor, or do a full bootstrap when no cursor exists. Upserts
+     * the result into the cache and advances the sync cursors.
+     */
+    private async syncVtxos(): Promise<{
+        isDelta: boolean;
+        fetchedExtended: ExtendedVirtualCoin[];
+        address: string;
+    }> {
         const address = await this.getAddress();
         // Batch cursor read with script map to avoid extra async hops
         // before the fetch (background operations may run between hops).
@@ -453,9 +510,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getScriptMap(),
             getAllSyncCursors(this.walletRepository),
         ]);
-        const f = filter ?? { withRecoverable: true, withUnrolled: false };
 
-        // Delta sync: fetch only VTXOs that changed since the last cursor.
         const allScripts = [...scriptMap.keys()];
 
         // If any script has no cursor yet, fall back to a full bootstrap.
@@ -503,44 +558,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             ),
         ]);
 
-        // For delta syncs, read the full merged set from cache so old
-        // VTXOs that weren't in the delta are still returned.
-        const vtxos = window
-            ? await this.walletRepository.getVtxos(address)
-            : fetchedExtended;
-
-        return vtxos.filter((vtxo) => {
-            if (isSpendable(vtxo)) {
-                if (
-                    !f.withRecoverable &&
-                    (isRecoverable(vtxo) || isExpired(vtxo))
-                ) {
-                    return false;
-                }
-                return true;
-            }
-            return !!(f.withUnrolled && vtxo.isUnrolled);
-        });
-    }
-
-    async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const scripts = await this.getWalletScripts();
-        const response = await this.indexerProvider.getVtxos({ scripts });
-
-        const { boardingTxs, commitmentsToIgnore } =
-            await this.getBoardingTxs();
-
-        const getTxCreatedAt = (txid: string) =>
-            this.indexerProvider
-                .getVtxos({ outpoints: [{ txid, vout: 0 }] })
-                .then((res) => res.vtxos[0]?.createdAt.getTime());
-
-        return buildTransactionHistory(
-            response.vtxos,
-            boardingTxs,
-            commitmentsToIgnore,
-            getTxCreatedAt
-        );
+        return { isDelta: !!window, fetchedExtended, address };
     }
 
     async getBoardingTxs(): Promise<{
