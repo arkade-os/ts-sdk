@@ -2369,7 +2369,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         );
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
-        await this.setPendingTxFlag(false);
+        try {
+            await this.setPendingTxFlag(false);
+        } catch (error) {
+            console.error("Failed to clear pending tx flag:", error);
+        }
 
         return { arkTxid, signedCheckpointTxs };
     }
