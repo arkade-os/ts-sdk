@@ -17,7 +17,6 @@ import {
     isRecoverable,
     ArkTxInput,
     Identity,
-    VirtualCoin,
 } from "@arkade-os/sdk";
 import type {
     Chain,
@@ -801,7 +800,11 @@ export class ArkadeSwaps {
                     `expected ${pendingSwap.response.address}, got ${vhtlcAddress}`
             );
 
-        // get spendable VTXOs from the lockup address
+        // Query VTXOs using the locally-reconstructed script (not the Boltz
+        // response address). The VHTLC script is unique per swap, so every
+        // unspent VTXO at this script belongs to this swap and must be refunded.
+        // We treat the Boltz API as adversarial for refunds — selection relies
+        // solely on what we can verify locally.
         const { vtxos } = await this.indexerProvider.getVtxos({
             scripts: [hex.encode(vhtlcScript.pkScript)],
         });
@@ -815,42 +818,55 @@ export class ArkadeSwaps {
             );
         }
 
-        // select the correct VTXO using the lockup outpoint from Boltz
-        const vtxo = await this.selectLockupVtxo(
-            pendingSwap.id,
-            spendableVtxos
-        );
+        const outputScript = ArkAddress.decode(address).pkScript;
 
-        const isRecoverableVtxo = isRecoverable(vtxo);
+        // Refund every unspent VTXO at the contract address.
+        // Throttle between Boltz API calls to avoid 429 rate-limiting.
+        let boltzCallCount = 0;
 
-        const input = {
-            ...vtxo,
-            tapLeafScript: isRecoverableVtxo
-                ? vhtlcScript.refundWithoutReceiver()
-                : vhtlcScript.refund(),
-            tapTree: vhtlcScript.encode(),
-        };
+        for (const vtxo of spendableVtxos) {
+            const isRecoverableVtxo = isRecoverable(vtxo);
 
-        const output = {
-            amount: BigInt(vtxo.value),
-            script: ArkAddress.decode(address).pkScript,
-        };
+            const input = {
+                ...vtxo,
+                tapLeafScript: isRecoverableVtxo
+                    ? vhtlcScript.refundWithoutReceiver()
+                    : vhtlcScript.refund(),
+                tapTree: vhtlcScript.encode(),
+            };
 
-        if (isRecoverableVtxo) {
-            await this.joinBatch(this.wallet.identity, input, output, arkInfo);
-        } else {
-            await refundVHTLCwithOffchainTx(
-                pendingSwap.id,
-                this.wallet.identity,
-                this.arkProvider,
-                boltzXOnlyPublicKey,
-                ourXOnlyPublicKey,
-                serverXOnlyPublicKey,
-                input,
-                output,
-                arkInfo,
-                this.swapProvider.refundSubmarineSwap.bind(this.swapProvider)
-            );
+            const output = {
+                amount: BigInt(vtxo.value),
+                script: outputScript,
+            };
+
+            if (isRecoverableVtxo) {
+                await this.joinBatch(
+                    this.wallet.identity,
+                    input,
+                    output,
+                    arkInfo
+                );
+            } else {
+                if (boltzCallCount > 0) {
+                    await new Promise((r) => setTimeout(r, 2000));
+                }
+                await refundVHTLCwithOffchainTx(
+                    pendingSwap.id,
+                    this.wallet.identity,
+                    this.arkProvider,
+                    boltzXOnlyPublicKey,
+                    ourXOnlyPublicKey,
+                    serverXOnlyPublicKey,
+                    input,
+                    output,
+                    arkInfo,
+                    this.swapProvider.refundSubmarineSwap.bind(
+                        this.swapProvider
+                    )
+                );
+                boltzCallCount++;
+            }
         }
 
         // update the pending swap on storage
@@ -860,78 +876,6 @@ export class ArkadeSwaps {
             this.savePendingSubmarineSwap.bind(this),
             { refundable: true, refunded: true }
         );
-    }
-
-    /**
-     * Selects the correct lockup VTXO for a submarine swap refund.
-     * Queries Boltz for the lockup transaction ID and matches it against
-     * the available VTXOs. Falls back to the first VTXO for legacy swaps
-     * where Boltz does not return a transaction ID.
-     */
-    private async selectLockupVtxo(
-        swapId: string,
-        spendableVtxos: VirtualCoin[]
-    ): Promise<VirtualCoin> {
-        // query Boltz for the lockup transaction ID
-        try {
-            const status = await this.swapProvider.getSwapStatus(swapId);
-            if (status.transaction?.id) {
-                const lockupTxid = status.transaction.id;
-                const matching = spendableVtxos.filter(
-                    (v) => v.txid === lockupTxid
-                );
-
-                if (matching.length === 1) {
-                    return matching[0];
-                }
-
-                if (matching.length === 0) {
-                    // The Boltz txid may no longer match after an Ark round
-                    // transition (the VTXO gets a new outpoint). Since the
-                    // VHTLC script is unique per swap, a single unspent VTXO
-                    // at this address is unambiguously the lockup for this swap.
-                    if (spendableVtxos.length === 1) {
-                        logger.warn(
-                            `Boltz lockup txid ${lockupTxid} does not match ` +
-                                `VTXO ${spendableVtxos[0].txid}:${spendableVtxos[0].vout} ` +
-                                `for swap ${swapId} (likely Ark round transition), ` +
-                                `using sole candidate`
-                        );
-                        return spendableVtxos[0];
-                    }
-
-                    // multiple unspent VTXOs and none match — ambiguous
-                    throw new Error(
-                        `No VTXO matches lockup txid ${lockupTxid} for swap ${swapId} ` +
-                            `and ${spendableVtxos.length} candidates are ambiguous. ` +
-                            `Available: ${spendableVtxos.map((v) => `${v.txid}:${v.vout}`).join(", ")}`
-                    );
-                }
-
-                // multiple matches at same txid — ambiguous, fail loudly
-                throw new Error(
-                    `Multiple VTXOs match lockup txid ${lockupTxid} for swap ${swapId}: ` +
-                        `${matching.map((v) => `${v.txid}:${v.vout}`).join(", ")}`
-                );
-            }
-        } catch (error) {
-            // if the status call itself failed (network error), don't block the
-            // refund — fall through to legacy selection below
-            if (
-                error instanceof Error &&
-                (error.message.includes("lockup txid") ||
-                    error.message.includes("candidates are ambiguous"))
-            ) {
-                throw error; // re-throw our own selection errors
-            }
-            logger.warn(
-                `Failed to fetch lockup txid for swap ${swapId}, falling back to first VTXO:`,
-                error
-            );
-        }
-
-        // legacy fallback: no transaction ID from Boltz
-        return spendableVtxos[0];
     }
 
     /**

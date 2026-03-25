@@ -34,7 +34,6 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { decodeInvoice } from "../src/utils/decoding";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { refundVHTLCwithOffchainTx } from "../src/utils/vhtlc";
-import { NetworkError } from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -2476,77 +2475,84 @@ describe("ArkadeSwaps", () => {
             vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
         });
 
-        it("should select the VTXO matching Boltz lockup txid", async () => {
-            const correctVtxo = makeVtxo(lockupTxid, 0);
-            const wrongVtxo = makeVtxo(otherTxid, 0);
+        it("should refund a single unspent VTXO (recoverable path)", async () => {
+            const vtxo = makeVtxo(lockupTxid, 0);
 
             vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [wrongVtxo, correctVtxo] as any,
-            });
-            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                status: "invoice.failedToPay",
-                transaction: { id: lockupTxid },
+                vtxos: [vtxo] as any,
             });
 
             await swaps.refundVHTLC(refundableSwap);
 
-            // joinBatch(identity, input, output, arkInfo) — input is arg[1]
-            const joinBatchCall = vi.mocked((swaps as any).joinBatch).mock
-                .calls[0];
-            expect(joinBatchCall[1].txid).toBe(lockupTxid);
+            const joinBatch = vi.mocked((swaps as any).joinBatch);
+            expect(joinBatch).toHaveBeenCalledOnce();
+            expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
         });
 
-        it("should use sole VTXO when Boltz txid does not match after round transition", async () => {
-            const roundTransitionedVtxo = makeVtxo(otherTxid, 0);
-
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [roundTransitionedVtxo] as any,
-            });
-            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                status: "invoice.failedToPay",
-                transaction: { id: lockupTxid },
-            });
-
-            // should succeed — sole VTXO at a unique VHTLC script is unambiguous
-            await swaps.refundVHTLC(refundableSwap);
-
-            const joinBatchCall = vi.mocked((swaps as any).joinBatch).mock
-                .calls[0];
-            expect(joinBatchCall[1].txid).toBe(otherTxid);
-        });
-
-        it("should throw when Boltz txid matches none and multiple VTXOs are ambiguous", async () => {
-            const vtxoA = makeVtxo(otherTxid, 0);
-            const vtxoB = makeVtxo(hex.encode(randomBytes(32)), 0);
+        it("should refund all unspent VTXOs at the contract address", async () => {
+            const vtxoA = makeVtxo(lockupTxid, 0);
+            const vtxoB = makeVtxo(otherTxid, 1);
 
             vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
                 vtxos: [vtxoA, vtxoB] as any,
             });
-            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                status: "invoice.failedToPay",
-                transaction: { id: lockupTxid },
-            });
 
-            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                /candidates are ambiguous/
-            );
+            await swaps.refundVHTLC(refundableSwap);
+
+            const joinBatch = vi.mocked((swaps as any).joinBatch);
+            expect(joinBatch).toHaveBeenCalledTimes(2);
+            expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
+            expect(joinBatch.mock.calls[1][1].txid).toBe(otherTxid);
         });
 
-        it("should fall back to vtxos[0] when Boltz status has no transaction", async () => {
-            const firstVtxo = makeVtxo(otherTxid, 0);
+        it("should skip spent VTXOs and refund only unspent ones", async () => {
+            const spentVtxo = { ...makeVtxo(lockupTxid, 0), isSpent: true };
+            const unspentVtxo = makeVtxo(otherTxid, 1);
 
             vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [firstVtxo] as any,
-            });
-            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                status: "invoice.failedToPay",
+                vtxos: [spentVtxo, unspentVtxo] as any,
             });
 
             await swaps.refundVHTLC(refundableSwap);
 
-            const joinBatchCall = vi.mocked((swaps as any).joinBatch).mock
-                .calls[0];
-            expect(joinBatchCall[1].txid).toBe(otherTxid);
+            const joinBatch = vi.mocked((swaps as any).joinBatch);
+            expect(joinBatch).toHaveBeenCalledOnce();
+            expect(joinBatch.mock.calls[0][1].txid).toBe(otherTxid);
+        });
+
+        it("should throw when all VTXOs are spent", async () => {
+            const spentVtxo = { ...makeVtxo(lockupTxid, 0), isSpent: true };
+
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [spentVtxo] as any,
+            });
+
+            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                /VHTLC is already spent/
+            );
+        });
+
+        it("should throw when no VTXOs exist at the address", async () => {
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [] as any,
+            });
+
+            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                /VHTLC not found/
+            );
+        });
+
+        it("should not query Boltz status — selection is local only", async () => {
+            const vtxo = makeVtxo(lockupTxid, 0);
+
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [vtxo] as any,
+            });
+            const statusSpy = vi.spyOn(swapProvider, "getSwapStatus");
+
+            await swaps.refundVHTLC(refundableSwap);
+
+            expect(statusSpy).not.toHaveBeenCalled();
         });
 
         describe("non-recoverable VTXOs (Boltz-signing branch)", () => {
@@ -2565,91 +2571,40 @@ describe("ArkadeSwaps", () => {
                 createdAt: new Date(),
             });
 
-            it("should select the correct VTXO and call refundVHTLCwithOffchainTx", async () => {
-                const correctVtxo = makeNonRecoverableVtxo(lockupTxid, 0);
-                const wrongVtxo = makeNonRecoverableVtxo(otherTxid, 0);
+            it("should call refundVHTLCwithOffchainTx for each non-recoverable VTXO", async () => {
+                const vtxoA = makeNonRecoverableVtxo(lockupTxid, 0);
+                const vtxoB = makeNonRecoverableVtxo(otherTxid, 1);
 
                 vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [wrongVtxo, correctVtxo] as any,
-                });
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                    status: "invoice.failedToPay",
-                    transaction: { id: lockupTxid },
+                    vtxos: [vtxoA, vtxoB] as any,
                 });
 
                 await swaps.refundVHTLC(refundableSwap);
 
-                // refundVHTLCwithOffchainTx(swapId, identity, ..., input, ...)
-                // input is arg[6]
+                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
+                expect(mockRefund).toHaveBeenCalledTimes(2);
+                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
+                    lockupTxid
+                );
+                expect((mockRefund.mock.calls[1][6] as any).txid).toBe(
+                    otherTxid
+                );
+            });
+
+            it("should refund single non-recoverable VTXO via Boltz co-signing", async () => {
+                const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [vtxo] as any,
+                });
+
+                await swaps.refundVHTLC(refundableSwap);
+
                 const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
                 expect(mockRefund).toHaveBeenCalledOnce();
                 expect(mockRefund.mock.calls[0][0]).toBe(refundableSwap.id);
                 expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
                     lockupTxid
-                );
-            });
-
-            it("should use sole VTXO after round transition (Boltz txid mismatch)", async () => {
-                const roundTransitionedVtxo = makeNonRecoverableVtxo(
-                    otherTxid,
-                    0
-                );
-
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [roundTransitionedVtxo] as any,
-                });
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                    status: "invoice.failedToPay",
-                    transaction: { id: lockupTxid },
-                });
-
-                await swaps.refundVHTLC(refundableSwap);
-
-                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
-                expect(mockRefund).toHaveBeenCalledOnce();
-                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
-                    otherTxid
-                );
-            });
-
-            it("should throw when Boltz txid matches none and multiple VTXOs are ambiguous", async () => {
-                const vtxoA = makeNonRecoverableVtxo(otherTxid, 0);
-                const vtxoB = makeNonRecoverableVtxo(
-                    hex.encode(randomBytes(32)),
-                    0
-                );
-
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [vtxoA, vtxoB] as any,
-                });
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                    status: "invoice.failedToPay",
-                    transaction: { id: lockupTxid },
-                });
-
-                await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                    /candidates are ambiguous/
-                );
-
-                expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
-            });
-
-            it("should fall back to vtxos[0] when status has no transaction", async () => {
-                const firstVtxo = makeNonRecoverableVtxo(otherTxid, 0);
-
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [firstVtxo] as any,
-                });
-                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
-                    status: "invoice.failedToPay",
-                });
-
-                await swaps.refundVHTLC(refundableSwap);
-
-                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
-                expect(mockRefund).toHaveBeenCalledOnce();
-                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
-                    otherTxid
                 );
             });
         });
@@ -2660,14 +2615,13 @@ describe("ArkadeSwaps", () => {
                 vhtlcScript: { claimScript: new Uint8Array([1]) },
                 vhtlcAddress: "ark1-wrong-address",
             });
-            const getSwapStatusSpy = vi.spyOn(swapProvider, "getSwapStatus");
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
                 /VHTLC address mismatch/
             );
 
-            // should not reach any Boltz API call
-            expect(getSwapStatusSpy).not.toHaveBeenCalled();
+            // should not reach indexer or any refund call
+            expect(indexerProvider.getVtxos).not.toHaveBeenCalled();
         });
     });
 });
