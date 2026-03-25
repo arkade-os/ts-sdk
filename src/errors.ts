@@ -131,3 +131,12 @@ export class TransactionRefundedError extends SwapError {
         this.name = "TransactionRefundedError";
     }
 }
+
+/** Returns true if the error is a Boltz 400 "transaction is not for this swap". */
+export function isVtxoMismatchError(error: unknown): boolean {
+    return (
+        error instanceof NetworkError &&
+        error.statusCode === 400 &&
+        error.errorData?.error === "transaction is not for this swap"
+    );
+}

@@ -758,27 +758,7 @@ export class ArkadeSwaps {
         if (!preimageHash)
             throw new Error("Preimage hash is required to refund VHTLC");
 
-        const vhtlcPkScript = ArkAddress.decode(
-            pendingSwap.response.address
-        ).pkScript;
-
-        // get spendable VTXOs from the lockup address
-        const { vtxos } = await this.indexerProvider.getVtxos({
-            scripts: [hex.encode(vhtlcPkScript)],
-        });
-        if (vtxos.length === 0) {
-            throw new Error(
-                `VHTLC not found for address ${pendingSwap.response.address}`
-            );
-        }
-
-        const vtxo = vtxos[0];
-
-        if (vtxo.isSpent) {
-            throw new Error("VHTLC is already spent");
-        }
-
-        // prepare variables for claiming the VHTLC
+        // prepare keys and script (independent of VTXO selection)
         const arkInfo = await this.arkProvider.getInfo();
         const address = await this.wallet.getAddress();
         if (!address) throw new Error("Failed to get ark address from wallet");
@@ -801,7 +781,7 @@ export class ArkadeSwaps {
             pendingSwap.id
         );
 
-        const { vhtlcScript } = this.createVHTLCScript({
+        const { vhtlcScript, vhtlcAddress } = this.createVHTLCScript({
             network: arkInfo.network,
             preimageHash: hex.decode(preimageHash),
             receiverPubkey: hex.encode(boltzXOnlyPublicKey),
@@ -813,36 +793,85 @@ export class ArkadeSwaps {
         if (!vhtlcScript.claimScript)
             throw new Error("Failed to create VHTLC script for submarine swap");
 
-        const isRecoverableVtxo = isRecoverable(vtxo);
-
-        const input = {
-            ...vtxo,
-            tapLeafScript: isRecoverableVtxo
-                ? vhtlcScript.refundWithoutReceiver()
-                : vhtlcScript.refund(),
-            tapTree: vhtlcScript.encode(),
-        };
-
-        const output = {
-            amount: BigInt(vtxo.value),
-            script: ArkAddress.decode(address).pkScript,
-        };
-
-        if (isRecoverableVtxo) {
-            await this.joinBatch(this.wallet.identity, input, output, arkInfo);
-        } else {
-            await refundVHTLCwithOffchainTx(
-                pendingSwap.id,
-                this.wallet.identity,
-                this.arkProvider,
-                boltzXOnlyPublicKey,
-                ourXOnlyPublicKey,
-                serverXOnlyPublicKey,
-                input,
-                output,
-                arkInfo,
-                this.swapProvider.refundSubmarineSwap.bind(this.swapProvider)
+        // sanity check: reconstructed address must match the swap response
+        if (vhtlcAddress !== pendingSwap.response.address)
+            throw new Error(
+                `VHTLC address mismatch for swap ${pendingSwap.id}: ` +
+                    `expected ${pendingSwap.response.address}, got ${vhtlcAddress}`
             );
+
+        // Query VTXOs using the locally-reconstructed script (not the Boltz
+        // response address). The VHTLC script is unique per swap, so every
+        // unspent VTXO at this script belongs to this swap and must be refunded.
+        // We treat the Boltz API as adversarial for refunds — selection relies
+        // solely on what we can verify locally.
+        const vhtlcPkScriptHex = hex.encode(vhtlcScript.pkScript);
+        const { vtxos: spendableVtxos } = await this.indexerProvider.getVtxos({
+            scripts: [vhtlcPkScriptHex],
+            spendableOnly: true,
+        });
+
+        if (spendableVtxos.length === 0) {
+            // Distinguish "all spent" from "never funded" for diagnostics
+            const { vtxos: allVtxos } = await this.indexerProvider.getVtxos({
+                scripts: [vhtlcPkScriptHex],
+            });
+            throw new Error(
+                allVtxos.length > 0
+                    ? "VHTLC is already spent"
+                    : `VHTLC not found for address ${pendingSwap.response.address}`
+            );
+        }
+
+        const outputScript = ArkAddress.decode(address).pkScript;
+
+        // Refund every unspent VTXO at the contract address.
+        // Throttle between Boltz API calls to avoid 429 rate-limiting.
+        let boltzCallCount = 0;
+
+        for (const vtxo of spendableVtxos) {
+            const isRecoverableVtxo = isRecoverable(vtxo);
+
+            const input = {
+                ...vtxo,
+                tapLeafScript: isRecoverableVtxo
+                    ? vhtlcScript.refundWithoutReceiver()
+                    : vhtlcScript.refund(),
+                tapTree: vhtlcScript.encode(),
+            };
+
+            const output = {
+                amount: BigInt(vtxo.value),
+                script: outputScript,
+            };
+
+            if (isRecoverableVtxo) {
+                await this.joinBatch(
+                    this.wallet.identity,
+                    input,
+                    output,
+                    arkInfo
+                );
+            } else {
+                if (boltzCallCount > 0) {
+                    await new Promise((r) => setTimeout(r, 2000));
+                }
+                await refundVHTLCwithOffchainTx(
+                    pendingSwap.id,
+                    this.wallet.identity,
+                    this.arkProvider,
+                    boltzXOnlyPublicKey,
+                    ourXOnlyPublicKey,
+                    serverXOnlyPublicKey,
+                    input,
+                    output,
+                    arkInfo,
+                    this.swapProvider.refundSubmarineSwap.bind(
+                        this.swapProvider
+                    )
+                );
+                boltzCallCount++;
+            }
         }
 
         // update the pending swap on storage
