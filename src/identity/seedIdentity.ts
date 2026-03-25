@@ -7,14 +7,12 @@ import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 import {
-    defaultFactory,
-    scureBIP32 as BIP32,
+    HDKey,
+    expand,
     networks,
     scriptExpressions,
-} from "@kukks/bitcoin-descriptors";
-import type { Network } from "@kukks/bitcoin-descriptors";
-
-const { expand } = defaultFactory;
+    type Network,
+} from "@bitcoinerlab/descriptors-scure";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
@@ -60,7 +58,7 @@ function hasDescriptor(opts: SeedIdentityOptions): opts is DescriptorOptions {
  */
 function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
     const network = isMainnet ? networks.bitcoin : networks.testnet;
-    const masterNode = BIP32.fromSeed(seed, network);
+    const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
     return scriptExpressions.trBIP32({
         masterNode,
         network,
@@ -121,9 +119,9 @@ export class SeedIdentity implements Identity {
         }
 
         // Verify the xpub in the descriptor matches our seed
-        const masterNode = BIP32.fromSeed(seed, network);
-        const accountNode = masterNode.derivePath(`m${keyInfo.originPath}`);
-        if (accountNode.neutered().toBase58() !== keyInfo.bip32?.toBase58()) {
+        const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
+        const accountNode = masterNode.derive(`m${keyInfo.originPath}`);
+        if (accountNode.publicExtendedKey !== keyInfo.bip32?.toBase58()) {
             throw new Error(
                 "xpub mismatch: derived key does not match descriptor"
             );
@@ -133,7 +131,7 @@ export class SeedIdentity implements Identity {
         if (!keyInfo.path) {
             throw new Error("Descriptor must specify a full derivation path");
         }
-        const derivedNode = masterNode.derivePath(keyInfo.path);
+        const derivedNode = masterNode.derive(keyInfo.path);
         if (!derivedNode.privateKey) {
             throw new Error("Failed to derive private key");
         }
