@@ -118,6 +118,18 @@ export interface SubscriptionEvent extends SubscriptionResponse {
     type: "event";
 }
 
+export type GetVtxosOptions = PaginationOptions & {
+    spendableOnly?: boolean;
+    spentOnly?: boolean;
+    recoverableOnly?: boolean;
+    pendingOnly?: boolean;
+    after?: number;
+    before?: number;
+} & (
+        | { scripts: string[]; outpoints?: never }
+        | { outpoints: Outpoint[]; scripts?: never }
+    );
+
 export interface IndexerProvider {
     getVtxoTree(
         batchOutpoint: Outpoint,
@@ -152,13 +164,7 @@ export interface IndexerProvider {
         opts?: PaginationOptions
     ): Promise<VtxoChain>;
     getVtxos(
-        opts?: PaginationOptions & {
-            scripts?: string[];
-            outpoints?: Outpoint[];
-            spendableOnly?: boolean;
-            spentOnly?: boolean;
-            recoverableOnly?: boolean;
-        }
+        opts?: GetVtxosOptions
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }>;
     getAssetDetails(assetId: string): Promise<AssetDetails>;
     subscribeForScripts(
@@ -465,38 +471,56 @@ export class RestIndexerProvider implements IndexerProvider {
     }
 
     async getVtxos(
-        opts?: PaginationOptions & {
-            scripts?: string[];
-            outpoints?: Outpoint[];
-            spendableOnly?: boolean;
-            spentOnly?: boolean;
-            recoverableOnly?: boolean;
-        }
+        opts?: GetVtxosOptions
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }> {
+        const hasScripts = (opts?.scripts?.length ?? 0) > 0;
+        const hasOutpoints = (opts?.outpoints?.length ?? 0) > 0;
+
         // scripts and outpoints are mutually exclusive
-        if (opts?.scripts && opts?.outpoints) {
+        if (hasScripts && hasOutpoints) {
             throw new Error(
                 "scripts and outpoints are mutually exclusive options"
             );
         }
 
-        if (!opts?.scripts && !opts?.outpoints) {
+        if (!hasScripts && !hasOutpoints) {
             throw new Error("Either scripts or outpoints must be provided");
+        }
+
+        const filterCount = [
+            opts?.spendableOnly,
+            opts?.spentOnly,
+            opts?.recoverableOnly,
+        ].filter(Boolean).length;
+        if (filterCount > 1) {
+            throw new Error(
+                "spendableOnly, spentOnly, and recoverableOnly are mutually exclusive options"
+            );
+        }
+
+        if (
+            opts?.after !== undefined &&
+            opts?.before !== undefined &&
+            opts.after !== 0 &&
+            opts.before !== 0 &&
+            opts.before >= opts.after
+        ) {
+            throw new Error("before must be smaller than after");
         }
 
         let url = `${this.serverUrl}/v1/indexer/vtxos`;
         const params = new URLSearchParams();
 
         // Handle scripts with multi collection format
-        if (opts?.scripts && opts.scripts.length > 0) {
-            opts.scripts.forEach((script) => {
+        if (hasScripts) {
+            opts!.scripts!.forEach((script) => {
                 params.append("scripts", script);
             });
         }
 
         // Handle outpoints with multi collection format
-        if (opts?.outpoints && opts.outpoints.length > 0) {
-            opts.outpoints.forEach((outpoint) => {
+        if (hasOutpoints) {
+            opts!.outpoints!.forEach((outpoint) => {
                 params.append("outpoints", `${outpoint.txid}:${outpoint.vout}`);
             });
         }
@@ -511,6 +535,13 @@ export class RestIndexerProvider implements IndexerProvider {
                     "recoverableOnly",
                     opts.recoverableOnly.toString()
                 );
+            if (opts.pendingOnly !== undefined)
+                params.append("pendingOnly", opts.pendingOnly.toString());
+            if (opts.after !== undefined)
+                params.append("after", opts.after.toString());
+            if (opts.before !== undefined) {
+                params.append("before", opts.before.toString());
+            }
             if (opts.pageIndex !== undefined)
                 params.append("page.index", opts.pageIndex.toString());
             if (opts.pageSize !== undefined)

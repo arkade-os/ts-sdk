@@ -998,6 +998,12 @@ describe("Common", () => {
                         }
                     })();
 
+                    // Set the pending tx flag (normally set by buildAndSubmitOffchainTx)
+                    // so finalizePendingTxs doesn't early-exit.
+                    await alice.wallet.walletRepository.saveWalletState({
+                        settings: { hasPendingTx: true },
+                    });
+
                     const res = await alice.wallet.finalizePendingTxs();
                     expect(res.finalized).toHaveLength(1);
                     expect(res.finalized[0]).toBe(arkTxid);
