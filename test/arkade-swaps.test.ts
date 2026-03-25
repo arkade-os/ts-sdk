@@ -33,6 +33,8 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 import { decodeInvoice } from "../src/utils/decoding";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
+import { refundVHTLCwithOffchainTx } from "../src/utils/vhtlc";
+import { NetworkError } from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -44,6 +46,18 @@ vi.mock("@arkade-os/sdk", async () => {
         },
         RestArkProvider: vi.fn(),
         RestIndexerProvider: vi.fn(),
+    };
+});
+
+// Mock vhtlc utils — passthrough except refundVHTLCwithOffchainTx
+vi.mock("../src/utils/vhtlc", async () => {
+    const actual =
+        await vi.importActual<typeof import("../src/utils/vhtlc")>(
+            "../src/utils/vhtlc"
+        );
+    return {
+        ...actual,
+        refundVHTLCwithOffchainTx: vi.fn().mockResolvedValue(undefined),
     };
 });
 
@@ -2513,6 +2527,84 @@ describe("ArkadeSwaps", () => {
             const joinBatchCall = vi.mocked((swaps as any).joinBatch).mock
                 .calls[0];
             expect(joinBatchCall[1].txid).toBe(otherTxid);
+        });
+
+        describe("non-recoverable VTXOs (Boltz-signing branch)", () => {
+            const makeNonRecoverableVtxo = (txid: string, vout: number) => ({
+                txid,
+                vout,
+                value: 50000,
+                status: {
+                    confirmed: true,
+                    blockHeight: 100,
+                    blockHash: "abc",
+                },
+                virtualStatus: { state: "settled" as const },
+                isSpent: false,
+                isUnrolled: false,
+                createdAt: new Date(),
+            });
+
+            it("should select the correct VTXO and call refundVHTLCwithOffchainTx", async () => {
+                const correctVtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+                const wrongVtxo = makeNonRecoverableVtxo(otherTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [wrongVtxo, correctVtxo] as any,
+                });
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "invoice.failedToPay",
+                    transaction: { id: lockupTxid },
+                });
+
+                await swaps.refundVHTLC(refundableSwap);
+
+                // refundVHTLCwithOffchainTx(swapId, identity, ..., input, ...)
+                // input is arg[6]
+                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
+                expect(mockRefund).toHaveBeenCalledOnce();
+                expect(mockRefund.mock.calls[0][0]).toBe(refundableSwap.id);
+                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
+                    lockupTxid
+                );
+            });
+
+            it("should throw mismatch error when wrong VTXO is the only candidate", async () => {
+                const wrongVtxo = makeNonRecoverableVtxo(otherTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [wrongVtxo] as any,
+                });
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "invoice.failedToPay",
+                    transaction: { id: lockupTxid },
+                });
+
+                await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                    /No VTXO matches lockup txid/
+                );
+
+                expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+            });
+
+            it("should fall back to vtxos[0] when status has no transaction", async () => {
+                const firstVtxo = makeNonRecoverableVtxo(otherTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [firstVtxo] as any,
+                });
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "invoice.failedToPay",
+                });
+
+                await swaps.refundVHTLC(refundableSwap);
+
+                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
+                expect(mockRefund).toHaveBeenCalledOnce();
+                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
+                    otherTxid
+                );
+            });
         });
 
         it("should fail early on VHTLC address mismatch", async () => {
