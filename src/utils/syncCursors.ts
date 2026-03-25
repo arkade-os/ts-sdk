@@ -1,4 +1,7 @@
-import { WalletRepository } from "../repositories/walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+} from "../repositories/walletRepository";
 
 /** Lag behind real-time to avoid racing with indexer writes. */
 export const SAFETY_LAG_MS = 30_000;
@@ -7,6 +10,36 @@ export const SAFETY_LAG_MS = 30_000;
 export const OVERLAP_MS = 60_000;
 
 type SyncCursors = Record<string, number>;
+
+/**
+ * Per-repository mutex that serializes wallet-state mutations so that
+ * concurrent read-modify-write cycles (e.g. advanceSyncCursors racing
+ * with clearSyncCursors or setPendingTxFlag) never silently overwrite
+ * each other's changes.
+ */
+const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
+
+/**
+ * Atomically read, mutate, and persist wallet state.
+ * All callers that modify wallet state should go through this helper
+ * to avoid lost-update races between interleaved async operations.
+ */
+export async function updateWalletState(
+    repo: WalletRepository,
+    updater: (state: WalletState) => WalletState
+): Promise<void> {
+    const prev = walletStateLocks.get(repo) ?? Promise.resolve();
+    const op = prev.then(async () => {
+        const state = (await repo.getWalletState()) ?? {};
+        await repo.saveWalletState(updater(state));
+    });
+    // Store a version that never rejects so the chain doesn't break.
+    walletStateLocks.set(
+        repo,
+        op.catch(() => {})
+    );
+    return op;
+}
 
 /**
  * Read the high-water mark for a single script.
@@ -41,15 +74,16 @@ export async function advanceSyncCursor(
     script: string,
     cursor: number
 ): Promise<void> {
-    const state = (await repo.getWalletState()) ?? {};
-    const existing =
-        (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
-    await repo.saveWalletState({
-        ...state,
-        settings: {
-            ...state.settings,
-            vtxoSyncCursors: { ...existing, [script]: cursor },
-        },
+    await updateWalletState(repo, (state) => {
+        const existing =
+            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
+        return {
+            ...state,
+            settings: {
+                ...state.settings,
+                vtxoSyncCursors: { ...existing, [script]: cursor },
+            },
+        };
     });
 }
 
@@ -60,15 +94,16 @@ export async function advanceSyncCursors(
     repo: WalletRepository,
     updates: Record<string, number>
 ): Promise<void> {
-    const state = (await repo.getWalletState()) ?? {};
-    const existing =
-        (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
-    await repo.saveWalletState({
-        ...state,
-        settings: {
-            ...state.settings,
-            vtxoSyncCursors: { ...existing, ...updates },
-        },
+    await updateWalletState(repo, (state) => {
+        const existing =
+            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
+        return {
+            ...state,
+            settings: {
+                ...state.settings,
+                vtxoSyncCursors: { ...existing, ...updates },
+            },
+        };
     });
 }
 
@@ -76,11 +111,12 @@ export async function advanceSyncCursors(
  * Remove all sync cursors, forcing a full re-bootstrap on next sync.
  */
 export async function clearSyncCursors(repo: WalletRepository): Promise<void> {
-    const state = (await repo.getWalletState()) ?? {};
-    const { vtxoSyncCursors: _, ...restSettings } = state.settings ?? {};
-    await repo.saveWalletState({
-        ...state,
-        settings: restSettings,
+    await updateWalletState(repo, (state) => {
+        const { vtxoSyncCursors: _, ...restSettings } = state.settings ?? {};
+        return {
+            ...state,
+            settings: restSettings,
+        };
     });
 }
 

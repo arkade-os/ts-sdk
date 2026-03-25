@@ -682,8 +682,9 @@ describe("Wallet", () => {
 });
 
 describe("ReadonlyWallet", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         mockFetch.mockReset();
+        await sharedRepo.clear();
     });
 
     const mockServerKeyHex =

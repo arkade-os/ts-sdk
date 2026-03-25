@@ -105,6 +105,7 @@ import {
     computeSyncWindow,
     getAllSyncCursors,
     SAFETY_LAG_MS,
+    updateWalletState,
 } from "../utils/syncCursors";
 
 export type IncomingFunds =
@@ -549,15 +550,41 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 tapTree: vtxoScript.encode(),
             });
         }
-        // Save VTXOs and advance cursors concurrently.
+        // Save VTXOs first, then advance cursors only on success.
         const cutoff = window?.after ?? Date.now() - SAFETY_LAG_MS;
-        await Promise.all([
-            this.walletRepository.saveVtxos(address, fetchedExtended),
-            advanceSyncCursors(
-                this.walletRepository,
-                Object.fromEntries(allScripts.map((s) => [s, cutoff]))
-            ),
-        ]);
+        await this.walletRepository.saveVtxos(address, fetchedExtended);
+        await advanceSyncCursors(
+            this.walletRepository,
+            Object.fromEntries(allScripts.map((s) => [s, cutoff]))
+        );
+
+        // For delta syncs, reconcile pending (preconfirmed/spent) VTXOs
+        // whose state may have changed in the SAFETY_LAG_MS gap so that
+        // getVtxos()/getTransactionHistory() don't serve stale state.
+        if (window) {
+            const { vtxos: pendingVtxos } = await this.indexerProvider.getVtxos(
+                {
+                    scripts: allScripts,
+                    pendingOnly: true,
+                }
+            );
+            const pendingExtended: ExtendedVirtualCoin[] = [];
+            for (const vtxo of pendingVtxos) {
+                const vtxoScript = vtxo.script
+                    ? scriptMap.get(vtxo.script)
+                    : undefined;
+                if (!vtxoScript) continue;
+                pendingExtended.push({
+                    ...vtxo,
+                    forfeitTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.forfeit(),
+                    tapTree: vtxoScript.encode(),
+                });
+            }
+            if (pendingExtended.length > 0) {
+                await this.walletRepository.saveVtxos(address, pendingExtended);
+            }
+        }
 
         return { isDelta: !!window, fetchedExtended, address };
     }
@@ -2139,11 +2166,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     private async setPendingTxFlag(value: boolean): Promise<void> {
-        const state = (await this.walletRepository.getWalletState()) ?? {};
-        await this.walletRepository.saveWalletState({
+        await updateWalletState(this.walletRepository, (state) => ({
             ...state,
             settings: { ...state.settings, hasPendingTx: value },
-        });
+        }));
     }
 
     /**

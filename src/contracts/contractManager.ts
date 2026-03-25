@@ -721,7 +721,8 @@ export class ContractManager implements IContractManager {
                 const fetched = await this.fetchContractVxosFromIndexer(
                     delta,
                     true,
-                    pageSize
+                    pageSize,
+                    window
                 );
                 for (const [script, vtxos] of fetched) {
                     result.set(script, vtxos);
