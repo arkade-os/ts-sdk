@@ -2420,4 +2420,116 @@ describe("ArkadeSwaps", () => {
             expect(getPreimageSpy).not.toHaveBeenCalled();
         });
     });
+
+    describe("refundVHTLC — VTXO selection", () => {
+        const lockupTxid = hex.encode(randomBytes(32));
+        const otherTxid = hex.encode(randomBytes(32));
+
+        const makeVtxo = (txid: string, vout: number) => ({
+            txid,
+            vout,
+            value: 50000,
+            status: { confirmed: true, blockHeight: 100, blockHash: "abc" },
+            virtualStatus: { state: "swept" as const },
+            isSpent: false,
+            isUnrolled: false,
+            createdAt: new Date(),
+        });
+
+        const refundableSwap: PendingSubmarineSwap = {
+            ...mockSubmarineSwap,
+            status: "invoice.failedToPay",
+        };
+
+        beforeEach(() => {
+            vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
+            vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
+
+            // stub createVHTLCScript to return matching address
+            vi.spyOn(swaps as any, "createVHTLCScript").mockReturnValue({
+                vhtlcScript: {
+                    claimScript: new Uint8Array([1]),
+                    pkScript: new Uint8Array([2]),
+                    refund: () => [{}, new Uint8Array([3]), 0xc0] as any,
+                    refundWithoutReceiver: () =>
+                        [{}, new Uint8Array([4]), 0xc0] as any,
+                    encode: () => [] as any,
+                },
+                vhtlcAddress: refundableSwap.response.address,
+            });
+
+            // stub the actual refund call so we don't need real crypto
+            vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
+        });
+
+        it("should select the VTXO matching Boltz lockup txid", async () => {
+            const correctVtxo = makeVtxo(lockupTxid, 0);
+            const wrongVtxo = makeVtxo(otherTxid, 0);
+
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [wrongVtxo, correctVtxo] as any,
+            });
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "invoice.failedToPay",
+                transaction: { id: lockupTxid },
+            });
+
+            await swaps.refundVHTLC(refundableSwap);
+
+            // joinBatch(identity, input, output, arkInfo) — input is arg[1]
+            const joinBatchCall = vi.mocked((swaps as any).joinBatch).mock
+                .calls[0];
+            expect(joinBatchCall[1].txid).toBe(lockupTxid);
+        });
+
+        it("should throw when no VTXO matches the Boltz lockup txid", async () => {
+            const wrongVtxo = makeVtxo(otherTxid, 0);
+
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [wrongVtxo] as any,
+            });
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "invoice.failedToPay",
+                transaction: { id: lockupTxid },
+            });
+
+            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                /No VTXO matches lockup txid/
+            );
+        });
+
+        it("should fall back to vtxos[0] when Boltz status has no transaction", async () => {
+            const firstVtxo = makeVtxo(otherTxid, 0);
+
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [firstVtxo] as any,
+            });
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "invoice.failedToPay",
+            });
+
+            await swaps.refundVHTLC(refundableSwap);
+
+            const joinBatchCall = vi.mocked((swaps as any).joinBatch).mock
+                .calls[0];
+            expect(joinBatchCall[1].txid).toBe(otherTxid);
+        });
+
+        it("should fail early on VHTLC address mismatch", async () => {
+            // return a mismatched address from createVHTLCScript
+            vi.spyOn(swaps as any, "createVHTLCScript").mockReturnValue({
+                vhtlcScript: { claimScript: new Uint8Array([1]) },
+                vhtlcAddress: "ark1-wrong-address",
+            });
+
+            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                /VHTLC address mismatch/
+            );
+
+            // should not reach any Boltz API call
+            expect(
+                vi.spyOn(swapProvider, "getSwapStatus")
+            ).not.toHaveBeenCalled();
+        });
+    });
 });
