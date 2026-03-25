@@ -21,8 +21,8 @@ describe("RestIndexerProvider", () => {
                 scripts: ["script-a", "script-b"],
                 spendableOnly: false,
                 pendingOnly: true,
-                after: 1234,
-                before: 5678,
+                after: 5234,
+                before: 1678,
                 pageIndex: 2,
                 pageSize: 50,
             });
@@ -39,8 +39,8 @@ describe("RestIndexerProvider", () => {
             ]);
             expect(requestUrl.searchParams.get("spendableOnly")).toBe("false");
             expect(requestUrl.searchParams.get("pendingOnly")).toBe("true");
-            expect(requestUrl.searchParams.get("after")).toBe("1234");
-            expect(requestUrl.searchParams.get("before")).toBe("5678");
+            expect(requestUrl.searchParams.get("after")).toBe("5234");
+            expect(requestUrl.searchParams.get("before")).toBe("1678");
             expect(requestUrl.searchParams.get("page.index")).toBe("2");
             expect(requestUrl.searchParams.get("page.size")).toBe("50");
         });
@@ -124,7 +124,7 @@ describe("RestIndexerProvider", () => {
                     after: 2000,
                     before: 2000,
                 })
-            ).rejects.toThrow("before must be greater than after");
+            ).rejects.toThrow("before must be smaller than after");
 
             expect(mockFetch).not.toHaveBeenCalled();
         });
