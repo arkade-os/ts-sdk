@@ -2660,15 +2660,14 @@ describe("ArkadeSwaps", () => {
                 vhtlcScript: { claimScript: new Uint8Array([1]) },
                 vhtlcAddress: "ark1-wrong-address",
             });
+            const getSwapStatusSpy = vi.spyOn(swapProvider, "getSwapStatus");
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
                 /VHTLC address mismatch/
             );
 
             // should not reach any Boltz API call
-            expect(
-                vi.spyOn(swapProvider, "getSwapStatus")
-            ).not.toHaveBeenCalled();
+            expect(getSwapStatusSpy).not.toHaveBeenCalled();
         });
     });
 });
