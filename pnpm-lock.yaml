@@ -14,8 +14,8 @@ importers:
   .:
     dependencies:
       '@kukks/bitcoin-descriptors':
-        specifier: 3.2.2
-        version: 3.2.2(@bitcoinerlab/miniscript@1.4.3)
+        specifier: 3.2.3
+        version: 3.2.3(@bitcoinerlab/miniscript@1.4.3)
       '@marcbachmann/cel-js':
         specifier: 7.3.1
         version: 7.3.1
@@ -951,8 +951,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@kukks/bitcoin-descriptors@3.2.2':
-    resolution: {integrity: sha512-xQr5348LsthNn3uaScGNCCWM8vslSaWHqgWCeF9/RzEp6do+D5nAHp7vKZDqq2xwdhgBpYyBbwcy5yYiiv3NVg==}
+  '@kukks/bitcoin-descriptors@3.2.3':
+    resolution: {integrity: sha512-oa37RYwnbd6WIRgZTr44ifUYrrQCESvM/K4ITXPU54HywDlin4y57fJzj1h+g3koBdz/dUP4DpE8qhzVGefLeQ==}
     peerDependencies:
       '@bitcoinerlab/miniscript': ^1.4.3
     peerDependenciesMeta:
@@ -4805,7 +4805,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@kukks/bitcoin-descriptors@3.2.2(@bitcoinerlab/miniscript@1.4.3)':
+  '@kukks/bitcoin-descriptors@3.2.3(@bitcoinerlab/miniscript@1.4.3)':
     dependencies:
       '@noble/curves': 2.0.1
       '@noble/hashes': 2.0.1
