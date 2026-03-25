@@ -550,7 +550,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
         }
         // Save VTXOs and advance cursors concurrently.
-        const cutoff = window?.before ?? Date.now() - SAFETY_LAG_MS;
+        const cutoff = window?.after ?? Date.now() - SAFETY_LAG_MS;
         await Promise.all([
             this.walletRepository.saveVtxos(address, fetchedExtended),
             advanceSyncCursors(

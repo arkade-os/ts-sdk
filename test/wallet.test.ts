@@ -8,7 +8,10 @@ import {
     ReadonlyWallet,
 } from "../src";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
-import { IndexedDBWalletRepository } from "../src/repositories";
+import {
+    IndexedDBWalletRepository,
+    IndexedDBContractRepository,
+} from "../src/repositories";
 import type { Coin } from "../src/wallet";
 
 // Mock fetch
@@ -24,9 +27,10 @@ const MockEventSource = vi.fn().mockImplementation((url: string) => ({
 }));
 vi.stubGlobal("EventSource", MockEventSource);
 
-// Shared IndexedDB repo — cleared between tests so cached VTXOs and
-// sync cursors from one test don't leak into the next.
+// Shared IndexedDB repos — cleared between tests so cached VTXOs,
+// sync cursors, and contracts from one test don't leak into the next.
 const sharedRepo = new IndexedDBWalletRepository();
+const sharedContractRepo = new IndexedDBContractRepository();
 
 describe("Wallet", () => {
     // Test vector from BIP340
@@ -40,6 +44,7 @@ describe("Wallet", () => {
     beforeEach(async () => {
         mockFetch.mockReset();
         await sharedRepo.clear();
+        await sharedContractRepo.clear();
     });
 
     describe("getBalance", () => {
@@ -561,10 +566,15 @@ describe("Wallet", () => {
         });
 
         it("should convert Wallet to ReadonlyWallet", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockArkInfo),
-            });
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve(mockArkInfo),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
+                });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
@@ -585,13 +595,20 @@ describe("Wallet", () => {
             const readonlyBoardingAddress =
                 await readonlyWallet.getBoardingAddress();
             expect(boardingAddress).toBe(readonlyBoardingAddress);
+
+            await wallet.dispose();
         });
 
         it("should not have sendBitcoin method on ReadonlyWallet type", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockArkInfo),
-            });
+            mockFetch
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve(mockArkInfo),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
+                });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
@@ -603,6 +620,8 @@ describe("Wallet", () => {
             // ReadonlyWallet should not have sendBitcoin in its type
             expect((readonlyWallet as any).sendBitcoin).toBeUndefined();
             expect((readonlyWallet as any).settle).toBeUndefined();
+
+            await wallet.dispose();
         });
 
         it("should allow querying balance on ReadonlyWallet", async () => {
@@ -625,10 +644,10 @@ describe("Wallet", () => {
                     ok: true,
                     json: () => Promise.resolve(mockArkInfo),
                 })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockUTXOs),
-                })
+                // VtxoManager background init fetches VTXOs for the
+                // default contract via createContract; provide a mock
+                // so dispose() (which awaits that init) doesn't shift
+                // the queue.
                 .mockResolvedValueOnce({
                     ok: true,
                     json: () => Promise.resolve({ vtxos: [] }),
@@ -663,6 +682,10 @@ describe("Wallet", () => {
 });
 
 describe("ReadonlyWallet", () => {
+    beforeEach(() => {
+        mockFetch.mockReset();
+    });
+
     const mockServerKeyHex =
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 

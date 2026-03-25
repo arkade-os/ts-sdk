@@ -678,7 +678,8 @@ export class ContractManager implements IContractManager {
      * Scripts without a cursor are bootstrapped with a full fetch.
      */
     private async deltaSyncContracts(
-        contracts: Contract[]
+        contracts: Contract[],
+        pageSize?: number
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) return new Map();
 
@@ -720,11 +721,11 @@ export class ContractManager implements IContractManager {
                 const fetched = await this.fetchContractVxosFromIndexer(
                     delta,
                     true,
-                    window
+                    pageSize
                 );
                 for (const [script, vtxos] of fetched) {
                     result.set(script, vtxos);
-                    cursorUpdates[script] = window.before;
+                    cursorUpdates[script] = window.after;
                 }
             }
         }
@@ -782,7 +783,7 @@ export class ContractManager implements IContractManager {
     private async fetchContractVxosFromIndexer(
         contracts: Contract[],
         includeSpent: boolean,
-        pageSize?: number     ,
+        pageSize?: number,
         syncWindow?: { after: number; before: number }
     ): Promise<Map<string, ContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
