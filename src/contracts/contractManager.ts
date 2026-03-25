@@ -18,6 +18,8 @@ import { VirtualCoin } from "../wallet";
 import { extendVtxoFromContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 
+const DEFAULT_PAGE_SIZE = 500;
+
 /**
  * Contract lifecycle and VTXO orchestration API.
  *
@@ -400,10 +402,11 @@ export class ContractManager implements IContractManager {
     }
 
     async getContractsWithVtxos(
-        filter?: GetContractsFilter
+        filter?: GetContractsFilter,
+        pageSize?: number
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
-        const vtxos = await this.getVtxosForContracts(contracts);
+        const vtxos = await this.getVtxosForContracts(contracts, pageSize);
         return contracts.map((contract) => ({
             contract,
             vtxos: vtxos.get(contract.script) ?? [],
@@ -583,9 +586,9 @@ export class ContractManager implements IContractManager {
      * Force a full VTXO refresh from the indexer for all contracts.
      * Populates the wallet repository with complete VTXO history.
      */
-    async refreshVtxos(): Promise<void> {
+    async refreshVtxos(pageSize?: number): Promise<void> {
         const contracts = await this.config.contractRepository.getContracts();
-        await this.fetchContractVxosFromIndexer(contracts, true);
+        await this.fetchContractVxosFromIndexer(contracts, true, pageSize);
     }
 
     /**
@@ -641,22 +644,29 @@ export class ContractManager implements IContractManager {
     }
 
     private async getVtxosForContracts(
-        contracts: Contract[]
+        contracts: Contract[],
+        pageSize?: number
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) {
             return new Map();
         }
 
-        return await this.fetchContractVxosFromIndexer(contracts, false);
+        return await this.fetchContractVxosFromIndexer(
+            contracts,
+            false,
+            pageSize
+        );
     }
 
     private async fetchContractVxosFromIndexer(
         contracts: Contract[],
-        includeSpent: boolean
+        includeSpent: boolean,
+        pageSize?: number
     ): Promise<Map<string, ContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
-            includeSpent
+            includeSpent,
+            pageSize
         );
         const result = new Map<string, ContractVtxo[]>();
         for (const [contractScript, vtxos] of fetched) {
@@ -674,7 +684,8 @@ export class ContractManager implements IContractManager {
 
     private async fetchContractVtxosBulk(
         contracts: Contract[],
-        includeSpent: boolean
+        includeSpent: boolean,
+        pageSize: number = DEFAULT_PAGE_SIZE
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) {
             return new Map();
@@ -685,7 +696,8 @@ export class ContractManager implements IContractManager {
             const contract = contracts[0];
             const vtxos = await this.fetchContractVtxosPaginated(
                 contract,
-                includeSpent
+                includeSpent,
+                pageSize
             );
             return new Map([[contract.script, vtxos]]);
         }
@@ -701,7 +713,6 @@ export class ContractManager implements IContractManager {
         );
 
         const scripts = contracts.map((c) => c.script);
-        const pageSize = 500;
         const opts = includeSpent ? {} : { spendableOnly: true };
         let pageIndex = 0;
         let hasMore = true;
@@ -736,9 +747,9 @@ export class ContractManager implements IContractManager {
 
     private async fetchContractVtxosPaginated(
         contract: Contract,
-        includeSpent: boolean
+        includeSpent: boolean,
+        pageSize: number = DEFAULT_PAGE_SIZE
     ): Promise<ContractVtxo[]> {
-        const pageSize = 500;
         const allVtxos: ContractVtxo[] = [];
         let pageIndex = 0;
         let hasMore = true;
