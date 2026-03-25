@@ -503,9 +503,9 @@ export class RestIndexerProvider implements IndexerProvider {
             opts?.before !== undefined &&
             opts.after !== 0 &&
             opts.before !== 0 &&
-            opts.before >= opts.after
+            opts.before <= opts.after
         ) {
-            throw new Error("before must be smaller than after");
+            throw new Error("before must be greater than after");
         }
 
         let url = `${this.serverUrl}/v1/indexer/vtxos`;
