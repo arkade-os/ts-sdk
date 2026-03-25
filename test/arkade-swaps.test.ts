@@ -2523,9 +2523,11 @@ describe("ArkadeSwaps", () => {
         it("should throw when all VTXOs are spent", async () => {
             const spentVtxo = { ...makeVtxo(lockupTxid, 0), isSpent: true };
 
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [spentVtxo] as any,
-            });
+            vi.mocked(indexerProvider.getVtxos)
+                // first call: spendableOnly=true → empty
+                .mockResolvedValueOnce({ vtxos: [] as any })
+                // second call: all VTXOs → has the spent one
+                .mockResolvedValueOnce({ vtxos: [spentVtxo] as any });
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
                 /VHTLC is already spent/

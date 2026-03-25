@@ -805,14 +805,19 @@ export class ArkadeSwaps {
         // unspent VTXO at this script belongs to this swap and must be refunded.
         // We treat the Boltz API as adversarial for refunds — selection relies
         // solely on what we can verify locally.
-        const { vtxos } = await this.indexerProvider.getVtxos({
-            scripts: [hex.encode(vhtlcScript.pkScript)],
+        const vhtlcPkScriptHex = hex.encode(vhtlcScript.pkScript);
+        const { vtxos: spendableVtxos } = await this.indexerProvider.getVtxos({
+            scripts: [vhtlcPkScriptHex],
+            spendableOnly: true,
         });
 
-        const spendableVtxos = vtxos.filter((v) => !v.isSpent);
         if (spendableVtxos.length === 0) {
+            // Distinguish "all spent" from "never funded" for diagnostics
+            const { vtxos: allVtxos } = await this.indexerProvider.getVtxos({
+                scripts: [vhtlcPkScriptHex],
+            });
             throw new Error(
-                vtxos.length > 0
+                allVtxos.length > 0
                     ? "VHTLC is already spent"
                     : `VHTLC not found for address ${pendingSwap.response.address}`
             );
