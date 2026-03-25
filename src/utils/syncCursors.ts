@@ -128,7 +128,7 @@ export function computeSyncWindow(
     cursor: number | undefined
 ): { after: number; before: number } | undefined {
     if (cursor === undefined) return undefined;
-    const after = Date.now() - SAFETY_LAG_MS;
-    const before = Math.max(0, cursor - OVERLAP_MS);
+    const after = Math.max(0, cursor - OVERLAP_MS);
+    const before = Date.now() - SAFETY_LAG_MS;
     return { after, before };
 }
