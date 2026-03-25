@@ -2496,11 +2496,31 @@ describe("ArkadeSwaps", () => {
             expect(joinBatchCall[1].txid).toBe(lockupTxid);
         });
 
-        it("should throw when no VTXO matches the Boltz lockup txid", async () => {
-            const wrongVtxo = makeVtxo(otherTxid, 0);
+        it("should use sole VTXO when Boltz txid does not match after round transition", async () => {
+            const roundTransitionedVtxo = makeVtxo(otherTxid, 0);
 
             vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [wrongVtxo] as any,
+                vtxos: [roundTransitionedVtxo] as any,
+            });
+            vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                status: "invoice.failedToPay",
+                transaction: { id: lockupTxid },
+            });
+
+            // should succeed — sole VTXO at a unique VHTLC script is unambiguous
+            await swaps.refundVHTLC(refundableSwap);
+
+            const joinBatchCall = vi.mocked((swaps as any).joinBatch).mock
+                .calls[0];
+            expect(joinBatchCall[1].txid).toBe(otherTxid);
+        });
+
+        it("should throw when Boltz txid matches none and multiple VTXOs are ambiguous", async () => {
+            const vtxoA = makeVtxo(otherTxid, 0);
+            const vtxoB = makeVtxo(hex.encode(randomBytes(32)), 0);
+
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [vtxoA, vtxoB] as any,
             });
             vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                 status: "invoice.failedToPay",
@@ -2508,7 +2528,7 @@ describe("ArkadeSwaps", () => {
             });
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                /No VTXO matches lockup txid/
+                /candidates are ambiguous/
             );
         });
 
@@ -2569,11 +2589,38 @@ describe("ArkadeSwaps", () => {
                 );
             });
 
-            it("should throw mismatch error when wrong VTXO is the only candidate", async () => {
-                const wrongVtxo = makeNonRecoverableVtxo(otherTxid, 0);
+            it("should use sole VTXO after round transition (Boltz txid mismatch)", async () => {
+                const roundTransitionedVtxo = makeNonRecoverableVtxo(
+                    otherTxid,
+                    0
+                );
 
                 vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [wrongVtxo] as any,
+                    vtxos: [roundTransitionedVtxo] as any,
+                });
+                vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
+                    status: "invoice.failedToPay",
+                    transaction: { id: lockupTxid },
+                });
+
+                await swaps.refundVHTLC(refundableSwap);
+
+                const mockRefund = vi.mocked(refundVHTLCwithOffchainTx);
+                expect(mockRefund).toHaveBeenCalledOnce();
+                expect((mockRefund.mock.calls[0][6] as any).txid).toBe(
+                    otherTxid
+                );
+            });
+
+            it("should throw when Boltz txid matches none and multiple VTXOs are ambiguous", async () => {
+                const vtxoA = makeNonRecoverableVtxo(otherTxid, 0);
+                const vtxoB = makeNonRecoverableVtxo(
+                    hex.encode(randomBytes(32)),
+                    0
+                );
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [vtxoA, vtxoB] as any,
                 });
                 vi.spyOn(swapProvider, "getSwapStatus").mockResolvedValue({
                     status: "invoice.failedToPay",
@@ -2581,7 +2628,7 @@ describe("ArkadeSwaps", () => {
                 });
 
                 await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                    /No VTXO matches lockup txid/
+                    /candidates are ambiguous/
                 );
 
                 expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();

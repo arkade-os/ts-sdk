@@ -886,8 +886,24 @@ export class ArkadeSwaps {
                 }
 
                 if (matching.length === 0) {
+                    // The Boltz txid may no longer match after an Ark round
+                    // transition (the VTXO gets a new outpoint). Since the
+                    // VHTLC script is unique per swap, a single unspent VTXO
+                    // at this address is unambiguously the lockup for this swap.
+                    if (spendableVtxos.length === 1) {
+                        logger.warn(
+                            `Boltz lockup txid ${lockupTxid} does not match ` +
+                                `VTXO ${spendableVtxos[0].txid}:${spendableVtxos[0].vout} ` +
+                                `for swap ${swapId} (likely Ark round transition), ` +
+                                `using sole candidate`
+                        );
+                        return spendableVtxos[0];
+                    }
+
+                    // multiple unspent VTXOs and none match — ambiguous
                     throw new Error(
-                        `No VTXO matches lockup txid ${lockupTxid} for swap ${swapId}. ` +
+                        `No VTXO matches lockup txid ${lockupTxid} for swap ${swapId} ` +
+                            `and ${spendableVtxos.length} candidates are ambiguous. ` +
                             `Available: ${spendableVtxos.map((v) => `${v.txid}:${v.vout}`).join(", ")}`
                     );
                 }
@@ -903,9 +919,10 @@ export class ArkadeSwaps {
             // refund — fall through to legacy selection below
             if (
                 error instanceof Error &&
-                error.message.includes("lockup txid")
+                (error.message.includes("lockup txid") ||
+                    error.message.includes("candidates are ambiguous"))
             ) {
-                throw error; // re-throw our own mismatch errors
+                throw error; // re-throw our own selection errors
             }
             logger.warn(
                 `Failed to fetch lockup txid for swap ${swapId}, falling back to first VTXO:`,
