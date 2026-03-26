@@ -52,7 +52,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Start regtest environment
-        run: ./regtest/start-env.sh
+        run: chmod +x regtest/*.sh regtest/helpers/*.sh && ./regtest/start-env.sh
       - name: Setup test wallets
         run: pnpm test:setup-docker
       - name: Run integration tests
@@ -68,7 +68,7 @@ jobs:
           docker logs boltz-fulmine 2>&1 || true
       - name: Cleanup
         if: always()
-        run: ./regtest/clean-env.sh
+        run: chmod +x regtest/*.sh regtest/helpers/*.sh 2>/dev/null; ./regtest/clean-env.sh
 
   build:
     runs-on: ubuntu-latest
