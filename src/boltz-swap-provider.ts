@@ -112,6 +112,7 @@ export const isReverseFinalStatus = (status: BoltzSwapStatus): boolean => {
         "transaction.refunded",
         "transaction.failed",
         "invoice.settled", // normal status for completed swaps
+        "invoice.expired",
         "swap.expired",
     ].includes(status);
 };
