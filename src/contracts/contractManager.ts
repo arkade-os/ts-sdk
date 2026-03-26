@@ -726,7 +726,7 @@ export class ContractManager implements IContractManager {
                 );
                 for (const [script, vtxos] of fetched) {
                     result.set(script, vtxos);
-                    cursorUpdates[script] = window.after;
+                    cursorUpdates[script] = window.before;
                 }
             }
         }
