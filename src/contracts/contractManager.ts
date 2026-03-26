@@ -395,7 +395,16 @@ export class ContractManager implements IContractManager {
         await this.config.contractRepository.saveContract(contract);
 
         // fetch all VTXOs (including spent/swept) for this contract
+        const requestStartedAt = Date.now();
         await this.fetchContractVxosFromIndexer([contract], true);
+
+        // Advance the sync cursor so that the watcher's vtxo_received
+        // event (triggered by addContract below) doesn't re-bootstrap
+        // the same script via deltaSyncContracts.
+        const cutoff = cursorCutoff(requestStartedAt);
+        await advanceSyncCursors(this.config.walletRepository, {
+            [contract.script]: cutoff,
+        });
 
         // Add to watcher
         await this.watcher.addContract(contract);
