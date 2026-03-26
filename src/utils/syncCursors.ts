@@ -160,7 +160,12 @@ export function computeSyncWindow(
  * The safe high-water mark for cursor advancement.
  * Lags behind real-time by {@link SAFETY_LAG_MS} so that VTXOs still
  * being indexed are re-queried on the next sync.
+ *
+ * When `requestStartedAt` is provided the cutoff is frozen to the
+ * request start rather than wall-clock at commit time, preventing
+ * long-running paginated fetches from advancing the cursor past the
+ * data they actually observed.
  */
-export function cursorCutoff(): number {
-    return Date.now() - SAFETY_LAG_MS;
+export function cursorCutoff(requestStartedAt?: number): number {
+    return (requestStartedAt ?? Date.now()) - SAFETY_LAG_MS;
 }

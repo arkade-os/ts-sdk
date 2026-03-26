@@ -515,30 +515,46 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const allScripts = [...scriptMap.keys()];
 
-        // If any script has no cursor yet, fall back to a full bootstrap.
-        let needsBootstrap = false;
-        let minCursor = Infinity;
+        // Partition scripts into bootstrap (no cursor) and delta (has cursor).
+        const bootstrapScripts: string[] = [];
+        const deltaScripts: string[] = [];
         for (const s of allScripts) {
-            const c = cursors[s];
-            if (c === undefined) {
-                needsBootstrap = true;
-                break;
+            if (cursors[s] === undefined) {
+                bootstrapScripts.push(s);
+            } else {
+                deltaScripts.push(s);
             }
-            if (c < minCursor) minCursor = c;
         }
 
-        const window = !needsBootstrap
-            ? computeSyncWindow(minCursor)
-            : undefined;
+        const requestStartedAt = Date.now();
+        const allVtxos: VirtualCoin[] = [];
 
-        const response = await this.indexerProvider.getVtxos({
-            scripts: allScripts,
-            ...(window ? { after: window.after } : {}),
-        });
+        // Full fetch for scripts with no cursor.
+        if (bootstrapScripts.length > 0) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts: bootstrapScripts,
+            });
+            allVtxos.push(...response.vtxos);
+        }
+
+        // Delta fetch for scripts with an existing cursor.
+        let hasDelta = false;
+        if (deltaScripts.length > 0) {
+            const minCursor = Math.min(...deltaScripts.map((s) => cursors[s]));
+            const window = computeSyncWindow(minCursor);
+            if (window) {
+                hasDelta = true;
+                const response = await this.indexerProvider.getVtxos({
+                    scripts: deltaScripts,
+                    after: window.after,
+                });
+                allVtxos.push(...response.vtxos);
+            }
+        }
 
         // Extend every fetched VTXO and upsert into the cache.
         const fetchedExtended: ExtendedVirtualCoin[] = [];
-        for (const vtxo of response.vtxos) {
+        for (const vtxo of allVtxos) {
             const vtxoScript = vtxo.script
                 ? scriptMap.get(vtxo.script)
                 : undefined;
@@ -551,7 +567,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
         }
         // Save VTXOs first, then advance cursors only on success.
-        const cutoff = cursorCutoff();
+        const cutoff = cursorCutoff(requestStartedAt);
         await this.walletRepository.saveVtxos(address, fetchedExtended);
         await advanceSyncCursors(
             this.walletRepository,
@@ -561,10 +577,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // For delta syncs, reconcile pending (preconfirmed/spent) VTXOs
         // whose state may have changed since the cursor so that
         // getVtxos()/getTransactionHistory() don't serve stale state.
-        if (window) {
+        if (hasDelta) {
             const { vtxos: pendingVtxos } = await this.indexerProvider.getVtxos(
                 {
-                    scripts: allScripts,
+                    scripts: deltaScripts,
                     pendingOnly: true,
                 }
             );
@@ -586,7 +602,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        return { isDelta: !!window, fetchedExtended, address };
+        return {
+            isDelta: hasDelta || bootstrapScripts.length === 0,
+            fetchedExtended,
+            address,
+        };
     }
 
     /**

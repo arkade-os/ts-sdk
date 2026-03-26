@@ -638,12 +638,26 @@ export class ContractManager implements IContractManager {
             }
         }
 
-        await this.fetchContractVxosFromIndexer(
+        const requestStartedAt = Date.now();
+        const fetched = await this.fetchContractVxosFromIndexer(
             contracts,
             true,
             undefined,
             syncWindow
         );
+
+        // Persist cursors so subsequent incremental syncs don't re-bootstrap.
+        const cutoff = cursorCutoff(requestStartedAt);
+        const cursorUpdates: Record<string, number> = {};
+        for (const script of fetched.keys()) {
+            cursorUpdates[script] = cutoff;
+        }
+        if (Object.keys(cursorUpdates).length > 0) {
+            await advanceSyncCursors(
+                this.config.walletRepository,
+                cursorUpdates
+            );
+        }
     }
 
     /**
@@ -741,11 +755,12 @@ export class ContractManager implements IContractManager {
 
         // Full bootstrap for new scripts.
         if (bootstrap.length > 0) {
+            const requestStartedAt = Date.now();
             const fetched = await this.fetchContractVxosFromIndexer(
                 bootstrap,
                 true
             );
-            const cutoff = cursorCutoff();
+            const cutoff = cursorCutoff(requestStartedAt);
             for (const [script, vtxos] of fetched) {
                 result.set(script, vtxos);
                 cursorUpdates[script] = cutoff;
@@ -758,13 +773,14 @@ export class ContractManager implements IContractManager {
             const minCursor = Math.min(...delta.map((c) => cursors[c.script]));
             const window = computeSyncWindow(minCursor);
             if (window) {
+                const requestStartedAt = Date.now();
                 const fetched = await this.fetchContractVxosFromIndexer(
                     delta,
                     true,
                     pageSize,
                     window
                 );
-                const cutoff = cursorCutoff();
+                const cutoff = cursorCutoff(requestStartedAt);
                 for (const [script, vtxos] of fetched) {
                     result.set(script, vtxos);
                     cursorUpdates[script] = cutoff;
