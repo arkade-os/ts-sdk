@@ -665,10 +665,17 @@ describe("Wallet", () => {
             await wallet.dispose();
 
             // Should be able to get balance
+            // getBalance calls getBoardingUtxos (1 mock) then getVtxos →
+            // syncVtxos which, with a cursor present, does a delta fetch
+            // (1 mock) plus a pendingOnly reconciliation (1 mock).
             mockFetch
                 .mockResolvedValueOnce({
                     ok: true,
                     json: () => Promise.resolve(mockUTXOs),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
                 })
                 .mockResolvedValueOnce({
                     ok: true,
