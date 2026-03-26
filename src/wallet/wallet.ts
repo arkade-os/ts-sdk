@@ -99,6 +99,14 @@ import {
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
+import {
+    advanceSyncCursors,
+    clearSyncCursors,
+    computeSyncWindow,
+    cursorCutoff,
+    getAllSyncCursors,
+    updateWalletState,
+} from "../utils/syncCursors";
 
 export type IncomingFunds =
     | {
@@ -440,51 +448,36 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        const address = await this.getAddress();
-        const scriptMap = await this.getScriptMap();
+        const { isDelta, fetchedExtended, address } = await this.syncVtxos();
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
-        const allExtended: ExtendedVirtualCoin[] = [];
 
-        // Batch all scripts into a single indexer call
-        const allScripts = [...scriptMap.keys()];
-        const response = await this.indexerProvider.getVtxos({
-            scripts: allScripts,
-        });
+        // For delta syncs, read the full merged set from cache so old
+        // VTXOs that weren't in the delta are still returned.
+        const vtxos = isDelta
+            ? await this.walletRepository.getVtxos(address)
+            : fetchedExtended;
 
-        for (const vtxo of response.vtxos) {
-            const vtxoScript = vtxo.script
-                ? scriptMap.get(vtxo.script)
-                : undefined;
-            if (!vtxoScript) continue;
-
+        return vtxos.filter((vtxo) => {
             if (isSpendable(vtxo)) {
                 if (
                     !f.withRecoverable &&
                     (isRecoverable(vtxo) || isExpired(vtxo))
                 ) {
-                    continue;
+                    return false;
                 }
-            } else {
-                if (!f.withUnrolled || !vtxo.isUnrolled) continue;
+                return true;
             }
-
-            allExtended.push({
-                ...vtxo,
-                forfeitTapLeafScript: vtxoScript.forfeit(),
-                intentTapLeafScript: vtxoScript.forfeit(),
-                tapTree: vtxoScript.encode(),
-            });
-        }
-
-        // Update cache with fresh data
-        await this.walletRepository.saveVtxos(address, allExtended);
-
-        return allExtended;
+            return !!(f.withUnrolled && vtxo.isUnrolled);
+        });
     }
 
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        const scripts = await this.getWalletScripts();
-        const response = await this.indexerProvider.getVtxos({ scripts });
+        // Delta-sync VTXOs into cache, then build history from the cache.
+        const { isDelta, fetchedExtended, address } = await this.syncVtxos();
+
+        const allVtxos = isDelta
+            ? await this.walletRepository.getVtxos(address)
+            : fetchedExtended;
 
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
@@ -495,11 +488,133 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 .then((res) => res.vtxos[0]?.createdAt.getTime());
 
         return buildTransactionHistory(
-            response.vtxos,
+            allVtxos,
             boardingTxs,
             commitmentsToIgnore,
             getTxCreatedAt
         );
+    }
+
+    /**
+     * Delta-sync wallet VTXOs: fetch only changed VTXOs since the last
+     * cursor, or do a full bootstrap when no cursor exists. Upserts
+     * the result into the cache and advances the sync cursors.
+     */
+    private async syncVtxos(): Promise<{
+        isDelta: boolean;
+        fetchedExtended: ExtendedVirtualCoin[];
+        address: string;
+    }> {
+        const address = await this.getAddress();
+        // Batch cursor read with script map to avoid extra async hops
+        // before the fetch (background operations may run between hops).
+        const [scriptMap, cursors] = await Promise.all([
+            this.getScriptMap(),
+            getAllSyncCursors(this.walletRepository),
+        ]);
+
+        const allScripts = [...scriptMap.keys()];
+
+        // Partition scripts into bootstrap (no cursor) and delta (has cursor).
+        const bootstrapScripts: string[] = [];
+        const deltaScripts: string[] = [];
+        for (const s of allScripts) {
+            if (cursors[s] === undefined) {
+                bootstrapScripts.push(s);
+            } else {
+                deltaScripts.push(s);
+            }
+        }
+
+        const requestStartedAt = Date.now();
+        const allVtxos: VirtualCoin[] = [];
+
+        // Full fetch for scripts with no cursor.
+        if (bootstrapScripts.length > 0) {
+            const response = await this.indexerProvider.getVtxos({
+                scripts: bootstrapScripts,
+            });
+            allVtxos.push(...response.vtxos);
+        }
+
+        // Delta fetch for scripts with an existing cursor.
+        let hasDelta = false;
+        if (deltaScripts.length > 0) {
+            const minCursor = Math.min(...deltaScripts.map((s) => cursors[s]));
+            const window = computeSyncWindow(minCursor);
+            if (window) {
+                hasDelta = true;
+                const response = await this.indexerProvider.getVtxos({
+                    scripts: deltaScripts,
+                    after: window.after,
+                });
+                allVtxos.push(...response.vtxos);
+            }
+        }
+
+        // Extend every fetched VTXO and upsert into the cache.
+        const fetchedExtended: ExtendedVirtualCoin[] = [];
+        for (const vtxo of allVtxos) {
+            const vtxoScript = vtxo.script
+                ? scriptMap.get(vtxo.script)
+                : undefined;
+            if (!vtxoScript) continue;
+            fetchedExtended.push({
+                ...vtxo,
+                forfeitTapLeafScript: vtxoScript.forfeit(),
+                intentTapLeafScript: vtxoScript.forfeit(),
+                tapTree: vtxoScript.encode(),
+            });
+        }
+        // Save VTXOs first, then advance cursors only on success.
+        const cutoff = cursorCutoff(requestStartedAt);
+        await this.walletRepository.saveVtxos(address, fetchedExtended);
+        await advanceSyncCursors(
+            this.walletRepository,
+            Object.fromEntries(allScripts.map((s) => [s, cutoff]))
+        );
+
+        // For delta syncs, reconcile pending (preconfirmed/spent) VTXOs
+        // whose state may have changed since the cursor so that
+        // getVtxos()/getTransactionHistory() don't serve stale state.
+        if (hasDelta) {
+            const { vtxos: pendingVtxos } = await this.indexerProvider.getVtxos(
+                {
+                    scripts: deltaScripts,
+                    pendingOnly: true,
+                }
+            );
+            const pendingExtended: ExtendedVirtualCoin[] = [];
+            for (const vtxo of pendingVtxos) {
+                const vtxoScript = vtxo.script
+                    ? scriptMap.get(vtxo.script)
+                    : undefined;
+                if (!vtxoScript) continue;
+                pendingExtended.push({
+                    ...vtxo,
+                    forfeitTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.forfeit(),
+                    tapTree: vtxoScript.encode(),
+                });
+            }
+            if (pendingExtended.length > 0) {
+                await this.walletRepository.saveVtxos(address, pendingExtended);
+            }
+        }
+
+        return {
+            isDelta: hasDelta || bootstrapScripts.length === 0,
+            fetchedExtended,
+            address,
+        };
+    }
+
+    /**
+     * Clear all VTXO sync cursors, forcing a full re-bootstrap on next sync.
+     * Useful for recovery after indexer reprocessing or debugging.
+     */
+    async clearSyncCursors(): Promise<void> {
+        await clearSyncCursors(this.walletRepository);
     }
 
     async getBoardingTxs(): Promise<{
@@ -2071,11 +2186,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     private async setPendingTxFlag(value: boolean): Promise<void> {
-        const state = (await this.walletRepository.getWalletState()) ?? {};
-        await this.walletRepository.saveWalletState({
+        await updateWalletState(this.walletRepository, (state) => ({
             ...state,
             settings: { ...state.settings, hasPendingTx: value },
-        });
+        }));
     }
 
     /**

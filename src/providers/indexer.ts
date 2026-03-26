@@ -503,9 +503,9 @@ export class RestIndexerProvider implements IndexerProvider {
             opts?.before !== undefined &&
             opts.after !== 0 &&
             opts.before !== 0 &&
-            opts.before >= opts.after
+            opts.before <= opts.after
         ) {
-            throw new Error("before must be smaller than after");
+            throw new Error("before must be greater than after");
         }
 
         let url = `${this.serverUrl}/v1/indexer/vtxos`;
@@ -539,9 +539,8 @@ export class RestIndexerProvider implements IndexerProvider {
                 params.append("pendingOnly", opts.pendingOnly.toString());
             if (opts.after !== undefined)
                 params.append("after", opts.after.toString());
-            if (opts.before !== undefined) {
+            if (opts.before !== undefined)
                 params.append("before", opts.before.toString());
-            }
             if (opts.pageIndex !== undefined)
                 params.append("page.index", opts.pageIndex.toString());
             if (opts.pageSize !== undefined)
