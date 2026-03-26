@@ -1,6 +1,7 @@
 import { TransactionOutput } from "@scure/btc-signer/psbt";
 import {
     ArkAddress,
+    ArkInfo,
     ArkProvider,
     Asset,
     decodeTapscript,
@@ -68,13 +69,18 @@ export class DelegatorManagerImpl implements IDelegatorManager {
 
         const destinationScript = ArkAddress.decode(destination).pkScript;
 
+        // fetch server and delegator info once, shared across all groups
+        const arkInfo = await this.arkInfoProvider.getInfo();
+        const delegateInfo = await this.delegatorProvider.getDelegateInfo();
+
         // if explicit delegateAt is provided, delegate all vtxos at once without sorting
         if (delegateAt) {
             try {
                 await delegate(
                     this.identity,
                     this.delegatorProvider,
-                    this.arkInfoProvider,
+                    arkInfo,
+                    delegateInfo,
                     vtxos,
                     destinationScript,
                     delegateAt
@@ -111,7 +117,8 @@ export class DelegatorManagerImpl implements IDelegatorManager {
                 await delegate(
                     this.identity,
                     this.delegatorProvider,
-                    this.arkInfoProvider,
+                    arkInfo,
+                    delegateInfo,
                     recoverableVtxos,
                     destinationScript,
                     delegateAt
@@ -140,7 +147,8 @@ export class DelegatorManagerImpl implements IDelegatorManager {
                 delegate(
                     this.identity,
                     this.delegatorProvider,
-                    this.arkInfoProvider,
+                    arkInfo,
+                    delegateInfo,
                     vtxosGroup,
                     destinationScript
                 )
@@ -175,7 +183,8 @@ export class DelegatorManagerImpl implements IDelegatorManager {
 async function delegate(
     identity: Identity,
     delegatorProvider: DelegatorProvider,
-    arkInfoProvider: Pick<ArkProvider, "getInfo">,
+    arkInfo: ArkInfo,
+    delegateInfo: DelegateInfo,
     vtxos: ExtendedVirtualCoin[],
     destinationScript: Bytes,
     delegateAt?: Date
@@ -212,8 +221,7 @@ async function delegate(
             }
         }
     }
-    const { fees, dust, forfeitAddress, network } =
-        await arkInfoProvider.getInfo();
+    const { fees, dust, forfeitAddress, network } = arkInfo;
 
     const delegateAtSeconds = delegateAt.getTime() / 1000;
     const estimator = new Estimator({
@@ -245,8 +253,7 @@ async function delegate(
         }
         amount += BigInt(coin.value) - BigInt(inputFee.value);
     }
-    const { delegatorAddress, pubkey, fee } =
-        await delegatorProvider.getDelegateInfo();
+    const { delegatorAddress, pubkey, fee } = delegateInfo;
 
     const outputs = [];
     const delegatorFee = BigInt(Number(fee));

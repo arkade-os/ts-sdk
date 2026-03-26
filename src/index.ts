@@ -82,7 +82,7 @@ import {
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
-import type { SettlementConfig } from "./wallet/vtxo-manager";
+import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
@@ -251,7 +251,17 @@ import type {
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
-import { WalletMessageHandler } from "./wallet/serviceWorker/wallet-message-handler";
+import {
+    WalletMessageHandler,
+    WalletNotInitializedError,
+    ReadonlyWalletError,
+    DelegatorNotConfiguredError,
+} from "./wallet/serviceWorker/wallet-message-handler";
+import {
+    MESSAGE_BUS_NOT_INITIALIZED,
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "./worker/errors";
 
 export {
     // Wallets
@@ -292,6 +302,12 @@ export {
     setupServiceWorker,
     MessageBus,
     WalletMessageHandler,
+    WalletNotInitializedError,
+    ReadonlyWalletError,
+    DelegatorNotConfiguredError,
+    MESSAGE_BUS_NOT_INITIALIZED,
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
 
@@ -480,6 +496,7 @@ export type {
     // Wallet types
     GetVtxosFilter,
     SettlementConfig,
+    IVtxoManager,
 
     // Asset types
     Asset,

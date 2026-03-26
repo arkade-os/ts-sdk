@@ -64,7 +64,7 @@ export async function buildTransactionHistory(
     vtxos: VirtualCoin[],
     allBoardingTxs: ArkTransaction[],
     commitmentsToIgnore: Set<string>,
-    getTxCreatedAt?: (txid: string) => Promise<number>
+    getTxCreatedAt?: (txid: string) => Promise<number | undefined>
 ): Promise<ExtendedArkTransaction[]> {
     const fromOldestVtxo = [...vtxos].sort(
         (a, b) => a.createdAt.getTime() - b.createdAt.getTime()
@@ -153,7 +153,8 @@ export async function buildTransactionHistory(
                     txAmount = spentAmount;
                     // TODO: fetch the vtxo with /v1/indexer/vtxos?outpoints=<vtxo.arkTxid:0> to know when the tx was made
                     txTime = getTxCreatedAt
-                        ? await getTxCreatedAt(vtxo.arkTxId!)
+                        ? ((await getTxCreatedAt(vtxo.arkTxId!)) ??
+                          vtxo.createdAt.getTime() + 1)
                         : vtxo.createdAt.getTime() + 1;
                 }
 

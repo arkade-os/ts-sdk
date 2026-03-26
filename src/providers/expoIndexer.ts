@@ -30,6 +30,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         createdAt: new Date(Number(vtxo.createdAt) * 1000),
         isUnrolled: vtxo.isUnrolled,
         isSpent: vtxo.isSpent,
+        script: vtxo.script,
         assets: vtxo.assets?.map((a) => ({
             assetId: a.assetId,
             amount: Number(a.amount),

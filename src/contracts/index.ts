@@ -29,4 +29,5 @@ export { ContractManager } from "./contractManager";
 export type {
     ContractManagerConfig,
     CreateContractParams,
+    RefreshVtxosOptions,
 } from "./contractManager";

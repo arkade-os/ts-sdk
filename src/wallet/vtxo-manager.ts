@@ -350,17 +350,53 @@ export function getExpiringAndRecoverableVtxos(
  * }
  * ```
  */
-export class VtxoManager implements AsyncDisposable {
+export interface IVtxoManager {
+    recoverVtxos(
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string>;
+
+    getRecoverableBalance(): Promise<{
+        recoverable: bigint;
+        subdust: bigint;
+        includesSubdust: boolean;
+        vtxoCount: number;
+    }>;
+
+    getExpiringVtxos(thresholdMs?: number): Promise<ExtendedVirtualCoin[]>;
+
+    renewVtxos(
+        eventCallback?: (event: SettlementEvent) => void
+    ): Promise<string>;
+
+    getExpiredBoardingUtxos(): Promise<ExtendedCoin[]>;
+
+    sweepExpiredBoardingUtxos(): Promise<string>;
+
+    dispose(): Promise<void>;
+}
+
+export class VtxoManager implements AsyncDisposable, IVtxoManager {
     readonly settlementConfig: SettlementConfig | false;
     private contractEventsSubscription?: () => void;
     private readonly contractEventsSubscriptionReady: Promise<
         (() => void) | undefined
     >;
     private disposePromise?: Promise<void>;
-    private pollIntervalId?: ReturnType<typeof setInterval>;
+    private pollTimeoutId?: ReturnType<typeof setTimeout>;
     private knownBoardingUtxos = new Set<string>();
     private sweptBoardingUtxos = new Set<string>();
     private pollInProgress = false;
+    private pollDone?: { promise: Promise<void>; resolve: () => void };
+    private disposed = false;
+    private consecutivePollFailures = 0;
+    private startupPollTimeoutId?: ReturnType<typeof setTimeout>;
+    private static readonly MAX_BACKOFF_MS = 5 * 60 * 1000; // 5 minutes
+
+    // Guards against renewal feedback loop: when renewVtxos() settles, the
+    // server emits new VTXOs → vtxo_received → renewVtxos() again → infinite loop.
+    private renewalInProgress = false;
+    private lastRenewalTimestamp = 0;
+    private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
 
     constructor(
         readonly wallet: IWallet,
@@ -589,45 +625,60 @@ export class VtxoManager implements AsyncDisposable {
     async renewVtxos(
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        // Get all VTXOs (including recoverable ones)
-        // Use default threshold to bypass settlementConfig gate (manual API should always work)
-        const vtxos = await this.getExpiringVtxos(
-            this.settlementConfig !== false &&
-                this.settlementConfig?.vtxoThreshold !== undefined
-                ? this.settlementConfig.vtxoThreshold * 1000
-                : DEFAULT_RENEWAL_CONFIG.thresholdMs
-        );
-
-        if (vtxos.length === 0) {
-            throw new Error("No VTXOs available to renew");
+        if (this.renewalInProgress) {
+            throw new Error("Renewal already in progress");
         }
 
-        const totalAmount = vtxos.reduce((sum, vtxo) => sum + vtxo.value, 0);
+        this.renewalInProgress = true;
 
-        // Get dust amount from wallet
-        const dustAmount = getDustAmount(this.wallet);
-
-        // Check if total amount is above dust threshold
-        if (BigInt(totalAmount) < dustAmount) {
-            throw new Error(
-                `Total amount ${totalAmount} is below dust threshold ${dustAmount}`
+        try {
+            // Get all VTXOs (including recoverable ones)
+            // Use default threshold to bypass settlementConfig gate (manual API should always work)
+            const vtxos = await this.getExpiringVtxos(
+                this.settlementConfig !== false &&
+                    this.settlementConfig?.vtxoThreshold !== undefined
+                    ? this.settlementConfig.vtxoThreshold * 1000
+                    : DEFAULT_RENEWAL_CONFIG.thresholdMs
             );
+
+            if (vtxos.length === 0) {
+                throw new Error("No VTXOs available to renew");
+            }
+
+            const totalAmount = vtxos.reduce(
+                (sum, vtxo) => sum + vtxo.value,
+                0
+            );
+
+            // Get dust amount from wallet
+            const dustAmount = getDustAmount(this.wallet);
+
+            // Check if total amount is above dust threshold
+            if (BigInt(totalAmount) < dustAmount) {
+                throw new Error(
+                    `Total amount ${totalAmount} is below dust threshold ${dustAmount}`
+                );
+            }
+
+            const arkAddress = await this.wallet.getAddress();
+
+            const txid = await this.wallet.settle(
+                {
+                    inputs: vtxos,
+                    outputs: [
+                        {
+                            address: arkAddress,
+                            amount: BigInt(totalAmount),
+                        },
+                    ],
+                },
+                eventCallback
+            );
+            this.lastRenewalTimestamp = Date.now();
+            return txid;
+        } finally {
+            this.renewalInProgress = false;
         }
-
-        const arkAddress = await this.wallet.getAddress();
-
-        return this.wallet.settle(
-            {
-                inputs: vtxos,
-                outputs: [
-                    {
-                        address: arkAddress,
-                        amount: BigInt(totalAmount),
-                    },
-                ],
-            },
-            eventCallback
-        );
     }
 
     // ========== Boarding UTXO Sweep Methods ==========
@@ -649,8 +700,11 @@ export class VtxoManager implements AsyncDisposable {
      * }
      * ```
      */
-    async getExpiredBoardingUtxos(): Promise<ExtendedCoin[]> {
-        const boardingUtxos = await this.wallet.getBoardingUtxos();
+    async getExpiredBoardingUtxos(
+        prefetchedUtxos?: ExtendedCoin[]
+    ): Promise<ExtendedCoin[]> {
+        const boardingUtxos =
+            prefetchedUtxos ?? (await this.wallet.getBoardingUtxos());
         const boardingTimelock = this.getBoardingTimelock();
 
         // For block-based timelocks, fetch the chain tip height
@@ -696,7 +750,9 @@ export class VtxoManager implements AsyncDisposable {
      * }
      * ```
      */
-    async sweepExpiredBoardingUtxos(): Promise<string> {
+    async sweepExpiredBoardingUtxos(
+        prefetchedUtxos?: ExtendedCoin[]
+    ): Promise<string> {
         const sweepEnabled =
             this.settlementConfig !== false &&
             (this.settlementConfig?.boardingUtxoSweep ??
@@ -707,7 +763,7 @@ export class VtxoManager implements AsyncDisposable {
             );
         }
 
-        const allExpired = await this.getExpiredBoardingUtxos();
+        const allExpired = await this.getExpiredBoardingUtxos(prefetchedUtxos);
         // Filter out UTXOs already swept (tx broadcast but not yet confirmed)
         const expiredUtxos = allExpired.filter(
             (u) => !this.sweptBoardingUtxos.has(`${u.txid}:${u.vout}`)
@@ -847,7 +903,10 @@ export class VtxoManager implements AsyncDisposable {
 
         // Start polling for boarding UTXOs independently of contract manager
         // SSE setup. Use a short delay to let the wallet finish construction.
-        setTimeout(() => this.startBoardingUtxoPoll(), 1000);
+        this.startupPollTimeoutId = setTimeout(() => {
+            if (this.disposed) return;
+            this.startBoardingUtxoPoll();
+        }, 1000);
 
         try {
             const [delegatorManager, contractManager, destination] =
@@ -862,9 +921,42 @@ export class VtxoManager implements AsyncDisposable {
                     return;
                 }
 
-                this.renewVtxos().catch((e) => {
-                    console.error("Error renewing VTXOs:", e);
-                });
+                const msSinceLastRenewal =
+                    Date.now() - this.lastRenewalTimestamp;
+                const shouldRenew =
+                    !this.renewalInProgress &&
+                    msSinceLastRenewal >= VtxoManager.RENEWAL_COOLDOWN_MS;
+
+                if (shouldRenew) {
+                    this.renewVtxos().catch((e) => {
+                        if (e instanceof Error) {
+                            if (
+                                e.message.includes(
+                                    "No VTXOs available to renew"
+                                )
+                            ) {
+                                // Not an error, just no VTXO eligible for renewal.
+                                return;
+                            }
+                            if (e.message.includes("is below dust threshold")) {
+                                // Not an error, just below dust threshold.
+                                // As more VTXOs are received, the threshold will be raised.
+                                return;
+                            }
+                            if (
+                                e.message.includes("VTXO_ALREADY_REGISTERED") ||
+                                e.message.includes("duplicated input")
+                            ) {
+                                // VTXO is already being used in a concurrent
+                                // user-initiated operation. Skip silently — the
+                                // wallet's tx lock serializes these, but the
+                                // renewal will retry on the next cycle.
+                                return;
+                            }
+                        }
+                        console.error("Error renewing VTXOs:", e);
+                    });
+                }
                 delegatorManager
                     ?.delegate(event.vtxos, destination)
                     .catch((e) => {
@@ -879,39 +971,67 @@ export class VtxoManager implements AsyncDisposable {
         }
     }
 
+    /** Computes the next poll delay, applying exponential backoff on failures. */
+    private getNextPollDelay(): number {
+        if (this.settlementConfig === false) return 0;
+        const baseMs =
+            this.settlementConfig.pollIntervalMs ??
+            DEFAULT_SETTLEMENT_CONFIG.pollIntervalMs;
+        if (this.consecutivePollFailures === 0) return baseMs;
+        const backoff = Math.min(
+            baseMs * Math.pow(2, this.consecutivePollFailures),
+            VtxoManager.MAX_BACKOFF_MS
+        );
+        return backoff;
+    }
+
     /**
      * Starts a polling loop that:
      * 1. Auto-settles new boarding UTXOs into Ark
      * 2. Sweeps expired boarding UTXOs (when boardingUtxoSweep is enabled)
+     *
+     * Uses setTimeout chaining (not setInterval) so a slow/blocked poll
+     * cannot stack up and the next delay can incorporate backoff.
      */
     private startBoardingUtxoPoll(): void {
         if (this.settlementConfig === false) return;
 
-        const intervalMs =
-            this.settlementConfig.pollIntervalMs ??
-            DEFAULT_SETTLEMENT_CONFIG.pollIntervalMs;
-
-        // Run once immediately, then on interval
+        // Run once immediately, then schedule next
         this.pollBoardingUtxos();
-        this.pollIntervalId = setInterval(
-            () => this.pollBoardingUtxos(),
-            intervalMs
-        );
+    }
+
+    private schedulePoll(): void {
+        if (this.disposed || this.settlementConfig === false) return;
+        const delay = this.getNextPollDelay();
+        this.pollTimeoutId = setTimeout(() => this.pollBoardingUtxos(), delay);
     }
 
     private async pollBoardingUtxos(): Promise<void> {
         // Guard: wallet must support boarding UTXO + sweep operations
         if (!isSweepCapable(this.wallet)) return;
-        // Skip if a previous poll is still running
+        // Skip if disposed or a previous poll is still running
+        if (this.disposed) return;
         if (this.pollInProgress) return;
         this.pollInProgress = true;
 
+        // Create a promise that dispose() can await
+        let resolve: () => void;
+        const promise = new Promise<void>((r) => (resolve = r));
+        this.pollDone = { promise, resolve: resolve! };
+
+        let hadError = false;
+
         try {
+            // Fetch boarding UTXOs once for the entire poll cycle so that
+            // settle and sweep don't each hit the network independently.
+            const boardingUtxos = await this.wallet.getBoardingUtxos();
+
             // Settle new (unexpired) UTXOs first, then sweep expired ones.
             // Sequential to avoid racing for the same UTXOs.
             try {
-                await this.settleBoardingUtxos();
+                await this.settleBoardingUtxos(boardingUtxos);
             } catch (e) {
+                hadError = true;
                 console.error("Error auto-settling boarding UTXOs:", e);
             }
 
@@ -921,18 +1041,30 @@ export class VtxoManager implements AsyncDisposable {
                     DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
             if (sweepEnabled) {
                 try {
-                    await this.sweepExpiredBoardingUtxos();
+                    await this.sweepExpiredBoardingUtxos(boardingUtxos);
                 } catch (e) {
                     if (
                         !(e instanceof Error) ||
                         !e.message.includes("No expired boarding UTXOs")
                     ) {
+                        hadError = true;
                         console.error("Error auto-sweeping boarding UTXOs:", e);
                     }
                 }
             }
+        } catch (e) {
+            hadError = true;
+            console.error("Error fetching boarding UTXOs:", e);
         } finally {
+            if (hadError) {
+                this.consecutivePollFailures++;
+            } else {
+                this.consecutivePollFailures = 0;
+            }
             this.pollInProgress = false;
+            this.pollDone.resolve();
+            this.pollDone = undefined;
+            this.schedulePoll();
         }
     }
 
@@ -943,18 +1075,26 @@ export class VtxoManager implements AsyncDisposable {
      * UTXOs are marked as known only after a successful settle, so failed
      * attempts will be retried on the next poll.
      */
-    private async settleBoardingUtxos(): Promise<void> {
-        const boardingUtxos = await this.wallet.getBoardingUtxos();
-
+    private async settleBoardingUtxos(
+        boardingUtxos: ExtendedCoin[]
+    ): Promise<void> {
         // Exclude expired UTXOs — those should be swept, not settled.
         // If we can't determine expired status, bail out entirely to avoid
         // accidentally settling expired UTXOs (which would conflict with sweep).
         let expiredSet: Set<string>;
         try {
-            const expired = await this.getExpiredBoardingUtxos();
+            const boardingTimelock = this.getBoardingTimelock();
+            let chainTipHeight: number | undefined;
+            if (boardingTimelock.type === "blocks") {
+                const tip = await this.getOnchainProvider().getChainTip();
+                chainTipHeight = tip.height;
+            }
+            const expired = boardingUtxos.filter((utxo) =>
+                hasBoardingTxExpired(utxo, boardingTimelock, chainTipHeight)
+            );
             expiredSet = new Set(expired.map((u) => `${u.txid}:${u.vout}`));
-        } catch {
-            return;
+        } catch (e) {
+            throw e instanceof Error ? e : new Error(String(e));
         }
 
         const unsettledUtxos = boardingUtxos.filter(
@@ -986,9 +1126,23 @@ export class VtxoManager implements AsyncDisposable {
 
     async dispose(): Promise<void> {
         this.disposePromise ??= (async () => {
-            if (this.pollIntervalId) {
-                clearInterval(this.pollIntervalId);
-                this.pollIntervalId = undefined;
+            this.disposed = true;
+            if (this.startupPollTimeoutId) {
+                clearTimeout(this.startupPollTimeoutId);
+                this.startupPollTimeoutId = undefined;
+            }
+            if (this.pollTimeoutId) {
+                clearTimeout(this.pollTimeoutId);
+                this.pollTimeoutId = undefined;
+            }
+            // Wait for any in-flight poll to finish (with timeout to avoid hanging)
+            if (this.pollDone) {
+                let timer: ReturnType<typeof setTimeout>;
+                const timeout = new Promise<void>(
+                    (r) => (timer = setTimeout(r, 30_000))
+                );
+                await Promise.race([this.pollDone.promise, timeout]);
+                clearTimeout(timer!);
             }
             const subscription = await this.contractEventsSubscriptionReady;
             this.contractEventsSubscription = undefined;

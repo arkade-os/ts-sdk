@@ -20,8 +20,11 @@ const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
 /** Use default BIP86 derivation with network selection. */
 export interface NetworkOptions {
-    /** Mainnet (coin type 0) or testnet (coin type 1). */
-    isMainnet: boolean;
+    /**
+     * Mainnet (coin type 0) or testnet (coin type 1).
+     * @default true
+     */
+    isMainnet?: boolean;
 }
 
 /** Use a custom output descriptor for derivation. */
@@ -149,7 +152,7 @@ export class SeedIdentity implements Identity {
     static fromSeed(seed: Uint8Array, opts: SeedIdentityOptions): SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet);
+            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
         return new SeedIdentity(seed, descriptor);
     }
 
@@ -254,7 +257,7 @@ export class MnemonicIdentity extends SeedIdentity {
         const seed = mnemonicToSeedSync(phrase, passphrase);
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet);
+            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
         return new MnemonicIdentity(seed, descriptor);
     }
 }

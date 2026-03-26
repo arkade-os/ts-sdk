@@ -9,8 +9,14 @@ import { RestDelegatorProvider } from "../providers/delegator";
 import { ReadonlySingleKey, SingleKey } from "../identity";
 import { ReadonlyWallet, Wallet } from "../wallet/wallet";
 import { hex } from "@scure/base";
+import type { SettlementConfig } from "../wallet/vtxo-manager";
+import type { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
 import { getRandomId } from "../wallet/utils";
+import {
+    MessageBusNotInitializedError,
+    ServiceWorkerTimeoutError,
+} from "./errors";
 
 declare const self: ServiceWorkerGlobalScope;
 
@@ -98,6 +104,10 @@ type Initialize = {
             publicKey?: string;
         };
         delegatorUrl?: string;
+        indexerUrl?: string;
+        esploraUrl?: string;
+        settlementConfig?: SettlementConfig | false;
+        watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     };
 };
 
@@ -290,8 +300,12 @@ export class MessageBus {
                 identity,
                 arkServerUrl: config.arkServer.url,
                 arkServerPublicKey: config.arkServer.publicKey,
+                indexerUrl: config.indexerUrl,
+                esploraUrl: config.esploraUrl,
                 storage,
                 delegatorProvider,
+                settlementConfig: config.settlementConfig,
+                watcherConfig: config.watcherConfig,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
         } else if ("publicKey" in config.wallet) {
@@ -302,8 +316,11 @@ export class MessageBus {
                 identity,
                 arkServerUrl: config.arkServer.url,
                 arkServerPublicKey: config.arkServer.publicKey,
+                indexerUrl: config.indexerUrl,
+                esploraUrl: config.esploraUrl,
                 storage,
                 delegatorProvider,
+                watcherConfig: config.watcherConfig,
             });
             return { readonlyWallet, arkProvider };
         } else {
@@ -326,6 +343,11 @@ export class MessageBus {
 
     private async processMessage(event: ExtendableMessageEvent) {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
+
+        if (tag === "PING") {
+            event.source?.postMessage({ id, tag: "PONG" });
+            return;
+        }
 
         if (tag === "INITIALIZE_MESSAGE_BUS") {
             if (this.debug) {
@@ -355,7 +377,7 @@ export class MessageBus {
             event.source?.postMessage({
                 id,
                 tag: tag ?? "unknown",
-                error: new Error("MessageBus not initialized"),
+                error: new MessageBusNotInitializedError(),
             });
             return;
         }
@@ -448,7 +470,7 @@ export class MessageBus {
         return new Promise((resolve, reject) => {
             const timer = self.setTimeout(() => {
                 reject(
-                    new Error(
+                    new ServiceWorkerTimeoutError(
                         `Message handler timed out after ${this.messageTimeoutMs}ms (${label})`
                     )
                 );
