@@ -85,7 +85,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         },
-        delegatorProvider: new RestDelegatorProvider("http://localhost:7002"),
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
         settlementConfig: false,
     });
 

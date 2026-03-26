@@ -1131,7 +1131,7 @@ describe("Delegator Lifecycle", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -1298,7 +1298,7 @@ describe("Cross-contract spending", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -1418,7 +1418,7 @@ describe("Cross-contract spending", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -1992,7 +1992,7 @@ describe("Asset integration tests", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -2150,7 +2150,7 @@ describe("Asset integration tests", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -2249,7 +2249,7 @@ describe("Asset integration tests", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
