@@ -113,6 +113,7 @@ import type {
     GetAllSpendingPathsOptions,
     GetSpendablePathsOptions,
     IContractManager,
+    RefreshVtxosOptions,
 } from "../../contracts/contractManager";
 import type { ContractState } from "../../contracts/types";
 import type { IDelegatorManager } from "../delegator";
@@ -1064,11 +1065,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 };
             },
 
-            async refreshVtxos(): Promise<void> {
+            async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
                 const message: RequestRefreshVtxos = {
                     type: "REFRESH_VTXOS",
                     id: getRandomId(),
                     tag: messageTag,
+                    payload: opts,
                 };
                 await sendContractMessage(message);
             },

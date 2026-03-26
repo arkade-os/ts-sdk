@@ -21,8 +21,8 @@ import {
     advanceSyncCursors,
     clearSyncCursors,
     computeSyncWindow,
+    cursorCutoff,
     getAllSyncCursors,
-    SAFETY_LAG_MS,
 } from "../utils/syncCursors";
 
 const DEFAULT_PAGE_SIZE = 500;
@@ -66,6 +66,12 @@ const DEFAULT_PAGE_SIZE = 500;
  * manager.dispose();
  * ```
  */
+export type RefreshVtxosOptions = {
+    scripts?: string[];
+    after?: number;
+    before?: number;
+};
+
 export interface IContractManager extends Disposable {
     /**
      * Create and register a new contract.
@@ -144,10 +150,12 @@ export interface IContractManager extends Disposable {
     onContractEvent(callback: ContractEventCallback): () => void;
 
     /**
-     * Force a full VTXO refresh from the indexer for all contracts.
-     * Populates the wallet repository with complete VTXO history.
+     * Force a VTXO refresh from the indexer.
+     *
+     * Without options, refreshes all contracts from scratch.
+     * With options, narrows the refresh to specific scripts and/or a time window.
      */
-    refreshVtxos(): Promise<void>;
+    refreshVtxos(opts?: RefreshVtxosOptions): Promise<void>;
 
     /**
      * Whether the underlying watcher is currently active.
@@ -597,13 +605,45 @@ export class ContractManager implements IContractManager {
     }
 
     /**
-     * Force a full VTXO refresh from the indexer for all contracts.
-     * Clears sync cursors first so the next delta sync re-bootstraps.
+     * Force a VTXO refresh from the indexer.
+     *
+     * Without options, clears all sync cursors and re-fetches every contract.
+     * With options, narrows the refresh to specific scripts and/or a time window.
      */
-    async refreshVtxos(pageSize?: number): Promise<void> {
-        await clearSyncCursors(this.config.walletRepository);
-        const contracts = await this.config.contractRepository.getContracts();
-        await this.fetchContractVxosFromIndexer(contracts, true, pageSize);
+    async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
+        let contracts = await this.config.contractRepository.getContracts();
+
+        if (opts?.scripts && opts.scripts.length > 0) {
+            const scriptSet = new Set(opts.scripts);
+            contracts = contracts.filter((c) => scriptSet.has(c.script));
+        }
+
+        const syncWindow =
+            opts?.after !== undefined || opts?.before !== undefined
+                ? {
+                      after: opts.after ?? 0,
+                      before: opts.before ?? Date.now(),
+                  }
+                : undefined;
+
+        if (!syncWindow) {
+            // Full refresh — clear cursors so the next delta sync re-bootstraps.
+            if (opts?.scripts && opts.scripts.length > 0) {
+                await clearSyncCursors(
+                    this.config.walletRepository,
+                    opts.scripts
+                );
+            } else {
+                await clearSyncCursors(this.config.walletRepository);
+            }
+        }
+
+        await this.fetchContractVxosFromIndexer(
+            contracts,
+            true,
+            undefined,
+            syncWindow
+        );
     }
 
     /**
@@ -705,7 +745,7 @@ export class ContractManager implements IContractManager {
                 bootstrap,
                 true
             );
-            const cutoff = Date.now() - SAFETY_LAG_MS;
+            const cutoff = cursorCutoff();
             for (const [script, vtxos] of fetched) {
                 result.set(script, vtxos);
                 cursorUpdates[script] = cutoff;
@@ -724,9 +764,10 @@ export class ContractManager implements IContractManager {
                     pageSize,
                     window
                 );
+                const cutoff = cursorCutoff();
                 for (const [script, vtxos] of fetched) {
                     result.set(script, vtxos);
-                    cursorUpdates[script] = window.before;
+                    cursorUpdates[script] = cutoff;
                 }
             }
         }
@@ -785,7 +826,7 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         includeSpent: boolean,
         pageSize?: number,
-        syncWindow?: { after: number; before: number }
+        syncWindow?: { after?: number; before?: number }
     ): Promise<Map<string, ContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
@@ -811,7 +852,7 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         includeSpent: boolean,
         pageSize: number = DEFAULT_PAGE_SIZE,
-        syncWindow?: { after: number; before: number }
+        syncWindow?: { after?: number; before?: number }
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) {
             return new Map();
@@ -842,7 +883,14 @@ export class ContractManager implements IContractManager {
         const scripts = contracts.map((c) => c.script);
         const opts = includeSpent ? {} : { spendableOnly: true };
         const windowOpts = syncWindow
-            ? { after: syncWindow.after, before: syncWindow.before }
+            ? {
+                  ...(syncWindow.after !== undefined && {
+                      after: syncWindow.after,
+                  }),
+                  ...(syncWindow.before !== undefined && {
+                      before: syncWindow.before,
+                  }),
+              }
             : {};
         let pageIndex = 0;
         let hasMore = true;
@@ -880,7 +928,7 @@ export class ContractManager implements IContractManager {
         contract: Contract,
         includeSpent: boolean,
         pageSize: number = DEFAULT_PAGE_SIZE,
-        syncWindow?: { after: number; before: number }
+        syncWindow?: { after?: number; before?: number }
     ): Promise<ContractVtxo[]> {
         const allVtxos: ContractVtxo[] = [];
         let pageIndex = 0;
@@ -888,7 +936,14 @@ export class ContractManager implements IContractManager {
 
         const opts = includeSpent ? {} : { spendableOnly: true };
         const windowOpts = syncWindow
-            ? { after: syncWindow.after, before: syncWindow.before }
+            ? {
+                  ...(syncWindow.after !== undefined && {
+                      after: syncWindow.after,
+                  }),
+                  ...(syncWindow.before !== undefined && {
+                      before: syncWindow.before,
+                  }),
+              }
             : {};
 
         while (hasMore) {

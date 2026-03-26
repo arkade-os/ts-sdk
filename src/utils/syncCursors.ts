@@ -108,27 +108,59 @@ export async function advanceSyncCursors(
 }
 
 /**
- * Remove all sync cursors, forcing a full re-bootstrap on next sync.
+ * Remove sync cursors, forcing a full re-bootstrap on next sync.
+ * When `scripts` is provided, only those cursors are cleared.
  */
-export async function clearSyncCursors(repo: WalletRepository): Promise<void> {
+export async function clearSyncCursors(
+    repo: WalletRepository,
+    scripts?: string[]
+): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const { vtxoSyncCursors: _, ...restSettings } = state.settings ?? {};
+        if (!scripts) {
+            const { vtxoSyncCursors: _, ...restSettings } =
+                state.settings ?? {};
+            return {
+                ...state,
+                settings: restSettings,
+            };
+        }
+        const existing =
+            (state.settings?.vtxoSyncCursors as
+                | Record<string, number>
+                | undefined) ?? {};
+        const filtered = { ...existing };
+        for (const s of scripts) delete filtered[s];
         return {
             ...state,
-            settings: restSettings,
+            settings: {
+                ...state.settings,
+                vtxoSyncCursors: filtered,
+            },
         };
     });
 }
 
 /**
- * Compute the `after` and `before` bounds for a delta sync window.
+ * Compute the `after` lower-bound for a delta sync query.
  * Returns `undefined` when the script has no cursor (bootstrap needed).
+ *
+ * No upper bound (`before`) is applied to the query so that freshly
+ * created VTXOs are never excluded. The safety lag is applied only
+ * when advancing the cursor (see {@link cursorCutoff}).
  */
 export function computeSyncWindow(
     cursor: number | undefined
-): { after: number; before: number } | undefined {
+): { after: number } | undefined {
     if (cursor === undefined) return undefined;
     const after = Math.max(0, cursor - OVERLAP_MS);
-    const before = Date.now() - SAFETY_LAG_MS;
-    return { after, before };
+    return { after };
+}
+
+/**
+ * The safe high-water mark for cursor advancement.
+ * Lags behind real-time by {@link SAFETY_LAG_MS} so that VTXOs still
+ * being indexed are re-queried on the next sync.
+ */
+export function cursorCutoff(): number {
+    return Date.now() - SAFETY_LAG_MS;
 }

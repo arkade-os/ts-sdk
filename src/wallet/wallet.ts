@@ -103,8 +103,8 @@ import {
     advanceSyncCursors,
     clearSyncCursors,
     computeSyncWindow,
+    cursorCutoff,
     getAllSyncCursors,
-    SAFETY_LAG_MS,
     updateWalletState,
 } from "../utils/syncCursors";
 
@@ -533,7 +533,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const response = await this.indexerProvider.getVtxos({
             scripts: allScripts,
-            ...(window ? { after: window.after, before: window.before } : {}),
+            ...(window ? { after: window.after } : {}),
         });
 
         // Extend every fetched VTXO and upsert into the cache.
@@ -551,7 +551,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             });
         }
         // Save VTXOs first, then advance cursors only on success.
-        const cutoff = window?.after ?? Date.now() - SAFETY_LAG_MS;
+        const cutoff = cursorCutoff();
         await this.walletRepository.saveVtxos(address, fetchedExtended);
         await advanceSyncCursors(
             this.walletRepository,
@@ -559,7 +559,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         );
 
         // For delta syncs, reconcile pending (preconfirmed/spent) VTXOs
-        // whose state may have changed in the SAFETY_LAG_MS gap so that
+        // whose state may have changed since the cursor so that
         // getVtxos()/getTransactionHistory() don't serve stale state.
         if (window) {
             const { vtxos: pendingVtxos } = await this.indexerProvider.getVtxos(
