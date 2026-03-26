@@ -143,6 +143,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
+    private _syncVtxosInflight?: Promise<{
+        isDelta: boolean;
+        fetchedExtended: ExtendedVirtualCoin[];
+        address: string;
+    }>;
 
     get assetManager(): IReadonlyAssetManager {
         return this._assetManager;
@@ -499,8 +504,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * Delta-sync wallet VTXOs: fetch only changed VTXOs since the last
      * cursor, or do a full bootstrap when no cursor exists. Upserts
      * the result into the cache and advances the sync cursors.
+     *
+     * Concurrent calls are deduplicated: if a sync is already in flight,
+     * subsequent callers receive the same promise instead of triggering
+     * a second network round-trip.
      */
-    private async syncVtxos(): Promise<{
+    private syncVtxos(): Promise<{
+        isDelta: boolean;
+        fetchedExtended: ExtendedVirtualCoin[];
+        address: string;
+    }> {
+        if (this._syncVtxosInflight) return this._syncVtxosInflight;
+        const p = this.doSyncVtxos().finally(() => {
+            this._syncVtxosInflight = undefined;
+        });
+        this._syncVtxosInflight = p;
+        return p;
+    }
+
+    private async doSyncVtxos(): Promise<{
         isDelta: boolean;
         fetchedExtended: ExtendedVirtualCoin[];
         address: string;
