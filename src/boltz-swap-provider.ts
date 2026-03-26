@@ -1004,6 +1004,7 @@ export class BoltzSwapProvider {
     private readonly apiUrl: string;
     private readonly network: Network;
     private readonly referralId?: string;
+    private readonly inflightGets = new Map<string, Promise<unknown>>();
 
     /** @param config Provider configuration with network and optional API URL. */
     constructor(config: SwapProviderConfig) {
@@ -1564,6 +1565,26 @@ export class BoltzSwapProvider {
     }
 
     private async request<T>(
+        path: string,
+        method: "GET" | "POST",
+        body?: unknown
+    ): Promise<T> {
+        // Deduplicate concurrent GET requests to the same path so that
+        // callers like getFees() + getLimits() (which both hit
+        // /v2/swap/submarine) share a single in-flight fetch.
+        if (method === "GET") {
+            const inflight = this.inflightGets.get(path);
+            if (inflight) return inflight as Promise<T>;
+            const p = this.doRequest<T>(path, method).finally(() => {
+                this.inflightGets.delete(path);
+            });
+            this.inflightGets.set(path, p);
+            return p;
+        }
+        return this.doRequest<T>(path, method, body);
+    }
+
+    private async doRequest<T>(
         path: string,
         method: "GET" | "POST",
         body?: unknown
