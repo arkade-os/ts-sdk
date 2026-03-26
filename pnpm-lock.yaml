@@ -20,8 +20,8 @@ importers:
         specifier: 7.3.1
         version: 7.3.1
       '@noble/curves':
-        specifier: 2.0.0
-        version: 2.0.0
+        specifier: 2.0.1
+        version: 2.0.1
       '@noble/secp256k1':
         specifier: 3.0.0
         version: 3.0.0
@@ -995,16 +995,8 @@ packages:
     engines: {node: '>=20.19.0'}
     hasBin: true
 
-  '@noble/curves@2.0.0':
-    resolution: {integrity: sha512-RiwZZeJnsTnhT+/gg2KvITJZhK5oagQrpZo+yQyd3mv3D5NAG2qEeEHpw7IkXRlpkoD45wl2o4ydHAvY9wyEfw==}
-    engines: {node: '>= 20.19.0'}
-
   '@noble/curves@2.0.1':
     resolution: {integrity: sha512-vs1Az2OOTBiP4q0pwjW5aF0xp9n4MxVrmkFBxc6EKZc6ddYx5gaZiAsZoq0uRRXWbi3AT/sBqn05eRPtn1JCPw==}
-    engines: {node: '>= 20.19.0'}
-
-  '@noble/hashes@2.0.0':
-    resolution: {integrity: sha512-h8VUBlE8R42+XIDO229cgisD287im3kdY6nbNZJFjc6ZvKIXPYXe6Vc/t+kyjFdMFyt5JpapzTsEg8n63w5/lw==}
     engines: {node: '>= 20.19.0'}
 
   '@noble/hashes@2.0.1':
@@ -4874,15 +4866,9 @@ snapshots:
 
   '@marcbachmann/cel-js@7.3.1': {}
 
-  '@noble/curves@2.0.0':
-    dependencies:
-      '@noble/hashes': 2.0.0
-
   '@noble/curves@2.0.1':
     dependencies:
       '@noble/hashes': 2.0.1
-
-  '@noble/hashes@2.0.0': {}
 
   '@noble/hashes@2.0.1': {}
 
@@ -5153,7 +5139,7 @@ snapshots:
 
   '@scure/btc-signer@2.0.1':
     dependencies:
-      '@noble/curves': 2.0.0
+      '@noble/curves': 2.0.1
       '@noble/hashes': 2.0.1
       '@scure/base': 2.0.0
       micro-packed: 0.8.0
