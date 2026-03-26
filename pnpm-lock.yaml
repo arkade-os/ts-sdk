@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@arkade-os/sdk':
-        specifier: 0.4.10
-        version: 0.4.10
+        specifier: 0.4.11
+        version: 0.4.11(@bitcoinerlab/miniscript@1.4.3)
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.0.1
@@ -72,8 +72,8 @@ importers:
 
 packages:
 
-  '@arkade-os/sdk@0.4.10':
-    resolution: {integrity: sha512-7Ga7ywIDGiSfeLGyrvnJAPicOg7srcaYEdwlQOeDIWM+cmzDwKThj2KTJ2ZL50YAksoFMradAPAD+UAJs/Dwag==}
+  '@arkade-os/sdk@0.4.11':
+    resolution: {integrity: sha512-ldXeb0j0gzsZ61H3o6Ud0QvOa58HTGMwsW8RV/17pGRh3sE+vMHtyDDzSMvkRX0zy0gKrEWGUZCUZpjKvaihlw==}
     engines: {node: '>=22.12.0 <23', pnpm: '>=10.25.0 <11'}
     peerDependencies:
       '@react-native-async-storage/async-storage': '>=1.0.0'
@@ -323,8 +323,13 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@kukks/bitcoin-descriptors@3.1.0':
-    resolution: {integrity: sha512-7HOCZjufw3DIIDebx7/ZOeol6khkWoccM6vzee6t5bXOJoj/6ISdssEDhjxDgy88in/I39pKz+kzFukxK5eqVw==}
+  '@kukks/bitcoin-descriptors@3.2.3':
+    resolution: {integrity: sha512-oa37RYwnbd6WIRgZTr44ifUYrrQCESvM/K4ITXPU54HywDlin4y57fJzj1h+g3koBdz/dUP4DpE8qhzVGefLeQ==}
+    peerDependencies:
+      '@bitcoinerlab/miniscript': ^1.4.3
+    peerDependenciesMeta:
+      '@bitcoinerlab/miniscript':
+        optional: true
 
   '@marcbachmann/cel-js@7.3.1':
     resolution: {integrity: sha512-P6o26TvjStT8V8+8EF+yq9Pp7ZFV00bpiUMbssr76XbIZGxaB+NNWeBp6WNxOrR9gp0JPzvJueCKHpOs5LE9PQ==}
@@ -1403,9 +1408,9 @@ packages:
 
 snapshots:
 
-  '@arkade-os/sdk@0.4.10':
+  '@arkade-os/sdk@0.4.11(@bitcoinerlab/miniscript@1.4.3)':
     dependencies:
-      '@kukks/bitcoin-descriptors': 3.1.0
+      '@kukks/bitcoin-descriptors': 3.2.3(@bitcoinerlab/miniscript@1.4.3)
       '@marcbachmann/cel-js': 7.3.1
       '@noble/curves': 2.0.0
       '@noble/secp256k1': 3.0.0
@@ -1414,10 +1419,13 @@ snapshots:
       '@scure/bip39': 2.0.1
       '@scure/btc-signer': 2.0.1
       bip68: 1.0.4
+    transitivePeerDependencies:
+      - '@bitcoinerlab/miniscript'
 
   '@bitcoinerlab/miniscript@1.4.3':
     dependencies:
       bip68: 1.0.4
+    optional: true
 
   '@esbuild/aix-ppc64@0.25.9':
     optional: true
@@ -1575,14 +1583,15 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@kukks/bitcoin-descriptors@3.1.0':
+  '@kukks/bitcoin-descriptors@3.2.3(@bitcoinerlab/miniscript@1.4.3)':
     dependencies:
-      '@bitcoinerlab/miniscript': 1.4.3
       '@noble/curves': 2.0.1
       '@noble/hashes': 2.0.1
       '@scure/base': 2.0.0
       '@scure/bip32': 2.0.1
       '@scure/btc-signer': 2.0.1
+    optionalDependencies:
+      '@bitcoinerlab/miniscript': 1.4.3
 
   '@marcbachmann/cel-js@7.3.1': {}
 
