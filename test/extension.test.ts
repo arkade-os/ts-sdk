@@ -52,11 +52,15 @@ describe("Extension", () => {
                     const data = hex.decode(v.hex);
                     const ext = Extension.fromBytes(data);
                     expect(ext).toBeDefined();
-                    const assetPacket = ext.getAssetPacket();
                     if (v.expectedPacketTypes.includes(0)) {
-                        expect(assetPacket).not.toBeNull();
+                        expect(ext.getAssetPacket()).not.toBeNull();
                     } else {
-                        expect(assetPacket).toBeNull();
+                        expect(ext.getAssetPacket()).toBeNull();
+                    }
+                    if (v.expectedPacketTypes.includes(3)) {
+                        expect(ext.getBancoOffer()).not.toBeNull();
+                    } else {
+                        expect(ext.getBancoOffer()).toBeNull();
                     }
                 });
             });
@@ -172,6 +176,18 @@ describe("Extension", () => {
                 hex.decode("6a0b41524b0106010000015100")
             );
             expect(ext.getIntrospectorPacket()).not.toBeNull();
+        });
+
+        it("banco offer", () => {
+            const ext = Extension.fromBytes(
+                hex.decode(
+                    "6a4c8941524b03830101000a7461726b317174657374020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                )
+            );
+            const offer = ext.getBancoOffer();
+            expect(offer).not.toBeNull();
+            expect(offer!.swapAddress).toBe("tark1qtest");
+            expect(offer!.wantAmount).toBe(50000n);
         });
     });
 });

@@ -214,6 +214,7 @@ export * from "./arkfee";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
+export * as banco from "./banco";
 export * from "./extension/introspector";
 
 // Contracts

@@ -1,0 +1,29 @@
+{
+    "name": "@arkade-os/banco-cli",
+    "version": "0.0.1",
+    "private": true,
+    "description": "Banco CLI using @arkade-os/sdk",
+    "type": "module",
+    "bin": {
+        "banco": "src/index.ts"
+    },
+    "scripts": {
+        "build": "tsc",
+        "start": "tsx src/index.ts",
+        "dev": "tsc --watch"
+    },
+    "dependencies": {
+        "@arkade-os/sdk": "workspace:*",
+        "eventsource": "4.0.0"
+    },
+    "devDependencies": {
+        "@types/node": "24.3.1",
+        "tsx": "4.21.0",
+        "typescript": "5.9.2"
+    },
+    "packageManager": "pnpm@10.25.0",
+    "engines": {
+        "node": ">=22.12.0 <23",
+        "pnpm": ">=10.25.0 <11"
+    }
+}

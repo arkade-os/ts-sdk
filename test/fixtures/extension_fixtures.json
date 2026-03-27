@@ -107,6 +107,18 @@
                 "hex": "6a1b41524b000e01020200000001010000c0de810a0106010000015100",
                 "expectedPacketCount": 2,
                 "expectedPacketTypes": [0, 1]
+            },
+            {
+                "name": "single banco offer packet",
+                "hex": "6a4c8941524b03830101000a7461726b317174657374020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "expectedPacketCount": 1,
+                "expectedPacketTypes": [3]
+            },
+            {
+                "name": "banco offer and introspector packets",
+                "hex": "6a4c9141524b03830101000a7461726b317174657374020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc0106010000015100",
+                "expectedPacketCount": 2,
+                "expectedPacketTypes": [3, 1]
             }
         ],
         "roundtrip": [
@@ -121,6 +133,10 @@
             {
                 "name": "mixed asset and unknown packets",
                 "hex": "6a1941524b000e01020200000001010000c0de810aff04deadbeef"
+            },
+            {
+                "name": "single banco offer packet",
+                "hex": "6a4c8941524b03830101000a7461726b317174657374020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
             },
             {
                 "name": "large payload (PUSHDATA1)",

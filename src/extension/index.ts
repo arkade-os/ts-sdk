@@ -7,6 +7,7 @@ import { ExtensionPacket, UnknownPacket } from "./packet";
 import type { TransactionOutput } from "@scure/btc-signer/psbt";
 import type { Transaction } from "../utils/transaction";
 import { IntrospectorPacket } from "./introspector";
+import { Offer as BancoOffer } from "../banco/offer";
 
 export type { ExtensionPacket } from "./packet";
 export { UnknownPacket } from "./packet";
@@ -213,6 +214,18 @@ export class Extension {
     }
 
     /**
+     * getBancoOffer returns the embedded Banco offer, or null if not present.
+     */
+    getBancoOffer(): BancoOffer.Data | null {
+        for (const p of this.packets) {
+            if (p.type() === BancoOffer.PACKET_TYPE) {
+                return BancoOffer.fromPacket(p.serialize());
+            }
+        }
+        return null;
+    }
+
+    /**
      * getIntrospectorPacket returns the embedded IntrospectorPacket, or null if not present.
      */
     getIntrospectorPacket(): IntrospectorPacket | null {
@@ -234,6 +247,11 @@ function parsePacket(packetType: number, data: Uint8Array): ExtensionPacket {
             return Packet.fromBytes(data);
         case IntrospectorPacket.PACKET_TYPE:
             return IntrospectorPacket.fromBytes(data);
+        case BancoOffer.PACKET_TYPE:
+            return {
+                type: () => BancoOffer.PACKET_TYPE,
+                serialize: () => data,
+            };
         default:
             return new UnknownPacket(packetType, data);
     }
