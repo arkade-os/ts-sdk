@@ -115,12 +115,11 @@
         "release:cleanup": "bash scripts/release.sh --cleanup"
     },
     "dependencies": {
-        "@kukks/bitcoin-descriptors": "3.2.3",
+        "@bitcoinerlab/descriptors-scure": "3.1.4",
         "@marcbachmann/cel-js": "7.3.1",
-        "@noble/curves": "2.0.0",
+        "@noble/curves": "2.0.1",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
-        "@scure/bip32": "2.0.0",
         "@scure/bip39": "2.0.1",
         "@scure/btc-signer": "2.0.1",
         "bip68": "1.0.4"
