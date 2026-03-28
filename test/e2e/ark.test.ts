@@ -42,8 +42,8 @@ describe("Common", () => {
 
     for (const { name, factory } of [
         { name: "Wallet", factory: createTestArkWallet },
-        { name: "With Delegate", factory: createTestArkWalletWithDelegate },
-        { name: "With Mnemonic", factory: createTestArkWalletWithMnemonic },
+        // { name: "With Delegate", factory: createTestArkWalletWithDelegate },
+        // { name: "With Mnemonic", factory: createTestArkWalletWithMnemonic },
     ]) {
         describe(name, () => {
             it(

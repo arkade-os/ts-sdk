@@ -239,6 +239,11 @@ export type ResponseIsContractManagerWatching = ResponseEnvelope & {
 
 export type RequestRefreshVtxos = RequestEnvelope & {
     type: "REFRESH_VTXOS";
+    payload?: {
+        scripts?: string[];
+        after?: number;
+        before?: number;
+    };
 };
 export type ResponseRefreshVtxos = ResponseEnvelope & {
     type: "REFRESH_VTXOS_SUCCESS";
@@ -815,7 +820,9 @@ export class WalletMessageHandler
                 case "REFRESH_VTXOS": {
                     const manager =
                         await this.readonlyWallet.getContractManager();
-                    await manager.refreshVtxos();
+                    await manager.refreshVtxos(
+                        (message as RequestRefreshVtxos).payload
+                    );
                     return this.tagged({
                         id,
                         type: "REFRESH_VTXOS_SUCCESS",
