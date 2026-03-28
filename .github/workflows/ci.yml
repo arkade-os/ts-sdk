@@ -65,6 +65,7 @@ jobs:
         if: failure()
         run: |
           docker logs ark 2>&1 || true
+          docker logs ark-wallet 2>&1 || true
           docker logs boltz 2>&1 || true
           docker logs boltz-lnd 2>&1 || true
           docker logs boltz-fulmine 2>&1 || true
