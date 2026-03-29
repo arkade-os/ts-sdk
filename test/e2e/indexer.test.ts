@@ -309,10 +309,16 @@ describe("Indexer provider", () => {
         });
 
         // wait for the ark tx to be processed by the ark server
-        // replace sleep with:
+        console.log(
+            `[DIAG] === indexer vtxo-chain: waiting for offchain tx ${arkTxId} ===`
+        );
         await waitFor(
             async () => {
                 const vtxos = await alice.wallet.getVtxos();
+                console.log(
+                    `[DIAG] indexer poll: vtxos.length=${vtxos.length}, values=[${vtxos.map((v) => v.value).join(",")}]`
+                );
+                if (vtxos.length === 0 || !vtxos[0]) return false;
                 const updated = await indexerProvider.getVtxoChain(vtxos[0]);
                 return updated.chain.length > chainResponse.chain.length;
             },

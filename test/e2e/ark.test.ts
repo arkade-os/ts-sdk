@@ -1622,15 +1622,70 @@ describe("Asset integration tests", () => {
             await new Promise((resolve) => setTimeout(resolve, 1000));
 
             // first issuance to create a control asset
+            console.log("[DIAG] === issue-with-existing-control-asset ===");
+            const vtxosBefore = await alice.wallet.getVtxos({
+                withRecoverable: false,
+            });
+            console.log(
+                `[DIAG] VTXOs before first issue: count=${vtxosBefore.length}, values=[${vtxosBefore.map((v) => v.value).join(",")}]`
+            );
+            console.log(
+                `[DIAG] Balance before first issue:`,
+                await alice.wallet.getBalance()
+            );
+
             const firstIssueResult = await alice.wallet.assetManager.issue({
                 amount: 1,
             });
+            console.log(
+                `[DIAG] First issue completed: arkTxId=${firstIssueResult.arkTxId}, assetId=${firstIssueResult.assetId}`
+            );
+
+            // Log VTXO state immediately after first issue (no wait)
+            const vtxosAfterFirst = await alice.wallet.getVtxos({
+                withRecoverable: false,
+            });
+            console.log(
+                `[DIAG] VTXOs immediately after first issue: count=${vtxosAfterFirst.length}, values=[${vtxosAfterFirst.map((v) => v.value).join(",")}]`
+            );
+            console.log(
+                `[DIAG] VTXOs details: ${JSON.stringify(vtxosAfterFirst.map((v) => ({ txid: v.txid?.slice(0, 8), vout: v.vout, value: v.value, spent: v.spent, assets: v.assets })))}`
+            );
+            console.log(
+                `[DIAG] Balance after first issue:`,
+                await alice.wallet.getBalance()
+            );
+            console.log(`[DIAG] dustAmount=${alice.wallet.dustAmount}`);
+
+            // Wait for the round to complete and VTXO to be indexed
+            console.log(
+                "[DIAG] Waiting 2s for round completion before second issue..."
+            );
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+
+            const vtxosAfterWait = await alice.wallet.getVtxos({
+                withRecoverable: false,
+            });
+            console.log(
+                `[DIAG] VTXOs after 2s wait: count=${vtxosAfterWait.length}, values=[${vtxosAfterWait.map((v) => v.value).join(",")}]`
+            );
+            console.log(
+                `[DIAG] VTXOs details after wait: ${JSON.stringify(vtxosAfterWait.map((v) => ({ txid: v.txid?.slice(0, 8), vout: v.vout, value: v.value, spent: v.spent, assets: v.assets })))}`
+            );
+            console.log(
+                `[DIAG] Balance after wait:`,
+                await alice.wallet.getBalance()
+            );
 
             // second issuance to create a new asset using the control asset
+            console.log("[DIAG] Starting second issue...");
             const secondIssueResult = await alice.wallet.assetManager.issue({
                 amount: 500,
                 controlAssetId: firstIssueResult.assetId,
             });
+            console.log(
+                `[DIAG] Second issue completed: arkTxId=${secondIssueResult.arkTxId}`
+            );
 
             expect(secondIssueResult.arkTxId).toBeDefined();
             expect(secondIssueResult.assetId).toBeDefined();
@@ -1697,15 +1752,48 @@ describe("Asset integration tests", () => {
         await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // first issuance to create a control asset
+        console.log("[DIAG] === reissue-asset ===");
+        const vtxosBefore = await alice.wallet.getVtxos({
+            withRecoverable: false,
+        });
+        console.log(
+            `[DIAG] VTXOs before first issue: count=${vtxosBefore.length}, values=[${vtxosBefore.map((v) => v.value).join(",")}]`
+        );
+
         const firstIssueResult = await alice.wallet.assetManager.issue({
             amount: 1,
         });
+        console.log(
+            `[DIAG] First issue completed: arkTxId=${firstIssueResult.arkTxId}`
+        );
+
+        // Wait for round to complete before second issue
+        console.log("[DIAG] Waiting 2s for round completion...");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        const vtxosAfterWait = await alice.wallet.getVtxos({
+            withRecoverable: false,
+        });
+        console.log(
+            `[DIAG] VTXOs after wait: count=${vtxosAfterWait.length}, values=[${vtxosAfterWait.map((v) => v.value).join(",")}]`
+        );
+        console.log(
+            `[DIAG] VTXOs details: ${JSON.stringify(vtxosAfterWait.map((v) => ({ txid: v.txid?.slice(0, 8), vout: v.vout, value: v.value, assets: v.assets })))}`
+        );
 
         // second issuance to create a new asset using the control asset
+        console.log("[DIAG] Starting second issue...");
         const secondIssueResult = await alice.wallet.assetManager.issue({
             amount: 500,
             controlAssetId: firstIssueResult.assetId,
         });
+        console.log(
+            `[DIAG] Second issue completed: arkTxId=${secondIssueResult.arkTxId}`
+        );
+
+        // Wait for round before reissue
+        console.log("[DIAG] Waiting 2s before reissue...");
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // reissue more units
         const reissueAmount = 300;
