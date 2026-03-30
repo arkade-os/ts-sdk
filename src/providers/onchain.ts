@@ -41,6 +41,7 @@ export interface OnchainProvider {
         time: number;
         hash: string;
     }>;
+    getTxHex(txid: string): Promise<string>;
     watchAddresses(
         addresses: string[],
         eventCallback: (txs: ExplorerTransaction[]) => void
@@ -161,6 +162,16 @@ export class EsploraProvider implements OnchainProvider {
             blockTime: data.block_time,
             blockHeight: data.block_height,
         };
+    }
+
+    async getTxHex(txid: string): Promise<string> {
+        const response = await fetch(`${this.baseUrl}/tx/${txid}/hex`);
+        if (!response.ok) {
+            throw new Error(
+                `Failed to get transaction hex: ${response.statusText}`
+            );
+        }
+        return response.text();
     }
 
     async watchAddresses(
