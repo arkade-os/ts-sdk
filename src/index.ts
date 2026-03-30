@@ -253,6 +253,19 @@ import {
     MessageBusNotInitializedError,
     ServiceWorkerTimeoutError,
 } from "./worker/errors";
+import {
+    verifyVtxo,
+    verifyOnchainAnchor,
+    verifyTreeSignatures,
+    verifyCosignerKeys,
+} from "./verification";
+import type {
+    VtxoVerificationResult,
+    VtxoVerificationOptions,
+    AnchorVerification,
+    SignatureVerificationResult,
+    CosignerKeyVerificationResult,
+} from "./verification";
 
 export {
     // Wallets
@@ -370,6 +383,12 @@ export {
     // Errors
     ArkError,
     maybeArkError,
+
+    // Verification
+    verifyVtxo,
+    verifyOnchainAnchor,
+    verifyTreeSignatures,
+    verifyCosignerKeys,
 
     // Batch session
     Batch,
@@ -495,6 +514,13 @@ export type {
     AssetDetails,
     AssetMetadata,
     KnownMetadata,
+
+    // Verification types
+    VtxoVerificationResult,
+    VtxoVerificationOptions,
+    AnchorVerification,
+    SignatureVerificationResult,
+    CosignerKeyVerificationResult,
 
     // Musig2 types
     Nonces,

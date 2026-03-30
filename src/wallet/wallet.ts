@@ -96,6 +96,11 @@ import {
     IndexedDBContractRepository,
     IndexedDBWalletRepository,
 } from "../repositories";
+import {
+    verifyVtxo as verifyVtxoFn,
+    type VtxoVerificationResult,
+    type VtxoVerificationOptions,
+} from "../verification";
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
@@ -2698,6 +2703,63 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         } catch (e) {
             console.warn("error updating repository after settle", e);
         }
+    }
+
+    /**
+     * Verifies a single VTXO's full chain from leaf to onchain commitment.
+     *
+     * Checks DAG structure, signatures, cosigner key aggregation, and
+     * onchain anchoring (confirmation depth, output matching, double-spend).
+     *
+     * @param vtxo - The VTXO to verify
+     * @param options - Verification options (minConfirmationDepth, verifySignatures)
+     * @returns Verification result with errors/warnings
+     */
+    async verifyVtxo(
+        vtxo: VirtualCoin,
+        options?: VtxoVerificationOptions
+    ): Promise<VtxoVerificationResult> {
+        return verifyVtxoFn(
+            vtxo,
+            this.indexerProvider,
+            this.onchainProvider,
+            {
+                pubkey: this.forfeitPubkey,
+                sweepInterval: this.serverUnrollScript.params.timelock,
+            },
+            options
+        );
+    }
+
+    /**
+     * Verifies all spendable VTXOs in the wallet.
+     *
+     * Uses a cache for shared commitment transactions and runs verification
+     * with bounded concurrency to avoid rate-limiting.
+     *
+     * @param options - Verification options
+     * @returns Map of outpoint string ("txid:vout") to verification result
+     */
+    async verifyAllVtxos(
+        options?: VtxoVerificationOptions
+    ): Promise<Map<string, VtxoVerificationResult>> {
+        const vtxos = await this.getVtxos();
+        const results = new Map<string, VtxoVerificationResult>();
+
+        // Process in batches of 5 for bounded concurrency
+        const BATCH_SIZE = 5;
+        for (let i = 0; i < vtxos.length; i += BATCH_SIZE) {
+            const batch = vtxos.slice(i, i + BATCH_SIZE);
+            const batchResults = await Promise.all(
+                batch.map((vtxo) => this.verifyVtxo(vtxo, options))
+            );
+            for (const result of batchResults) {
+                const key = `${result.vtxoOutpoint.txid}:${result.vtxoOutpoint.vout}`;
+                results.set(key, result);
+            }
+        }
+
+        return results;
     }
 }
 
