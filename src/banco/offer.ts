@@ -1,5 +1,7 @@
 import { hex } from "@scure/base";
 import type { ExtensionPacket } from "../extension/packet";
+import { AssetId } from "../extension/asset";
+import { BufferReader } from "../extension/utils";
 
 const TLV_SWAP_ADDRESS = 0x01;
 const TLV_WANT_AMOUNT = 0x02;
@@ -76,7 +78,7 @@ export namespace Offer {
         /** Amount the maker wants to receive (in sats). */
         wantAmount: bigint;
         /** Asset the maker wants, as `"txid:vout"`. Omitted when wanting BTC. */
-        wantAsset?: string;
+        wantAsset?: AssetId;
         /** CLTV unix timestamp after which the maker can cancel. */
         cancelDelay?: bigint;
         /** Maker's full taproot scriptPubKey (34 bytes). */
@@ -98,9 +100,7 @@ export namespace Offer {
             writeTLV(TLV_WANT_AMOUNT, writeUint64BE(offer.wantAmount))
         );
         if (offer.wantAsset !== undefined) {
-            records.push(
-                writeTLV(TLV_WANT_ASSET, textEncoder.encode(offer.wantAsset))
-            );
+            records.push(writeTLV(TLV_WANT_ASSET, offer.wantAsset.serialize()));
         }
         if (offer.cancelDelay !== undefined) {
             records.push(
@@ -130,7 +130,7 @@ export namespace Offer {
     export function decode(data: Uint8Array): Data {
         let swapAddress: string | undefined;
         let wantAmount: bigint | undefined;
-        let wantAsset: string | undefined;
+        let wantAsset: AssetId | undefined;
         let cancelDelay: bigint | undefined;
         let makerPkScript: Uint8Array | undefined;
         let makerPublicKey: Uint8Array | undefined;
@@ -167,7 +167,7 @@ export namespace Offer {
                     wantAmount = readUint64BE(value);
                     break;
                 case TLV_WANT_ASSET:
-                    wantAsset = textDecoder.decode(value);
+                    wantAsset = AssetId.fromReader(new BufferReader(value));
                     break;
                 case TLV_CANCEL_DELAY:
                     cancelDelay = readUint64BE(value);

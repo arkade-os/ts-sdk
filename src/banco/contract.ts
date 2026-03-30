@@ -6,6 +6,7 @@ import {
 } from "../script/tapscript";
 import type { RelativeTimelock } from "../script/tapscript";
 import * as asset from "../extension/asset";
+import type { Offer } from "./offer";
 
 const { ArkadeScript, ArkadeVtxoScript } = arkade;
 
@@ -40,6 +41,26 @@ export class BancoSwap {
         readonly introspectors: Uint8Array[]
     ) {}
 
+    /** Construct a BancoSwap from a decoded offer and server context. */
+    static fromOffer(
+        offer: Offer.Data,
+        serverPubKey: Uint8Array,
+        exitTimelock: RelativeTimelock
+    ): BancoSwap {
+        return new BancoSwap(
+            {
+                wantAmount: offer.wantAmount,
+                want: offer.wantAsset ?? "btc",
+                cltvCancelTimelock: offer.cancelDelay,
+                exitTimelock,
+                makerPkScript: offer.makerPkScript,
+                makerPublicKey: offer.makerPublicKey,
+            },
+            serverPubKey,
+            [offer.introspectorPubkey]
+        );
+    }
+
     /**
      * Returns the arkade script for the fulfill path.
      *
@@ -72,16 +93,22 @@ export class BancoSwap {
             return ArkadeScript.encode([...valueCheck, ...scriptPubKeyCheck]);
         }
 
+        // INSPECTOUTASSETLOOKUP takes (gidx, txid, output_index) from the stack.
+        // The txid must be in internal byte order (little-endian) to match
+        // chainhash.Hash used by the introspector.
+        const txidInternalOrder = this.params.want.txid.slice().reverse();
+
         return ArkadeScript.encode([
-            0,
-            this.params.want.txid,
-            Number(this.params.want.groupIndex),
+            0, // group index in the asset packet
+            txidInternalOrder,
+            0, // output index: maker output is always at index 0 in the fulfill tx
             "INSPECTOUTASSETLOOKUP",
             "DUP",
             "1NEGATE",
             "EQUAL",
             "NOT",
             "VERIFY",
+            "SCRIPTNUMTOLE64", // convert looked-up amount to 8-byte LE
             Number(this.params.wantAmount),
             "SCRIPTNUMTOLE64",
             "GREATERTHANOREQUAL64",

@@ -11,12 +11,14 @@ import * as arkade from "../arkade";
 import * as asset from "../extension/asset";
 import { Extension } from "../extension";
 import { IntrospectorPacket } from "../extension/introspector";
-import type { IWallet } from "../wallet";
+import type { IWallet, ExtendedVirtualCoin } from "../wallet";
+import { selectCoinsWithAsset } from "../wallet/asset";
+import { selectVirtualCoins } from "../wallet/wallet";
 import { BancoSwap } from "./contract";
 import { Offer } from "./offer";
 
 /**
- * Taker (buy-side) of a banco swap.
+ * Taker of a banco swap.
  *
  * Decodes an offer, locates the swap VTXO, builds the fulfillment
  * transaction, and submits it through the introspector and ark server.
@@ -88,24 +90,7 @@ export class Taker {
             type: exitDelay < 512n ? "blocks" : "seconds",
         };
 
-        let want: "btc" | asset.AssetId = "btc";
-        if (offer.wantAsset) {
-            const [txid, voutStr] = offer.wantAsset.split(":");
-            want = asset.AssetId.create(txid, Number(voutStr ?? 0));
-        }
-
-        const swap = new BancoSwap(
-            {
-                wantAmount: offer.wantAmount,
-                want,
-                cltvCancelTimelock: offer.cancelDelay,
-                exitTimelock,
-                makerPkScript: offer.makerPkScript,
-                makerPublicKey: offer.makerPublicKey,
-            },
-            serverPubKey,
-            [offer.introspectorPubkey]
-        );
+        const swap = BancoSwap.fromOffer(offer, serverPubKey, exitTimelock);
 
         const swapVtxoScript = swap.vtxoScript();
         const swapPkScript = hex.encode(swapVtxoScript.pkScript);
@@ -144,44 +129,67 @@ export class Taker {
         );
         const swapTapTree = swapVtxoScript.encode();
 
-        const takerVtxos = await this.wallet.getVtxos();
-        if (takerVtxos.length === 0) {
+        const allTakerVtxos = await this.wallet.getVtxos();
+        if (allTakerVtxos.length === 0) {
             throw new Error("Taker wallet has no VTXOs");
         }
 
         const takerAddress = await this.wallet.getAddress();
         const takerPkScript = ArkAddress.decode(takerAddress).pkScript;
 
-        const totalTaker = takerVtxos.reduce((s, v) => s + v.value, 0);
-        const changeAmount = BigInt(totalTaker) - offer.wantAmount;
-        if (changeAmount < 0n) {
-            throw new Error(
-                `Insufficient funds: have ${totalTaker} sats, need ${offer.wantAmount}`
+        const wantAssetStr = offer.wantAsset?.toString();
+        const DUST = 450n;
+
+        // ── Coin selection (mirrors wallet.send logic) ──
+        let selectedTakerVtxos: ExtendedVirtualCoin[];
+        let takerAssetChange = 0n;
+
+        if (wantAssetStr) {
+            // Select coins carrying the wanted asset
+            const { selected, totalAssetAmount } = selectCoinsWithAsset(
+                allTakerVtxos,
+                wantAssetStr,
+                offer.wantAmount
             );
+            selectedTakerVtxos = selected;
+            takerAssetChange = totalAssetAmount - offer.wantAmount;
+
+            // Asset coins may not carry enough BTC for the maker's dust output;
+            // select additional BTC coins if needed.
+            const selectedBtc = selected.reduce((s, v) => s + v.value, 0);
+            if (selectedBtc < Number(DUST)) {
+                const remaining = allTakerVtxos.filter(
+                    (c) =>
+                        !selected.find(
+                            (sc) => sc.txid === c.txid && sc.vout === c.vout
+                        )
+                );
+                const { inputs: extraCoins } = selectVirtualCoins(
+                    remaining,
+                    Number(DUST) - selectedBtc
+                );
+                selectedTakerVtxos = [...selected, ...extraCoins];
+            }
+        } else {
+            // BTC: target-based selection sorted by expiry then amount
+            const { inputs } = selectVirtualCoins(
+                allTakerVtxos,
+                Number(offer.wantAmount)
+            );
+            selectedTakerVtxos = inputs;
         }
 
-        // Build outputs: maker payment, taker receives swap value, optional change
-        const outputs: { script: Uint8Array; amount: bigint }[] = [
-            { script: offer.makerPkScript, amount: offer.wantAmount },
-            { script: takerPkScript, amount: BigInt(swapVtxo.value) },
-        ];
-        if (changeAmount > 0n) {
-            outputs.push({ script: takerPkScript, amount: changeAmount });
-        }
+        const totalTakerBtc = BigInt(
+            selectedTakerVtxos.reduce((s, v) => s + v.value, 0)
+        );
 
-        // Build extension: introspector packet + optional asset transfer
-        const extensionPackets: Parameters<typeof Extension.create>[0] = [
-            IntrospectorPacket.create([
-                {
-                    vin: 0,
-                    script: swap.fulfillScript(),
-                    witness: new Uint8Array(0),
-                },
-            ]),
-        ];
+        // ── Build asset groups ──
+        const assetGroups: asset.AssetGroup[] = [];
+
+        // Assets from the swap VTXO (input 0) → taker (output 1)
         if (swapVtxo.assets && swapVtxo.assets.length > 0) {
-            const assetGroups = swapVtxo.assets.map(
-                (a: { assetId: string; amount: number }) =>
+            for (const a of swapVtxo.assets) {
+                assetGroups.push(
                     asset.AssetGroup.create(
                         asset.AssetId.fromString(a.assetId),
                         null,
@@ -189,7 +197,105 @@ export class Taker {
                         [asset.AssetOutput.create(1, a.amount)],
                         []
                     )
+                );
+            }
+        }
+
+        // Wanted asset from taker → maker (output 0), change → taker (output 1)
+        if (offer.wantAsset) {
+            const assetInputs: asset.AssetInput[] = [];
+            for (let i = 0; i < selectedTakerVtxos.length; i++) {
+                const vtxo = selectedTakerVtxos[i];
+                const entry = vtxo.assets?.find(
+                    (a) => a.assetId === wantAssetStr
+                );
+                if (entry)
+                    assetInputs.push(
+                        asset.AssetInput.create(i + 1, entry.amount)
+                    );
+            }
+            const assetOutputs: asset.AssetOutput[] = [
+                asset.AssetOutput.create(0, Number(offer.wantAmount)),
+            ];
+            if (takerAssetChange > 0n) {
+                assetOutputs.push(
+                    asset.AssetOutput.create(1, Number(takerAssetChange))
+                );
+            }
+            // Wanted-asset group must be at array index 0,
+            // matching gidx=0 in the fulfillScript's INSPECTOUTASSETLOOKUP call.
+            assetGroups.unshift(
+                asset.AssetGroup.create(
+                    offer.wantAsset,
+                    null,
+                    assetInputs,
+                    assetOutputs,
+                    []
+                )
             );
+        }
+
+        // Collateral assets on selected taker coins → taker (output 1)
+        // (coins selected for BTC or asset may carry unrelated assets)
+        const collateral = new Map<
+            string,
+            { inputs: asset.AssetInput[]; total: number }
+        >();
+        for (let i = 0; i < selectedTakerVtxos.length; i++) {
+            const vtxo = selectedTakerVtxos[i];
+            if (!vtxo.assets) continue;
+            for (const a of vtxo.assets) {
+                if (a.assetId === wantAssetStr) continue;
+                let entry = collateral.get(a.assetId);
+                if (!entry) {
+                    entry = { inputs: [], total: 0 };
+                    collateral.set(a.assetId, entry);
+                }
+                entry.inputs.push(asset.AssetInput.create(i + 1, a.amount));
+                entry.total += a.amount;
+            }
+        }
+        for (const [id, { inputs, total }] of collateral) {
+            assetGroups.push(
+                asset.AssetGroup.create(
+                    asset.AssetId.fromString(id),
+                    null,
+                    inputs,
+                    [asset.AssetOutput.create(1, total)],
+                    []
+                )
+            );
+        }
+
+        // ── Build outputs ──
+        const makerBtcAmount = offer.wantAsset ? DUST : offer.wantAmount;
+        const btcChange = totalTakerBtc - makerBtcAmount;
+        if (btcChange < 0n) {
+            throw new Error(
+                `Insufficient BTC: have ${totalTakerBtc}, need ${makerBtcAmount}`
+            );
+        }
+
+        const outputs: { script: Uint8Array; amount: bigint }[] = [
+            { script: offer.makerPkScript, amount: makerBtcAmount },
+            { script: takerPkScript, amount: BigInt(swapVtxo.value) },
+        ];
+        if (btcChange > 0n) {
+            outputs.push({ script: takerPkScript, amount: btcChange });
+        }
+
+        // ── Build extension ──
+        const fulfillScriptBytes = swap.fulfillScript();
+        const extensionPackets: Parameters<typeof Extension.create>[0] = [
+            IntrospectorPacket.create([
+                {
+                    vin: 0,
+                    script: fulfillScriptBytes,
+                    witness: new Uint8Array(0),
+                },
+            ]),
+        ];
+        if (assetGroups.length > 0) {
             extensionPackets.unshift(asset.Packet.create(assetGroups));
         }
         outputs.push(Extension.create(extensionPackets).txOut());
@@ -200,7 +306,7 @@ export class Taker {
             tapLeafScript: swapTapLeafScript,
             tapTree: swapTapTree,
         };
-        const takerInputs = takerVtxos.map((v) => ({
+        const takerInputs = selectedTakerVtxos.map((v) => ({
             ...v,
             tapLeafScript: v.forfeitTapLeafScript,
             tapTree: v.tapTree,
@@ -244,26 +350,16 @@ export class Taker {
                 introResult.signedCheckpointTxs
             );
 
-        // Merge introspector sigs into server checkpoints and counter-sign
+        // Merge introspector sigs + taproot metadata into server checkpoints,
+        // then counter-sign. The server reconstructs PSBTs and discards
+        // taproot metadata, so combine() restores it from the introspector copy.
         const finalCheckpoints = await Promise.all(
             signedCheckpointTxs.map(async (serverCp, i) => {
                 const serverTx = Transaction.fromPSBT(base64.decode(serverCp));
                 const introTx = Transaction.fromPSBT(
                     base64.decode(introResult.signedCheckpointTxs[i])
                 );
-
-                for (let j = 0; j < introTx.inputsLength; j++) {
-                    const introInput = introTx.getInput(j);
-                    if (introInput.tapScriptSig) {
-                        const serverInput = serverTx.getInput(j);
-                        serverTx.updateInput(j, {
-                            tapScriptSig: [
-                                ...(serverInput.tapScriptSig ?? []),
-                                ...introInput.tapScriptSig,
-                            ],
-                        });
-                    }
-                }
+                serverTx.combine(introTx);
 
                 if (i > 0) {
                     const signed = await this.wallet.identity.sign(serverTx, [

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
-import { banco, Extension } from "../../../src";
+import { banco, asset, Extension } from "../../../src";
 const { Offer } = banco;
 
 describe("Offer TLV encoding", () => {
@@ -38,15 +38,19 @@ describe("Offer TLV encoding", () => {
     });
 
     it("round-trips an asset offer with cancel delay", () => {
+        const wantAsset = asset.AssetId.create(
+            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",
+            0
+        );
         const offer: Offer.Data = {
             ...sampleOffer,
-            wantAsset:
-                "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234:0",
+            wantAsset,
             cancelDelay: 1_700_000_000n,
         };
         const decoded = Offer.decode(Offer.encode(offer));
 
-        expect(decoded.wantAsset).toBe(offer.wantAsset);
+        expect(decoded.wantAsset).toBeDefined();
+        expect(decoded.wantAsset!.toString()).toBe(wantAsset.toString());
         expect(decoded.cancelDelay).toBe(offer.cancelDelay);
     });
 

@@ -19,8 +19,8 @@ import { Offer } from "./offer";
 export interface CreateOfferParams {
     /** Amount the maker wants to receive (in sats). */
     wantAmount: bigint;
-    /** Asset the maker wants, as `"txid:vout"`. Omit for BTC. */
-    wantAsset?: string;
+    /** Asset the maker wants. Omit for BTC. */
+    wantAsset?: asset.AssetId;
     /** Seconds from now after which the maker can cancel. */
     cancelDelay?: number;
 }
@@ -99,17 +99,10 @@ export class Maker {
             ? BigInt(Math.floor(Date.now() / 1000) + params.cancelDelay)
             : undefined;
 
-        const want: "btc" | asset.AssetId = params.wantAsset
-            ? (() => {
-                  const [txid, voutStr] = params.wantAsset!.split(":");
-                  return asset.AssetId.create(txid, Number(voutStr));
-              })()
-            : "btc";
-
         const swap = new BancoSwap(
             {
                 wantAmount: params.wantAmount,
-                want,
+                want: params.wantAsset ?? "btc",
                 cltvCancelTimelock: cancelTimestamp,
                 exitTimelock,
                 makerPkScript,
@@ -189,25 +182,7 @@ export class Maker {
             type: exitDelay < 512n ? "blocks" : "seconds",
         };
 
-        const want: "btc" | asset.AssetId = offer.wantAsset
-            ? (() => {
-                  const [txid, voutStr] = offer.wantAsset!.split(":");
-                  return asset.AssetId.create(txid, Number(voutStr));
-              })()
-            : "btc";
-
-        const swap = new BancoSwap(
-            {
-                wantAmount: offer.wantAmount,
-                want,
-                cltvCancelTimelock: offer.cancelDelay,
-                exitTimelock,
-                makerPkScript: offer.makerPkScript,
-                makerPublicKey: offer.makerPublicKey,
-            },
-            serverPubKey,
-            [offer.introspectorPubkey]
-        );
+        const swap = BancoSwap.fromOffer(offer, serverPubKey, exitTimelock);
 
         const vtxoScript = swap.vtxoScript();
         const cancelTapscript = CLTVMultisigTapscript.encode({
