@@ -111,9 +111,17 @@ export async function verifyVtxo(
             return makeResult(outpoint, commitmentTxid, 0, 0, errors, warnings);
         }
 
-        // Get the VTXO tree for this batch
+        // Validate commitment txid consistency between chain and virtualStatus
+        if (commitmentTxIds[0] !== commitmentTxid) {
+            errors.push(
+                `Commitment tx mismatch: chain says ${commitmentTxid}, virtualStatus says ${commitmentTxIds[0]}`
+            );
+            return makeResult(outpoint, commitmentTxid, 0, 0, errors, warnings);
+        }
+
+        // Get the VTXO tree for this batch (use canonical commitmentTxid)
         const batchOutpoint: Outpoint = {
-            txid: commitmentTxIds[0],
+            txid: commitmentTxid,
             vout: BATCH_OUTPUT_INDEX,
         };
 
@@ -294,8 +302,13 @@ export async function verifyVtxo(
                 );
             } else {
                 const anchorTxid = hex.encode(rootInput.txid);
+                if (anchorTxid !== commitmentTxid) {
+                    errors.push(
+                        `Tree root input references ${anchorTxid}, expected commitment ${commitmentTxid}`
+                    );
+                }
                 const anchorResult = await verifyOnchainAnchor(
-                    anchorTxid,
+                    commitmentTxid,
                     rootInput.index ?? BATCH_OUTPUT_INDEX,
                     witnessUtxo.amount,
                     witnessUtxo.script,

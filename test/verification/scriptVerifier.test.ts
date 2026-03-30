@@ -51,7 +51,10 @@ describe("verifyScriptSatisfaction", () => {
             tx.addOutput({ amount: 4670n, script: vtxoScript.pkScript });
             tx.signIdx(identity["key"], 0, [SigHash.DEFAULT]);
 
-            const result = verifyScriptSatisfaction(tx, 0, chainTip, 800);
+            const result = verifyScriptSatisfaction(tx, 0, chainTip, {
+                height: 800,
+                time: 1699999000,
+            });
             expect(result.scriptType).toBe(TapscriptType.CSVMultisig);
             expect(result.timelockSatisfied).toBe(true);
             expect(result.signaturesSatisfied).toBe(true);
@@ -85,7 +88,10 @@ describe("verifyScriptSatisfaction", () => {
             tx.addOutput({ amount: 4670n, script: vtxoScript.pkScript });
             tx.signIdx(identity["key"], 0, [SigHash.DEFAULT]);
 
-            const result = verifyScriptSatisfaction(tx, 0, chainTip, 800);
+            const result = verifyScriptSatisfaction(tx, 0, chainTip, {
+                height: 800,
+                time: 1699999000,
+            });
             expect(result.timelockSatisfied).toBe(false);
             expect(result.errors.some((e) => e.includes("CSV"))).toBe(true);
         });
@@ -117,7 +123,10 @@ describe("verifyScriptSatisfaction", () => {
             tx.signIdx(identity["key"], 0, [SigHash.DEFAULT]);
 
             // Parent confirmed at height 990, only 10 blocks elapsed
-            const result = verifyScriptSatisfaction(tx, 0, chainTip, 990);
+            const result = verifyScriptSatisfaction(tx, 0, chainTip, {
+                height: 990,
+                time: 1699999900,
+            });
             expect(result.timelockSatisfied).toBe(false);
             expect(
                 result.errors.some((e) => e.includes("blocks elapsed"))

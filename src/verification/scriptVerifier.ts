@@ -11,7 +11,8 @@ import {
     ConditionMultisigTapscript,
 } from "../script/tapscript";
 import { scriptFromTapLeafScript, TapLeafScript } from "../script/base";
-import type { Transaction } from "@scure/btc-signer/transaction.js";
+import { ConditionWitness, getArkPsbtFields } from "../utils/unknownFields";
+import { Transaction } from "../utils/transaction";
 
 export interface ScriptVerificationResult {
     txid: string;
@@ -49,7 +50,7 @@ export function verifyScriptSatisfaction(
     tx: Transaction,
     inputIndex: number,
     chainTip: { height: number; time: number },
-    parentConfirmationHeight?: number
+    parentConfirmation?: { height: number; time: number }
 ): ScriptVerificationResult {
     const errors: string[] = [];
     const input = tx.getInput(inputIndex);
@@ -119,10 +120,10 @@ export function verifyScriptSatisfaction(
                             `CSV: sequence encodes ${actualBlocks} blocks, need ${timelock.value}`
                         );
                     }
-                    // Also check against chain state if parent height is known
-                    if (parentConfirmationHeight !== undefined) {
+                    // Also check against chain state if parent confirmation is known
+                    if (parentConfirmation) {
                         const elapsed = BigInt(
-                            chainTip.height - parentConfirmationHeight
+                            chainTip.height - parentConfirmation.height
                         );
                         if (elapsed < timelock.value) {
                             timelockSatisfied = false;
@@ -139,6 +140,18 @@ export function verifyScriptSatisfaction(
                             `CSV: sequence encodes ${actualSeconds}s, need ${timelock.value}s`
                         );
                     }
+                    // Check elapsed wall-clock time since parent confirmation
+                    if (parentConfirmation) {
+                        const elapsedSeconds = BigInt(
+                            chainTip.time - parentConfirmation.time
+                        );
+                        if (elapsedSeconds < timelock.value) {
+                            timelockSatisfied = false;
+                            errors.push(
+                                `CSV: only ${elapsedSeconds}s elapsed since parent confirmation, need ${timelock.value}s`
+                            );
+                        }
+                    }
                 }
             } catch {
                 timelockSatisfied = false;
@@ -153,6 +166,24 @@ export function verifyScriptSatisfaction(
     if (CLTVMultisigTapscript.is(decoded)) {
         const requiredLocktime = decoded.params.absoluteTimelock;
         const txLockTime = BigInt(tx.lockTime ?? 0);
+        const inputSequence = input.sequence ?? 0xffffffff;
+        const nLocktimeMinSeconds = 500_000_000n;
+
+        // BIP-65: CLTV fails if input nSequence is final
+        if (inputSequence === 0xffffffff) {
+            timelockSatisfied = false;
+            errors.push("CLTV: input nSequence is final (0xffffffff)");
+        }
+
+        // BIP-65: nLockTime and script operand must be in the same domain
+        const txIsTimeBased = txLockTime >= nLocktimeMinSeconds;
+        const scriptIsTimeBased = requiredLocktime >= nLocktimeMinSeconds;
+        if (txIsTimeBased !== scriptIsTimeBased) {
+            timelockSatisfied = false;
+            errors.push(
+                "CLTV: nLockTime type does not match script requirement (height vs time)"
+            );
+        }
 
         if (txLockTime < requiredLocktime) {
             timelockSatisfied = false;
@@ -162,7 +193,6 @@ export function verifyScriptSatisfaction(
         }
 
         // Check against chain state
-        const nLocktimeMinSeconds = 500_000_000n;
         if (requiredLocktime >= nLocktimeMinSeconds) {
             // Time-based: compare with chain tip time
             if (BigInt(chainTip.time) < requiredLocktime) {
@@ -188,7 +218,11 @@ export function verifyScriptSatisfaction(
         ConditionMultisigTapscript.is(decoded)
     ) {
         const conditionScript = decoded.params.conditionScript;
-        const preimageCheck = verifyHashPreimage(conditionScript, input);
+        const preimageCheck = verifyHashPreimage(
+            conditionScript,
+            tx,
+            inputIndex
+        );
         if (!preimageCheck.satisfied) {
             hashPreimageSatisfied = false;
             if (preimageCheck.error) {
@@ -233,8 +267,10 @@ interface PreimageCheckResult {
  */
 function verifyHashPreimage(
     conditionScript: Uint8Array,
-    input: ReturnType<Transaction["getInput"]>
+    tx: Transaction,
+    inputIndex: number
 ): PreimageCheckResult {
+    const input = tx.getInput(inputIndex);
     let asm;
     try {
         asm = Script.decode(conditionScript);
@@ -267,9 +303,8 @@ function verifyHashPreimage(
         return { satisfied: true };
     }
 
-    // Look for the preimage in the condition witness
-    // The preimage should be in the input's conditionWitness or tapScriptSig witness stack
-    const witness = extractConditionWitness(input);
+    // Look for the preimage in the Ark condition witness PSBT field
+    const witness = extractConditionWitness(tx, inputIndex);
     if (!witness || witness.length === 0) {
         return {
             satisfied: false,
@@ -306,26 +341,26 @@ function verifyHashPreimage(
 
 /**
  * Extracts condition witness data from a transaction input.
- * Looks for Ark PSBT condition witness field or falls back to finalScriptWitness.
+ * Uses the Ark ConditionWitness PSBT field decoder to match the specific field,
+ * avoiding collision with other Ark fields in the same namespace (e.g., cosigner keys).
+ * Falls back to finalScriptWitness if no Ark field found.
  */
 function extractConditionWitness(
-    input: ReturnType<Transaction["getInput"]>
+    tx: Transaction,
+    inputIndex: number
 ): Uint8Array[] | null {
-    // Check for Ark-specific condition witness in unknown fields
-    if (input.unknown) {
-        for (const [key, value] of input.unknown) {
-            // ArkPsbtFieldKeyType = 222, ArkPsbtFieldKey.ConditionWitness = "condition"
-            if (key.type === 222) {
-                try {
-                    return [value];
-                } catch {
-                    continue;
-                }
-            }
-        }
+    // Use the typed Ark PSBT field decoder for ConditionWitness
+    const conditionWitnesses = getArkPsbtFields(
+        tx,
+        inputIndex,
+        ConditionWitness
+    );
+    if (conditionWitnesses.length > 0) {
+        return conditionWitnesses[0]; // First condition witness entry
     }
 
     // Fall back to finalScriptWitness
+    const input = tx.getInput(inputIndex);
     if (input.finalScriptWitness && input.finalScriptWitness.length > 0) {
         return Array.from(input.finalScriptWitness);
     }

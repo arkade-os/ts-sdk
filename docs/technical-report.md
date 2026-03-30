@@ -10,7 +10,7 @@ This report describes the design and implementation of client-side VTXO (Virtual
 
 The verification pipeline processes a VTXO through five sequential stages:
 
-```
+```text
 VTXO (leaf) --> Chain Fetch --> DAG Reconstruction --> Structure Validation
                                                           |
                                      Signature Verification <--+

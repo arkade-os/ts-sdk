@@ -168,19 +168,16 @@ describe("verifyTreeSignatures", () => {
         const childTree = new TxTree(childTx);
         const tree = new TxTree(parentTx, new Map([[0, childTree]]));
 
-        // Pass both pubkeys as required signers
-        // verifyTreeSignatures uses the tapScriptSig keys as required signers,
-        // so only pk1 will be "required" and it will pass
-        // To test missing signer, we need to directly test verifyTapscriptSignatures
-        // which our verifier calls. The verifier collects signer keys from tapScriptSig.
-        // A partially signed tx is still "valid" for the sigs that exist.
-        // Instead, test that the result reports the correct signer keys
+        // With Fix #1, required signers are derived from the tapscript (pk1 + pk2),
+        // not from tapScriptSig. Since only pk1 signed, verification should FAIL
+        // because pk2's signature is missing.
         const results = verifyTreeSignatures(tree);
         expect(results.length).toBe(1);
-        expect(results[0].valid).toBe(true);
-        // Only 1 signer key reported (pk1 signed)
-        expect(results[0].signerKeys).toHaveLength(1);
-        expect(results[0].signerKeys[0]).toBe(hex.encode(pk1));
+        expect(results[0].valid).toBe(false);
+        // Both expected signers reported (derived from script)
+        expect(results[0].signerKeys).toHaveLength(2);
+        expect(results[0].error).toBeDefined();
+        expect(results[0].error).toContain("Missing");
     });
 
     it("should skip inputs without tapScriptSig", async () => {

@@ -1,9 +1,10 @@
 import { hex } from "@scure/base";
-import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { aggregateKeys } from "../musig2";
 import { TxTree } from "../tree/txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 import { verifyTapscriptSignatures } from "../utils/arkTransaction";
+import { decodeTapscript } from "../script/tapscript";
+import { scriptFromTapLeafScript } from "../script/base";
 import type { Transaction } from "@scure/btc-signer/transaction.js";
 
 export interface SignatureVerificationResult {
@@ -43,30 +44,67 @@ export function verifyTreeSignatures(
         for (let i = 0; i < tx.inputsLength; i++) {
             const input = tx.getInput(i);
 
-            // Skip inputs without tapScriptSig (e.g., root input references commitment tx)
-            if (!input.tapScriptSig || input.tapScriptSig.length === 0) {
+            // Skip inputs without tapLeafScript (e.g., root input references commitment tx)
+            if (!input.tapLeafScript || input.tapLeafScript.length === 0) {
                 continue;
             }
 
-            // Collect the signer public keys from tapScriptSig
-            const signerKeys = input.tapScriptSig.map(([data]) =>
-                hex.encode(data.pubKey)
-            );
+            // Derive expected signers from the tapscript leaf, not from existing signatures
+            let expectedSigners: string[];
+            try {
+                const rawScript = scriptFromTapLeafScript(
+                    input.tapLeafScript[0]
+                );
+                const decoded = decodeTapscript(rawScript);
+                expectedSigners = (decoded.params.pubkeys ?? []).map(
+                    (pk: Uint8Array) => hex.encode(pk)
+                );
+            } catch {
+                // Can't decode script, fall back to tapScriptSig keys if present
+                expectedSigners = (input.tapScriptSig ?? []).map(([data]) =>
+                    hex.encode(data.pubKey)
+                );
+            }
+
+            // If no signatures exist but signers are expected, report as invalid
+            if (
+                (!input.tapScriptSig || input.tapScriptSig.length === 0) &&
+                expectedSigners.length > 0
+            ) {
+                const filteredSigners = expectedSigners.filter(
+                    (pk) => !excludePubkeys.includes(pk)
+                );
+                if (filteredSigners.length > 0) {
+                    results.push({
+                        txid: tx.id,
+                        inputIndex: i,
+                        valid: false,
+                        signerKeys: expectedSigners,
+                        error: `Missing all signatures from: ${filteredSigners.map((pk) => pk.slice(0, 16)).join(", ")}...`,
+                    });
+                }
+                continue;
+            }
 
             try {
-                verifyTapscriptSignatures(tx, i, signerKeys, excludePubkeys);
+                verifyTapscriptSignatures(
+                    tx,
+                    i,
+                    expectedSigners,
+                    excludePubkeys
+                );
                 results.push({
                     txid: tx.id,
                     inputIndex: i,
                     valid: true,
-                    signerKeys,
+                    signerKeys: expectedSigners,
                 });
             } catch (err) {
                 results.push({
                     txid: tx.id,
                     inputIndex: i,
                     valid: false,
-                    signerKeys,
+                    signerKeys: expectedSigners,
                     error: err instanceof Error ? err.message : String(err),
                 });
             }
@@ -105,16 +143,21 @@ export function verifyCosignerKeys(
                 continue;
             }
 
-            const previousScriptKey = parentOutput.script.slice(2);
-            if (previousScriptKey.length !== 32) {
+            const script = parentOutput.script;
+            if (
+                script.length !== 34 ||
+                script[0] !== 0x51 ||
+                script[1] !== 0x20
+            ) {
                 results.push({
                     txid: subtree.root.id,
                     childIndex,
                     valid: false,
-                    error: `Parent output ${childIndex} has invalid script key length`,
+                    error: `Parent output ${childIndex} is not a taproot key-path output`,
                 });
                 continue;
             }
+            const previousScriptKey = script.subarray(2);
 
             const cosigners = getArkPsbtFields(
                 child.root,

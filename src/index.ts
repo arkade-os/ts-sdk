@@ -258,6 +258,7 @@ import {
     verifyOnchainAnchor,
     verifyTreeSignatures,
     verifyCosignerKeys,
+    verifyScriptSatisfaction,
 } from "./verification";
 import type {
     VtxoVerificationResult,
@@ -265,6 +266,8 @@ import type {
     AnchorVerification,
     SignatureVerificationResult,
     CosignerKeyVerificationResult,
+    ScriptVerificationResult,
+    TimelockCheck,
 } from "./verification";
 
 export {
@@ -389,6 +392,7 @@ export {
     verifyOnchainAnchor,
     verifyTreeSignatures,
     verifyCosignerKeys,
+    verifyScriptSatisfaction,
 
     // Batch session
     Batch,
@@ -521,6 +525,8 @@ export type {
     AnchorVerification,
     SignatureVerificationResult,
     CosignerKeyVerificationResult,
+    ScriptVerificationResult,
+    TimelockCheck,
 
     // Musig2 types
     Nonces,
