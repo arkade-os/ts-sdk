@@ -7,11 +7,9 @@ import type { RelativeTimelock } from "../script/tapscript";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { TxTree, TxTreeNode } from "../tree/txTree";
 import { validateVtxoTxGraph } from "../tree/validation";
-import {
-    verifyOnchainAnchor,
-    AnchorVerification,
-} from "./onchainAnchorVerifier";
+import { verifyOnchainAnchor } from "./onchainAnchorVerifier";
 import { verifyTreeSignatures, verifyCosignerKeys } from "./signatureVerifier";
+import { verifyScriptSatisfaction } from "./scriptVerifier";
 import { Transaction } from "../utils/transaction";
 
 export interface VtxoVerificationResult {
@@ -27,6 +25,7 @@ export interface VtxoVerificationResult {
 export interface VtxoVerificationOptions {
     minConfirmationDepth?: number;
     verifySignatures?: boolean;
+    verifyScripts?: boolean;
 }
 
 const BATCH_OUTPUT_INDEX = 0;
@@ -53,6 +52,7 @@ export async function verifyVtxo(
 ): Promise<VtxoVerificationResult> {
     const minDepth = options?.minConfirmationDepth ?? 6;
     const shouldVerifySigs = options?.verifySignatures ?? true;
+    const shouldVerifyScripts = options?.verifyScripts ?? false;
     const errors: string[] = [];
     const warnings: string[] = [];
     const outpoint: Outpoint = { txid: vtxo.txid, vout: vtxo.vout };
@@ -74,7 +74,6 @@ export async function verifyVtxo(
 
     // Step 1: Get VTXO chain from indexer
     let commitmentTxid = "";
-    let chainTxids: string[] = [];
     try {
         const chain = await indexer.getVtxoChain(outpoint);
         if (!chain.chain || chain.chain.length === 0) {
@@ -90,15 +89,6 @@ export async function verifyVtxo(
         if (commitmentEntry) {
             commitmentTxid = commitmentEntry.txid;
         }
-
-        // Collect all tree tx ids (non-commitment)
-        chainTxids = chain.chain
-            .filter(
-                (c) =>
-                    c.type !==
-                    ("INDEXER_CHAINED_TX_TYPE_COMMITMENT" as ChainTxType)
-            )
-            .map((c) => c.txid);
     } catch (err) {
         errors.push(
             `Failed to fetch VTXO chain: ${err instanceof Error ? err.message : String(err)}`
@@ -157,7 +147,7 @@ export async function verifyVtxo(
             return makeResult(outpoint, commitmentTxid, 0, 0, errors, warnings);
         }
 
-        // Fetch the actual virtual tx PSBTs
+        // Fetch the actual virtual tx PSBTs and map by txid for safe lookup
         const txids = allTreeNodes.map((n) => n.txid);
         const { txs } = await indexer.getVirtualTxs(txids);
 
@@ -175,9 +165,27 @@ export async function verifyVtxo(
             );
         }
 
-        // Fill in the tx data
-        for (let i = 0; i < allTreeNodes.length; i++) {
-            allTreeNodes[i].tx = txs[i];
+        // Build txid->tx map for safe lookup (avoids index alignment assumption)
+        const txByTxid = new Map<string, string>();
+        for (let i = 0; i < txids.length; i++) {
+            txByTxid.set(txids[i], txs[i]);
+        }
+
+        // Fill in the tx data using txid-keyed lookup
+        for (const node of allTreeNodes) {
+            const txData = txByTxid.get(node.txid);
+            if (!txData) {
+                errors.push(`Missing virtual tx data for ${node.txid}`);
+                return makeResult(
+                    outpoint,
+                    commitmentTxid,
+                    0,
+                    allTreeNodes.length,
+                    errors,
+                    warnings
+                );
+            }
+            node.tx = txData;
         }
 
         tree = TxTree.create(allTreeNodes);
@@ -238,26 +246,59 @@ export async function verifyVtxo(
         }
     }
 
+    // Step 4b: Verify script satisfaction (Tier 2, opt-in)
+    if (shouldVerifyScripts) {
+        try {
+            const chainTip = await onchain.getChainTip();
+            for (const subtree of tree.iterator()) {
+                const tx = subtree.root;
+                for (let i = 0; i < tx.inputsLength; i++) {
+                    const input = tx.getInput(i);
+                    if (
+                        !input.tapLeafScript ||
+                        input.tapLeafScript.length === 0
+                    ) {
+                        continue;
+                    }
+                    const scriptResult = verifyScriptSatisfaction(tx, i, {
+                        height: chainTip.height,
+                        time: chainTip.time,
+                    });
+                    for (const err of scriptResult.errors) {
+                        errors.push(
+                            `Script verification (tx ${tx.id} input ${i}): ${err}`
+                        );
+                    }
+                }
+            }
+        } catch (err) {
+            errors.push(
+                `Script verification error: ${err instanceof Error ? err.message : String(err)}`
+            );
+        }
+    }
+
     // Step 5: Verify onchain anchoring
+    // Use the tree root INPUT's witnessUtxo (the commitment tx batch output being spent),
+    // NOT the tree root's own outputs (which distribute funds to children).
     let confirmationDepth = 0;
     try {
-        const batchOutput = tree.root.getOutput(BATCH_OUTPUT_INDEX);
-        if (!batchOutput?.amount || !batchOutput?.script) {
-            errors.push(
-                "Tree root has no valid batch output for anchor verification"
-            );
+        const rootInput = tree.root.getInput(0);
+        if (!rootInput.txid) {
+            errors.push("Tree root input has no txid");
         } else {
-            // Get the commitment tx output that the tree root's input references
-            const rootInput = tree.root.getInput(0);
-            if (!rootInput.txid) {
-                errors.push("Tree root input has no txid");
+            const witnessUtxo = rootInput.witnessUtxo;
+            if (!witnessUtxo?.amount || !witnessUtxo?.script) {
+                errors.push(
+                    "Tree root input missing witnessUtxo for anchor verification"
+                );
             } else {
                 const anchorTxid = hex.encode(rootInput.txid);
                 const anchorResult = await verifyOnchainAnchor(
                     anchorTxid,
                     rootInput.index ?? BATCH_OUTPUT_INDEX,
-                    batchOutput.amount,
-                    batchOutput.script,
+                    witnessUtxo.amount,
+                    witnessUtxo.script,
                     onchain,
                     minDepth
                 );

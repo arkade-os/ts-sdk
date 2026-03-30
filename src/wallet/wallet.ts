@@ -2734,8 +2734,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     /**
      * Verifies all spendable VTXOs in the wallet.
      *
-     * Uses a cache for shared commitment transactions and runs verification
-     * with bounded concurrency to avoid rate-limiting.
+     * Groups VTXOs by commitment transaction to avoid redundant onchain
+     * queries. VTXOs sharing the same batch only verify the commitment tx
+     * and tree structure once; the first result is reused for the group.
+     *
+     * Runs with bounded concurrency (batches of 5 groups) to avoid rate-limiting.
      *
      * @param options - Verification options
      * @returns Map of outpoint string ("txid:vout") to verification result
@@ -2746,16 +2749,34 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const vtxos = await this.getVtxos();
         const results = new Map<string, VtxoVerificationResult>();
 
-        // Process in batches of 5 for bounded concurrency
+        // Group VTXOs by commitment txid to deduplicate verification
+        const groups = new Map<string, VirtualCoin[]>();
+        for (const vtxo of vtxos) {
+            const commitmentId =
+                vtxo.virtualStatus?.commitmentTxIds?.[0] ?? vtxo.txid;
+            const group = groups.get(commitmentId) ?? [];
+            group.push(vtxo);
+            groups.set(commitmentId, group);
+        }
+
+        // Verify one VTXO per group, share result with others in the same batch
+        const groupEntries = Array.from(groups.values());
         const BATCH_SIZE = 5;
-        for (let i = 0; i < vtxos.length; i += BATCH_SIZE) {
-            const batch = vtxos.slice(i, i + BATCH_SIZE);
+        for (let i = 0; i < groupEntries.length; i += BATCH_SIZE) {
+            const batch = groupEntries.slice(i, i + BATCH_SIZE);
             const batchResults = await Promise.all(
-                batch.map((vtxo) => this.verifyVtxo(vtxo, options))
+                batch.map((group) => this.verifyVtxo(group[0], options))
             );
-            for (const result of batchResults) {
-                const key = `${result.vtxoOutpoint.txid}:${result.vtxoOutpoint.vout}`;
-                results.set(key, result);
+            for (let j = 0; j < batch.length; j++) {
+                const verificationResult = batchResults[j];
+                // Apply the same verification result to all VTXOs in the group
+                for (const vtxo of batch[j]) {
+                    const key = `${vtxo.txid}:${vtxo.vout}`;
+                    results.set(key, {
+                        ...verificationResult,
+                        vtxoOutpoint: { txid: vtxo.txid, vout: vtxo.vout },
+                    });
+                }
             }
         }
 
