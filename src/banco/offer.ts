@@ -10,6 +10,9 @@ const TLV_CANCEL_DELAY = 0x04;
 const TLV_MAKER_PK_SCRIPT = 0x05;
 const TLV_MAKER_PUBLIC_KEY = 0x07;
 const TLV_INTROSPECTOR_PUBKEY = 0x08;
+const TLV_RATIO_NUM = 0x09;
+const TLV_RATIO_DEN = 0x0a;
+const TLV_OFFER_ASSET = 0x0b;
 
 const KNOWN_TYPES = new Set([
     TLV_SWAP_ADDRESS,
@@ -19,6 +22,9 @@ const KNOWN_TYPES = new Set([
     TLV_MAKER_PK_SCRIPT,
     TLV_MAKER_PUBLIC_KEY,
     TLV_INTROSPECTOR_PUBKEY,
+    TLV_RATIO_NUM,
+    TLV_RATIO_DEN,
+    TLV_OFFER_ASSET,
 ]);
 
 const textEncoder = new TextEncoder();
@@ -66,6 +72,9 @@ function readUint64BE(buf: Uint8Array): bigint {
  * | `0x05` | makerPkScript      | raw bytes (34)                       |
  * | `0x07` | makerPublicKey     | raw bytes (32)                       |
  * | `0x08` | introspectorPubkey | raw bytes (32)                       |
+ * | `0x09` | ratioNum           | 8-byte big-endian uint64 (optional)  |
+ * | `0x0a` | ratioDen           | 8-byte big-endian uint64 (optional)  |
+ * | `0x0b` | offerAsset         | raw AssetId bytes (optional)         |
  */
 export namespace Offer {
     /** Extension packet type tag. */
@@ -79,6 +88,12 @@ export namespace Offer {
         wantAmount: bigint;
         /** Asset the maker wants, as `"txid:vout"`. Omitted when wanting BTC. */
         wantAsset?: AssetId;
+        /** LE64 numerator: BTC sats paid per `ratioDen` asset units. */
+        ratioNum?: bigint;
+        /** LE64 denominator: asset units corresponding to `ratioNum` sats. */
+        ratioDen?: bigint;
+        /** Asset the maker is offering (locked in the VTXO). Omitted when offering BTC. */
+        offerAsset?: AssetId;
         /** CLTV unix timestamp after which the maker can cancel. */
         cancelDelay?: bigint;
         /** Maker's full taproot scriptPubKey (34 bytes). */
@@ -101,6 +116,21 @@ export namespace Offer {
         );
         if (offer.wantAsset !== undefined) {
             records.push(writeTLV(TLV_WANT_ASSET, offer.wantAsset.serialize()));
+        }
+        if (offer.ratioNum !== undefined) {
+            records.push(
+                writeTLV(TLV_RATIO_NUM, writeUint64BE(offer.ratioNum))
+            );
+        }
+        if (offer.ratioDen !== undefined) {
+            records.push(
+                writeTLV(TLV_RATIO_DEN, writeUint64BE(offer.ratioDen))
+            );
+        }
+        if (offer.offerAsset !== undefined) {
+            records.push(
+                writeTLV(TLV_OFFER_ASSET, offer.offerAsset.serialize())
+            );
         }
         if (offer.cancelDelay !== undefined) {
             records.push(
@@ -131,6 +161,9 @@ export namespace Offer {
         let swapAddress: string | undefined;
         let wantAmount: bigint | undefined;
         let wantAsset: AssetId | undefined;
+        let ratioNum: bigint | undefined;
+        let ratioDen: bigint | undefined;
+        let offerAsset: AssetId | undefined;
         let cancelDelay: bigint | undefined;
         let makerPkScript: Uint8Array | undefined;
         let makerPublicKey: Uint8Array | undefined;
@@ -168,6 +201,15 @@ export namespace Offer {
                     break;
                 case TLV_WANT_ASSET:
                     wantAsset = AssetId.fromReader(new BufferReader(value));
+                    break;
+                case TLV_RATIO_NUM:
+                    ratioNum = readUint64BE(value);
+                    break;
+                case TLV_RATIO_DEN:
+                    ratioDen = readUint64BE(value);
+                    break;
+                case TLV_OFFER_ASSET:
+                    offerAsset = AssetId.fromReader(new BufferReader(value));
                     break;
                 case TLV_CANCEL_DELAY:
                     cancelDelay = readUint64BE(value);
@@ -215,6 +257,9 @@ export namespace Offer {
             swapAddress,
             wantAmount,
             ...(wantAsset !== undefined && { wantAsset }),
+            ...(ratioNum !== undefined && { ratioNum }),
+            ...(ratioDen !== undefined && { ratioDen }),
+            ...(offerAsset !== undefined && { offerAsset }),
             ...(cancelDelay !== undefined && { cancelDelay }),
             makerPkScript,
             makerPublicKey,

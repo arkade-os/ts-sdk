@@ -13,14 +13,28 @@ import { buildOffchainTx } from "../utils/arkTransaction";
 import * as asset from "../extension/asset";
 import type { ExtensionPacket } from "../extension/packet";
 import type { IWallet } from "../wallet";
+import { gcd } from "../utils/math";
 import { BancoSwap } from "./contract";
 import { Offer } from "./offer";
 
 export interface CreateOfferParams {
-    /** Amount the maker wants to receive (in sats). */
+    /** Amount the maker wants to receive (in sats or asset units). */
     wantAmount: bigint;
     /** Asset the maker wants. Omit for BTC. */
     wantAsset?: asset.AssetId;
+    /** Asset the maker is offering (locked in the VTXO). Omit for BTC. */
+    offerAsset?: asset.AssetId;
+    /**
+     * Partial-fill ratio numerator.
+     * Must be provided together with `ratioDen`. Both must be positive.
+     * Automatically reduced by GCD before encoding.
+     */
+    ratioNum?: bigint;
+    /**
+     * Partial-fill ratio denominator.
+     * Must be provided together with `ratioNum`. Both must be positive.
+     */
+    ratioDen?: bigint;
     /** Seconds from now after which the maker can cancel. */
     cancelDelay?: number;
 }
@@ -99,10 +113,31 @@ export class Maker {
             ? BigInt(Math.floor(Date.now() / 1000) + params.cancelDelay)
             : undefined;
 
+        let ratioNum: bigint | undefined;
+        let ratioDen: bigint | undefined;
+        const hasNum = params.ratioNum !== undefined;
+        const hasDen = params.ratioDen !== undefined;
+        if (hasNum !== hasDen) {
+            throw new Error(
+                "ratioNum and ratioDen must both be provided or both omitted"
+            );
+        }
+        if (hasNum && hasDen) {
+            if (params.ratioNum! <= 0n || params.ratioDen! <= 0n) {
+                throw new Error("ratioNum and ratioDen must be positive");
+            }
+            const g = gcd(params.ratioNum!, params.ratioDen!);
+            ratioNum = params.ratioNum! / g;
+            ratioDen = params.ratioDen! / g;
+        }
+
         const swap = new BancoSwap(
             {
                 wantAmount: params.wantAmount,
                 want: params.wantAsset ?? "btc",
+                offer: params.offerAsset ?? "btc",
+                ratioNum,
+                ratioDen,
                 cltvCancelTimelock: cancelTimestamp,
                 exitTimelock,
                 makerPkScript,
@@ -122,6 +157,9 @@ export class Maker {
             swapAddress,
             wantAmount: params.wantAmount,
             wantAsset: params.wantAsset,
+            offerAsset: params.offerAsset,
+            ratioNum,
+            ratioDen,
             cancelDelay: cancelTimestamp,
             makerPkScript,
             makerPublicKey,

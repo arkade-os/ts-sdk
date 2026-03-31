@@ -94,4 +94,22 @@ describe("Offer TLV encoding", () => {
             hex.encode(sampleOffer.makerPkScript)
         );
     });
+
+    it("round-trips an offer with ratio fields", () => {
+        const wantAsset = asset.AssetId.create(
+            "abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234",
+            0
+        );
+        const offer: Offer.Data = {
+            ...sampleOffer,
+            wantAsset,
+            ratioNum: 100_000_000n,
+            ratioDen: 5n,
+        };
+        const decoded = Offer.decode(Offer.encode(offer));
+
+        expect(decoded.ratioNum).toBe(100_000_000n);
+        expect(decoded.ratioDen).toBe(5n);
+        expect(decoded.wantAsset).toBeDefined();
+    });
 });
