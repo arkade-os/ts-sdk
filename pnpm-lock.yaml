@@ -14,8 +14,8 @@ importers:
   .:
     dependencies:
       '@bitcoinerlab/descriptors-scure':
-        specifier: 3.1.4
-        version: 3.1.4
+        specifier: 3.1.7
+        version: 3.1.7
       '@marcbachmann/cel-js':
         specifier: 7.3.1
         version: 7.3.1
@@ -611,8 +611,8 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@bitcoinerlab/descriptors-core@3.1.4':
-    resolution: {integrity: sha512-IfTKBe6ztJ+xuxW1XVnCioqWxhZwUCL9UfRc/Igtz/ZDP8JTv5kqOlYORjmNQL93VtO58iX7qAYfFpR5x8O/aw==}
+  '@bitcoinerlab/descriptors-core@3.1.7':
+    resolution: {integrity: sha512-7VccUDvKcHK7RF07Vo19Obax9jO3wlPWIXtvXy61GBqXptKv156O9Z4+sm2py1CuxPRpTXHlvH70G4KVVDoKlw==}
     engines: {node: '>=20.19.0'}
     peerDependencies:
       '@ledgerhq/ledger-bitcoin': ^0.3.1
@@ -644,8 +644,8 @@ packages:
       ecpair:
         optional: true
 
-  '@bitcoinerlab/descriptors-scure@3.1.4':
-    resolution: {integrity: sha512-r2m1vLh4k5OhDgfh8TnBLeUWaVc9GXiXCR24gf0zJp1LhDA/i+KYO1WaYplibJK44mKWi1uIkBdw499dqymTLw==}
+  '@bitcoinerlab/descriptors-scure@3.1.7':
+    resolution: {integrity: sha512-jeyi8L3hzOquJn3t5w+NY3G93B/amZw83xeF8hrpwe7w4FMt2SH2o9rithEydQ2tP3Tlqfog+LnJOOChmfFPWw==}
     engines: {node: '>=20.19.0'}
     peerDependencies:
       '@ledgerhq/ledger-bitcoin': ^0.3.1
@@ -4355,7 +4355,7 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@bitcoinerlab/descriptors-core@3.1.4(@noble/curves@2.0.1)(@noble/hashes@2.0.1)(@scure/base@2.0.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.0.1)':
+  '@bitcoinerlab/descriptors-core@3.1.7(@noble/curves@2.0.1)(@noble/hashes@2.0.1)(@scure/base@2.0.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.0.1)':
     dependencies:
       '@bitcoinerlab/miniscript': 2.0.0
       lodash.memoize: 4.1.2
@@ -4368,9 +4368,9 @@ snapshots:
       '@scure/bip32': 2.0.1
       '@scure/btc-signer': 2.0.1
 
-  '@bitcoinerlab/descriptors-scure@3.1.4':
+  '@bitcoinerlab/descriptors-scure@3.1.7':
     dependencies:
-      '@bitcoinerlab/descriptors-core': 3.1.4(@noble/curves@2.0.1)(@noble/hashes@2.0.1)(@scure/base@2.0.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.0.1)
+      '@bitcoinerlab/descriptors-core': 3.1.7(@noble/curves@2.0.1)(@noble/hashes@2.0.1)(@scure/base@2.0.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.0.1)
       '@noble/curves': 2.0.1
       '@noble/hashes': 2.0.1
       '@scure/base': 2.0.0
