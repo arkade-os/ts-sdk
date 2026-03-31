@@ -477,12 +477,7 @@ export namespace ConditionCSVMultisigTapscript {
 
         const asm = Script.decode(script);
 
-        let verifyIndex = -1;
-        for (let i = asm.length - 1; i >= 0; i--) {
-            if (asm[i] === "VERIFY") {
-                verifyIndex = i;
-            }
-        }
+        let verifyIndex = getVerifyIndex(asm);
 
         const conditionScript = new Uint8Array(
             Script.encode(asm.slice(0, verifyIndex))
@@ -525,6 +520,17 @@ export namespace ConditionCSVMultisigTapscript {
         return tapscript.type === TapscriptType.ConditionCSVMultisig;
     }
 
+    function getVerifyIndex(asm: ScriptType) {
+        let verifyIndex = -1;
+        for (let i = asm.length - 1; i >= 0; i--) {
+            if (asm[i] === "VERIFY") {
+                verifyIndex = i;
+                return verifyIndex;
+            }
+        }
+        return verifyIndex;
+    }
+
     export function isScriptValid(script: Uint8Array): boolean | Error {
         const asm = Script.decode(script);
 
@@ -532,12 +538,7 @@ export namespace ConditionCSVMultisigTapscript {
             return new Error(`Invalid script: too short (expected at least 1)`);
         }
 
-        let verifyIndex = -1;
-        for (let i = asm.length - 1; i >= 0; i--) {
-            if (asm[i] === "VERIFY") {
-                verifyIndex = i;
-            }
-        }
+        let verifyIndex = getVerifyIndex(asm);
 
         if (verifyIndex === -1) {
             return new Error("Invalid script: missing VERIFY operation");
@@ -560,7 +561,6 @@ export namespace ConditionCSVMultisigTapscript {
  * ```
  */
 export namespace ConditionMultisigTapscript {
-    import isScriptValid = ConditionCSVMultisigTapscript.isScriptValid;
     export type Type = ArkTapscript<TapscriptType.ConditionMultisig, Params>;
 
     export type Params = {
@@ -593,12 +593,7 @@ export namespace ConditionMultisigTapscript {
 
         const asm = Script.decode(script);
 
-        let verifyIndex = -1;
-        for (let i = asm.length - 1; i >= 0; i--) {
-            if (asm[i] === "VERIFY") {
-                verifyIndex = i;
-            }
-        }
+        let verifyIndex = getVerifyIndex(asm);
 
         const conditionScript = new Uint8Array(
             Script.encode(asm.slice(0, verifyIndex))
@@ -639,6 +634,33 @@ export namespace ConditionMultisigTapscript {
 
     export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.ConditionMultisig;
+    }
+
+    function getVerifyIndex(asm: ScriptType) {
+        let verifyIndex = -1;
+        for (let i = asm.length - 1; i >= 0; i--) {
+            if (asm[i] === "VERIFY") {
+                verifyIndex = i;
+                return verifyIndex;
+            }
+        }
+        return verifyIndex;
+    }
+
+    export function isScriptValid(script: Uint8Array): boolean | Error {
+        const asm = Script.decode(script);
+
+        if (asm.length < 1) {
+            return new Error(`Invalid script: too short (expected at least 1)`);
+        }
+
+        let verifyIndex = getVerifyIndex(asm);
+
+        if (verifyIndex === -1) {
+            return new Error("Invalid script: missing VERIFY operation");
+        }
+
+        return true;
     }
 }
 
