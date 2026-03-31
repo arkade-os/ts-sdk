@@ -6,8 +6,8 @@ import {
     CreateSubmarineSwapRequest,
 } from "../../src/boltz-swap-provider";
 import type {
-    PendingReverseSwap,
-    PendingSubmarineSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
     ArkadeSwapsConfig,
 } from "../../src/types";
 import {
@@ -686,7 +686,7 @@ describe("ArkadeSwaps", () => {
 
                     const swapHistory = await swaps.getSwapHistory();
                     expect(swapHistory.length).toBeGreaterThanOrEqual(1);
-                    const failedSwap = swapHistory[0] as PendingSubmarineSwap;
+                    const failedSwap = swapHistory[0] as BoltzSubmarineSwap;
                     expect(failedSwap.status).toBe("invoice.failedToPay");
                 }
             );
@@ -1247,7 +1247,7 @@ describe("ArkadeSwaps", () => {
                 const swapHistory = await swaps.getSwapHistory();
                 expect(swapHistory.length).toBeGreaterThanOrEqual(1);
 
-                const swap = swapHistory[0] as PendingReverseSwap;
+                const swap = swapHistory[0] as BoltzReverseSwap;
                 expect(swap.request.invoiceAmount).toBe(amount);
                 expect(swap.status).toBe("invoice.settled");
                 expect(swap.type).toBe("reverse");
@@ -1284,7 +1284,7 @@ describe("ArkadeSwaps", () => {
                 const swapHistory = await swaps.getSwapHistory();
                 expect(swapHistory.length).toBeGreaterThanOrEqual(1);
 
-                const swap = swapHistory[0] as PendingSubmarineSwap;
+                const swap = swapHistory[0] as BoltzSubmarineSwap;
                 expect(swap.status).toBe("transaction.claimed");
                 expect(swap.request.invoice).toBe(invoice);
                 expect(swap.type).toBe("submarine");

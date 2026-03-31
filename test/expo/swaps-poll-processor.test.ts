@@ -5,7 +5,7 @@ import {
     SWAP_POLL_TASK_TYPE,
 } from "../../src/expo/swapsPollProcessor";
 import type { SwapTaskDependencies } from "../../src/expo/types";
-import type { PendingReverseSwap, PendingSubmarineSwap } from "../../src/types";
+import type { BoltzReverseSwap, BoltzSubmarineSwap } from "../../src/types";
 import type { BoltzSwapProvider } from "../../src/boltz-swap-provider";
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
 import { ArkadeSwaps } from "../../src/arkade-swaps";
@@ -14,9 +14,9 @@ import { ArkadeSwaps } from "../../src/arkade-swaps";
 
 const createReverseSwap = (
     id: string,
-    status: PendingReverseSwap["status"],
+    status: BoltzReverseSwap["status"],
     preimage = "a".repeat(64)
-): PendingReverseSwap => ({
+): BoltzReverseSwap => ({
     id,
     type: "reverse",
     createdAt: Math.floor(Date.now() / 1000),
@@ -44,9 +44,9 @@ const createReverseSwap = (
 
 const createSubmarineSwap = (
     id: string,
-    status: PendingSubmarineSwap["status"],
+    status: BoltzSubmarineSwap["status"],
     opts: { invoice?: string; preimageHash?: string; refundable?: boolean } = {}
-): PendingSubmarineSwap => ({
+): BoltzSubmarineSwap => ({
     id,
     type: "submarine",
     createdAt: Math.floor(Date.now() / 1000),

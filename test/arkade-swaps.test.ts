@@ -10,9 +10,9 @@ import {
     CreateChainSwapResponse,
 } from "../src/boltz-swap-provider";
 import type {
-    PendingReverseSwap,
-    PendingSubmarineSwap,
-    PendingChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
+    BoltzChainSwap,
     ArkadeSwapsConfig,
     ChainFeesResponse,
     LimitsResponse,
@@ -249,7 +249,7 @@ describe("ArkadeSwaps", () => {
         },
     };
 
-    const mockReverseSwap: PendingReverseSwap = {
+    const mockReverseSwap: BoltzReverseSwap = {
         id: mock.id,
         type: "reverse",
         createdAt: Math.floor(Date.now() / 1000),
@@ -259,7 +259,7 @@ describe("ArkadeSwaps", () => {
         status: "swap.created",
     };
 
-    const mockSubmarineSwap: PendingSubmarineSwap = {
+    const mockSubmarineSwap: BoltzSubmarineSwap = {
         id: mock.id,
         type: "submarine",
         createdAt: Math.floor(Date.now() / 1000),
@@ -353,7 +353,7 @@ describe("ArkadeSwaps", () => {
         },
     };
 
-    const mockArkBtcChainSwap: PendingChainSwap = {
+    const mockArkBtcChainSwap: BoltzChainSwap = {
         id: mock.id,
         type: "chain",
         feeSatsPerByte: 1,
@@ -367,7 +367,7 @@ describe("ArkadeSwaps", () => {
         amount: mock.amount,
     };
 
-    const mockBtcArkChainSwap: PendingChainSwap = {
+    const mockBtcArkChainSwap: BoltzChainSwap = {
         id: mock.id,
         type: "chain",
         feeSatsPerByte: 1,
@@ -579,7 +579,7 @@ describe("ArkadeSwaps", () => {
 
             it("should create a Lightning invoice", async () => {
                 // arrange
-                const pendingSwap: PendingReverseSwap = {
+                const pendingSwap: BoltzReverseSwap = {
                     ...mockReverseSwap,
                     preimage: mock.preimage,
                 };
@@ -605,7 +605,7 @@ describe("ArkadeSwaps", () => {
             it("should pass description to reverse swap when creating Lightning invoice", async () => {
                 // arrange
                 const testDescription = "Test payment description";
-                const pendingSwap: PendingReverseSwap = {
+                const pendingSwap: BoltzReverseSwap = {
                     ...mockReverseSwap,
                     request: {
                         ...createReverseSwapRequest,
@@ -731,7 +731,7 @@ describe("ArkadeSwaps", () => {
             };
             it("should claim a VHTLC", async () => {
                 // arrange
-                const pendingSwap: PendingReverseSwap = {
+                const pendingSwap: BoltzReverseSwap = {
                     id: mock.id,
                     type: "reverse",
                     createdAt: Date.now(),
@@ -948,7 +948,7 @@ describe("ArkadeSwaps", () => {
         describe("claimBtc", () => {
             it("should throw error when toAddress is missing", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                     toAddress: undefined,
                 };
@@ -965,7 +965,7 @@ describe("ArkadeSwaps", () => {
 
             it("should throw error when swap tree in claim details is missing", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                     response: {
                         ...mockArkBtcChainSwap.response,
@@ -988,7 +988,7 @@ describe("ArkadeSwaps", () => {
 
             it("should throw error when server public key in claim details is missing", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                     response: {
                         ...mockArkBtcChainSwap.response,
@@ -1161,7 +1161,7 @@ describe("ArkadeSwaps", () => {
                     vhtlcAddress: mock.address.ark,
                 });
 
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                     response: createArkBtcChainSwapResponse,
                 };
@@ -1187,7 +1187,7 @@ describe("ArkadeSwaps", () => {
                     vhtlcAddress: "different-address",
                 });
 
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                     response: createArkBtcChainSwapResponse,
                 };
@@ -1209,7 +1209,7 @@ describe("ArkadeSwaps", () => {
         describe("waitAndClaimBtc", () => {
             it("should resolve with txid when transaction is claimed", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
                 vi.spyOn(swaps, "claimBtc").mockResolvedValue();
@@ -1240,7 +1240,7 @@ describe("ArkadeSwaps", () => {
 
             it("should reject with SwapExpiredError when swap expires", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
@@ -1261,7 +1261,7 @@ describe("ArkadeSwaps", () => {
 
             it("should reject with TransactionFailedError when transaction fails", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
@@ -1285,7 +1285,7 @@ describe("ArkadeSwaps", () => {
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockArkBtcChainSwap,
                 };
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
@@ -1358,7 +1358,7 @@ describe("ArkadeSwaps", () => {
         describe("claimArk", () => {
             it("should throw error when toAddress is missing", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                     toAddress: undefined,
                 };
@@ -1375,7 +1375,7 @@ describe("ArkadeSwaps", () => {
 
             it("should throw error when timeouts in claim details is missing", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                     response: {
                         ...mockBtcArkChainSwap.response,
@@ -1398,7 +1398,7 @@ describe("ArkadeSwaps", () => {
 
             it("should throw error when server public key in claim details is missing", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                     response: {
                         ...mockBtcArkChainSwap.response,
@@ -1421,7 +1421,7 @@ describe("ArkadeSwaps", () => {
 
             it("should throw error when no spendable VTXOs found", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                     preimage: hex.encode(mockPreimage),
                 };
@@ -1581,7 +1581,7 @@ describe("ArkadeSwaps", () => {
                     vhtlcAddress: mock.address.ark,
                 });
 
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                     response: createBtcArkChainSwapResponse,
                 };
@@ -1607,7 +1607,7 @@ describe("ArkadeSwaps", () => {
                     vhtlcAddress: mock.address.ark + "...",
                 });
 
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                     response: createBtcArkChainSwapResponse,
                 };
@@ -1629,7 +1629,7 @@ describe("ArkadeSwaps", () => {
         describe("waitAndClaimArk", () => {
             it("should resolve with txid when transaction is claimed", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
                 vi.spyOn(swaps, "claimArk").mockResolvedValue();
@@ -1660,7 +1660,7 @@ describe("ArkadeSwaps", () => {
 
             it("should reject with SwapExpiredError when swap expires", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
@@ -1681,7 +1681,7 @@ describe("ArkadeSwaps", () => {
 
             it("should reject with TransactionFailedError when transaction fails", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
@@ -1705,7 +1705,7 @@ describe("ArkadeSwaps", () => {
 
             it("should reject with TransactionRefundedError when transaction is refunded", async () => {
                 // arrange
-                const pendingSwap: PendingChainSwap = {
+                const pendingSwap: BoltzChainSwap = {
                     ...mockBtcArkChainSwap,
                 };
                 vi.spyOn(swapProvider, "monitorSwap").mockImplementation(
@@ -1763,7 +1763,7 @@ describe("ArkadeSwaps", () => {
 
             it("should return only reverse swaps with swap.created status", async () => {
                 // arrange
-                const mockReverseSwaps: PendingReverseSwap[] = [
+                const mockReverseSwaps: BoltzReverseSwap[] = [
                     {
                         ...mockReverseSwap,
                         id: "swap1",
@@ -1817,7 +1817,7 @@ describe("ArkadeSwaps", () => {
 
             it("should return only submarine swaps with invoice.set status", async () => {
                 // arrange
-                const mockSubmarineSwaps: PendingSubmarineSwap[] = [
+                const mockSubmarineSwaps: BoltzSubmarineSwap[] = [
                     {
                         ...mockSubmarineSwap,
                         id: "swap1",
@@ -1870,7 +1870,7 @@ describe("ArkadeSwaps", () => {
 
             it("should return only chain swaps with swap.created status", async () => {
                 // arrange
-                const mockChainSwaps: PendingChainSwap[] = [
+                const mockChainSwaps: BoltzChainSwap[] = [
                     {
                         ...mockArkBtcChainSwap,
                         id: "swap1",
@@ -1931,7 +1931,7 @@ describe("ArkadeSwaps", () => {
             it("should return all swaps sorted by creation date (newest first)", async () => {
                 // arrange
                 const now = Date.now();
-                const mockReverseSwaps: PendingReverseSwap[] = [
+                const mockReverseSwaps: BoltzReverseSwap[] = [
                     {
                         ...mockReverseSwap,
                         id: "reverse1",
@@ -1945,7 +1945,7 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                const mockSubmarineSwaps: PendingSubmarineSwap[] = [
+                const mockSubmarineSwaps: BoltzSubmarineSwap[] = [
                     {
                         ...mockSubmarineSwap,
                         id: "submarine1",
@@ -1960,7 +1960,7 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                const mockChainSwaps: PendingChainSwap[] = [
+                const mockChainSwaps: BoltzChainSwap[] = [
                     {
                         ...mockArkBtcChainSwap,
                         id: "chain1",
@@ -2006,7 +2006,7 @@ describe("ArkadeSwaps", () => {
             it("should handle mixed swap types and statuses correctly", async () => {
                 // arrange
                 const now = Date.now();
-                const mockReverseSwaps: PendingReverseSwap[] = [
+                const mockReverseSwaps: BoltzReverseSwap[] = [
                     {
                         ...mockReverseSwap,
                         createdAt: now - 1000,
@@ -2019,7 +2019,7 @@ describe("ArkadeSwaps", () => {
                     },
                 ];
 
-                const mockSubmarineSwaps: PendingSubmarineSwap[] = [
+                const mockSubmarineSwaps: BoltzSubmarineSwap[] = [
                     {
                         ...mockSubmarineSwap,
                         createdAt: now,
@@ -2127,7 +2127,7 @@ describe("ArkadeSwaps", () => {
         describe("refreshSwapsStatus", () => {
             it("should refresh status of all non-final chain swaps", async () => {
                 // arrange
-                const mockChainSwaps: PendingChainSwap[] = [
+                const mockChainSwaps: BoltzChainSwap[] = [
                     {
                         ...mockBtcArkChainSwap,
                         id: "swap1",
@@ -2188,7 +2188,7 @@ describe("ArkadeSwaps", () => {
                 const preimage = hex.encode(preimageBytes);
                 const preimageHash = hex.encode(sha256(preimageBytes));
 
-                const swap: PendingReverseSwap = {
+                const swap: BoltzReverseSwap = {
                     ...mockReverseSwap,
                     preimage: "", // Empty preimage (restored swap)
                     request: {
@@ -2204,7 +2204,7 @@ describe("ArkadeSwaps", () => {
             });
 
             it("should throw error for mismatched preimage", () => {
-                const swap: PendingReverseSwap = {
+                const swap: BoltzReverseSwap = {
                     ...mockReverseSwap,
                     preimage: "", // Empty preimage (restored swap)
                     request: {
@@ -2223,7 +2223,7 @@ describe("ArkadeSwaps", () => {
 
         describe("enrichSubmarineSwapInvoice", () => {
             it("should enrich submarine swap with valid invoice", () => {
-                const swap: PendingSubmarineSwap = {
+                const swap: BoltzSubmarineSwap = {
                     ...mockSubmarineSwap,
                     request: {
                         ...mockSubmarineSwap.request,
@@ -2240,7 +2240,7 @@ describe("ArkadeSwaps", () => {
             });
 
             it("should throw error for invalid invoice format", () => {
-                const swap: PendingSubmarineSwap = {
+                const swap: BoltzSubmarineSwap = {
                     ...mockSubmarineSwap,
                     request: {
                         ...mockSubmarineSwap.request,
@@ -2449,7 +2449,7 @@ describe("ArkadeSwaps", () => {
             createdAt: new Date(),
         });
 
-        const refundableSwap: PendingSubmarineSwap = {
+        const refundableSwap: BoltzSubmarineSwap = {
             ...mockSubmarineSwap,
             status: "invoice.failedToPay",
         };

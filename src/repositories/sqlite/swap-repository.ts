@@ -1,7 +1,7 @@
 import type { SQLExecutor } from "@arkade-os/sdk/repositories/sqlite";
 import type {
     GetSwapsFilter,
-    PendingSwap,
+    BoltzSwap,
     SwapRepository,
 } from "../swap-repository";
 
@@ -64,7 +64,7 @@ export class SQLiteSwapRepository implements SwapRepository {
 
     // ── Swap operations ────────────────────────────────────────────────
 
-    async saveSwap<T extends PendingSwap>(swap: T): Promise<void> {
+    async saveSwap<T extends BoltzSwap>(swap: T): Promise<void> {
         await this.ensureInit();
         await this.executor.run(
             `INSERT OR REPLACE INTO boltz_swaps (id, type, status, created_at, data)
@@ -84,7 +84,7 @@ export class SQLiteSwapRepository implements SwapRepository {
         await this.executor.run(`DELETE FROM boltz_swaps WHERE id = ?`, [id]);
     }
 
-    async getAllSwaps<T extends PendingSwap>(
+    async getAllSwaps<T extends BoltzSwap>(
         filter?: GetSwapsFilter
     ): Promise<T[]> {
         await this.ensureInit();

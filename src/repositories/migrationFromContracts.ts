@@ -1,5 +1,5 @@
 import { SwapRepository } from "./swap-repository";
-import { PendingReverseSwap, PendingSubmarineSwap } from "../types";
+import { BoltzReverseSwap, BoltzSubmarineSwap } from "../types";
 
 const MIGRATION_KEY = "migration-from-storage-adapter-swaps";
 
@@ -33,9 +33,9 @@ export async function migrateToSwapRepository(
         }
 
         // reverse swaps
-        const reverseSwaps: readonly PendingReverseSwap[] =
+        const reverseSwaps: readonly BoltzReverseSwap[] =
             await getContractCollection(storageAdapter, "reverseSwaps");
-        const submarineSwaps: readonly PendingSubmarineSwap[] =
+        const submarineSwaps: readonly BoltzSubmarineSwap[] =
             await getContractCollection(storageAdapter, "submarineSwaps");
 
         for (const swap of reverseSwaps) {

@@ -11,10 +11,10 @@ import type {
     CreateLightningInvoiceResponse,
     FeesResponse,
     LimitsResponse,
-    PendingChainSwap,
-    PendingReverseSwap,
-    PendingSubmarineSwap,
-    PendingSwap,
+    BoltzChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
+    BoltzSwap,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
 } from "../types";
@@ -288,53 +288,53 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
     createSubmarineSwap(
         args: SendLightningPaymentRequest
-    ): Promise<PendingSubmarineSwap> {
+    ): Promise<BoltzSubmarineSwap> {
         return this.inner.createSubmarineSwap(args);
     }
 
     createReverseSwap(
         args: CreateLightningInvoiceRequest
-    ): Promise<PendingReverseSwap> {
+    ): Promise<BoltzReverseSwap> {
         return this.inner.createReverseSwap(args);
     }
 
-    claimVHTLC(pendingSwap: PendingReverseSwap): Promise<void> {
+    claimVHTLC(pendingSwap: BoltzReverseSwap): Promise<void> {
         return this.inner.claimVHTLC(pendingSwap);
     }
 
-    refundVHTLC(pendingSwap: PendingSubmarineSwap): Promise<void> {
+    refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<void> {
         return this.inner.refundVHTLC(pendingSwap);
     }
 
-    waitAndClaim(pendingSwap: PendingReverseSwap): Promise<{ txid: string }> {
+    waitAndClaim(pendingSwap: BoltzReverseSwap): Promise<{ txid: string }> {
         return this.inner.waitAndClaim(pendingSwap);
     }
 
     waitForSwapSettlement(
-        pendingSwap: PendingSubmarineSwap
+        pendingSwap: BoltzSubmarineSwap
     ): Promise<{ preimage: string }> {
         return this.inner.waitForSwapSettlement(pendingSwap);
     }
 
     restoreSwaps(boltzFees?: FeesResponse): Promise<{
-        chainSwaps: PendingChainSwap[];
-        reverseSwaps: PendingReverseSwap[];
-        submarineSwaps: PendingSubmarineSwap[];
+        chainSwaps: BoltzChainSwap[];
+        reverseSwaps: BoltzReverseSwap[];
+        submarineSwaps: BoltzSubmarineSwap[];
     }> {
         return this.inner.restoreSwaps(boltzFees);
     }
 
     enrichReverseSwapPreimage(
-        swap: PendingReverseSwap,
+        swap: BoltzReverseSwap,
         preimage: string
-    ): PendingReverseSwap {
+    ): BoltzReverseSwap {
         return this.inner.enrichReverseSwapPreimage(swap, preimage);
     }
 
     enrichSubmarineSwapInvoice(
-        swap: PendingSubmarineSwap,
+        swap: BoltzSubmarineSwap,
         invoice: string
-    ): PendingSubmarineSwap {
+    ): BoltzSubmarineSwap {
         return this.inner.enrichSubmarineSwapInvoice(swap, invoice);
     }
 
@@ -349,15 +349,15 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.arkToBtc(args);
     }
 
-    waitAndClaimBtc(pendingSwap: PendingChainSwap): Promise<{ txid: string }> {
+    waitAndClaimBtc(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
         return this.inner.waitAndClaimBtc(pendingSwap);
     }
 
-    claimBtc(pendingSwap: PendingChainSwap): Promise<void> {
+    claimBtc(pendingSwap: BoltzChainSwap): Promise<void> {
         return this.inner.claimBtc(pendingSwap);
     }
 
-    refundArk(pendingSwap: PendingChainSwap): Promise<void> {
+    refundArk(pendingSwap: BoltzChainSwap): Promise<void> {
         return this.inner.refundArk(pendingSwap);
     }
 
@@ -369,22 +369,22 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.btcToArk(args);
     }
 
-    waitAndClaimArk(pendingSwap: PendingChainSwap): Promise<{ txid: string }> {
+    waitAndClaimArk(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
         return this.inner.waitAndClaimArk(pendingSwap);
     }
 
-    claimArk(pendingSwap: PendingChainSwap): Promise<void> {
+    claimArk(pendingSwap: BoltzChainSwap): Promise<void> {
         return this.inner.claimArk(pendingSwap);
     }
 
     signCooperativeClaimForServer(
-        pendingSwap: PendingChainSwap
+        pendingSwap: BoltzChainSwap
     ): Promise<void> {
         return this.inner.signCooperativeClaimForServer(pendingSwap);
     }
 
     waitAndClaimChain(
-        pendingSwap: PendingChainSwap
+        pendingSwap: BoltzChainSwap
     ): Promise<{ txid: string }> {
         return this.inner.waitAndClaimChain(pendingSwap);
     }
@@ -396,14 +396,14 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         feeSatsPerByte?: number;
         senderLockAmount?: number;
         receiverLockAmount?: number;
-    }): Promise<PendingChainSwap> {
+    }): Promise<BoltzChainSwap> {
         return this.inner.createChainSwap(args);
     }
 
     verifyChainSwap(args: {
         to: Chain;
         from: Chain;
-        swap: PendingChainSwap;
+        swap: BoltzChainSwap;
         arkInfo: ArkInfo;
     }): Promise<boolean> {
         return this.inner.verifyChainSwap(args);
@@ -470,19 +470,19 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.getSwapStatus(swapId);
     }
 
-    getPendingSubmarineSwaps(): Promise<PendingSubmarineSwap[]> {
+    getPendingSubmarineSwaps(): Promise<BoltzSubmarineSwap[]> {
         return this.inner.getPendingSubmarineSwaps();
     }
 
-    getPendingReverseSwaps(): Promise<PendingReverseSwap[]> {
+    getPendingReverseSwaps(): Promise<BoltzReverseSwap[]> {
         return this.inner.getPendingReverseSwaps();
     }
 
-    getPendingChainSwaps(): Promise<PendingChainSwap[]> {
+    getPendingChainSwaps(): Promise<BoltzChainSwap[]> {
         return this.inner.getPendingChainSwaps();
     }
 
-    getSwapHistory(): Promise<PendingSwap[]> {
+    getSwapHistory(): Promise<BoltzSwap[]> {
         return this.inner.getSwapHistory();
     }
 

@@ -1,6 +1,6 @@
 import type {
     GetSwapsFilter,
-    PendingSwap,
+    BoltzSwap,
     SwapRepository,
 } from "../swap-repository";
 
@@ -32,7 +32,7 @@ export class RealmSwapRepository implements SwapRepository {
 
     // ── Swap operations ────────────────────────────────────────────────
 
-    async saveSwap<T extends PendingSwap>(swap: T): Promise<void> {
+    async saveSwap<T extends BoltzSwap>(swap: T): Promise<void> {
         await this.ensureInit();
         this.realm.write(() => {
             this.realm.create(
@@ -61,7 +61,7 @@ export class RealmSwapRepository implements SwapRepository {
         });
     }
 
-    async getAllSwaps<T extends PendingSwap>(
+    async getAllSwaps<T extends BoltzSwap>(
         filter?: GetSwapsFilter
     ): Promise<T[]> {
         await this.ensureInit();

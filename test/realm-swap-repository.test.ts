@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { RealmSwapRepository } from "../src/repositories/realm/swap-repository";
 import type {
-    PendingReverseSwap,
-    PendingSubmarineSwap,
-    PendingChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
+    BoltzChainSwap,
 } from "../src/types";
 
 // ── Mock Realm ──────────────────────────────────────────────────────────
@@ -136,8 +136,8 @@ function createMockRealm() {
 
 const createReverseSwap = (
     id: string,
-    status: PendingReverseSwap["status"]
-): PendingReverseSwap => ({
+    status: BoltzReverseSwap["status"]
+): BoltzReverseSwap => ({
     id,
     type: "reverse",
     createdAt: Date.now() / 1000,
@@ -165,8 +165,8 @@ const createReverseSwap = (
 
 const createSubmarineSwap = (
     id: string,
-    status: PendingSubmarineSwap["status"]
-): PendingSubmarineSwap => ({
+    status: BoltzSubmarineSwap["status"]
+): BoltzSubmarineSwap => ({
     id,
     type: "submarine",
     createdAt: Date.now() / 1000,
@@ -192,9 +192,9 @@ const createSubmarineSwap = (
 
 const createChainSwap = (
     id: string,
-    status: PendingChainSwap["status"],
-    overrides?: Partial<PendingChainSwap>
-): PendingChainSwap => ({
+    status: BoltzChainSwap["status"],
+    overrides?: Partial<BoltzChainSwap>
+): BoltzChainSwap => ({
     id,
     type: "chain",
     createdAt: Date.now() / 1000,
@@ -259,7 +259,7 @@ describe("RealmSwapRepository", () => {
         const reverse = createReverseSwap("reverse-1", "swap.created");
         await repo.saveSwap(reverse);
 
-        const [result] = await repo.getAllSwaps<PendingReverseSwap>({
+        const [result] = await repo.getAllSwaps<BoltzReverseSwap>({
             id: "reverse-1",
         });
 
@@ -493,7 +493,7 @@ describe("RealmSwapRepository", () => {
         });
         await repo.saveSwap(chain);
 
-        const [result] = await repo.getAllSwaps<PendingChainSwap>({
+        const [result] = await repo.getAllSwaps<BoltzChainSwap>({
             id: "c1",
         });
 

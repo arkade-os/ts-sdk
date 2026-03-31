@@ -10,9 +10,9 @@ import {
     FeesResponse,
     LimitsResponse,
     Network,
-    PendingChainSwap,
-    PendingReverseSwap,
-    PendingSubmarineSwap,
+    BoltzChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
 } from "../types";
@@ -108,24 +108,24 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     private eventListenerInitialized = false;
     private swapUpdateListeners = new Set<
         (
-            swap: PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap,
+            swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap,
             oldStatus: BoltzSwapStatus
         ) => void
     >();
     private swapCompletedListeners = new Set<
         (
-            swap: PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap
+            swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap
         ) => void
     >();
     private swapFailedListeners = new Set<
         (
-            swap: PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap,
+            swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap,
             error: Error
         ) => void
     >();
     private actionExecutedListeners = new Set<
         (
-            swap: PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap,
+            swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap,
             action: Actions
         ) => void
     >();
@@ -229,9 +229,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             },
             addSwap: async (
                 swap:
-                    | PendingReverseSwap
-                    | PendingSubmarineSwap
-                    | PendingChainSwap
+                    | BoltzReverseSwap
+                    | BoltzSubmarineSwap
+                    | BoltzChainSwap
             ) => {
                 await send({
                     id: getRandomId(),
@@ -257,9 +257,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                 return (
                     res as ArkadeSwapsUpdaterResponse & {
                         payload: (
-                            | PendingReverseSwap
-                            | PendingSubmarineSwap
-                            | PendingChainSwap
+                            | BoltzReverseSwap
+                            | BoltzSubmarineSwap
+                            | BoltzChainSwap
                         )[];
                     }
                 ).payload;
@@ -326,17 +326,17 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                 swapId: string,
                 callback: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     oldStatus: BoltzSwapStatus
                 ) => void
             ) => {
                 const filteredListener = (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     oldStatus: BoltzSwapStatus
                 ) => {
                     if (swap.id === swapId) {
@@ -349,9 +349,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             onSwapUpdate: async (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     oldStatus: BoltzSwapStatus
                 ) => void
             ) => {
@@ -361,9 +361,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             onSwapCompleted: async (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap
                 ) => void
             ) => {
                 this.swapCompletedListeners.add(listener);
@@ -372,9 +372,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             onSwapFailed: async (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     error: Error
                 ) => void
             ) => {
@@ -384,9 +384,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             onActionExecuted: async (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     action: Actions
                 ) => void
             ) => {
@@ -406,9 +406,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             offSwapUpdate: (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     oldStatus: BoltzSwapStatus
                 ) => void
             ) => {
@@ -417,9 +417,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             offSwapCompleted: (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap
                 ) => void
             ) => {
                 this.swapCompletedListeners.delete(listener);
@@ -427,9 +427,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             offSwapFailed: (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     error: Error
                 ) => void
             ) => {
@@ -438,9 +438,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             offActionExecuted: (
                 listener: (
                     swap:
-                        | PendingReverseSwap
-                        | PendingSubmarineSwap
-                        | PendingChainSwap,
+                        | BoltzReverseSwap
+                        | BoltzSubmarineSwap
+                        | BoltzChainSwap,
                     action: Actions
                 ) => void
             ) => {
@@ -491,7 +491,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
 
     async createSubmarineSwap(
         args: SendLightningPaymentRequest
-    ): Promise<PendingSubmarineSwap> {
+    ): Promise<BoltzSubmarineSwap> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
@@ -507,7 +507,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
 
     async createReverseSwap(
         args: CreateLightningInvoiceRequest
-    ): Promise<PendingReverseSwap> {
+    ): Promise<BoltzReverseSwap> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
@@ -521,7 +521,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async claimVHTLC(pendingSwap: PendingReverseSwap): Promise<void> {
+    async claimVHTLC(pendingSwap: BoltzReverseSwap): Promise<void> {
         await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
@@ -530,7 +530,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
-    async refundVHTLC(pendingSwap: PendingSubmarineSwap): Promise<void> {
+    async refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<void> {
         await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
@@ -540,7 +540,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async waitAndClaim(
-        pendingSwap: PendingReverseSwap
+        pendingSwap: BoltzReverseSwap
     ): Promise<{ txid: string }> {
         try {
             const res = await this.sendMessage({
@@ -558,7 +558,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async waitForSwapSettlement(
-        pendingSwap: PendingSubmarineSwap
+        pendingSwap: BoltzSubmarineSwap
     ): Promise<{ preimage: string }> {
         try {
             const res = await this.sendMessage({
@@ -574,9 +574,9 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async restoreSwaps(boltzFees?: FeesResponse): Promise<{
-        chainSwaps: PendingChainSwap[];
-        reverseSwaps: PendingReverseSwap[];
-        submarineSwaps: PendingSubmarineSwap[];
+        chainSwaps: BoltzChainSwap[];
+        reverseSwaps: BoltzReverseSwap[];
+        submarineSwaps: BoltzSubmarineSwap[];
     }> {
         try {
             const res = await this.sendMessage({
@@ -639,7 +639,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         feeSatsPerByte?: number;
         senderLockAmount?: number;
         receiverLockAmount?: number;
-    }): Promise<PendingChainSwap> {
+    }): Promise<BoltzChainSwap> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
@@ -654,7 +654,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async waitAndClaimChain(
-        pendingSwap: PendingChainSwap
+        pendingSwap: BoltzChainSwap
     ): Promise<{ txid: string }> {
         try {
             const res = await this.sendMessage({
@@ -672,7 +672,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async waitAndClaimArk(
-        pendingSwap: PendingChainSwap
+        pendingSwap: BoltzChainSwap
     ): Promise<{ txid: string }> {
         try {
             const res = await this.sendMessage({
@@ -690,7 +690,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async waitAndClaimBtc(
-        pendingSwap: PendingChainSwap
+        pendingSwap: BoltzChainSwap
     ): Promise<{ txid: string }> {
         try {
             const res = await this.sendMessage({
@@ -707,7 +707,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async claimArk(pendingSwap: PendingChainSwap): Promise<void> {
+    async claimArk(pendingSwap: BoltzChainSwap): Promise<void> {
         await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
@@ -716,7 +716,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
-    async claimBtc(pendingSwap: PendingChainSwap): Promise<void> {
+    async claimBtc(pendingSwap: BoltzChainSwap): Promise<void> {
         await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
@@ -725,7 +725,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
-    async refundArk(pendingSwap: PendingChainSwap): Promise<void> {
+    async refundArk(pendingSwap: BoltzChainSwap): Promise<void> {
         await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
@@ -735,7 +735,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async signCooperativeClaimForServer(
-        pendingSwap: PendingChainSwap
+        pendingSwap: BoltzChainSwap
     ): Promise<void> {
         await this.sendMessage({
             id: getRandomId(),
@@ -748,7 +748,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     async verifyChainSwap(args: {
         to: Chain;
         from: Chain;
-        swap: PendingChainSwap;
+        swap: BoltzChainSwap;
         arkInfo: ArkInfo;
     }): Promise<boolean> {
         try {
@@ -784,16 +784,16 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     enrichReverseSwapPreimage(
-        swap: PendingReverseSwap,
+        swap: BoltzReverseSwap,
         preimage: string
-    ): PendingReverseSwap {
+    ): BoltzReverseSwap {
         return _enrichReverseSwapPreimage(swap, preimage);
     }
 
     enrichSubmarineSwapInvoice(
-        swap: PendingSubmarineSwap,
+        swap: BoltzSubmarineSwap,
         invoice: string
-    ): PendingSubmarineSwap {
+    ): BoltzSubmarineSwap {
         return _enrichSubmarineSwapInvoice(swap, invoice);
     }
 
@@ -884,7 +884,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async getPendingSubmarineSwaps(): Promise<PendingSubmarineSwap[]> {
+    async getPendingSubmarineSwaps(): Promise<BoltzSubmarineSwap[]> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
@@ -899,7 +899,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async getPendingReverseSwaps(): Promise<PendingReverseSwap[]> {
+    async getPendingReverseSwaps(): Promise<BoltzReverseSwap[]> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
@@ -912,7 +912,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         }
     }
 
-    async getPendingChainSwaps(): Promise<PendingChainSwap[]> {
+    async getPendingChainSwaps(): Promise<BoltzChainSwap[]> {
         try {
             const res = await this.sendMessage({
                 id: getRandomId(),
@@ -926,7 +926,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     async getSwapHistory(): Promise<
-        (PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap)[]
+        (BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap)[]
     > {
         try {
             const res = await this.sendMessage({

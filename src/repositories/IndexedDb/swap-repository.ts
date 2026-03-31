@@ -1,6 +1,6 @@
 import {
     GetSwapsFilter,
-    PendingSwap,
+    BoltzSwap,
     SwapRepository,
 } from "../swap-repository";
 import { closeDatabase, openDatabase } from "@arkade-os/sdk";
@@ -32,7 +32,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
         return this.db;
     }
 
-    async saveSwap<T extends PendingSwap>(swap: T): Promise<void> {
+    async saveSwap<T extends BoltzSwap>(swap: T): Promise<void> {
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const transaction = db.transaction(
@@ -60,7 +60,7 @@ export class IndexedDbSwapRepository implements SwapRepository {
         });
     }
 
-    async getAllSwaps<T extends PendingSwap>(
+    async getAllSwaps<T extends BoltzSwap>(
         filter?: GetSwapsFilter
     ): Promise<T[]> {
         return this.getAllSwapsFromStore<T>(filter);

@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { InMemorySwapRepository } from "../src/repositories/inMemory/swap-repository";
 import { IndexedDbSwapRepository } from "../src/repositories/IndexedDb/swap-repository";
-import { PendingReverseSwap, PendingSubmarineSwap } from "../src/types";
+import { BoltzReverseSwap, BoltzSubmarineSwap } from "../src/types";
 
 const createReverseSwap = (
     id: string,
-    status: PendingReverseSwap["status"]
-): PendingReverseSwap => ({
+    status: BoltzReverseSwap["status"]
+): BoltzReverseSwap => ({
     id,
     type: "reverse",
     createdAt: Date.now() / 1000,
@@ -34,8 +34,8 @@ const createReverseSwap = (
 
 const createSubmarineSwap = (
     id: string,
-    status: PendingSubmarineSwap["status"]
-): PendingSubmarineSwap => ({
+    status: BoltzSubmarineSwap["status"]
+): BoltzSubmarineSwap => ({
     id,
     type: "submarine",
     createdAt: Date.now() / 1000,

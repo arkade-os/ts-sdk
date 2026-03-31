@@ -6,10 +6,10 @@ import {
     FeesResponse,
     LimitsResponse,
     Network,
-    PendingChainSwap,
-    PendingReverseSwap,
-    PendingSubmarineSwap,
-    PendingSwap,
+    BoltzChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
+    BoltzSwap,
 } from "./types";
 import { base64 } from "@scure/base";
 
@@ -186,31 +186,31 @@ export const isChainSuccessStatus = (status: BoltzSwapStatus): boolean => {
     return status === "transaction.claimed";
 };
 
-/** Type guard: narrows PendingSwap to PendingReverseSwap. */
+/** Type guard: narrows BoltzSwap to BoltzReverseSwap. */
 export const isPendingReverseSwap = (
-    swap: PendingSwap
-): swap is PendingReverseSwap => {
+    swap: BoltzSwap
+): swap is BoltzReverseSwap => {
     return swap.type === "reverse";
 };
 
-/** Type guard: narrows PendingSwap to PendingSubmarineSwap. */
+/** Type guard: narrows BoltzSwap to BoltzSubmarineSwap. */
 export const isPendingSubmarineSwap = (
-    swap: PendingSwap
-): swap is PendingSubmarineSwap => {
+    swap: BoltzSwap
+): swap is BoltzSubmarineSwap => {
     return swap.type === "submarine";
 };
 
-/** Type guard: narrows PendingSwap to PendingChainSwap. */
+/** Type guard: narrows BoltzSwap to BoltzChainSwap. */
 export const isPendingChainSwap = (
-    swap: PendingSwap
-): swap is PendingChainSwap => {
+    swap: BoltzSwap
+): swap is BoltzChainSwap => {
     return swap.type === "chain";
 };
 
 /** Type guard: checks if swap is a refundable submarine swap (failed + not yet refunded). */
 export const isSubmarineSwapRefundable = (
-    swap: PendingSwap
-): swap is PendingSubmarineSwap => {
+    swap: BoltzSwap
+): swap is BoltzSubmarineSwap => {
     return (
         isSubmarineRefundableStatus(swap.status) &&
         isPendingSubmarineSwap(swap) &&
@@ -221,8 +221,8 @@ export const isSubmarineSwapRefundable = (
 
 /** Type guard: checks if swap is a refundable chain swap (expired ARK → BTC). */
 export const isChainSwapRefundable = (
-    swap: PendingSwap
-): swap is PendingChainSwap => {
+    swap: BoltzSwap
+): swap is BoltzChainSwap => {
     return (
         isChainRefundableStatus(swap.status) &&
         isPendingChainSwap(swap) &&
@@ -232,15 +232,15 @@ export const isChainSwapRefundable = (
 
 /** Type guard: checks if swap is a claimable reverse swap. */
 export const isReverseSwapClaimable = (
-    swap: PendingSwap
-): swap is PendingReverseSwap => {
+    swap: BoltzSwap
+): swap is BoltzReverseSwap => {
     return isReverseClaimableStatus(swap.status) && isPendingReverseSwap(swap);
 };
 
 /** Type guard: checks if swap is a claimable chain swap. */
 export const isChainSwapClaimable = (
-    swap: PendingSwap
-): swap is PendingChainSwap => {
+    swap: BoltzSwap
+): swap is BoltzChainSwap => {
     return isChainClaimableStatus(swap.status) && isPendingChainSwap(swap);
 };
 

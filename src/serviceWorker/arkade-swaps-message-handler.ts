@@ -23,9 +23,9 @@ import {
     type FeesResponse,
     type LimitsResponse,
     Network,
-    PendingChainSwap,
-    PendingReverseSwap,
-    PendingSubmarineSwap,
+    BoltzChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
     type SendLightningPaymentRequest,
     SendLightningPaymentResponse,
 } from "../types";
@@ -82,7 +82,7 @@ export type RequestCreateSubmarineSwap = RequestEnvelope & {
 };
 export type ResponseCreateSubmarineSwap = ResponseEnvelope & {
     type: "SUBMARINE_SWAP_CREATED";
-    payload: PendingSubmarineSwap;
+    payload: BoltzSubmarineSwap;
 };
 
 export type RequestCreateReverseSwap = RequestEnvelope & {
@@ -91,12 +91,12 @@ export type RequestCreateReverseSwap = RequestEnvelope & {
 };
 export type ResponseCreateReverseSwap = ResponseEnvelope & {
     type: "REVERSE_SWAP_CREATED";
-    payload: PendingReverseSwap;
+    payload: BoltzReverseSwap;
 };
 
 export type RequestClaimVhtlc = RequestEnvelope & {
     type: "CLAIM_VHTLC";
-    payload: PendingReverseSwap;
+    payload: BoltzReverseSwap;
 };
 export type ResponseClaimVhtlc = ResponseEnvelope & {
     type: "VHTLC_CLAIMED";
@@ -104,7 +104,7 @@ export type ResponseClaimVhtlc = ResponseEnvelope & {
 
 export type RequestRefundVhtlc = RequestEnvelope & {
     type: "REFUND_VHTLC";
-    payload: PendingSubmarineSwap;
+    payload: BoltzSubmarineSwap;
 };
 export type ResponseRefundVhtlc = ResponseEnvelope & {
     type: "VHTLC_REFUNDED";
@@ -112,7 +112,7 @@ export type ResponseRefundVhtlc = ResponseEnvelope & {
 
 export type RequestWaitAndClaim = RequestEnvelope & {
     type: "WAIT_AND_CLAIM";
-    payload: PendingReverseSwap;
+    payload: BoltzReverseSwap;
 };
 export type ResponseWaitAndClaim = ResponseEnvelope & {
     type: "WAIT_AND_CLAIMED";
@@ -121,7 +121,7 @@ export type ResponseWaitAndClaim = ResponseEnvelope & {
 
 export type RequestWaitForSwapSettlement = RequestEnvelope & {
     type: "WAIT_FOR_SWAP_SETTLEMENT";
-    payload: PendingSubmarineSwap;
+    payload: BoltzSubmarineSwap;
 };
 export type ResponseWaitForSwapSettlement = ResponseEnvelope & {
     type: "SWAP_SETTLED";
@@ -135,28 +135,28 @@ export type RequestRestoreSwaps = RequestEnvelope & {
 export type ResponseRestoreSwaps = ResponseEnvelope & {
     type: "SWAPS_RESTORED";
     payload: {
-        chainSwaps: PendingChainSwap[];
-        reverseSwaps: PendingReverseSwap[];
-        submarineSwaps: PendingSubmarineSwap[];
+        chainSwaps: BoltzChainSwap[];
+        reverseSwaps: BoltzReverseSwap[];
+        submarineSwaps: BoltzSubmarineSwap[];
     };
 };
 
 export type RequestEnrichReverseSwapPreimage = RequestEnvelope & {
     type: "ENRICH_REVERSE_SWAP_PREIMAGE";
-    payload: { swap: PendingReverseSwap; preimage: string };
+    payload: { swap: BoltzReverseSwap; preimage: string };
 };
 export type ResponseEnrichReverseSwapPreimage = ResponseEnvelope & {
     type: "REVERSE_SWAP_PREIMAGE_ENRICHED";
-    payload: PendingReverseSwap;
+    payload: BoltzReverseSwap;
 };
 
 export type RequestEnrichSubmarineSwapInvoice = RequestEnvelope & {
     type: "ENRICH_SUBMARINE_SWAP_INVOICE";
-    payload: { swap: PendingSubmarineSwap; invoice: string };
+    payload: { swap: BoltzSubmarineSwap; invoice: string };
 };
 export type ResponseEnrichSubmarineSwapInvoice = ResponseEnvelope & {
     type: "SUBMARINE_SWAP_INVOICE_ENRICHED";
-    payload: PendingSubmarineSwap;
+    payload: BoltzSubmarineSwap;
 };
 
 export type RequestGetFees = RequestEnvelope & {
@@ -191,7 +191,7 @@ export type RequestGetPendingSubmarineSwaps = RequestEnvelope & {
 };
 export type ResponseGetPendingSubmarineSwaps = ResponseEnvelope & {
     type: "PENDING_SUBMARINE_SWAPS";
-    payload: PendingSubmarineSwap[];
+    payload: BoltzSubmarineSwap[];
 };
 
 export type RequestGetPendingReverseSwaps = RequestEnvelope & {
@@ -199,7 +199,7 @@ export type RequestGetPendingReverseSwaps = RequestEnvelope & {
 };
 export type ResponseGetPendingReverseSwaps = ResponseEnvelope & {
     type: "PENDING_REVERSE_SWAPS";
-    payload: PendingReverseSwap[];
+    payload: BoltzReverseSwap[];
 };
 
 export type RequestGetPendingChainSwaps = RequestEnvelope & {
@@ -207,7 +207,7 @@ export type RequestGetPendingChainSwaps = RequestEnvelope & {
 };
 export type ResponseGetPendingChainSwaps = ResponseEnvelope & {
     type: "PENDING_CHAIN_SWAPS";
-    payload: PendingChainSwap[];
+    payload: BoltzChainSwap[];
 };
 
 export type RequestGetSwapHistory = RequestEnvelope & {
@@ -215,7 +215,7 @@ export type RequestGetSwapHistory = RequestEnvelope & {
 };
 export type ResponseGetSwapHistory = ResponseEnvelope & {
     type: "SWAP_HISTORY";
-    payload: (PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap)[];
+    payload: (BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap)[];
 };
 
 export type RequestRefreshSwapsStatus = RequestEnvelope & {
@@ -265,12 +265,12 @@ export type RequestCreateChainSwap = RequestEnvelope & {
 };
 export type ResponseCreateChainSwap = ResponseEnvelope & {
     type: "CHAIN_SWAP_CREATED";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 
 export type RequestWaitAndClaimChain = RequestEnvelope & {
     type: "WAIT_AND_CLAIM_CHAIN";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 export type ResponseWaitAndClaimChain = ResponseEnvelope & {
     type: "CHAIN_CLAIMED";
@@ -279,7 +279,7 @@ export type ResponseWaitAndClaimChain = ResponseEnvelope & {
 
 export type RequestWaitAndClaimArk = RequestEnvelope & {
     type: "WAIT_AND_CLAIM_ARK";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 export type ResponseWaitAndClaimArk = ResponseEnvelope & {
     type: "ARK_CLAIMED";
@@ -288,7 +288,7 @@ export type ResponseWaitAndClaimArk = ResponseEnvelope & {
 
 export type RequestWaitAndClaimBtc = RequestEnvelope & {
     type: "WAIT_AND_CLAIM_BTC";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 export type ResponseWaitAndClaimBtc = ResponseEnvelope & {
     type: "BTC_CLAIMED";
@@ -297,7 +297,7 @@ export type ResponseWaitAndClaimBtc = ResponseEnvelope & {
 
 export type RequestClaimArk = RequestEnvelope & {
     type: "CLAIM_ARK";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 export type ResponseClaimArk = ResponseEnvelope & {
     type: "ARK_CLAIM_EXECUTED";
@@ -305,7 +305,7 @@ export type ResponseClaimArk = ResponseEnvelope & {
 
 export type RequestClaimBtc = RequestEnvelope & {
     type: "CLAIM_BTC";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 export type ResponseClaimBtc = ResponseEnvelope & {
     type: "BTC_CLAIM_EXECUTED";
@@ -313,7 +313,7 @@ export type ResponseClaimBtc = ResponseEnvelope & {
 
 export type RequestRefundArk = RequestEnvelope & {
     type: "REFUND_ARK";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 export type ResponseRefundArk = ResponseEnvelope & {
     type: "ARK_REFUND_EXECUTED";
@@ -321,7 +321,7 @@ export type ResponseRefundArk = ResponseEnvelope & {
 
 export type RequestSignServerClaim = RequestEnvelope & {
     type: "SIGN_SERVER_CLAIM";
-    payload: PendingChainSwap;
+    payload: BoltzChainSwap;
 };
 export type ResponseSignServerClaim = ResponseEnvelope & {
     type: "SERVER_CLAIM_SIGNED";
@@ -332,7 +332,7 @@ export type RequestVerifyChainSwap = RequestEnvelope & {
     payload: {
         to: Chain;
         from: Chain;
-        swap: PendingChainSwap;
+        swap: BoltzChainSwap;
         arkInfo: ArkInfo;
     };
 };
@@ -368,7 +368,7 @@ export type ResponseSwapManagerStop = ResponseEnvelope & {
 
 export type RequestSwapManagerAddSwap = RequestEnvelope & {
     type: "SM-ADD_SWAP";
-    payload: PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap;
+    payload: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap;
 };
 export type ResponseSwapManagerAddSwap = ResponseEnvelope & {
     type: "SM-SWAP_ADDED";
@@ -387,7 +387,7 @@ export type RequestSwapManagerGetPending = RequestEnvelope & {
 };
 export type ResponseSwapManagerGetPending = ResponseEnvelope & {
     type: "SM-PENDING_SWAPS";
-    payload: (PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap)[];
+    payload: (BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap)[];
 };
 
 export type RequestSwapManagerHasSwap = RequestEnvelope & {
@@ -518,29 +518,29 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseSwapManagerGetStats
     | ResponseSwapManagerWaitForCompletion;
 
-type PendingSwap = PendingReverseSwap | PendingSubmarineSwap | PendingChainSwap;
+type BoltzSwap = BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap;
 
 export type SwapManagerEventMessage =
     | {
           tag: string;
           type: "SM-EVENT-SWAP_UPDATE";
-          payload: { swap: PendingSwap; oldStatus: BoltzSwapStatus };
+          payload: { swap: BoltzSwap; oldStatus: BoltzSwapStatus };
       }
     | {
           tag: string;
           type: "SM-EVENT-SWAP_COMPLETED";
-          payload: { swap: PendingSwap };
+          payload: { swap: BoltzSwap };
       }
     | {
           tag: string;
           type: "SM-EVENT-SWAP_FAILED";
-          payload: { swap: PendingSwap; error: { message: string } };
+          payload: { swap: BoltzSwap; error: { message: string } };
       }
     | {
           tag: string;
           type: "SM-EVENT-ACTION_EXECUTED";
           payload: {
-              swap: PendingSwap;
+              swap: BoltzSwap;
               action:
                   | "claim"
                   | "refund"

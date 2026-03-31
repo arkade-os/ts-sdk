@@ -4,7 +4,7 @@ import {
     DEFAULT_MESSAGE_TAG,
     type RequestInitArkSwaps,
 } from "../../src/serviceWorker/arkade-swaps-message-handler";
-import type { PendingReverseSwap, PendingSubmarineSwap } from "../../src/types";
+import type { BoltzReverseSwap, BoltzSubmarineSwap } from "../../src/types";
 import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { hex } from "@scure/base";
@@ -87,7 +87,7 @@ describe("SwArkadeSwapsRuntime events", () => {
             id: "1",
             type: "reverse",
             status: "swap.created",
-        } as PendingReverseSwap;
+        } as BoltzReverseSwap;
         fakeSw.emit({
             tag: TAG,
             type: "SM-EVENT-SWAP_UPDATE",
@@ -109,7 +109,7 @@ describe("SwArkadeSwapsRuntime events", () => {
             id: "2",
             type: "submarine",
             status: "transaction.claimed",
-        } as PendingSubmarineSwap;
+        } as BoltzSubmarineSwap;
         fakeSw.emit({
             tag: TAG,
             type: "SM-EVENT-SWAP_COMPLETED",
@@ -155,12 +155,12 @@ describe("SwArkadeSwapsRuntime events", () => {
             id: "target-swap",
             type: "reverse",
             status: "swap.created",
-        } as PendingReverseSwap;
+        } as BoltzReverseSwap;
         const otherSwap = {
             id: "other-swap",
             type: "reverse",
             status: "swap.created",
-        } as PendingReverseSwap;
+        } as BoltzReverseSwap;
 
         // Matching id should invoke callback
         fakeSw.emit({
@@ -239,7 +239,7 @@ describe("SwArkadeSwapsRuntime enrich methods", () => {
         const swap = {
             request: { preimageHash },
             preimage: "",
-        } as PendingReverseSwap;
+        } as BoltzReverseSwap;
 
         const enriched = runtime.enrichReverseSwapPreimage(swap, preimage);
 
@@ -251,7 +251,7 @@ describe("SwArkadeSwapsRuntime enrich methods", () => {
         const swap = {
             request: { preimageHash: "00".repeat(32) },
             preimage: "",
-        } as PendingReverseSwap;
+        } as BoltzReverseSwap;
 
         expect(() =>
             runtime.enrichReverseSwapPreimage(swap, "11".repeat(32))
@@ -264,7 +264,7 @@ describe("SwArkadeSwapsRuntime enrich methods", () => {
         const swap = {
             preimageHash: paymentHash,
             request: { invoice: "" },
-        } as PendingSubmarineSwap;
+        } as BoltzSubmarineSwap;
 
         const enriched = runtime.enrichSubmarineSwapInvoice(swap, invoice);
 
@@ -275,7 +275,7 @@ describe("SwArkadeSwapsRuntime enrich methods", () => {
         const runtime = await createRuntime(fakeSw);
         const swap = {
             request: { invoice: "" },
-        } as PendingSubmarineSwap;
+        } as BoltzSubmarineSwap;
 
         expect(() =>
             runtime.enrichSubmarineSwapInvoice(swap, "not-a-lightning-invoice")

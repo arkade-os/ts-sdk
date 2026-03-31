@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ArkadeSwapsMessageHandler } from "../../src/serviceWorker/arkade-swaps-message-handler";
 import { SwapRepository } from "../../src/repositories/swap-repository";
-import { PendingReverseSwap } from "../../src/types";
+import { BoltzReverseSwap } from "../../src/types";
 import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
 
 describe("ArkadeSwapsMessageHandler broadcastEvent", () => {
@@ -24,7 +24,7 @@ describe("ArkadeSwapsMessageHandler broadcastEvent", () => {
     });
 
     it("broadcasts swap update event to all clients", async () => {
-        const swap = { id: "s1" } as PendingReverseSwap;
+        const swap = { id: "s1" } as BoltzReverseSwap;
         await (handler as any).broadcastEvent({
             tag: "TAG",
             type: "SM-EVENT-SWAP_UPDATE",

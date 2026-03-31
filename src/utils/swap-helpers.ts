@@ -6,10 +6,10 @@ import {
     isPendingSubmarineSwap,
 } from "../boltz-swap-provider";
 import {
-    PendingChainSwap,
-    PendingReverseSwap,
-    PendingSubmarineSwap,
-    PendingSwap,
+    BoltzChainSwap,
+    BoltzReverseSwap,
+    BoltzSubmarineSwap,
+    BoltzSwap,
 } from "../types";
 import { decodeInvoice } from "./decoding";
 
@@ -17,9 +17,9 @@ import { decodeInvoice } from "./decoding";
  * Generic type for swap save functions
  */
 export type SwapSaver = {
-    saveChainSwap?: (swap: PendingChainSwap) => Promise<void>;
-    saveReverseSwap?: (swap: PendingReverseSwap) => Promise<void>;
-    saveSubmarineSwap?: (swap: PendingSubmarineSwap) => Promise<void>;
+    saveChainSwap?: (swap: BoltzChainSwap) => Promise<void>;
+    saveReverseSwap?: (swap: BoltzReverseSwap) => Promise<void>;
+    saveSubmarineSwap?: (swap: BoltzSubmarineSwap) => Promise<void>;
 };
 
 /**
@@ -27,7 +27,7 @@ export type SwapSaver = {
  * This eliminates the need for type checking in multiple places
  */
 export async function saveSwap(
-    swap: PendingSwap,
+    swap: BoltzSwap,
     saver: SwapSaver
 ): Promise<void> {
     if (isPendingReverseSwap(swap)) {
@@ -57,10 +57,10 @@ export async function saveSwap(
  * Update a reverse swap's status and save it
  */
 export async function updateReverseSwapStatus(
-    swap: PendingReverseSwap,
-    status: PendingReverseSwap["status"],
-    saveFunc: (swap: PendingReverseSwap) => Promise<void>,
-    additionalFields?: Partial<PendingReverseSwap>
+    swap: BoltzReverseSwap,
+    status: BoltzReverseSwap["status"],
+    saveFunc: (swap: BoltzReverseSwap) => Promise<void>,
+    additionalFields?: Partial<BoltzReverseSwap>
 ): Promise<void> {
     await saveFunc({
         ...swap,
@@ -73,10 +73,10 @@ export async function updateReverseSwapStatus(
  * Update a submarine swap's status and save it
  */
 export async function updateSubmarineSwapStatus(
-    swap: PendingSubmarineSwap,
-    status: PendingSubmarineSwap["status"],
-    saveFunc: (swap: PendingSubmarineSwap) => Promise<void>,
-    additionalFields?: Partial<PendingSubmarineSwap>
+    swap: BoltzSubmarineSwap,
+    status: BoltzSubmarineSwap["status"],
+    saveFunc: (swap: BoltzSubmarineSwap) => Promise<void>,
+    additionalFields?: Partial<BoltzSubmarineSwap>
 ): Promise<void> {
     await saveFunc({
         ...swap,
@@ -89,10 +89,10 @@ export async function updateSubmarineSwapStatus(
  * Update a chain swap's status and save it
  */
 export async function updateChainSwapStatus(
-    swap: PendingChainSwap,
-    status: PendingChainSwap["status"],
-    saveFunc: (swap: PendingChainSwap) => Promise<void>,
-    additionalFields?: Partial<PendingChainSwap>
+    swap: BoltzChainSwap,
+    status: BoltzChainSwap["status"],
+    saveFunc: (swap: BoltzChainSwap) => Promise<void>,
+    additionalFields?: Partial<BoltzChainSwap>
 ): Promise<void> {
     await saveFunc({
         ...swap,
@@ -105,9 +105,9 @@ export async function updateChainSwapStatus(
  * Enrich a reverse swap with its preimage after validation.
  */
 export function enrichReverseSwapPreimage(
-    swap: PendingReverseSwap,
+    swap: BoltzReverseSwap,
     preimage: string
-): PendingReverseSwap {
+): BoltzReverseSwap {
     const computedHash = hex.encode(sha256(hex.decode(preimage)));
     if (computedHash !== swap.request.preimageHash) {
         throw new Error(
@@ -122,9 +122,9 @@ export function enrichReverseSwapPreimage(
  * Enrich a submarine swap with its invoice after validation.
  */
 export function enrichSubmarineSwapInvoice(
-    swap: PendingSubmarineSwap,
+    swap: BoltzSubmarineSwap,
     invoice: string
-): PendingSubmarineSwap {
+): BoltzSubmarineSwap {
     let paymentHash: string;
     try {
         const decoded = decodeInvoice(invoice);
