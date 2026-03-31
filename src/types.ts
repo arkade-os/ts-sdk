@@ -179,6 +179,15 @@ export type BoltzSwap =
     | BoltzSubmarineSwap
     | BoltzChainSwap;
 
+/** Pending- swap type aliases for backwards compatibility */
+export interface PendingReverseSwap extends BoltzReverseSwap {}
+export interface PendingSubmarineSwap extends BoltzSubmarineSwap {}
+export interface PendingChainSwap extends BoltzChainSwap {}
+export type PendingSwap =
+    | PendingReverseSwap
+    | PendingSubmarineSwap
+    | PendingChainSwap;
+
 /** Configuration for initializing ArkadeSwaps via the constructor (swapProvider is required). */
 export interface ArkadeSwapsConfig {
     /** An IWallet instance from @arkade-os/sdk (must expose arkProvider and indexerProvider). */
