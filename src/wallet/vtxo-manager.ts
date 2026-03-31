@@ -945,6 +945,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             }
                             if (
                                 e.message.includes("VTXO_ALREADY_REGISTERED") ||
+                                e.message.includes("VTXO_ALREADY_SPENT") ||
                                 e.message.includes("duplicated input")
                             ) {
                                 // VTXO is already being used in a concurrent
