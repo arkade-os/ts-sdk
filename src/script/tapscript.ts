@@ -470,14 +470,15 @@ export namespace ConditionCSVMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
-        const isValid = isScriptValid(script);
-        if (isValid instanceof Error) {
-            throw isValid;
-        }
+        isScriptValid(script);
 
         const asm = Script.decode(script);
 
         let verifyIndex = getVerifyIndex(asm);
+
+        if (verifyIndex === -1) {
+            throw Error("Invalid script: missing VERIFY operation");
+        }
 
         const conditionScript = new Uint8Array(
             Script.encode(asm.slice(0, verifyIndex))
@@ -531,17 +532,17 @@ export namespace ConditionCSVMultisigTapscript {
         return verifyIndex;
     }
 
-    export function isScriptValid(script: Uint8Array): boolean | Error {
+    export function isScriptValid(script: Uint8Array): true {
         const asm = Script.decode(script);
 
         if (asm.length < 1) {
-            return new Error(`Invalid script: too short (expected at least 1)`);
+            throw Error(`Invalid script: too short (expected at least 1)`);
         }
 
         let verifyIndex = getVerifyIndex(asm);
 
         if (verifyIndex === -1) {
-            return new Error("Invalid script: missing VERIFY operation");
+            throw Error("Invalid script: missing VERIFY operation");
         }
 
         return true;
@@ -586,14 +587,15 @@ export namespace ConditionMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
-        const isValid = isScriptValid(script);
-        if (isValid instanceof Error) {
-            throw isValid;
-        }
+        isScriptValid(script);
 
         const asm = Script.decode(script);
 
         let verifyIndex = getVerifyIndex(asm);
+
+        if (verifyIndex === -1) {
+            throw Error("Invalid script: missing VERIFY operation");
+        }
 
         const conditionScript = new Uint8Array(
             Script.encode(asm.slice(0, verifyIndex))
@@ -647,17 +649,17 @@ export namespace ConditionMultisigTapscript {
         return verifyIndex;
     }
 
-    export function isScriptValid(script: Uint8Array): boolean | Error {
+    export function isScriptValid(script: Uint8Array): true {
         const asm = Script.decode(script);
 
         if (asm.length < 1) {
-            return new Error(`Invalid script: too short (expected at least 1)`);
+            throw Error(`Invalid script: too short (expected at least 1)`);
         }
 
         let verifyIndex = getVerifyIndex(asm);
 
         if (verifyIndex === -1) {
-            return new Error("Invalid script: missing VERIFY operation");
+            throw Error("Invalid script: missing VERIFY operation");
         }
 
         return true;

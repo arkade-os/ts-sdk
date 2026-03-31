@@ -136,7 +136,9 @@ export class VtxoScript {
                         ConditionCSVMultisigTapscript.decode(script);
                     paths.push(tapScript);
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.debug("Failed to decode script", e);
+            }
         }
         return paths;
     }
