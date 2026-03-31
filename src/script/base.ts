@@ -126,11 +126,11 @@ export class VtxoScript {
         for (const leaf of this.leaves) {
             try {
                 const script = scriptFromTapLeafScript(leaf);
-                if (CSVMultisigTapscript.isScriptValid(script) === true) {
+                if (CSVMultisigTapscript.isScriptValid(script)) {
                     const tapScript = CSVMultisigTapscript.decode(script);
                     paths.push(tapScript);
                 } else if (
-                    ConditionCSVMultisigTapscript.isScriptValid(script) === true
+                    ConditionCSVMultisigTapscript.isScriptValid(script)
                 ) {
                     const tapScript =
                         ConditionCSVMultisigTapscript.decode(script);

@@ -140,6 +140,22 @@ describe("CLTVMultisigTapscript", () => {
         );
     });
 
+    it("should encode and decode with small absolute timelock", () => {
+        const params = {
+            absoluteTimelock: BigInt(16), // Some timestamp
+            pubkeys: [exPubKey1],
+            type: MultisigTapscript.MultisigType.CHECKSIG,
+        };
+
+        const encoded = CLTVMultisigTapscript.encode(params);
+        const decoded = CLTVMultisigTapscript.decode(encoded.script);
+
+        expect(decoded.params.absoluteTimelock).toBe(params.absoluteTimelock);
+        expect(decoded.params.pubkeys.map(hex.encode)).toEqual(
+            params.pubkeys.map(hex.encode)
+        );
+    });
+
     it("should fail on empty script", () => {
         expect(() => CLTVMultisigTapscript.decode(new Uint8Array())).toThrow(
             "Failed to decode: script is empty"

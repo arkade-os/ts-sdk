@@ -410,7 +410,7 @@ export namespace CSVMultisigTapscript {
         return tapscript.type === TapscriptType.CSVMultisig;
     }
 
-    export function isScriptValid(script: Uint8Array): boolean | Error {
+    export function isScriptValid(script: Uint8Array): true | Error {
         const asm = Script.decode(script);
 
         if (asm.length < 3) {
@@ -470,7 +470,10 @@ export namespace ConditionCSVMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
-        isScriptValid(script);
+        const isValid = isScriptValid(script);
+        if (isValid instanceof Error) {
+            throw isValid;
+        }
 
         const asm = Script.decode(script);
 
@@ -532,17 +535,17 @@ export namespace ConditionCSVMultisigTapscript {
         return verifyIndex;
     }
 
-    export function isScriptValid(script: Uint8Array): true {
+    export function isScriptValid(script: Uint8Array): true | Error {
         const asm = Script.decode(script);
 
         if (asm.length < 1) {
-            throw Error(`Invalid script: too short (expected at least 1)`);
+            return new Error(`Invalid script: too short (expected at least 1)`);
         }
 
         let verifyIndex = getVerifyIndex(asm);
 
         if (verifyIndex === -1) {
-            throw Error("Invalid script: missing VERIFY operation");
+            return new Error("Invalid script: missing VERIFY operation");
         }
 
         return true;
@@ -587,7 +590,10 @@ export namespace ConditionMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
-        isScriptValid(script);
+        const isValid = isScriptValid(script);
+        if (isValid instanceof Error) {
+            throw isValid;
+        }
 
         const asm = Script.decode(script);
 
@@ -649,17 +655,17 @@ export namespace ConditionMultisigTapscript {
         return verifyIndex;
     }
 
-    export function isScriptValid(script: Uint8Array): true {
+    export function isScriptValid(script: Uint8Array): true | Error {
         const asm = Script.decode(script);
 
         if (asm.length < 1) {
-            throw Error(`Invalid script: too short (expected at least 1)`);
+            return new Error(`Invalid script: too short (expected at least 1)`);
         }
 
         let verifyIndex = getVerifyIndex(asm);
 
         if (verifyIndex === -1) {
-            throw Error("Invalid script: missing VERIFY operation");
+            return new Error("Invalid script: missing VERIFY operation");
         }
 
         return true;
@@ -763,7 +769,7 @@ export namespace CLTVMultisigTapscript {
         return tapscript.type === TapscriptType.CLTVMultisig;
     }
 
-    export function isScriptValid(script: Uint8Array): boolean | Error {
+    export function isScriptValid(script: Uint8Array): true | Error {
         const asm = Script.decode(script);
 
         if (asm.length < 3) {
