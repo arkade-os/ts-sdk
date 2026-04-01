@@ -4,8 +4,8 @@ import { RestArkProvider } from "../providers/ark";
 import { RestIndexerProvider } from "../providers/indexer";
 import { RestIntrospectorProvider } from "../providers/introspector";
 import {
-    CSVMultisigTapscript,
     CLTVMultisigTapscript,
+    CSVMultisigTapscript,
 } from "../script/tapscript";
 import type { RelativeTimelock } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
@@ -14,7 +14,6 @@ import * as asset from "../extension/asset";
 import type { ExtensionPacket } from "../extension/packet";
 import type { IWallet } from "../wallet";
 import { gcd } from "../utils/math";
-import { BancoSwap } from "./contract";
 import { Offer } from "./offer";
 
 export interface CreateOfferParams {
@@ -57,8 +56,8 @@ export interface OfferStatus {
  * @example
  * ```ts
  * const maker = new banco.Maker(wallet, serverUrl, introspectorUrl);
- * const { offer, swapAddress } = await maker.createOffer({ wantAmount: 10_000n });
- * await wallet.send({ address: swapAddress, amount: 50_000 });
+ * const { offer, swapPkScript } = await maker.createOffer({ wantAmount: 10_000n });
+ * await wallet.send({ address: swapAddress, amount: 50_000 }); // encode swapPkScript to address
  * ```
  */
 export class Maker {
@@ -78,7 +77,7 @@ export class Maker {
 
     /**
      * Create a new swap offer.
-     * @returns The offer as hex, as an extension packet, and the swap address to fund.
+     * @returns The offer as hex, as an extension packet, and the swap pkScript.
      *
      * Embed `packet` in the funding transaction's extension output so the
      * taker can discover the offer by txid.
@@ -86,7 +85,7 @@ export class Maker {
     async createOffer(params: CreateOfferParams): Promise<{
         offer: string;
         packet: ExtensionPacket;
-        swapAddress: string;
+        swapPkScript: Uint8Array;
     }> {
         const info = await this.arkProvider.getInfo();
         const serverPubKey = hex.decode(info.signerPubkey).slice(1);
@@ -131,56 +130,37 @@ export class Maker {
             ratioDen = params.ratioDen! / g;
         }
 
-        const swap = new BancoSwap(
-            {
-                wantAmount: params.wantAmount,
-                want: params.wantAsset ?? "btc",
-                offer: params.offerAsset ?? "btc",
-                ratioNum,
-                ratioDen,
-                cltvCancelTimelock: cancelTimestamp,
-                exitTimelock,
-                makerPkScript,
-                makerPublicKey,
-            },
-            serverPubKey,
-            [introspectorPubkey]
-        );
-
-        const hrp = this.getHrp(info.network);
-        const swapAddress = swap
-            .vtxoScript()
-            .address(hrp, serverPubKey)
-            .encode();
-
         const offerData: Offer.Data = {
-            swapAddress,
+            swapPkScript: new Uint8Array(0), // placeholder, computed below
             wantAmount: params.wantAmount,
             wantAsset: params.wantAsset,
             offerAsset: params.offerAsset,
             ratioNum,
             ratioDen,
             cancelDelay: cancelTimestamp,
+            exitTimelock,
             makerPkScript,
             makerPublicKey,
             introspectorPubkey,
         };
 
+        const swapPkScript = Offer.vtxoScript(offerData, serverPubKey).pkScript;
+        offerData.swapPkScript = swapPkScript;
+
         return {
             offer: Offer.toHex(offerData),
             packet: Offer.toPacket(offerData),
-            swapAddress,
+            swapPkScript,
         };
     }
 
     /**
-     * Query VTXOs at a swap address.
-     * @param swapAddress - The ark address of the swap contract.
+     * Query VTXOs at a swap pkScript.
+     * @param swapPkScript - The scriptPubKey of the swap contract.
      */
-    async getOffers(swapAddress: string): Promise<OfferStatus[]> {
-        const decoded = ArkAddress.decode(swapAddress);
+    async getOffers(swapPkScript: Uint8Array): Promise<OfferStatus[]> {
         const { vtxos } = await this.indexer.getVtxos({
-            scripts: [hex.encode(decoded.pkScript)],
+            scripts: [hex.encode(swapPkScript)],
             spendableOnly: false,
         });
 
@@ -215,24 +195,17 @@ export class Maker {
         );
 
         const exitDelay = info.unilateralExitDelay;
-        const exitTimelock: RelativeTimelock = {
-            value: exitDelay,
-            type: exitDelay < 512n ? "blocks" : "seconds",
-        };
-
-        const swap = BancoSwap.fromOffer(offer, serverPubKey, exitTimelock);
-
-        const vtxoScript = swap.vtxoScript();
+        const offerVtxoScript = Offer.vtxoScript(offer, serverPubKey);
         const cancelTapscript = CLTVMultisigTapscript.encode({
-            pubkeys: [offer.makerPublicKey, serverPubKey],
+            pubkeys: [offer.makerPublicKey!, serverPubKey],
             absoluteTimelock: offer.cancelDelay,
         });
-        const cancelLeaf = vtxoScript.findLeaf(
+        const cancelLeaf = offerVtxoScript.findLeaf(
             hex.encode(cancelTapscript.script)
         );
 
         const { vtxos } = await this.indexer.getVtxos({
-            scripts: [hex.encode(vtxoScript.pkScript)],
+            scripts: [hex.encode(offerVtxoScript.pkScript)],
             spendableOnly: true,
         });
         if (vtxos.length === 0) {
@@ -248,7 +221,7 @@ export class Maker {
                 {
                     ...swapVtxo,
                     tapLeafScript: cancelLeaf,
-                    tapTree: vtxoScript.encode(),
+                    tapTree: offerVtxoScript.encode(),
                 },
             ],
             [{ script: makerPkScript, amount: BigInt(swapVtxo.value) }],
@@ -272,16 +245,5 @@ export class Maker {
 
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
         return arkTxid;
-    }
-
-    private getHrp(network: string): string {
-        const hrpMap: Record<string, string> = {
-            mainnet: "ark",
-            testnet: "tark",
-            regtest: "tark",
-            signet: "tark",
-            mutinynet: "tark",
-        };
-        return hrpMap[network] ?? "tark";
     }
 }

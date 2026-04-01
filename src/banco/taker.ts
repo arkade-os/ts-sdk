@@ -4,7 +4,6 @@ import { RestArkProvider } from "../providers/ark";
 import { RestIndexerProvider } from "../providers/indexer";
 import { RestIntrospectorProvider } from "../providers/introspector";
 import { CSVMultisigTapscript, MultisigTapscript } from "../script/tapscript";
-import type { RelativeTimelock } from "../script/tapscript";
 import { Transaction } from "../utils/transaction";
 import { buildOffchainTx } from "../utils/arkTransaction";
 import * as arkade from "../arkade";
@@ -14,7 +13,6 @@ import { IntrospectorPacket } from "../extension/introspector";
 import type { IWallet, ExtendedVirtualCoin } from "../wallet";
 import { selectCoinsWithAsset } from "../wallet/asset";
 import { selectVirtualCoins } from "../wallet/wallet";
-import { BancoSwap } from "./contract";
 import { Offer } from "./offer";
 
 export interface FulfillOptions {
@@ -100,26 +98,17 @@ export class Taker {
             hex.decode(info.checkpointTapscript)
         );
 
-        const exitDelay = info.unilateralExitDelay;
-        const exitTimelock: RelativeTimelock = {
-            value: exitDelay,
-            type: exitDelay < 512n ? "blocks" : "seconds",
-        };
+        const isPartial = Offer.isPartialFill(offer);
+        const covenantScriptBytes = Offer.covenantScript(offer);
 
-        const swap = BancoSwap.fromOffer(offer, serverPubKey, exitTimelock);
-        const isPartial = swap.isPartialFill();
-        const covenantScriptBytes = swap.covenantScript();
-
-        const swapVtxoScript = swap.vtxoScript();
+        const swapVtxoScript = Offer.vtxoScript(offer, serverPubKey);
         const swapPkScript = hex.encode(swapVtxoScript.pkScript);
 
-        // Verify that the reconstructed contract matches the offer's swapAddress
-        const expectedPkScript = hex.encode(
-            ArkAddress.decode(offer.swapAddress).pkScript
-        );
+        // Verify that the reconstructed contract matches the offer's swapPkScript
+        const expectedPkScript = hex.encode(offer.swapPkScript);
         if (swapPkScript !== expectedPkScript) {
             throw new Error(
-                "Offer inconsistency: swapAddress does not match the reconstructed contract"
+                "Offer inconsistency: swapPkScript does not match the reconstructed contract"
             );
         }
 

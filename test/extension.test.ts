@@ -181,12 +181,14 @@ describe("Extension", () => {
         it("banco offer", () => {
             const ext = Extension.fromBytes(
                 hex.decode(
-                    "6a4c8941524b03830101000a7461726b317174657374020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    "6a4ca141524b039b010100225120eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
                 )
             );
             const offer = ext.getBancoOffer();
             expect(offer).not.toBeNull();
-            expect(offer!.swapAddress).toBe("tark1qtest");
+            expect(hex.encode(offer!.swapPkScript)).toBe(
+                "5120eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            );
             expect(offer!.wantAmount).toBe(50000n);
         });
     });
