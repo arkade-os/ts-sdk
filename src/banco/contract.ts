@@ -53,7 +53,13 @@ export class BancoSwap {
         readonly params: BancoSwapParams,
         readonly serverPubkey: Uint8Array,
         readonly introspectors: Uint8Array[]
-    ) {}
+    ) {
+        if (params.want.toString() === (params.offer ?? "btc").toString()) {
+            throw new Error(
+                "offer and want asset must differ: same-asset swaps are not supported"
+            );
+        }
+    }
 
     /** Construct a BancoSwap from a decoded offer and server context. */
     static fromOffer(

@@ -67,19 +67,16 @@ describe("BancoSwap", () => {
         });
     });
 
-    describe("partialFillScript", () => {
-        it("BTC → BTC throws", () => {
-            const swap = makeSwap({
-                offer: "btc",
-                want: "btc",
-                ratioNum,
-                ratioDen,
-            });
-            expect(() => swap.partialFillScript()).toThrow(
-                "cannot both be BTC"
-            );
-        });
+    it("rejects same-asset swap (offer == want)", () => {
+        expect(() => makeSwap({ offer: "btc", want: "btc" })).toThrow(
+            "same-asset swaps are not supported"
+        );
+        expect(() => makeSwap({ offer: assetX, want: assetX })).toThrow(
+            "same-asset swaps are not supported"
+        );
+    });
 
+    describe("partialFillScript", () => {
         it("offer defaults to btc (backward compatible)", () => {
             const explicit = makeSwap({
                 offer: "btc",
