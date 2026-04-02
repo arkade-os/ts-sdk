@@ -1163,7 +1163,7 @@ export class BoltzSwapProvider {
             invoiceAmount,
             claimPublicKey,
             preimageHash,
-            description: description?.trim() ?? "Send to Arkade address",
+            description: description?.trim() || "Send to Arkade address",
             ...(this.referralId ? { referralId: this.referralId } : {}),
         };
 
