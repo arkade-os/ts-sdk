@@ -491,7 +491,7 @@ describe("BoltzSwapProvider", () => {
             expect(response).toEqual(mockResponse);
         });
 
-        it("should omit whitespace-only descriptions from reverse swap request", async () => {
+        it("should replace whitespace-only descriptions from reverse swap request", async () => {
             // arrange
             const mockResponse = {
                 id: "mock-swap-id",
@@ -530,7 +530,8 @@ describe("BoltzSwapProvider", () => {
                         invoiceAmount: 21000,
                         claimPublicKey: mockHexCompressedPubKey,
                         preimageHash: "mock-preimage-hash",
-                        // description should be omitted when it's only whitespace
+                        description: "Send to Arkade address",
+                        // description should be replaced with default
                     }),
                 }
             );
