@@ -145,8 +145,13 @@ async function setupArkServer() {
         console.log("  Setting up ark server");
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-        const walletStatus = await checkWalletStatus()
-        if (walletStatus && walletStatus.initialized && walletStatus.unlocked && walletStatus.synced) {
+        const walletStatus = await checkWalletStatus();
+        if (
+            walletStatus &&
+            walletStatus.initialized &&
+            walletStatus.unlocked &&
+            walletStatus.synced
+        ) {
             console.log("  ✔ Wallet ready and synced");
         } else {
             // nigiri already initializes arkd
