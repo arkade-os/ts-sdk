@@ -145,24 +145,29 @@ async function setupArkServer() {
         console.log("  Setting up ark server");
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
-        // nigiri already initializes arkd
-        // Create and unlock arkd wallet
-        console.log("Creating ark wallet...");
-        await execCommand(
-            `${arkdExec} arkd wallet create --password secret`,
-            true
-        );
-        console.log("  ✔ Wallet created");
+        const walletStatus = await checkWalletStatus()
+        if (walletStatus && walletStatus.initialized && walletStatus.unlocked && walletStatus.synced) {
+            console.log("  ✔ Wallet ready and synced");
+        } else {
+            // nigiri already initializes arkd
+            // Create and unlock arkd wallet
+            console.log("Creating ark wallet...");
+            await execCommand(
+                `${arkdExec} arkd wallet create --password secret`,
+                true
+            );
+            console.log("  ✔ Wallet created");
 
-        console.log("\nUnlocking ark wallet...");
-        await execCommand(
-            `${arkdExec} arkd wallet unlock --password secret`,
-            true
-        );
-        console.log("  ✔ Wallet unlocked");
+            console.log("\nUnlocking ark wallet...");
+            await execCommand(
+                `${arkdExec} arkd wallet unlock --password secret`,
+                true
+            );
+            console.log("  ✔ Wallet unlocked");
 
-        // Wait for wallet to be ready and synced
-        await waitForWalletReady();
+            // Wait for wallet to be ready and synced
+            await waitForWalletReady();
+        }
 
         // Wait for ark server to be ready first
         // Get and log the server info
