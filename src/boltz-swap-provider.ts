@@ -201,9 +201,7 @@ export const isPendingSubmarineSwap = (
 };
 
 /** Type guard: narrows BoltzSwap to BoltzChainSwap. */
-export const isPendingChainSwap = (
-    swap: BoltzSwap
-): swap is BoltzChainSwap => {
+export const isPendingChainSwap = (swap: BoltzSwap): swap is BoltzChainSwap => {
     return swap.type === "chain";
 };
 

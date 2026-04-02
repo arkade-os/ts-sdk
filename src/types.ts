@@ -174,10 +174,7 @@ export interface BoltzChainSwap {
 }
 
 /** Union type of all pending swap types. */
-export type BoltzSwap =
-    | BoltzReverseSwap
-    | BoltzSubmarineSwap
-    | BoltzChainSwap;
+export type BoltzSwap = BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap;
 
 /** Pending- swap type aliases for backwards compatibility */
 export interface PendingReverseSwap extends BoltzReverseSwap {}
