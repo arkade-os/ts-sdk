@@ -29,19 +29,30 @@ async function execCommand(command, silent = false) {
     });
 }
 
-async function waitForArkServer(maxRetries = 30, retryDelay = 2000) {
-    console.log("Waiting for ark server to be ready...");
+async function waitForArkServerInfo(maxRetries = 30, retryDelay = 2000) {
+    console.log("\nWaiting for ark server to be ready...");
     for (let i = 0; i < maxRetries; i++) {
         try {
-            execSync("curl -s http://localhost:7070/v1/info", {
-                stdio: "pipe",
-            });
-            console.log("  ✔ Server ready");
-            return true;
-        } catch {
-            if (i < maxRetries - 1) {
-                console.log(`  Waiting... (${i + 1}/${maxRetries})`);
+            const response = execSync(
+                "curl -sf http://localhost:7070/v1/info",
+                {
+                    stdio: "pipe",
+                    encoding: "utf8",
+                }
+            );
+            const info = JSON.parse(response);
+
+            // We check the signer pubkey because the service status is empty
+            if (info.signerPubkey) {
+                console.log("  ✔ Server ready");
+                return info;
             }
+        } catch {
+            /*Ignore any error and retry*/
+        }
+
+        if (i < maxRetries - 1) {
+            console.log(`  Waiting... (${i + 1}/${maxRetries})`);
             await sleep(retryDelay);
         }
     }
@@ -58,13 +69,15 @@ async function checkWalletStatus(maxRetries = 30, retryDelay = 2000) {
             const synced = statusOutput.includes("synced: true");
             return { initialized, unlocked, synced };
         } catch {
+            /*Ignore any error and retry*/
             await sleep(retryDelay);
         }
     }
+    throw new Error("Could not get wallet status");
 }
 
 async function waitForWalletReady(maxRetries = 30, retryDelay = 2000) {
-    console.log("Waiting for wallet to be ready and synced...");
+    console.log("\nWaiting for wallet to be ready and synced...");
     for (let i = 0; i < maxRetries; i++) {
         const status = await checkWalletStatus();
         if (status && status.initialized && status.unlocked && status.synced) {
@@ -73,8 +86,8 @@ async function waitForWalletReady(maxRetries = 30, retryDelay = 2000) {
         }
         if (i < maxRetries - 1) {
             console.log(`  Waiting... (${i + 1}/${maxRetries})`);
+            await sleep(retryDelay);
         }
-        await sleep(retryDelay);
     }
     throw new Error("Wallet failed to be ready after maximum retries");
 }
@@ -143,32 +156,42 @@ async function setupArkServer() {
         console.log("  Setting up ark server");
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
 
+        const walletStatus = await checkWalletStatus();
+
+        if (
+            walletStatus.initialized &&
+            walletStatus.unlocked &&
+            walletStatus.synced
+        ) {
+            console.log("  ✔ Wallet ready and synced");
+        } else {
+            if (!walletStatus.initialized) {
+                // nigiri already initializes arkd
+                // Create and unlock arkd wallet
+                console.log("Creating ark wallet...");
+                await execCommand(
+                    `${arkdExec} arkd wallet create --password secret`,
+                    true
+                );
+                console.log("  ✔ Wallet created");
+            }
+
+            if (!walletStatus.unlocked) {
+                console.log("\nUnlocking ark wallet...");
+                await execCommand(
+                    `${arkdExec} arkd wallet unlock --password secret`,
+                    true
+                );
+                console.log("  ✔ Wallet unlocked");
+            }
+            // Wait for wallet to be ready and synced
+            await waitForWalletReady();
+        }
+
         // Wait for ark server to be ready first
-        await waitForArkServer();
-
-        // nigiri already initializes arkd
-        // Create and unlock arkd wallet
-        console.log("Creating ark wallet...");
-        await execCommand(
-            `${arkdExec} arkd wallet create --password secret`,
-            true
-        );
-        console.log("  ✔ Wallet created");
-
-        console.log("Unlocking ark wallet...");
-        await execCommand(
-            `${arkdExec} arkd wallet unlock --password secret`,
-            true
-        );
-        console.log("  ✔ Wallet unlocked");
-
-        // Wait for wallet to be ready and synced
-        await waitForWalletReady();
-
         // Get and log the server info
-        const serverInfo = JSON.parse(
-            execSync("curl -s http://localhost:7070/v1/info").toString()
-        );
+        const serverInfo = await waitForArkServerInfo();
+
         console.log(`\nark Server Public Key: ${serverInfo.signerPubkey}`);
 
         // Get arkd address and fund it with nigiri faucet
