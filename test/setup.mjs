@@ -53,8 +53,8 @@ async function waitForArkServerInfo(maxRetries = 30, retryDelay = 2000) {
 
         if (i < maxRetries - 1) {
             console.log(`  Waiting... (${i + 1}/${maxRetries})`);
+            await sleep(retryDelay);
         }
-        await sleep(retryDelay);
     }
     throw new Error("ark server failed to be ready after maximum retries");
 }
@@ -86,8 +86,8 @@ async function waitForWalletReady(maxRetries = 30, retryDelay = 2000) {
         }
         if (i < maxRetries - 1) {
             console.log(`  Waiting... (${i + 1}/${maxRetries})`);
+            await sleep(retryDelay);
         }
-        await sleep(retryDelay);
     }
     throw new Error("Wallet failed to be ready after maximum retries");
 }
