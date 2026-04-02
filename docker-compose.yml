@@ -122,6 +122,14 @@ services:
             - type: tmpfs
               target: /app/data
 
+    websocat:
+        container_name: websocat
+        image: solsson/websocat
+        restart: unless-stopped
+        command: ["-b", "ws-l:0.0.0.0:1234", "tcp:electrs:50001"]
+        ports:
+            - "1234:1234"
+
 networks:
     default:
         name: nigiri
