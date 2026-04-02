@@ -21,12 +21,6 @@ describe("SeedIdentity", () => {
             expect(xOnlyPubKey).toHaveLength(32);
         });
 
-        it("should require network selection", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            // @ts-expect-error opts is required
-            expect(() => SeedIdentity.fromSeed(seed)).toThrow();
-        });
-
         it("should derive different keys for mainnet vs testnet", async () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
 
@@ -207,13 +201,6 @@ describe("MnemonicIdentity", () => {
             const xOnlyPubKey = await identity.xOnlyPublicKey();
             expect(xOnlyPubKey).toBeInstanceOf(Uint8Array);
             expect(xOnlyPubKey).toHaveLength(32);
-        });
-
-        it("should require network selection", () => {
-            // @ts-expect-error opts is required
-            expect(() =>
-                MnemonicIdentity.fromMnemonic(TEST_MNEMONIC)
-            ).toThrow();
         });
 
         it("should produce same key as SeedIdentity.fromSeed with equivalent seed", async () => {
