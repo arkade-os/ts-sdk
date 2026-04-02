@@ -439,6 +439,7 @@ describe("BoltzSwapProvider", () => {
                         invoiceAmount: 21000,
                         claimPublicKey: mockHexCompressedPubKey,
                         preimageHash: "mock-preimage-hash",
+                        description: "Send to Arkade address"
                     }),
                 }
             );
