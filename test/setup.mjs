@@ -68,7 +68,8 @@ async function checkWalletStatus(maxRetries = 30, retryDelay = 2000) {
             const unlocked = statusOutput.includes("unlocked: true");
             const synced = statusOutput.includes("synced: true");
             return { initialized, unlocked, synced };
-        } catch (e) {
+        } catch {
+            /*Ignore any error and retry*/
             await sleep(retryDelay);
         }
     }
@@ -163,28 +164,29 @@ async function setupArkServer() {
             walletStatus.synced
         ) {
             console.log("  ✔ Wallet ready and synced");
-        }
-        if (!walletStatus.initialized) {
-            // nigiri already initializes arkd
-            // Create and unlock arkd wallet
-            console.log("Creating ark wallet...");
-            await execCommand(
-                `${arkdExec} arkd wallet create --password secret`,
-                true
-            );
-            console.log("  ✔ Wallet created");
-        }
+        } else {
+            if (!walletStatus.initialized) {
+                // nigiri already initializes arkd
+                // Create and unlock arkd wallet
+                console.log("Creating ark wallet...");
+                await execCommand(
+                    `${arkdExec} arkd wallet create --password secret`,
+                    true
+                );
+                console.log("  ✔ Wallet created");
+            }
 
-        if (!walletStatus.unlocked) {
-            console.log("\nUnlocking ark wallet...");
-            await execCommand(
-                `${arkdExec} arkd wallet unlock --password secret`,
-                true
-            );
-            console.log("  ✔ Wallet unlocked");
+            if (!walletStatus.unlocked) {
+                console.log("\nUnlocking ark wallet...");
+                await execCommand(
+                    `${arkdExec} arkd wallet unlock --password secret`,
+                    true
+                );
+                console.log("  ✔ Wallet unlocked");
+            }
+            // Wait for wallet to be ready and synced
+            await waitForWalletReady();
         }
-        // Wait for wallet to be ready and synced
-        await waitForWalletReady();
 
         // Wait for ark server to be ready first
         // Get and log the server info
