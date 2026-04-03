@@ -10,7 +10,7 @@ import { AssetRef } from "./assetRef";
 import { AssetInput, AssetInputs } from "./assetInput";
 import { AssetOutput, AssetOutputs } from "./assetOutput";
 import { Metadata, MetadataList } from "./metadata";
-import { BufferReader, BufferWriter } from "./utils";
+import { BufferReader, BufferWriter } from "../utils";
 
 /**
  * An asset group contains inputs/outputs and all data related to a given asset id.

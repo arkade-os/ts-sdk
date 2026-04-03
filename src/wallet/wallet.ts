@@ -85,7 +85,7 @@ import { Estimator } from "../arkfee";
 import { DelegatorProvider } from "../providers/delegator";
 import { buildTransactionHistory } from "../utils/transactionHistory";
 import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
-import { Extension } from "../extension";
+import { Extension, type ExtensionPacket } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
 import {
     IDelegatorManager,
@@ -2439,13 +2439,30 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const hasAssets =
             assetInputs.size > 0 ||
             recipients.some((r) => r.assets && r.assets.length > 0);
+
+        // collect custom extension packets from recipients
+        const customExtPackets: ExtensionPacket[] = [];
+        for (const r of args) {
+            if (r.extensions) {
+                for (const ext of r.extensions) {
+                    customExtPackets.push({
+                        type: () => ext.type,
+                        serialize: () => ext.payload,
+                    });
+                }
+            }
+        }
+
+        const allExtPackets: ExtensionPacket[] = [];
         if (hasAssets) {
-            const assetPacket = createAssetPacket(
-                assetInputs,
-                recipients,
-                changeReceiver
+            allExtPackets.push(
+                createAssetPacket(assetInputs, recipients, changeReceiver)
             );
-            outputs.push(Extension.create([assetPacket]).txOut());
+        }
+        allExtPackets.push(...customExtPackets);
+
+        if (allExtPackets.length > 0) {
+            outputs.push(Extension.create(allExtPackets).txOut());
         }
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);

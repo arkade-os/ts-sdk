@@ -165,6 +165,7 @@ export interface Recipient {
     address: string;
     amount?: number; // btc, default to dust
     assets?: Asset[]; // list of assets to send
+    extensions?: Array<{ type: number; payload: Uint8Array }>; // custom extension packets to embed in the tx
 }
 
 export type KnownMetadata = Partial<{

@@ -284,11 +284,48 @@ async function setupFulmine() {
     }
 }
 
+async function setupIntrospector() {
+    try {
+        console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        console.log("  Setting up Introspector");
+        console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");
+
+        console.log("Waiting for introspector to be ready...");
+        for (let i = 0; i < 30; i++) {
+            try {
+                const info = JSON.parse(
+                    execSync("curl -s http://localhost:7073/v1/info", {
+                        stdio: "pipe",
+                    }).toString()
+                );
+                console.log("  ✔ Introspector ready");
+                console.log(
+                    `\nIntrospector Signer Public Key: ${info.signerPubkey}`
+                );
+                console.log("\n✔ Introspector setup completed");
+                return;
+            } catch {
+                if (i < 29) {
+                    console.log(`  Waiting... (${i + 1}/30)`);
+                }
+                await sleep(2000);
+            }
+        }
+        throw new Error(
+            "Introspector failed to be ready after maximum retries"
+        );
+    } catch (error) {
+        console.error("\n✗ Error setting up Introspector:", error);
+        throw error;
+    }
+}
+
 // Run setup
 async function setup() {
     try {
         await setupArkServer();
         await setupFulmine();
+        await setupIntrospector();
         console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         console.log("  ✓ regtest setup completed successfully");
         console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n");

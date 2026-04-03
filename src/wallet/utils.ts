@@ -73,7 +73,10 @@ export function isValidArkAddress(address: string): boolean {
     }
 }
 
-type ValidatedRecipient = Required<Recipient> & { script: Bytes };
+type ValidatedRecipient = Required<Omit<Recipient, "extensions">> & {
+    script: Bytes;
+    extensions?: Recipient["extensions"];
+};
 
 export function validateRecipients(
     recipients: Recipient[],

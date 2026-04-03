@@ -176,6 +176,14 @@ import {
     SubscriptionHeartbeat,
     SubscriptionEvent,
 } from "./providers/indexer";
+import {
+    RestIntrospectorProvider,
+    type IntrospectorProvider,
+    type IntrospectorInfo,
+    type ConnectorTreeNode,
+} from "./providers/introspector";
+import type { ArkadeExtendedCoin } from "./arkade/batch";
+import type { ArkadeLeaf, ArkadeVtxoInput } from "./arkade/vtxoScript";
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
@@ -205,7 +213,11 @@ import type { MigrationStatus } from "./repositories";
 import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
 
 export * from "./arkfee";
+export * from "./extension";
 export * as asset from "./extension/asset";
+export * as arkade from "./arkade";
+export * as banco from "./banco";
+export * from "./extension/introspector";
 
 // Contracts
 import {
@@ -274,6 +286,7 @@ export {
     EsploraProvider,
     RestArkProvider,
     RestIndexerProvider,
+    RestIntrospectorProvider,
 
     // Script-related
     ArkAddress,
@@ -320,7 +333,6 @@ export {
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
-
     // Utils
     buildOffchainTx,
     verifyTapscriptSignatures,
@@ -441,6 +453,11 @@ export type {
     VtxoChain,
     Tx,
 
+    // Introspector types
+    IntrospectorProvider,
+    IntrospectorInfo,
+    ConnectorTreeNode,
+
     // Provider types
     OnchainProvider,
     ArkProvider,
@@ -537,6 +554,11 @@ export type {
     RequestEnvelope,
     ResponseEnvelope,
     MessageTimeouts,
+
+    // Arkade types
+    ArkadeExtendedCoin,
+    ArkadeLeaf,
+    ArkadeVtxoInput,
 
     // Delegator types
     IDelegatorManager,
