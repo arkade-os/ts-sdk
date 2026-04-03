@@ -99,7 +99,7 @@ export class Maker {
 
         const address = await this.wallet.getAddress();
         const decoded = ArkAddress.decode(address);
-        const makerPublicKey = decoded.vtxoTaprootKey;
+        const makerPublicKey = await this.wallet.identity.xOnlyPublicKey();
         const makerPkScript = decoded.pkScript;
 
         const exitDelay = info.unilateralExitDelay;
