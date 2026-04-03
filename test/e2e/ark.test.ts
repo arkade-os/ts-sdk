@@ -1131,7 +1131,7 @@ describe("Delegator Lifecycle", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -1298,7 +1298,7 @@ describe("Cross-contract spending", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -1418,7 +1418,7 @@ describe("Cross-contract spending", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -1626,6 +1626,9 @@ describe("Asset integration tests", () => {
                 amount: 1,
             });
 
+            // Wait for round completion so change VTXO is indexed
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+
             // second issuance to create a new asset using the control asset
             const secondIssueResult = await alice.wallet.assetManager.issue({
                 amount: 500,
@@ -1701,11 +1704,17 @@ describe("Asset integration tests", () => {
             amount: 1,
         });
 
+        // Wait for round completion so change VTXO is indexed
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
         // second issuance to create a new asset using the control asset
         const secondIssueResult = await alice.wallet.assetManager.issue({
             amount: 500,
             controlAssetId: firstIssueResult.assetId,
         });
+
+        // Wait for round completion before reissue
+        await new Promise((resolve) => setTimeout(resolve, 2000));
 
         // reissue more units
         const reissueAmount = 300;
@@ -1992,7 +2001,7 @@ describe("Asset integration tests", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -2150,7 +2159,7 @@ describe("Asset integration tests", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });
@@ -2249,7 +2258,7 @@ describe("Asset integration tests", () => {
                 onchainProvider,
                 storage: { walletRepository, contractRepository },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: false,
             });

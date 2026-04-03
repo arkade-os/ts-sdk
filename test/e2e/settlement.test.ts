@@ -344,7 +344,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
                     contractRepository: new InMemoryContractRepository(),
                 },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: {
                     pollIntervalMs: 5000,

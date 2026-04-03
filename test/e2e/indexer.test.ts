@@ -309,10 +309,10 @@ describe("Indexer provider", () => {
         });
 
         // wait for the ark tx to be processed by the ark server
-        // replace sleep with:
         await waitFor(
             async () => {
                 const vtxos = await alice.wallet.getVtxos();
+                if (vtxos.length === 0 || !vtxos[0]) return false;
                 const updated = await indexerProvider.getVtxoChain(vtxos[0]);
                 return updated.chain.length > chainResponse.chain.length;
             },

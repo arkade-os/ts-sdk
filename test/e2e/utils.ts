@@ -17,8 +17,7 @@ import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
-export const arkdExec = "docker exec -t arkd";
-// process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
+export const arkdExec = "docker exec -t ark";
 
 export interface TestArkWallet {
     wallet: Wallet;
@@ -86,7 +85,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         },
-        delegatorProvider: new RestDelegatorProvider("http://localhost:7002"),
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
         settlementConfig: false,
     });
 
