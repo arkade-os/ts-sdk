@@ -48,7 +48,9 @@ function detectNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
 }
 
-function hasDescriptor(opts: SeedIdentityOptions): opts is DescriptorOptions {
+function hasDescriptor(
+    opts: SeedIdentityOptions = {}
+): opts is DescriptorOptions {
     return "descriptor" in opts && typeof opts.descriptor === "string";
 }
 
@@ -147,7 +149,10 @@ export class SeedIdentity implements Identity {
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
      * @param opts - Network selection or custom descriptor.
      */
-    static fromSeed(seed: Uint8Array, opts: SeedIdentityOptions): SeedIdentity {
+    static fromSeed(
+        seed: Uint8Array,
+        opts: SeedIdentityOptions = {}
+    ): SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
@@ -246,7 +251,7 @@ export class MnemonicIdentity extends SeedIdentity {
      */
     static fromMnemonic(
         phrase: string,
-        opts: MnemonicOptions
+        opts: MnemonicOptions = {}
     ): MnemonicIdentity {
         if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");

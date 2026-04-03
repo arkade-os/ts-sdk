@@ -8,15 +8,26 @@ async function waitForArkServer(maxRetries = 30, retryDelay = 2000) {
     console.log("Waiting for ark server to be ready...");
     for (let i = 0; i < maxRetries; i++) {
         try {
-            execSync("curl -s http://localhost:7070/v1/info", {
-                stdio: "pipe",
-            });
-            console.log("  ✔ Server ready");
-            return true;
-        } catch {
-            if (i < maxRetries - 1) {
-                console.log(`  Waiting... (${i + 1}/${maxRetries})`);
+            const response = execSync(
+                "curl -sf http://localhost:7070/v1/info",
+                {
+                    stdio: "pipe",
+                    encoding: "utf8",
+                }
+            );
+            const info = JSON.parse(response);
+
+            // We check the signer pubkey because the service status is empty
+            if (info.signerPubkey) {
+                console.log("  ✔ Server ready");
+                return info;
             }
+        } catch {
+            /*Ignore any error and retry*/
+        }
+
+        if (i < maxRetries - 1) {
+            console.log(`  Waiting... (${i + 1}/${maxRetries})`);
             await sleep(retryDelay);
         }
     }
@@ -40,8 +51,8 @@ async function waitForBoltzPairs(maxRetries = 30, retryDelay = 2000) {
         }
         if (i < maxRetries - 1) {
             console.log(`  Waiting... (${i + 1}/${maxRetries})`);
+            await sleep(retryDelay);
         }
-        await sleep(retryDelay);
     }
     throw new Error("Boltz ARK/BTC pairs not available after maximum retries");
 }
