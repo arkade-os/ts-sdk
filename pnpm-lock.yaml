@@ -99,25 +99,6 @@ importers:
         specifier: 3.2.4
         version: 3.2.4(@types/node@24.3.1)(lightningcss@1.31.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2)
 
-  examples/banco:
-    dependencies:
-      '@arkade-os/sdk':
-        specifier: workspace:*
-        version: link:../..
-      eventsource:
-        specifier: 4.0.0
-        version: 4.0.0
-    devDependencies:
-      '@types/node':
-        specifier: 24.3.1
-        version: 24.3.1
-      tsx:
-        specifier: 4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: 5.9.2
-        version: 5.9.2
-
 packages:
 
   '@0no-co/graphql.web@1.2.0':
@@ -6120,6 +6101,7 @@ snapshots:
   get-tsconfig@4.13.7:
     dependencies:
       resolve-pkg-maps: 1.0.0
+    optional: true
 
   getenv@2.0.0: {}
 
@@ -7239,7 +7221,8 @@ snapshots:
     dependencies:
       global-dirs: 0.1.1
 
-  resolve-pkg-maps@1.0.0: {}
+  resolve-pkg-maps@1.0.0:
+    optional: true
 
   resolve-workspace-root@2.0.1: {}
 
@@ -7626,6 +7609,7 @@ snapshots:
       get-tsconfig: 4.13.7
     optionalDependencies:
       fsevents: 2.3.3
+    optional: true
 
   tunnel-agent@0.6.0:
     dependencies:
