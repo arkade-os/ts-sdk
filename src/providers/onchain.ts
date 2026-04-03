@@ -16,7 +16,7 @@ export type ExplorerTransaction = {
     txid: string;
     vout: {
         scriptpubkey_address: string;
-        value: string;
+        value: number;
     }[];
     status: {
         confirmed: boolean;
@@ -28,6 +28,7 @@ export interface OnchainProvider {
     getCoins(address: string): Promise<Coin[]>;
     getFeeRate(): Promise<number | undefined>;
     broadcastTransaction(...txs: string[]): Promise<string>;
+    getTxHex(txid: string): Promise<string>;
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
     getTransactions(address: string): Promise<ExplorerTransaction[]>;
     getTxStatus(
@@ -99,6 +100,15 @@ export class EsploraProvider implements OnchainProvider {
             default:
                 throw new Error("Only 1 or 1C1P package can be broadcast");
         }
+    }
+
+    async getTxHex(txid: string): Promise<string> {
+        const response = await fetch(`${this.baseUrl}/tx/${txid}/hex`);
+        const text = await response.text();
+        if (!response.ok) {
+            throw new Error(`Failed to get transaction hex: ${text}`);
+        }
+        return text;
     }
 
     async getTxOutspends(
@@ -323,7 +333,7 @@ export class EsploraProvider implements OnchainProvider {
             throw new Error(`Failed to broadcast package: ${error}`);
         }
 
-        return response.json();
+        return response.text();
     }
 
     private async broadcastTx(tx: string): Promise<string> {

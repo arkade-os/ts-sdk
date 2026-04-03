@@ -207,6 +207,41 @@ import { DelegatorManagerImpl, IDelegatorManager } from "./wallet/delegator";
 export * from "./arkfee";
 export * as asset from "./extension/asset";
 
+// Verification
+export {
+    verifyVtxo,
+    verifyAllVtxos,
+    verifyOnchainAnchor,
+    verifyTreeSignatures,
+    verifyCosignerKeys,
+    verifyInternalKeysUnspendable,
+    verifyTaprootScriptTree,
+    verifyCSV,
+    verifyCLTV,
+    verifyHashPreimage,
+    verifyScriptSatisfaction,
+    collectExitData,
+    validateExitData,
+    InMemoryExitDataRepository,
+    sovereignExit,
+    canSovereignExit,
+} from "./verification";
+export type {
+    VtxoVerificationResult,
+    VtxoVerificationOptions,
+    AnchorVerification,
+    SignatureVerificationResult,
+    CosignerKeyVerificationResult,
+    InternalKeyVerificationResult,
+    ScriptVerificationResult,
+    ChainTip,
+    ParentConfirmation,
+    ExitData,
+    ExitDataRepository,
+    SovereignExitStep,
+    SovereignExitResult,
+} from "./verification";
+
 // Contracts
 import {
     ContractManager,

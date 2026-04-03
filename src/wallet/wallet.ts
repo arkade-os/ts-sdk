@@ -2699,6 +2699,84 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             console.warn("error updating repository after settle", e);
         }
     }
+
+    /**
+     * Verify a single VTXO's chain from leaf back to the onchain commitment.
+     * Uses path-only verification (leaf → root), not the full batch tree.
+     */
+    async verifyVtxo(
+        vtxo: VirtualCoin,
+        options?: {
+            minConfirmationDepth?: number;
+            verifySignatures?: boolean;
+        }
+    ): Promise<
+        import("../verification/vtxoChainVerifier").VtxoVerificationResult
+    > {
+        const { verifyVtxo } = await import(
+            "../verification/vtxoChainVerifier"
+        );
+        const info = await this.arkProvider.getInfo();
+        return verifyVtxo(
+            vtxo,
+            this.indexerProvider,
+            this.onchainProvider,
+            {
+                pubkey: this.forfeitPubkey,
+                sweepInterval: {
+                    value: info.unilateralExitDelay,
+                    type:
+                        info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+                },
+            },
+            options
+        );
+    }
+
+    /**
+     * Verify all spendable VTXOs in the wallet.
+     * Each VTXO is verified independently via its own leaf → root path.
+     */
+    async verifyAllVtxos(options?: {
+        minConfirmationDepth?: number;
+        verifySignatures?: boolean;
+    }): Promise<
+        Map<
+            string,
+            import("../verification/vtxoChainVerifier").VtxoVerificationResult
+        >
+    > {
+        const { verifyAllVtxos } = await import(
+            "../verification/vtxoChainVerifier"
+        );
+        const info = await this.arkProvider.getInfo();
+        const vtxos = await this.getVtxos();
+        return verifyAllVtxos(
+            vtxos,
+            this.indexerProvider,
+            this.onchainProvider,
+            {
+                pubkey: this.forfeitPubkey,
+                sweepInterval: {
+                    value: info.unilateralExitDelay,
+                    type:
+                        info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+                },
+            },
+            options
+        );
+    }
+
+    /**
+     * Build a DAG visualization of a VTXO's virtual history.
+     * Returns a structured graph with nodes, edges, and checkpoint metadata.
+     */
+    async getVtxoDAG(
+        vtxo: VirtualCoin
+    ): Promise<import("../verification/dagVisualizer").VtxoDAG> {
+        const { buildVtxoDAG } = await import("../verification/dagVisualizer");
+        return buildVtxoDAG(vtxo, this.indexerProvider);
+    }
 }
 
 /**
