@@ -84,6 +84,8 @@ export const ARKADE_OP = {
     TXID: 0xf3,
 } as const;
 
+export const ARKADE_OPCODES: number[] = Object.values(ARKADE_OP);
+
 export const ARKADE_OPCODE_NAMES: Record<number, string> = Object.fromEntries(
     Object.entries(ARKADE_OP).map(([name, value]) => [value, name])
 );

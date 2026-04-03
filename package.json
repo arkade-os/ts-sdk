@@ -108,7 +108,7 @@
         "lint": "prettier --check src test examples",
         "audit": "pnpm audit",
         "prepack": "pnpm run build",
-        "prepare": "husky",
+        "prepare": "husky && pnpm run build",
         "prepublishOnly": "pnpm run build",
         "release": "bash scripts/release.sh",
         "release:dry-run": "bash scripts/release.sh --dry-run",

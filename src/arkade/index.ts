@@ -20,6 +20,7 @@ export { OP, Script, type ScriptType };
 
 export {
     ARKADE_OP,
+    ARKADE_OPCODES,
     ARKADE_OPCODE_NAMES,
     ARKADE_OPCODE_VALUES,
     OPCODE_NAMES,

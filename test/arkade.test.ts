@@ -520,10 +520,13 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: multisig }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: multisig,
+            },
+        ]);
         expect(vtxo).toBeInstanceOf(VtxoScript);
     });
 
@@ -531,10 +534,13 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: multisig }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: multisig,
+            },
+        ]);
         const expectedTweaked = computeArkadeScriptPublicKey(
             introspectorPubkey,
             arkadeScriptBytes
@@ -552,10 +558,13 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: multisig }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: multisig,
+            },
+        ]);
         expect(vtxo.arkadeScripts.size).toBe(1);
         expect(hex.encode(vtxo.arkadeScripts.get(0)!)).toBe(
             hex.encode(arkadeScriptBytes)
@@ -570,13 +579,14 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [
-                { arkadeScript: arkadeScriptBytes, tapscript: multisig },
-                csvExit.script,
-            ],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: multisig,
+            },
+            csvExit.script,
+        ]);
         expect(vtxo.leaves).toHaveLength(2);
         expect(vtxo.arkadeScripts.has(0)).toBe(true);
         expect(vtxo.arkadeScripts.has(1)).toBe(false);
@@ -594,13 +604,14 @@ describe("ArkadeVtxoScript", () => {
             timelock: { type: "blocks", value: 5120n },
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [
-                { arkadeScript: arkadeScriptBytes, tapscript: multisig },
-                csvExit.script,
-            ],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: multisig,
+            },
+            csvExit.script,
+        ]);
         const manualMultisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey, expectedTweaked],
         });
@@ -619,10 +630,13 @@ describe("ArkadeVtxoScript", () => {
             timelock: { type: "blocks", value: 100n },
             pubkeys: [userPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [{ arkadeScript: arkadeScriptBytes, tapscript: csv }],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: csv,
+            },
+        ]);
         const expectedTweaked = computeArkadeScriptPublicKey(
             introspectorPubkey,
             arkadeScriptBytes
@@ -649,13 +663,18 @@ describe("ArkadeVtxoScript", () => {
         const multisig2 = MultisigTapscript.encode({
             pubkeys: [userPubkey],
         });
-        const vtxo = new ArkadeVtxoScript(
-            [
-                { arkadeScript: arkadeScriptBytes, tapscript: multisig1 },
-                { arkadeScript: arkadeScript2, tapscript: multisig2 },
-            ],
-            { introspectorPubkey }
-        );
+        const vtxo = new ArkadeVtxoScript([
+            {
+                arkadeScript: arkadeScriptBytes,
+                introspectors: [introspectorPubkey],
+                tapscript: multisig1,
+            },
+            {
+                arkadeScript: arkadeScript2,
+                introspectors: [introspectorPubkey],
+                tapscript: multisig2,
+            },
+        ]);
         expect(vtxo.leaves).toHaveLength(2);
         expect(vtxo.arkadeScripts.size).toBe(2);
         expect(hex.encode(vtxo.arkadeScripts.get(0)!)).toBe(
@@ -674,9 +693,7 @@ describe("ArkadeVtxoScript", () => {
         const multisig = MultisigTapscript.encode({
             pubkeys: [userPubkey, serverPubkey],
         });
-        const vtxo = new ArkadeVtxoScript([multisig.script, csvExit.script], {
-            introspectorPubkey,
-        });
+        const vtxo = new ArkadeVtxoScript([multisig.script, csvExit.script]);
         const manualVtxo = new VtxoScript([multisig.script, csvExit.script]);
         expect(hex.encode(vtxo.tweakedPublicKey)).toBe(
             hex.encode(manualVtxo.tweakedPublicKey)
