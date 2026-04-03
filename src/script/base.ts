@@ -1,5 +1,4 @@
 import {
-    Script,
     Address,
     p2tr,
     taprootListToTree,
@@ -45,6 +44,7 @@ export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
 export class VtxoScript {
     readonly leaves: TapLeafScript[];
     readonly tweakedPublicKey: Bytes;
+    readonly pkScript: Bytes;
 
     static decode(tapTree: Bytes): VtxoScript {
         const leaves = TapTreeCoder.decode(tapTree);
@@ -79,6 +79,7 @@ export class VtxoScript {
 
         this.leaves = payment.tapLeafScript;
         this.tweakedPublicKey = payment.tweakedPubkey;
+        this.pkScript = payment.script;
     }
 
     encode(): Bytes {
@@ -94,10 +95,6 @@ export class VtxoScript {
 
     address(prefix: string, serverPubKey: Bytes): ArkAddress {
         return new ArkAddress(serverPubKey, this.tweakedPublicKey, prefix);
-    }
-
-    get pkScript(): Bytes {
-        return Script.encode(["OP_1", this.tweakedPublicKey]);
     }
 
     onchainAddress(network: typeof NETWORK): string {

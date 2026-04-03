@@ -12,7 +12,10 @@ import { Transaction } from "../utils/transaction";
 import { buildOffchainTx } from "../utils/arkTransaction";
 import * as asset from "../extension/asset";
 import type { ExtensionPacket } from "../extension/packet";
+import { Extension } from "../extension";
 import type { IWallet } from "../wallet";
+import { createAssetPacket } from "../wallet/asset";
+import type { Asset, Recipient } from "../wallet";
 import { gcd } from "../utils/math";
 import { Offer } from "./offer";
 
@@ -216,6 +219,26 @@ export class Maker {
         const makerAddress = await this.wallet.getAddress();
         const makerPkScript = ArkAddress.decode(makerAddress).pkScript;
 
+        const outputs: { script: Uint8Array; amount: bigint }[] = [
+            { script: makerPkScript, amount: BigInt(swapVtxo.value) },
+        ];
+
+        if (swapVtxo.assets && swapVtxo.assets.length > 0) {
+            const assetInputs = new Map<number, Asset[]>();
+            assetInputs.set(0, swapVtxo.assets);
+
+            const recipients: Recipient[] = [
+                {
+                    address: makerAddress,
+                    amount: swapVtxo.value,
+                    assets: swapVtxo.assets,
+                },
+            ];
+
+            const assetPacket = createAssetPacket(assetInputs, recipients);
+            outputs.push(Extension.create([assetPacket]).txOut());
+        }
+
         const { arkTx, checkpoints } = buildOffchainTx(
             [
                 {
@@ -224,7 +247,7 @@ export class Maker {
                     tapTree: offerVtxoScript.encode(),
                 },
             ],
-            [{ script: makerPkScript, amount: BigInt(swapVtxo.value) }],
+            outputs,
             checkpointUnrollClosure
         );
 
