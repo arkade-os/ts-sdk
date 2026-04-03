@@ -58,9 +58,9 @@ describe("Extension", () => {
                         expect(ext.getAssetPacket()).toBeNull();
                     }
                     if (v.expectedPacketTypes.includes(3)) {
-                        expect(ext.getBancoOffer()).not.toBeNull();
+                        expect(ext.getPacketByType(3)).not.toBeNull();
                     } else {
-                        expect(ext.getBancoOffer()).toBeNull();
+                        expect(ext.getPacketByType(3)).toBeNull();
                     }
                 });
             });
@@ -178,18 +178,15 @@ describe("Extension", () => {
             expect(ext.getIntrospectorPacket()).not.toBeNull();
         });
 
-        it("banco offer", () => {
+        it("banco offer (generic packet lookup)", () => {
             const ext = Extension.fromBytes(
                 hex.decode(
                     "6a4ca141524b039b010100225120eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee020008000000000000c3500500225120aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa070020bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb080020cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
                 )
             );
-            const offer = ext.getBancoOffer();
-            expect(offer).not.toBeNull();
-            expect(hex.encode(offer!.swapPkScript)).toBe(
-                "5120eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
-            );
-            expect(offer!.wantAmount).toBe(50000n);
+            const packet = ext.getPacketByType(3);
+            expect(packet).not.toBeNull();
+            expect(packet!.type()).toBe(3);
         });
     });
 });

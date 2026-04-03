@@ -73,7 +73,9 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    selectVirtualCoins,
 } from "./wallet/wallet";
+import { createAssetPacket, selectCoinsWithAsset } from "./wallet/asset";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
     SignerSession,
@@ -214,7 +216,6 @@ export * from "./arkfee";
 export * from "./extension";
 export * as asset from "./extension/asset";
 export * as arkade from "./arkade";
-export * as banco from "./banco";
 export * from "./extension/introspector";
 
 // Contracts
@@ -338,6 +339,11 @@ export {
     combineTapscriptSigs,
     isVtxoExpiringSoon,
     isValidArkAddress,
+
+    // Asset utilities
+    createAssetPacket,
+    selectCoinsWithAsset,
+    selectVirtualCoins,
 
     // Arknote
     ArkNote,
