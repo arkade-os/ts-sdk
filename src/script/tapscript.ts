@@ -351,23 +351,14 @@ export namespace CSVMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
+        const isValid = isScriptValid(script);
+        if (isValid instanceof Error) {
+            throw isValid;
+        }
+
         const asm = Script.decode(script);
 
-        if (asm.length < 3) {
-            throw new Error(`Invalid script: too short (expected at least 3)`);
-        }
-
         const sequence = asm[0];
-        if (typeof sequence === "string") {
-            throw new Error("Invalid script: expected sequence number");
-        }
-
-        if (asm[1] !== "CHECKSEQUENCEVERIFY" || asm[2] !== "DROP") {
-            throw new Error(
-                "Invalid script: expected CHECKSEQUENCEVERIFY DROP"
-            );
-        }
-
         const multisigScript = new Uint8Array(Script.encode(asm.slice(3)));
         let multisig: MultisigTapscript.Type;
 
@@ -418,6 +409,27 @@ export namespace CSVMultisigTapscript {
     export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.CSVMultisig;
     }
+
+    export function isScriptValid(script: Uint8Array): true | Error {
+        const asm = Script.decode(script);
+
+        if (asm.length < 3) {
+            return new Error(`Invalid script: too short (expected at least 3)`);
+        }
+
+        const sequence = asm[0];
+        if (typeof sequence === "string") {
+            return new Error("Invalid script: expected sequence number");
+        }
+
+        if (asm[1] !== "CHECKSEQUENCEVERIFY" || asm[2] !== "DROP") {
+            return new Error(
+                "Invalid script: expected CHECKSEQUENCEVERIFY DROP"
+            );
+        }
+
+        return true;
+    }
 }
 
 /**
@@ -458,21 +470,17 @@ export namespace ConditionCSVMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
+        const isValid = isScriptValid(script);
+        if (isValid instanceof Error) {
+            throw isValid;
+        }
+
         const asm = Script.decode(script);
 
-        if (asm.length < 1) {
-            throw new Error(`Invalid script: too short (expected at least 1)`);
-        }
-
-        let verifyIndex = -1;
-        for (let i = asm.length - 1; i >= 0; i--) {
-            if (asm[i] === "VERIFY") {
-                verifyIndex = i;
-            }
-        }
+        let verifyIndex = getVerifyIndex(asm);
 
         if (verifyIndex === -1) {
-            throw new Error("Invalid script: missing VERIFY operation");
+            throw Error("Invalid script: missing VERIFY operation");
         }
 
         const conditionScript = new Uint8Array(
@@ -515,6 +523,33 @@ export namespace ConditionCSVMultisigTapscript {
     export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.ConditionCSVMultisig;
     }
+
+    function getVerifyIndex(asm: ScriptType) {
+        let verifyIndex = -1;
+        for (let i = asm.length - 1; i >= 0; i--) {
+            if (asm[i] === "VERIFY") {
+                verifyIndex = i;
+                return verifyIndex;
+            }
+        }
+        return verifyIndex;
+    }
+
+    export function isScriptValid(script: Uint8Array): true | Error {
+        const asm = Script.decode(script);
+
+        if (asm.length < 1) {
+            return new Error(`Invalid script: too short (expected at least 1)`);
+        }
+
+        let verifyIndex = getVerifyIndex(asm);
+
+        if (verifyIndex === -1) {
+            return new Error("Invalid script: missing VERIFY operation");
+        }
+
+        return true;
+    }
 }
 
 /**
@@ -555,21 +590,17 @@ export namespace ConditionMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
+        const isValid = isScriptValid(script);
+        if (isValid instanceof Error) {
+            throw isValid;
+        }
+
         const asm = Script.decode(script);
 
-        if (asm.length < 1) {
-            throw new Error(`Invalid script: too short (expected at least 1)`);
-        }
-
-        let verifyIndex = -1;
-        for (let i = asm.length - 1; i >= 0; i--) {
-            if (asm[i] === "VERIFY") {
-                verifyIndex = i;
-            }
-        }
+        let verifyIndex = getVerifyIndex(asm);
 
         if (verifyIndex === -1) {
-            throw new Error("Invalid script: missing VERIFY operation");
+            throw Error("Invalid script: missing VERIFY operation");
         }
 
         const conditionScript = new Uint8Array(
@@ -611,6 +642,33 @@ export namespace ConditionMultisigTapscript {
 
     export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.ConditionMultisig;
+    }
+
+    function getVerifyIndex(asm: ScriptType) {
+        let verifyIndex = -1;
+        for (let i = asm.length - 1; i >= 0; i--) {
+            if (asm[i] === "VERIFY") {
+                verifyIndex = i;
+                return verifyIndex;
+            }
+        }
+        return verifyIndex;
+    }
+
+    export function isScriptValid(script: Uint8Array): true | Error {
+        const asm = Script.decode(script);
+
+        if (asm.length < 1) {
+            return new Error(`Invalid script: too short (expected at least 1)`);
+        }
+
+        let verifyIndex = getVerifyIndex(asm);
+
+        if (verifyIndex === -1) {
+            return new Error("Invalid script: missing VERIFY operation");
+        }
+
+        return true;
     }
 }
 
@@ -659,22 +717,14 @@ export namespace CLTVMultisigTapscript {
             throw new Error("Failed to decode: script is empty");
         }
 
+        const isValid = isScriptValid(script);
+        if (isValid instanceof Error) {
+            throw isValid;
+        }
+
         const asm = Script.decode(script);
 
-        if (asm.length < 3) {
-            throw new Error(`Invalid script: too short (expected at least 3)`);
-        }
-
         const locktime = asm[0];
-        if (typeof locktime === "string" || typeof locktime === "number") {
-            throw new Error("Invalid script: expected locktime number");
-        }
-
-        if (asm[1] !== "CHECKLOCKTIMEVERIFY" || asm[2] !== "DROP") {
-            throw new Error(
-                "Invalid script: expected CHECKLOCKTIMEVERIFY DROP"
-            );
-        }
 
         const multisigScript = new Uint8Array(Script.encode(asm.slice(3)));
         let multisig: MultisigTapscript.Type;
@@ -687,7 +737,12 @@ export namespace CLTVMultisigTapscript {
             );
         }
 
-        const absoluteTimelock = MinimalScriptNum.decode(locktime);
+        let absoluteTimelock: bigint;
+        if (typeof locktime === "number") {
+            absoluteTimelock = BigInt(locktime);
+        } else {
+            absoluteTimelock = MinimalScriptNum.decode(locktime as Bytes);
+        }
 
         const reconstructed = encode({
             absoluteTimelock,
@@ -712,5 +767,28 @@ export namespace CLTVMultisigTapscript {
 
     export function is(tapscript: ArkTapscript<any, any>): tapscript is Type {
         return tapscript.type === TapscriptType.CLTVMultisig;
+    }
+
+    export function isScriptValid(script: Uint8Array): true | Error {
+        const asm = Script.decode(script);
+
+        if (asm.length < 3) {
+            return new Error(`Invalid script: too short (expected at least 3)`);
+        }
+
+        const locktime = asm[0];
+        if (typeof locktime === "string") {
+            return new Error(
+                "Invalid script: expected locktime as number or bytes"
+            );
+        }
+
+        if (asm[1] !== "CHECKLOCKTIMEVERIFY" || asm[2] !== "DROP") {
+            return new Error(
+                "Invalid script: expected CHECKLOCKTIMEVERIFY DROP"
+            );
+        }
+
+        return true;
     }
 }
