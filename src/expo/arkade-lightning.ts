@@ -377,15 +377,11 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.claimArk(pendingSwap);
     }
 
-    signCooperativeClaimForServer(
-        pendingSwap: BoltzChainSwap
-    ): Promise<void> {
+    signCooperativeClaimForServer(pendingSwap: BoltzChainSwap): Promise<void> {
         return this.inner.signCooperativeClaimForServer(pendingSwap);
     }
 
-    waitAndClaimChain(
-        pendingSwap: BoltzChainSwap
-    ): Promise<{ txid: string }> {
+    waitAndClaimChain(pendingSwap: BoltzChainSwap): Promise<{ txid: string }> {
         return this.inner.waitAndClaimChain(pendingSwap);
     }
 

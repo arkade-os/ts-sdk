@@ -224,7 +224,7 @@ describe("ArkadeSwaps", () => {
         const amount = 1_000_000;
 
         const { stdout: arknote } = await execAsync(
-            `docker exec -t arkd arkd note --amount ${amount}`
+            `docker exec -t ark arkd note --amount ${amount}`
         );
 
         await fundedWallet.settle({

@@ -1,8 +1,4 @@
-import {
-    GetSwapsFilter,
-    BoltzSwap,
-    SwapRepository,
-} from "../swap-repository";
+import { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
 export class InMemorySwapRepository implements SwapRepository {
     readonly version = 1 as const;
     private readonly swaps: Map<string, BoltzSwap> = new Map();

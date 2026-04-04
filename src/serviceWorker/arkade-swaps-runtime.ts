@@ -113,9 +113,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         ) => void
     >();
     private swapCompletedListeners = new Set<
-        (
-            swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap
-        ) => void
+        (swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap) => void
     >();
     private swapFailedListeners = new Set<
         (
@@ -228,10 +226,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                 });
             },
             addSwap: async (
-                swap:
-                    | BoltzReverseSwap
-                    | BoltzSubmarineSwap
-                    | BoltzChainSwap
+                swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap
             ) => {
                 await send({
                     id: getRandomId(),
@@ -360,10 +355,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             },
             onSwapCompleted: async (
                 listener: (
-                    swap:
-                        | BoltzReverseSwap
-                        | BoltzSubmarineSwap
-                        | BoltzChainSwap
+                    swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap
                 ) => void
             ) => {
                 this.swapCompletedListeners.add(listener);
@@ -416,10 +408,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             },
             offSwapCompleted: (
                 listener: (
-                    swap:
-                        | BoltzReverseSwap
-                        | BoltzSubmarineSwap
-                        | BoltzChainSwap
+                    swap: BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap
                 ) => void
             ) => {
                 this.swapCompletedListeners.delete(listener);

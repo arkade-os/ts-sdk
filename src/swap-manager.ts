@@ -78,10 +78,7 @@ export interface SwapManagerEvents {
 }
 
 /** Callback for swap status changes. Receives the updated swap and its previous status. */
-type SwapUpdateListener = (
-    swap: BoltzSwap,
-    oldStatus: BoltzSwapStatus
-) => void;
+type SwapUpdateListener = (swap: BoltzSwap, oldStatus: BoltzSwapStatus) => void;
 /** Callback for swap completions (final success state reached). */
 type SwapCompletedListener = (swap: BoltzSwap) => void;
 /** Callback for swap failures. Includes the error that caused the failure. */
@@ -94,10 +91,7 @@ type WebSocketConnectedListener = () => void;
 type WebSocketDisconnectedListener = (error?: Error) => void;
 
 /** Per-swap update callback used with subscribeToSwapUpdates. */
-type SwapUpdateCallback = (
-    swap: BoltzSwap,
-    oldStatus: BoltzSwapStatus
-) => void;
+type SwapUpdateCallback = (swap: BoltzSwap, oldStatus: BoltzSwapStatus) => void;
 
 /** Public interface for SwapManager consumers. Provides swap monitoring, event subscription, and lifecycle control. */
 export interface SwapManagerClient {
@@ -204,18 +198,15 @@ export class SwapManager implements SwapManagerClient {
     private swapSubscriptions = new Map<string, Set<SwapUpdateCallback>>();
 
     // Action callbacks (injected via setCallbacks)
-    private claimCallback:
-        | ((swap: BoltzReverseSwap) => Promise<void>)
-        | null = null;
+    private claimCallback: ((swap: BoltzReverseSwap) => Promise<void>) | null =
+        null;
     private refundCallback:
         | ((swap: BoltzSubmarineSwap) => Promise<void>)
         | null = null;
-    private claimArkCallback:
-        | ((swap: BoltzChainSwap) => Promise<void>)
-        | null = null;
-    private claimBtcCallback:
-        | ((swap: BoltzChainSwap) => Promise<void>)
-        | null = null;
+    private claimArkCallback: ((swap: BoltzChainSwap) => Promise<void>) | null =
+        null;
+    private claimBtcCallback: ((swap: BoltzChainSwap) => Promise<void>) | null =
+        null;
     private refundArkCallback:
         | ((swap: BoltzChainSwap) => Promise<void>)
         | null = null;
@@ -1073,9 +1064,7 @@ export class SwapManager implements SwapManagerClient {
     /**
      * Execute refund action for submarine swap
      */
-    private async executeRefundAction(
-        swap: BoltzSubmarineSwap
-    ): Promise<void> {
+    private async executeRefundAction(swap: BoltzSubmarineSwap): Promise<void> {
         if (!this.refundCallback) {
             logger.error("Refund callback not set");
             return;
@@ -1111,9 +1100,7 @@ export class SwapManager implements SwapManagerClient {
     /**
      * Execute refund action for chain swap Ark to Btc
      */
-    private async executeRefundArkAction(
-        swap: BoltzChainSwap
-    ): Promise<void> {
+    private async executeRefundArkAction(swap: BoltzChainSwap): Promise<void> {
         if (!this.refundArkCallback) {
             logger.error("refundArk callback not set");
             return;

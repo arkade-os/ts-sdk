@@ -1,8 +1,4 @@
-import {
-    GetSwapsFilter,
-    BoltzSwap,
-    SwapRepository,
-} from "../swap-repository";
+import { GetSwapsFilter, BoltzSwap, SwapRepository } from "../swap-repository";
 import { closeDatabase, openDatabase } from "@arkade-os/sdk";
 
 const DEFAULT_DB_NAME = "arkade-boltz-swap";
