@@ -14,6 +14,7 @@ import type {
 import { Identity, ReadonlyIdentity } from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
+import { CovVHTLC } from "./script/cov-vhtlc";
 import { DefaultVtxo } from "./script/default";
 import { DelegateVtxo } from "./script/delegate";
 import {
@@ -293,6 +294,7 @@ export {
     DelegateVtxo,
     VtxoScript,
     VHTLC,
+    CovVHTLC,
 
     // Enums
     TxType,
