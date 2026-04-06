@@ -27,5 +27,23 @@ export type {
     CheckpointTimelockResult,
 } from "./checkpointVerifier";
 
+export {
+    verifyTaprootScriptTree,
+    verifyCSV,
+    verifyCLTV,
+    verifyHashPreimage,
+    verifyScriptSatisfaction,
+} from "./scriptVerifier";
+export type {
+    ScriptVerificationResult,
+    ChainTip,
+    ParentConfirmation,
+} from "./scriptVerifier";
+
+export {
+    verifyBoltzSwapPreimage,
+    verifyBoltzSwapSatisfaction,
+} from "./swapVerifier";
+
 export { buildVtxoDAG, renderDAGAscii } from "./dagVisualizer";
 export type { DAGNode, DAGEdge, VtxoDAG } from "./dagVisualizer";
