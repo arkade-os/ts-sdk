@@ -107,6 +107,16 @@ import {
     getAllSyncCursors,
     updateWalletState,
 } from "../utils/syncCursors";
+import type { ExitDataRepository } from "../verification/exitDataStore";
+import { syncExitData } from "../verification/exitDataSync";
+import {
+    verifyAllVtxos as verifyAllStoredVtxos,
+    verifyVtxo as verifyStoredVtxo,
+} from "../verification/vtxoChainVerifier";
+import type {
+    VtxoVerificationOptions,
+    VtxoVerificationResult,
+} from "../verification/vtxoChainVerifier";
 
 export type IncomingFunds =
     | {
@@ -164,6 +174,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
         public readonly contractRepository: ContractRepository,
+        protected readonly exitDataRepository?: ExitDataRepository,
         readonly delegatorProvider?: DelegatorProvider,
         watcherConfig?: ReadonlyWalletConfig["watcherConfig"]
     ) {
@@ -317,6 +328,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contractRepository =
             config.storage?.contractRepository ??
             new IndexedDBContractRepository();
+        const exitDataRepository = config.storage?.exitDataRepository;
 
         return {
             arkProvider,
@@ -330,6 +342,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             dustAmount: info.dust,
             walletRepository,
             contractRepository,
+            exitDataRepository,
             info,
             delegatorProvider: config.delegatorProvider,
         };
@@ -354,6 +367,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
+            setup.exitDataRepository,
             setup.delegatorProvider,
             config.watcherConfig
         );
@@ -509,7 +523,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * subsequent callers receive the same promise instead of triggering
      * a second network round-trip.
      */
-    private syncVtxos(): Promise<{
+    protected syncVtxos(): Promise<{
         isDelta: boolean;
         fetchedExtended: ExtendedVirtualCoin[];
         address: string;
@@ -550,6 +564,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const requestStartedAt = Date.now();
         const allVtxos: VirtualCoin[] = [];
+        const changedExtended: ExtendedVirtualCoin[] = [];
 
         // Full fetch for scripts with no cursor.
         if (bootstrapScripts.length > 0) {
@@ -588,6 +603,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 tapTree: vtxoScript.encode(),
             });
         }
+        changedExtended.push(...fetchedExtended);
         // Save VTXOs first, then advance cursors only on success.
         const cutoff = cursorCutoff(requestStartedAt);
         await this.walletRepository.saveVtxos(address, fetchedExtended);
@@ -621,14 +637,50 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
             if (pendingExtended.length > 0) {
                 await this.walletRepository.saveVtxos(address, pendingExtended);
+                changedExtended.push(...pendingExtended);
             }
         }
+
+        await this.syncStoredExitData(changedExtended);
 
         return {
             isDelta: hasDelta || bootstrapScripts.length === 0,
             fetchedExtended,
             address,
         };
+    }
+
+    protected async syncStoredExitData(
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<void> {
+        if (!this.exitDataRepository || vtxos.length === 0) {
+            return;
+        }
+
+        const spendable = vtxos.filter(isSpendable);
+        if (spendable.length > 0) {
+            try {
+                await syncExitData(
+                    spendable,
+                    this.indexerProvider,
+                    this.exitDataRepository
+                );
+            } catch (error) {
+                console.warn("failed to sync exit data", error);
+            }
+        }
+
+        const stale = vtxos.filter((vtxo) => !isSpendable(vtxo));
+        for (const vtxo of stale) {
+            try {
+                await this.exitDataRepository.deleteExitData({
+                    txid: vtxo.txid,
+                    vout: vtxo.vout,
+                });
+            } catch (error) {
+                console.warn("failed to delete stale exit data", error);
+            }
+        }
     }
 
     /**
@@ -766,7 +818,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             const vout = findVoutOnTx(tx);
                             const value = Number(tx.vout[vout].value);
                             return { txid, vout, value, status };
-                        });
+                        })
+                        .filter((coin) => coin.status.confirmed);
+
+                    if (coins.length === 0) {
+                        return;
+                    }
 
                     // and notify via callback
                     eventCallback({
@@ -809,6 +866,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             update.newVtxos?.length > 0 ||
                             update.spentVtxos?.length > 0
                         ) {
+                            if (this.exitDataRepository) {
+                                void this.syncVtxos().catch((error) => {
+                                    console.warn(
+                                        "failed to refresh exit data after indexer update",
+                                        error
+                                    );
+                                });
+                            }
                             eventCallback({
                                 type: "vtxo",
                                 newVtxos: update.newVtxos.map((vtxo) =>
@@ -1163,6 +1228,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         dustAmount: bigint,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
+        exitDataRepository?: ExitDataRepository,
         /** @deprecated Use settlementConfig */
         renewalConfig?: WalletConfig["renewalConfig"],
         delegatorProvider?: DelegatorProvider,
@@ -1180,6 +1246,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             dustAmount,
             walletRepository,
             contractRepository,
+            exitDataRepository,
             delegatorProvider,
             watcherConfig
         );
@@ -1304,6 +1371,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.dustAmount,
             setup.walletRepository,
             setup.contractRepository,
+            setup.exitDataRepository,
             config.renewalConfig,
             config.delegatorProvider,
             config.watcherConfig,
@@ -1349,6 +1417,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.dustAmount,
             this.walletRepository,
             this.contractRepository,
+            this.exitDataRepository,
             this.delegatorProvider,
             this.watcherConfig
         );
@@ -1356,6 +1425,38 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
         return this._delegatorManager;
+    }
+
+    async verifyVtxo(
+        vtxo: VirtualCoin,
+        options?: VtxoVerificationOptions
+    ): Promise<VtxoVerificationResult> {
+        return verifyStoredVtxo(
+            vtxo,
+            this.indexerProvider,
+            this.onchainProvider,
+            {
+                pubkey: this.arkServerPublicKey,
+                sweepInterval: this.serverUnrollScript.params.timelock,
+            },
+            options
+        );
+    }
+
+    async verifyAllVtxos(
+        options?: VtxoVerificationOptions
+    ): Promise<Map<string, VtxoVerificationResult>> {
+        const vtxos = await this.getVtxos({ withRecoverable: true });
+        return verifyAllStoredVtxos(
+            vtxos,
+            this.indexerProvider,
+            this.onchainProvider,
+            {
+                pubkey: this.arkServerPublicKey,
+                sweepInterval: this.serverUnrollScript.params.timelock,
+            },
+            options
+        );
     }
 
     /**
@@ -1691,6 +1792,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
+            if (this.exitDataRepository) {
+                await this.syncVtxos();
+            }
 
             return commitmentTxid;
         } catch (error) {
@@ -2616,6 +2720,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             await this.walletRepository.saveVtxos(
                 addr,
+                changeVtxo ? [...spentVtxos, changeVtxo] : spentVtxos
+            );
+            await this.syncStoredExitData(
                 changeVtxo ? [...spentVtxos, changeVtxo] : spentVtxos
             );
 

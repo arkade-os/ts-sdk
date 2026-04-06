@@ -226,6 +226,18 @@ export {
     verifyScriptSatisfaction,
     verifyBoltzSwapPreimage,
     verifyBoltzSwapSatisfaction,
+    collectExitData,
+    validateExitData,
+    InMemoryExitDataRepository,
+    StorageAdapterExitDataRepository,
+    FileSystemExitDataRepository,
+    IndexedDBExitDataRepository,
+    AsyncStorageExitDataRepository,
+    buildExitDataForVtxo,
+    buildExitDataForVtxos,
+    syncExitData,
+    sovereignExit,
+    canSovereignExit,
 } from "./verification";
 export type {
     VtxoVerificationResult,
@@ -239,9 +251,14 @@ export type {
     ScriptVerificationResult,
     ChainTip,
     ParentConfirmation,
+    ExitData,
+    ExitDataRepository,
     DAGNode,
     DAGEdge,
     VtxoDAG,
+    SovereignExitStep,
+    SovereignExitResult,
+    SovereignExitOptions,
 } from "./verification";
 
 // Contracts

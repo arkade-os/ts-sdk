@@ -257,6 +257,103 @@ const txid = await wallet.sendBitcoin({
 })
 ```
 
+### Client-Side Verification
+
+The SDK exposes standalone verification helpers for reconstructing and checking a VTXO chain. `Wallet` and `ExpoWallet` also provide thin convenience wrappers for `verifyVtxo(...)` and `verifyAllVtxos(...)`.
+
+Tier 1 support currently includes:
+
+- reconstructing the VTXO DAG from the leaf VTXO back to the commitment transaction(s)
+- validating parent/child linkage across the virtual transaction chain
+- verifying tree signatures, cosigner key aggregation, and unspendable internal keys
+- verifying onchain anchoring against a user-controlled Bitcoin backend
+- validating checkpoint integration and checkpoint expiry metadata
+
+```typescript
+import {
+  verifyVtxo,
+  verifyAllVtxos,
+  verifyOnchainAnchor,
+  verifyCheckpointTransactions,
+} from '@arkade-os/sdk'
+
+const result = await verifyVtxo(vtxo, indexerProvider, onchainProvider, {
+  pubkey: serverPubkey,
+  sweepInterval: { value: 144n, type: 'blocks' },
+})
+
+if (!result.valid) {
+  console.error(result.errors)
+}
+```
+
+If you provide a custom `OnchainProvider`, it must implement `getTxHex(txid)` for client-side verification. The verification flow uses raw transaction hex to reconstruct and validate onchain commitment transactions.
+
+```typescript
+const result = await wallet.verifyVtxo(vtxo)
+const results = await wallet.verifyAllVtxos()
+```
+
+Tier 2 helpers are also available for script-path validation:
+
+- `verifyTaprootScriptTree(...)`
+- `verifyCSV(...)`
+- `verifyCLTV(...)`
+- `verifyHashPreimage(...)`
+- `verifyScriptSatisfaction(...)`
+- `verifyBoltzSwapPreimage(...)`
+- `verifyBoltzSwapSatisfaction(...)`
+
+These cover taproot script-tree parsing, locktime/sequence checks, and hash-preimage verification, including a Boltz-style swap path demonstration.
+
+Tier 3 helpers are available for sovereign unilateral exit and local exit-data persistence:
+
+- `StorageAdapterExitDataRepository`
+- `FileSystemExitDataRepository`
+- `IndexedDBExitDataRepository`
+- `AsyncStorageExitDataRepository`
+- `buildExitDataForVtxo(...)`
+- `buildExitDataForVtxos(...)`
+- `syncExitData(...)`
+- `canSovereignExit(...)`
+- `sovereignExit(...)`
+
+```typescript
+import {
+  FileSystemExitDataRepository,
+  Wallet,
+  sovereignExit,
+} from '@arkade-os/sdk'
+
+const repo = new FileSystemExitDataRepository('./exit-data')
+const wallet = await Wallet.create({
+  identity,
+  arkServerUrl,
+  esploraUrl,
+  storage: {
+    walletRepository,
+    contractRepository,
+    exitDataRepository: repo,
+  },
+})
+
+// Exit data is kept in sync when wallet VTXOs are refreshed or batch state changes.
+await wallet.getVtxos()
+
+const exitResult = await sovereignExit(vtxoOutpoint, repo, onchainProvider, {
+  identity,
+  outputAddress: await wallet.getBoardingAddress(),
+  network: wallet.network,
+})
+if (!exitResult.success) {
+  console.error(exitResult.errors)
+}
+```
+
+If `identity`, `outputAddress`, and `network` are provided, `sovereignExit(...)` will also build and broadcast the final CSV claim transaction once the stored VTXO is confirmed and its exit timelock is spendable.
+
+The sovereign-exit flow uses only locally stored exit data plus the configured Bitcoin backend. It does not require contacting the ASP during exit. For the full final-claim step, the stored exit data must include local claim metadata, which is populated automatically when `exitDataRepository` is configured on the wallet.
+
 ### Assets (Issue, Reissue, Burn, Send)
 
 The wallet's `assetManager` lets you create and manage assets on Ark. `send` method supports sending assets.

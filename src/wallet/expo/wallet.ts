@@ -13,8 +13,8 @@ import type {
     ExtendedCoin,
     ExtendedVirtualCoin,
     Recipient,
+    VirtualCoin,
 } from "..";
-import type { VirtualCoin } from "..";
 import type { SettlementEvent } from "../../providers/ark";
 import type { Identity } from "../../identity";
 import type { IContractManager } from "../../contracts/contractManager";
@@ -37,6 +37,10 @@ import {
 import { DefaultVtxo } from "../../script/default";
 import type { PersistedBackgroundConfig } from "./background";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
+import type {
+    VtxoVerificationOptions,
+    VtxoVerificationResult,
+} from "../../verification/vtxoChainVerifier";
 
 /**
  * Background processing configuration for {@link ExpoWallet}.
@@ -298,6 +302,19 @@ export class ExpoWallet implements IWallet {
 
     getDelegatorManager(): Promise<IDelegatorManager | undefined> {
         return this.wallet.getDelegatorManager();
+    }
+
+    verifyVtxo(
+        vtxo: VirtualCoin,
+        options?: VtxoVerificationOptions
+    ): Promise<VtxoVerificationResult> {
+        return this.wallet.verifyVtxo(vtxo, options);
+    }
+
+    verifyAllVtxos(
+        options?: VtxoVerificationOptions
+    ): Promise<Map<string, VtxoVerificationResult>> {
+        return this.wallet.verifyAllVtxos(options);
     }
 
     sendBitcoin(params: SendBitcoinParams): Promise<string> {

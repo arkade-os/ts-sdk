@@ -11,6 +11,7 @@ import { ContractRepository, WalletRepository } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
+import type { ExitDataRepository } from "../verification/exitDataStore";
 
 /**
  * Base configuration options shared by all wallet types.
@@ -124,6 +125,7 @@ export interface WalletConfig extends ReadonlyWalletConfig {
 export type StorageConfig = {
     walletRepository: WalletRepository;
     contractRepository: ContractRepository;
+    exitDataRepository?: ExitDataRepository;
 };
 
 /**
