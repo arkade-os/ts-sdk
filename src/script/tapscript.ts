@@ -666,7 +666,7 @@ export namespace CLTVMultisigTapscript {
         }
 
         const locktime = asm[0];
-        if (typeof locktime === "string" || typeof locktime === "number") {
+        if (typeof locktime === "string") {
             throw new Error("Invalid script: expected locktime number");
         }
 
@@ -687,8 +687,12 @@ export namespace CLTVMultisigTapscript {
             );
         }
 
-        const absoluteTimelock = MinimalScriptNum.decode(locktime);
-
+        let absoluteTimelock: bigint;
+        if (typeof locktime == "number") {
+            absoluteTimelock = BigInt(locktime);
+        } else {
+            absoluteTimelock = MinimalScriptNum.decode(locktime);
+        }
         const reconstructed = encode({
             absoluteTimelock,
             ...multisig.params,
