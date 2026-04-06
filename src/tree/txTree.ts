@@ -20,6 +20,25 @@ type DecodedNode = {
     children: Record<number, string>;
 };
 
+export function findInputIndexSpendingOutpoint(
+    tx: Transaction,
+    parentTxid: string,
+    outputIndex: number
+): number | null {
+    for (let inputIndex = 0; inputIndex < tx.inputsLength; inputIndex++) {
+        const input = tx.getInput(inputIndex);
+        if (
+            input.txid &&
+            hex.encode(input.txid) === parentTxid &&
+            input.index === outputIndex
+        ) {
+            return inputIndex;
+        }
+    }
+
+    return null;
+}
+
 /**
  * TxTree is a graph of bitcoin transactions.
  * It is used to represent batch tree created during settlement session
@@ -109,9 +128,9 @@ export class TxTree {
         const nbOfOutputs = this.root.outputsLength;
         const nbOfInputs = this.root.inputsLength;
 
-        if (nbOfInputs !== 1) {
+        if (nbOfInputs < 1) {
             throw new Error(
-                `unexpected number of inputs: ${nbOfInputs}, expected 1`
+                `unexpected number of inputs: ${nbOfInputs}, expected at least 1`
             );
         }
 
@@ -134,15 +153,15 @@ export class TxTree {
 
             child.validate();
 
-            const childInput = child.root.getInput(0);
             const parentTxid = this.root.id;
+            const childInputIndex = findInputIndexSpendingOutpoint(
+                child.root,
+                parentTxid,
+                outputIndex
+            );
 
-            // verify the input of the child is the output of the parent
-            if (
-                !childInput.txid ||
-                hex.encode(childInput.txid) !== parentTxid ||
-                childInput.index !== outputIndex
-            ) {
+            // verify the child spends the expected parent outpoint.
+            if (childInputIndex === null) {
                 throw new Error(
                     `input of child ${outputIndex} is not the output of the parent`
                 );

@@ -2,7 +2,7 @@ import { hex } from "@scure/base";
 import { Transaction } from "@scure/btc-signer/transaction.js";
 import { base64 } from "@scure/base";
 import { aggregateKeys } from "../musig2";
-import { TxTree } from "./txTree";
+import { findInputIndexSpendingOutpoint, TxTree } from "./txTree";
 import { CosignerPublicKey, getArkPsbtFields } from "../utils/unknownFields";
 
 export const ErrInvalidSettlementTx = (tx: string) =>
@@ -79,14 +79,14 @@ export function validateVtxoTxGraph(
         throw ErrEmptyTree;
     }
 
-    const rootInput = graph.root.getInput(0);
     const commitmentTxid = roundTransaction.id;
+    const rootInputIndex = findInputIndexSpendingOutpoint(
+        graph.root,
+        commitmentTxid,
+        BATCH_OUTPUT_VTXO_INDEX
+    );
 
-    if (
-        !rootInput.txid ||
-        hex.encode(rootInput.txid) !== commitmentTxid ||
-        rootInput.index !== BATCH_OUTPUT_VTXO_INDEX
-    ) {
+    if (rootInputIndex === null) {
         throw ErrWrongCommitmentTxid;
     }
 
@@ -125,9 +125,20 @@ export function validateVtxoTxGraph(
                 );
             }
 
+            const childInputIndex = findInputIndexSpendingOutpoint(
+                child.root,
+                g.root.id,
+                childIndex
+            );
+            if (childInputIndex === null) {
+                throw new Error(
+                    `child does not spend parent ${g.root.id}:${childIndex}`
+                );
+            }
+
             const cosigners = getArkPsbtFields(
                 child.root,
-                0,
+                childInputIndex,
                 CosignerPublicKey
             );
 
