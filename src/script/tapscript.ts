@@ -688,7 +688,7 @@ export namespace CLTVMultisigTapscript {
         }
 
         let absoluteTimelock: bigint;
-        if (typeof locktime == "number") {
+        if (typeof locktime === "number") {
             absoluteTimelock = BigInt(locktime);
         } else {
             absoluteTimelock = MinimalScriptNum.decode(locktime);
