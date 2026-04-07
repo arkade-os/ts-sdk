@@ -293,17 +293,24 @@ const { assets } = await wallet.getBalance()
 const assetBalance = assets.find(asset => asset.assetId === assetId)?.amount
 ```
 
-### Batch Settlements
+### Batch Settlement
 
-This can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs and VTXOs.
+The `settle` method can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs to VTXOs.
 
 ```typescript
+// Fetch offchain preconfirmed VTXOs and onchain boarding UTXOs
+const [virtualUtxos, boardingUtxos] = await Promise.all([
+  wallet.getVtxos(),
+  wallet.getBoardingUtxos()
+])
+
 // For settling transactions
-const settleTxid = await wallet.settle({
-  inputs, // from getVtxos() or getBoardingUtxos()
+const settlementTxId = await wallet.settle({
+  inputs: [...virtualUtxos, ...boardingUtxos],
+  // Optional: specify a mainnet output
   outputs: [{
-    address: destinationAddress,
-    amount: BigInt(amount)
+    address: "bc1p...",
+    amount: 100_000n
   }]
 })
 ```
