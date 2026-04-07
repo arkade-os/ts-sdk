@@ -42,20 +42,20 @@ The SDK supports readonly wallets that allow you to query wallet state without e
 - **Public interfaces**: Display wallet information safely in public-facing applications
 - **Separate concerns**: Keep signing operations isolated from query operations
 
-#### Creating a Readonly Wallet
+#### Creating a Read-Only Wallet
 
 ```typescript
 import { ReadonlySingleKey, ReadonlyWallet } from '@arkade-os/sdk'
 
-// Create a readonly identity from a public key
-const identity = SingleKey.fromHex('your_public_key_hex')
+// Create a read-only identity from a public key
+const identity = SingleKey.fromHex('e09ca...56609')
 const publicKey = await identity.compressedPublicKey()
 const readonlyIdentity = ReadonlySingleKey.fromPublicKey(publicKey)
 
-// Create a readonly wallet
+// Create a read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 
 // Query operations work normally
@@ -65,43 +65,43 @@ const vtxos = await readonlyWallet.getVtxos()
 const history = await readonlyWallet.getTransactionHistory()
 
 // Transaction methods are not available (TypeScript will prevent this)
-// await readonlyWallet.sendBitcoin(...) // ❌ Type error!
+// await readonlyWallet.send(...) // ❌ Type error!
 ```
 
-#### Converting Wallets to Readonly
+#### Converting Wallets to Read-Only
 
 ```typescript
 import { Wallet, SingleKey } from '@arkade-os/sdk'
 
 // Create a full wallet
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = SingleKey.fromHex('e09ca...56609')
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 
-// Convert to readonly wallet (safe to share)
+// Convert to read-only wallet (safe to share)
 const readonlyWallet = await wallet.toReadonly()
 
-// The readonly wallet can query but not transact
+// The read-only wallet can query but not transact
 const balance = await readonlyWallet.getBalance()
 ```
 
-#### Converting Identity to Readonly
+#### Converting Identity to Read-Only
 
 ```typescript
 import { SingleKey } from '@arkade-os/sdk'
 
 // Full identity
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = SingleKey.fromHex('e09ca...56609')
 
-// Convert to readonly (no signing capability)
+// Convert to read-only (no signing capability)
 const readonlyIdentity = await identity.toReadonly()
 
-// Use in readonly wallet
+// Use in read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
