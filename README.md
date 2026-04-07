@@ -964,9 +964,9 @@ const executor = {
 
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'),
-  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'),
+  arkServerUrl: 'https://arkade.computer',
+  arkProvider: new ExpoArkProvider('https://arkade.computer'),
+  indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
     contractRepository: new SQLiteContractRepository(executor),
