@@ -678,15 +678,13 @@ bus.start()
 
 ```typescript
 // app.ts
-import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
-
-const identity = SingleKey.fromHex('your_private_key_hex')
+import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 // One-liner: registers the SW, initializes the MessageBus, and creates the wallet
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity,
+  arkServerUrl: 'https://arkade.computer',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
 })
 
 // Use like any other wallet — calls are proxied to the service worker
