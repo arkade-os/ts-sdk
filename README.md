@@ -71,10 +71,10 @@ const history = await readonlyWallet.getTransactionHistory()
 #### Converting Wallets to Read-Only
 
 ```typescript
-import { Wallet, SingleKey } from '@arkade-os/sdk'
+import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 // Create a full wallet
-const identity = SingleKey.fromHex('e09ca...56609')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://arkade.computer'
