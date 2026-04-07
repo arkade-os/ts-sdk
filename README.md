@@ -557,14 +557,19 @@ const history = await wallet.getTransactionHistory()
 Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an on-chain address:
 
 ```typescript
-import { Ramps } from '@arkade-os/sdk'
+import { Wallet, MnemonicIdentity, Ramps } from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer'
+})
 
 // Get fee information from the server
-const info = await wallet.arkProvider.getInfo();
+const { fees } = await wallet.arkProvider.getInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
-  onchainAddress,
-  info.fees
+  'bc1p...',
+  fees
 );
 ```
 
