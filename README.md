@@ -513,9 +513,9 @@ console.log('Fee address:', info.delegatorAddress)
 Sign and verify messages using [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki). Supports P2TR (Taproot) signing, and verification for P2TR, P2WPKH, and legacy P2PKH addresses.
 
 ```typescript
-import { BIP322, SingleKey } from '@arkade-os/sdk'
+import { BIP322, MnemonicIdentity } from '@arkade-os/sdk'
 
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 // Sign a message (P2TR key-spend)
 const signature = await BIP322.sign('Hello Bitcoin!', identity)
