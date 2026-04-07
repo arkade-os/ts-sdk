@@ -122,18 +122,17 @@ import { wordlist } from '@scure/bip39/wordlists/english.js'
 const mnemonic = generateMnemonic(wordlist)
 
 // Create identity from a 12 or 24 word mnemonic
-const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: true })
+const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 
 // With optional passphrase for additional security
 const identityWithPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
-  isMainnet: true,
   passphrase: 'my secret passphrase'
 })
 
 // Create wallet as usual
 const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  identity: identityWithPassphrase,
+  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
