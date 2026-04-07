@@ -443,12 +443,12 @@ To run a delegator, you'll need to set up a [Fulmine server](https://github.com/
 ```typescript
 import { Wallet, SingleKey, RestDelegatorProvider } from '@arkade-os/sdk'
 
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = SingleKey.fromHex('e09ca...56609')
 
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  delegatorProvider: new RestDelegatorProvider('https://delegator.example.com'),
+  arkServerUrl: 'https://arkade.computer',
+  delegatorProvider: new RestDelegatorProvider('http://localhost:7001'),
 })
 ```
 
