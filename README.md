@@ -459,13 +459,14 @@ const wallet = await Wallet.create({
 Once the wallet is configured with a delegator, use `wallet.delegatorManager` to delegate your VTXOs:
 
 ```typescript
-// Get spendable VTXOs
+// Get spendable VTXOs (including recoverable)
 const vtxos = (await wallet.getVtxos({ withRecoverable: true }))
   .filter(v => v.virtualStatus.type === 'confirmed')
 
 // Delegate all VTXOs — the delegator will renew them before expiry
-const myAddress = await wallet.getAddress()
-const result = await wallet.delegatorManager.delegate(vtxos, myAddress)
+const arkadeAddress = await wallet.getAddress()
+const delegatorManager = await wallet.getDelegatorManager();
+const delegationResult = await delegatorManager.delegate(vtxos, arkadeAddress)
 
 console.log('Delegated:', result.delegated.length)
 console.log('Failed:', result.failed.length)
@@ -476,7 +477,7 @@ The `delegate` method groups VTXOs by expiry date and submits them to the delega
 ```typescript
 // Delegate with a specific renewal time
 const delegateAt = new Date(Date.now() + 12 * 60 * 60 * 1000) // 12 hours from now
-await wallet.delegatorManager.delegate(vtxos, myAddress, delegateAt)
+await delegatorManager.delegate(vtxos, arkadeAddress, delegateAt)
 ```
 
 #### Service Worker Integration
