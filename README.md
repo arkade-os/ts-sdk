@@ -575,7 +575,7 @@ const exitTxid = await new Ramps(wallet).offboard(
 
 ### Unilateral Exit
 
-Unilateral exit allows you to withdraw your funds from the Ark protocol back to the Bitcoin blockchain without requiring cooperation from the Ark server. This process involves two main steps:
+Unilateral exit allows you to withdraw your funds from the Arkade protocol back to the Bitcoin blockchain without requiring cooperation from the Arkade server. This process involves two main steps:
 
 1. **Unrolling**: Broadcasting the transaction chain from off-chain back to on-chain
 2. **Completing the exit**: Spending the unrolled VTXOs after the timelock expires
