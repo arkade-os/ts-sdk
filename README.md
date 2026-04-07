@@ -219,7 +219,7 @@ Onboarding allows you to swap on-chain funds into VTXOs:
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
 
-const onboardTxid = await new Ramps(wallet).onboard();
+const boardingTxId = await new Ramps(wallet).onboard();
 ```
 
 ### Checking Balance
