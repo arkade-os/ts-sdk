@@ -235,7 +235,7 @@ console.log('Offchain Preconfirmed:', balance.preconfirmed)
 console.log('Recoverable:', balance.recoverable)
 
 // Get virtual UTXOs (off-chain)
-const virtualCoins = await wallet.getVtxos()
+const virtualUtxos = await wallet.getVtxos()
 
 // Get boarding UTXOs
 const boardingUtxos = await wallet.getBoardingUtxos()
@@ -244,10 +244,10 @@ const boardingUtxos = await wallet.getBoardingUtxos()
 ### Sending Bitcoin
 
 ```typescript
-// Send bitcoin via Ark
-const txid = await wallet.sendBitcoin({
-  address: 'ark1qq4...', // ark address
-  amount: 50000,         // in satoshis
+// Send bitcoin instantly offchain
+const txid = await wallet.send({
+  address: 'ark1q...',  // arkade address
+  amount: 50_000,       // in satoshis
 })
 ```
 
