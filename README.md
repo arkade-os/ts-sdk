@@ -388,12 +388,10 @@ This settles expiring and recoverable VTXOs back to your wallet, refreshing thei
 ```typescript
 // Renew all VTXOs to prevent expiration
 const txid = await manager.renewVtxos()
-console.log('Renewed:', txid)
-
 // Check which VTXOs are expiring soon
 const expiringVtxos = await manager.getExpiringVtxos()
-// Override thresholdMs (e.g., renew when 5 seconds of time remains)
-const urgentlyExpiring = await manager.getExpiringVtxos(5_000)
+// Override thresholdMs (e.g., get VTXOs expiring in the next 60 seconds)
+const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 ```
 
 #### Boarding UTXO Sweep
