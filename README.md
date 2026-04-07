@@ -19,27 +19,18 @@ npm install @arkade-os/sdk
 import {
   MnemonicIdentity,
   Wallet,
-  IndexedDBWalletRepository,
-  IndexedDBContractRepository
 } from '@arkade-os/sdk'
 import { generateMnemonic } from '@scure/bip39'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
 
 // Generate a new mnemonic or use an existing one
 const mnemonic = generateMnemonic(wordlist)
-const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: false })
+const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 
-// Create a wallet with Ark support
+// Create a wallet with Arkade support
 const wallet = await Wallet.create({
   identity,
-  // Esplora API, can be left empty - mempool.space API will be used
-  esploraUrl: 'https://mutinynet.com/api',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Optional: provide repositories for persistence (defaults to IndexedDB)
-  // storage: {
-  //   walletRepository: new IndexedDBWalletRepository('my-wallet-db'),
-  //   contractRepository: new IndexedDBContractRepository('my-wallet-db')
-  // }
+  arkServerUrl: 'https://arkade.computer',
 })
 ```
 
