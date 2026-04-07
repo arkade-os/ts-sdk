@@ -926,16 +926,15 @@ See [`examples/node/multiple-wallets.ts`](examples/node/multiple-wallets.ts) for
 For React Native and Expo applications where standard EventSource and fetch streaming may not work properly, use the Expo-compatible providers:
 
 ```typescript
-import { Wallet, SingleKey } from '@arkade-os/sdk'
+import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
 import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
 
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 const wallet = await Wallet.create({
   identity: identity,
-  esploraUrl: 'https://mutinynet.com/api',
-  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'), // For settlement events and transactions streaming
-  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'), // For address subscriptions and VTXO updates
+  arkProvider: new ExpoArkProvider('https://arkade.computer'), // For settlement events and transactions streaming
+  indexerProvider: new ExpoIndexerProvider('https://arkade.computer'), // For address subscriptions and VTXO updates
 })
 
 // use expo/fetch for streaming support (SSE)
