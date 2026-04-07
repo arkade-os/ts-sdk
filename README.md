@@ -1099,7 +1099,7 @@ await wallet.contractRepository.saveToContractCollection(
 const swaps = await wallet.contractRepository.getContractCollection('swaps')
 ```
 
-_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
+_For complete API documentation, visit our [TypeDoc documentation](https://arkade-os.github.io/ts-sdk/)._
 
 ## Development
 
