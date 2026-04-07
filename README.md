@@ -583,10 +583,10 @@ Unilateral exit allows you to withdraw your funds from the Arkade protocol back 
 #### Step 1: Unrolling VTXOs
 
 ```typescript
-import { Unroll, OnchainWallet, SingleKey } from '@arkade-os/sdk'
+import { MnemonicIdentity, OnchainWallet, Unroll } from '@arkade-os/sdk'
 
 // Create an identity for the onchain wallet
-const onchainIdentity = SingleKey.fromHex('your_onchain_private_key_hex');
+const onchainIdentity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 // Create an onchain wallet to pay for P2A outputs in VTXO branches
 // OnchainWallet implements the AnchorBumper interface
