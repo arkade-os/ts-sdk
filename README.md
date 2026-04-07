@@ -34,9 +34,9 @@ const wallet = await Wallet.create({
 })
 ```
 
-### Readonly Wallets (Watch-Only)
+### Read-Only Wallets (Watch-Only)
 
-The SDK supports readonly wallets that allow you to query wallet state without exposing private keys. This is useful for:
+The SDK supports read-only wallets that allow you to query wallet state without exposing private keys. This is useful for:
 
 - **Watch-only wallets**: Monitor addresses and balances without transaction capabilities
 - **Public interfaces**: Display wallet information safely in public-facing applications
