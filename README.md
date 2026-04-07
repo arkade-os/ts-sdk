@@ -396,7 +396,7 @@ const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 
 #### Boarding UTXO Sweep
 
-When a boarding UTXO's CSV timelock expires, it can no longer be onboarded into Ark cooperatively. The sweep feature detects these expired UTXOs and builds a raw on-chain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
+When a boarding UTXO's CSV timelock expires, it can no longer be onboarded into Arkade cooperatively. The sweep feature detects these expired UTXOs and builds a raw on-chain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
 
 - Multiple expired UTXOs are batched into a single transaction (many inputs, one output)
 - A dust check ensures the sweep is skipped if fees would consume the entire value
