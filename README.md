@@ -871,14 +871,15 @@ For ephemeral storage (no persistence), pass the in-memory repositories:
 
 ```typescript
 import {
+  MnemonicIdentity,
+  Wallet,
   InMemoryWalletRepository,
-  InMemoryContractRepository,
-  Wallet
+  InMemoryContractRepository
 } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new InMemoryWalletRepository(),
     contractRepository: new InMemoryContractRepository()
