@@ -808,7 +808,7 @@ See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
 a full working example using `better-sqlite3`.
 
 ```typescript
-import { SingleKey, Wallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
 import Database from 'better-sqlite3'
 
@@ -822,8 +822,8 @@ const executor: SQLExecutor = {
 }
 
 const wallet = await Wallet.create({
-  identity: SingleKey.fromHex('your_private_key_hex'),
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
     contractRepository: new SQLiteContractRepository(executor),
