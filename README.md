@@ -900,7 +900,7 @@ import { EventSource } from "eventsource";
 (globalThis as any).EventSource = EventSource;
 
 // Use dynamic import so the polyfill is set before the SDK evaluates
-const { Wallet, SingleKey, Ramps } = await import("@arkade-os/sdk");
+const { Wallet } = await import("@arkade-os/sdk");
 ```
 
 If you also need IndexedDB persistence (e.g. for `WalletRepository`), set up the shim before any SDK import:
