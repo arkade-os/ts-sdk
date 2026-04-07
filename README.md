@@ -855,11 +855,11 @@ In the browser, the SDK defaults to IndexedDB repositories when no `storage`
 is provided:
 
 ```typescript
-import { SingleKey, Wallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
-  identity: SingleKey.fromHex('your_private_key_hex'),
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer',
   // Uses IndexedDB by default in the browser
 })
 ```
