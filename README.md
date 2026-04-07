@@ -841,7 +841,7 @@ import { RealmWalletRepository, RealmContractRepository, ArkRealmSchemas } from 
 const realm = await Realm.open({ schema: [...ArkRealmSchemas, ...yourSchemas] })
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new RealmWalletRepository(realm),
     contractRepository: new RealmContractRepository(realm),
