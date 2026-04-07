@@ -434,7 +434,7 @@ const balance = await manager.getRecoverableBalance()
 
 Delegation allows you to outsource VTXO renewal to a third-party delegator service. Instead of renewing VTXOs yourself, the delegator will automatically settle them before they expire, sending the funds back to your wallet address (minus a service fee). This is useful for wallets that cannot be online 24/7.
 
-When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Ark server.
+When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Arkade server.
 
 #### Setting Up a Wallet with Delegation
 
