@@ -26,7 +26,7 @@
   ],
   "defaultCategory": "Other",
   "readme": "./README.md",
-  "name": "@arkade-os/sdk Documentation",
+  "name": "Arkade TypeScript SDK Documentation",
   "theme": "default",
   "hideGenerator": false,
   "searchInComments": true,
