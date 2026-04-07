@@ -485,13 +485,13 @@ await delegatorManager.delegate(vtxos, arkadeAddress, delegateAt)
 When using a service worker wallet, pass the `delegatorUrl` option. The service worker will automatically delegate VTXOs after each VTXO update:
 
 ```typescript
-import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
+import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity: SingleKey.fromHex('your_private_key_hex'),
-  delegatorUrl: 'https://delegator.example.com',
+  arkServerUrl: 'https://arkade.computer',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  delegatorUrl: 'http://localhost:7001',
 })
 ```
 
