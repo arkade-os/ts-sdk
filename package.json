@@ -165,12 +165,20 @@
         }
     },
     "keywords": [
-        "bitcoin",
-        "wallet",
-        "taproot",
         "ark",
+        "arkade",
+        "bip39",
+        "bitcoin",
+        "btc",
+        "crypto",
+        "lightning",
         "sdk",
-        "arkade"
+        "stablecoin",
+        "taproot",
+        "typescript",
+        "utxo",
+        "vtxo",
+        "wallet"
     ],
     "author": "Ark Labs",
     "license": "MIT",
