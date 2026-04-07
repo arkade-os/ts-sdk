@@ -144,13 +144,13 @@ import { mnemonicToSeedSync } from '@scure/bip39'
 
 // If you already have a 64-byte seed
 const seed = mnemonicToSeedSync(mnemonic)
-const identity = SeedIdentity.fromSeed(seed, { isMainnet: true })
+const identity = SeedIdentity.fromSeed(seed)
 
 // Or with a custom output descriptor
-const identity2 = SeedIdentity.fromSeed(seed, { descriptor })
+const identityWithDescriptor = SeedIdentity.fromSeed(seed, { descriptor })
 
 // Or with a custom descriptor and passphrase (MnemonicIdentity)
-const identity3 = MnemonicIdentity.fromMnemonic(mnemonic, {
+const identityWithDescriptorAndPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
   descriptor,
   passphrase: 'my secret passphrase'
 })
@@ -161,9 +161,13 @@ const identity3 = MnemonicIdentity.fromMnemonic(mnemonic, {
 Create watch-only wallets from an output descriptor:
 
 ```typescript
-import { ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+import { generateMnemonic } from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english.js'
 
 // From a full identity
+const mnemonic = generateMnemonic(wordlist)
+const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 const readonly = await identity.toReadonly()
 
 // Or directly from a descriptor (e.g., from another wallet)
@@ -173,7 +177,7 @@ const readonlyFromDescriptor = ReadonlyDescriptorIdentity.fromDescriptor(descrip
 // Use in a watch-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonly,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 
 // Can query but not sign
