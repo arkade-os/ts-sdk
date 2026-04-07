@@ -436,6 +436,8 @@ Delegation allows you to outsource VTXO renewal to a third-party delegator servi
 
 When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Arkade server.
 
+To run a delegator, you'll need to set up a [Fulmine server](https://github.com/ArkLabsHQ/fulmine) with the [Delegation API](https://github.com/ArkLabsHQ/fulmine?tab=readme-ov-file#-delegate-api) enabled.
+
 #### Setting Up a Wallet with Delegation
 
 ```typescript
