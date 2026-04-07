@@ -197,17 +197,17 @@ The descriptor format (`tr([fingerprint/path']xpub.../0/0)`) is HD-ready — fut
 import { waitForIncomingFunds } from '@arkade-os/sdk'
 
 // Get wallet addresses
-const arkAddress = await wallet.getAddress()
+const arkadeAddress = await wallet.getAddress()
 const boardingAddress = await wallet.getBoardingAddress()
-console.log('Ark Address:', arkAddress)
-console.log('Boarding Address:', boardingAddress)
+console.log('Arkade Address:', arkadeAddress)
+console.log('Boarding (Mainnet) Address:', boardingAddress)
 
 const incomingFunds = await waitForIncomingFunds(wallet)
 if (incomingFunds.type === "vtxo") {
-  // Virtual coins received 
+  // Virtual UTXOs received 
   console.log("VTXOs: ", incomingFunds.vtxos)
 } else if (incomingFunds.type === "utxo") {
-  // Boarding coins received
+  // Boarding UTXOs received
   console.log("UTXOs: ", incomingFunds.coins)
 }
 ```
