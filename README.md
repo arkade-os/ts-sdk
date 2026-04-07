@@ -533,6 +533,23 @@ BIP322.verify('Hello Bitcoin!', sig, '1A1zP1...')  // legacy P2PKH
 ```typescript
 // Get transaction history
 const history = await wallet.getTransactionHistory()
+/*
+{
+    key: {
+        boardingTxid: string;
+        commitmentTxid: string;
+        arkTxid: string;
+    };
+    type: "SENT" | "RECEIVED";
+    amount: number;
+    settled: boolean;
+    createdAt: number;
+    assets?: Array<{
+        assetId: string,
+        amount: number
+    }>
+}
+*/
 ```
 
 ### Offboarding
