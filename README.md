@@ -332,9 +332,16 @@ VTXO renewal at 3 days and boarding UTXO sweep enabled.
 ```typescript
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Enable settlement with defaults explicitly
-  settlementConfig: {},
+  arkServerUrl: 'https://arkade.computer',
+  // Enable settlement with defaults explicitly:
+  settlementConfig: {
+    // Seconds before VTXO expiry to trigger renewal
+    vtxoThreshold: 259200, // 3 days
+    // Whether to sweep expired boarding UTXOs back to a fresh boarding address
+    boardingUtxoSweep: true,
+    // Polling interval in milliseconds for checking boarding UTXOs
+    pollIntervalMs: 60000 // 1 minute
+  },
 })
 ```
 
@@ -342,7 +349,7 @@ const wallet = await Wallet.create({
 // Enable both VTXO renewal and boarding UTXO sweep
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkServerUrl: 'https://arkade.computer',
   settlementConfig: {
     vtxoThreshold: 86400,      // renew when 24 hours remain (in seconds)
     boardingUtxoSweep: true,   // sweep expired boarding UTXOs
@@ -354,7 +361,7 @@ const wallet = await Wallet.create({
 // Explicitly disable all settlement
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkServerUrl: 'https://arkade.computer',
   settlementConfig: false,
 })
 ```
@@ -366,7 +373,7 @@ import { VtxoManager } from '@arkade-os/sdk'
 
 const manager = new VtxoManager(
   wallet,
-  undefined,               // deprecated renewalConfig
+  undefined,               // renewalConfig (deprecated)
   wallet.settlementConfig  // new settlementConfig
 )
 ```
