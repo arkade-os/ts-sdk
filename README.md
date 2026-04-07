@@ -253,38 +253,44 @@ const txid = await wallet.send({
 
 ### Assets (Issue, Reissue, Burn, Send)
 
-The wallet's `assetManager` lets you create and manage assets on Ark. `send` method supports sending assets.
+The wallet's `assetManager` lets you create and manage assets on Arkade. The `send` method supports sending assets.
 
 ```typescript
 // Issue a new asset (non-reissuable by default)
-const controlAssetIssuance = await wallet.assetManager.issue({
-  amount: 1000,
-  metadata: { name: 'My Token', ticker: 'MTK', decimals: 8 },
+const { assetId: controlAssetId } = await wallet.assetManager.issue({
+  amount: 1,
+  metadata: {
+    ticker: 'ctrl-MTK'
+  }
 })
 
-// Issue a new asset using the control asset as reference
-const assetIssuance = await wallet.assetManager.issue({
+// Issue a new asset referencing the control asset
+const { assetId } = await wallet.assetManager.issue({
   amount: 500,
-  controlAssetId: controlAssetIssuance.assetId,
+  controlAssetId,
 })
 
-// Reissue more supply of the asset, need ownership of the control asset
-const reissuanceTxid = await wallet.assetManager.reissue({
-  assetId: assetIssuance.assetId,
+// Reissue more supply of the asset (requires ownership of the control asset)
+const reissuanceTxId = await wallet.assetManager.reissue({
+  assetId,
   amount: 500,
 })
 
 // Burn some of the asset
-const burnTxid = await wallet.assetManager.burn({
-  assetId: assetIssuance.assetId,
+const burnTxId = await wallet.assetManager.burn({
+  assetId,
   amount: 200,
 })
 
-// Send asset to another Ark address
-const sendTxid = await wallet.send({
-  address: 'ark1qq4...',
-  assets: [{ assetId: assetIssuance.assetId, amount: 100 }],
+// Send asset to another Arkade address
+const sendTxId = await wallet.send({
+  address: 'ark1q...',
+  assets: [{ assetId, amount: 100 }],
 })
+
+// Check remaining balance
+const { assets } = await wallet.getBalance()
+const assetBalance = assets.find(asset => asset.assetId === assetId)?.amount
 ```
 
 ### Batch Settlements
