@@ -989,7 +989,7 @@ if (!global.crypto) global.crypto = {} as any;
 global.crypto.getRandomValues = Crypto.getRandomValues;
 
 // Now import the SDK
-import { Wallet, SingleKey } from '@arkade-os/sdk';
+import { Wallet, MnemonicIdentity } from '@arkade-os/sdk';
 import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
 ```
 
