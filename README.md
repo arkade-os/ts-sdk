@@ -710,12 +710,9 @@ differ in orchestration and communication.
 See the platform READMEs for architecture details, runtime flow, and usage
 examples.
 
-
-
 ### Repositories (Storage)
 
-The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
-`storage`, the SDK uses IndexedDB repositories with the default database name.
+The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `storage`, the SDK uses IndexedDB repositories with the default database name.
 
 #### Migration from v1 StorageAdapter
 
