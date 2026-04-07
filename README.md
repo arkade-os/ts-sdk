@@ -90,10 +90,10 @@ const balance = await readonlyWallet.getBalance()
 #### Converting Identity to Read-Only
 
 ```typescript
-import { SingleKey } from '@arkade-os/sdk'
+import { MnemonicIdentity } from '@arkade-os/sdk'
 
 // Full identity
-const identity = SingleKey.fromHex('e09ca...56609')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 // Convert to read-only (no signing capability)
 const readonlyIdentity = await identity.toReadonly()
