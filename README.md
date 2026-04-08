@@ -1,8 +1,8 @@
 # Arkade TypeScript SDK
 
-The Arkade SDK is a TypeScript library for building Bitcoin wallets with support for both on-chain and off-chain transactions via the Ark protocol.
+The Arkade SDK is a TypeScript library for building Bitcoin wallets using the Arkade protocol.
 
-[![TypeScript Documentation](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
+[![TypeDoc](https://img.shields.io/badge/TypeScript-Documentation-blue?style=flat-square)](https://arkade-os.github.io/ts-sdk/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/arkade-os/ts-sdk)
 
 ## Installation
@@ -19,52 +19,43 @@ npm install @arkade-os/sdk
 import {
   MnemonicIdentity,
   Wallet,
-  IndexedDBWalletRepository,
-  IndexedDBContractRepository
 } from '@arkade-os/sdk'
 import { generateMnemonic } from '@scure/bip39'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
 
 // Generate a new mnemonic or use an existing one
 const mnemonic = generateMnemonic(wordlist)
-const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: false })
+const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 
-// Create a wallet with Ark support
+// Create a wallet with Arkade support
 const wallet = await Wallet.create({
   identity,
-  // Esplora API, can be left empty - mempool.space API will be used
-  esploraUrl: 'https://mutinynet.com/api',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Optional: provide repositories for persistence (defaults to IndexedDB)
-  // storage: {
-  //   walletRepository: new IndexedDBWalletRepository('my-wallet-db'),
-  //   contractRepository: new IndexedDBContractRepository('my-wallet-db')
-  // }
+  arkServerUrl: 'https://arkade.computer',
 })
 ```
 
-### Readonly Wallets (Watch-Only)
+### Read-Only Wallets (Watch-Only)
 
-The SDK supports readonly wallets that allow you to query wallet state without exposing private keys. This is useful for:
+The SDK supports read-only wallets that allow you to query wallet state without exposing private keys. This is useful for:
 
 - **Watch-only wallets**: Monitor addresses and balances without transaction capabilities
 - **Public interfaces**: Display wallet information safely in public-facing applications
 - **Separate concerns**: Keep signing operations isolated from query operations
 
-#### Creating a Readonly Wallet
+#### Creating a Read-Only Wallet
 
 ```typescript
 import { ReadonlySingleKey, ReadonlyWallet } from '@arkade-os/sdk'
 
-// Create a readonly identity from a public key
-const identity = SingleKey.fromHex('your_public_key_hex')
+// Create a read-only identity from a public key
+const identity = SingleKey.fromHex('e09ca...56609')
 const publicKey = await identity.compressedPublicKey()
 const readonlyIdentity = ReadonlySingleKey.fromPublicKey(publicKey)
 
-// Create a readonly wallet
+// Create a read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 
 // Query operations work normally
@@ -74,43 +65,43 @@ const vtxos = await readonlyWallet.getVtxos()
 const history = await readonlyWallet.getTransactionHistory()
 
 // Transaction methods are not available (TypeScript will prevent this)
-// await readonlyWallet.sendBitcoin(...) // ❌ Type error!
+// await readonlyWallet.send(...) // ❌ Type error!
 ```
 
-#### Converting Wallets to Readonly
+#### Converting Wallets to Read-Only
 
 ```typescript
-import { Wallet, SingleKey } from '@arkade-os/sdk'
+import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 // Create a full wallet
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 
-// Convert to readonly wallet (safe to share)
+// Convert to read-only wallet (safe to share)
 const readonlyWallet = await wallet.toReadonly()
 
-// The readonly wallet can query but not transact
+// The read-only wallet can query but not transact
 const balance = await readonlyWallet.getBalance()
 ```
 
-#### Converting Identity to Readonly
+#### Converting Identity to Read-Only
 
 ```typescript
-import { SingleKey } from '@arkade-os/sdk'
+import { MnemonicIdentity } from '@arkade-os/sdk'
 
 // Full identity
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
-// Convert to readonly (no signing capability)
+// Convert to read-only (no signing capability)
 const readonlyIdentity = await identity.toReadonly()
 
-// Use in readonly wallet
+// Use in read-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonlyIdentity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
@@ -131,18 +122,17 @@ import { wordlist } from '@scure/bip39/wordlists/english.js'
 const mnemonic = generateMnemonic(wordlist)
 
 // Create identity from a 12 or 24 word mnemonic
-const identity = MnemonicIdentity.fromMnemonic(mnemonic, { isMainnet: true })
+const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 
 // With optional passphrase for additional security
 const identityWithPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
-  isMainnet: true,
   passphrase: 'my secret passphrase'
 })
 
 // Create wallet as usual
 const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  identity: identityWithPassphrase,
+  arkServerUrl: 'https://arkade.computer'
 })
 ```
 
@@ -154,13 +144,13 @@ import { mnemonicToSeedSync } from '@scure/bip39'
 
 // If you already have a 64-byte seed
 const seed = mnemonicToSeedSync(mnemonic)
-const identity = SeedIdentity.fromSeed(seed, { isMainnet: true })
+const identity = SeedIdentity.fromSeed(seed)
 
 // Or with a custom output descriptor
-const identity2 = SeedIdentity.fromSeed(seed, { descriptor })
+const identityWithDescriptor = SeedIdentity.fromSeed(seed, { descriptor })
 
 // Or with a custom descriptor and passphrase (MnemonicIdentity)
-const identity3 = MnemonicIdentity.fromMnemonic(mnemonic, {
+const identityWithDescriptorAndPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
   descriptor,
   passphrase: 'my secret passphrase'
 })
@@ -171,9 +161,13 @@ const identity3 = MnemonicIdentity.fromMnemonic(mnemonic, {
 Create watch-only wallets from an output descriptor:
 
 ```typescript
-import { ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
+import { generateMnemonic } from '@scure/bip39'
+import { wordlist } from '@scure/bip39/wordlists/english.js'
 
 // From a full identity
+const mnemonic = generateMnemonic(wordlist)
+const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 const readonly = await identity.toReadonly()
 
 // Or directly from a descriptor (e.g., from another wallet)
@@ -183,7 +177,7 @@ const readonlyFromDescriptor = ReadonlyDescriptorIdentity.fromDescriptor(descrip
 // Use in a watch-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
   identity: readonly,
-  arkServerUrl: 'https://mutinynet.arkade.sh'
+  arkServerUrl: 'https://arkade.computer'
 })
 
 // Can query but not sign
@@ -203,17 +197,17 @@ The descriptor format (`tr([fingerprint/path']xpub.../0/0)`) is HD-ready — fut
 import { waitForIncomingFunds } from '@arkade-os/sdk'
 
 // Get wallet addresses
-const arkAddress = await wallet.getAddress()
+const arkadeAddress = await wallet.getAddress()
 const boardingAddress = await wallet.getBoardingAddress()
-console.log('Ark Address:', arkAddress)
-console.log('Boarding Address:', boardingAddress)
+console.log('Arkade Address:', arkadeAddress)
+console.log('Boarding (Mainnet) Address:', boardingAddress)
 
 const incomingFunds = await waitForIncomingFunds(wallet)
 if (incomingFunds.type === "vtxo") {
-  // Virtual coins received 
+  // Virtual UTXOs received 
   console.log("VTXOs: ", incomingFunds.vtxos)
 } else if (incomingFunds.type === "utxo") {
-  // Boarding coins received
+  // Boarding UTXOs received
   console.log("UTXOs: ", incomingFunds.coins)
 }
 ```
@@ -225,7 +219,7 @@ Onboarding allows you to swap on-chain funds into VTXOs:
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
 
-const onboardTxid = await new Ramps(wallet).onboard();
+const boardingTxId = await new Ramps(wallet).onboard();
 ```
 
 ### Checking Balance
@@ -241,7 +235,7 @@ console.log('Offchain Preconfirmed:', balance.preconfirmed)
 console.log('Recoverable:', balance.recoverable)
 
 // Get virtual UTXOs (off-chain)
-const virtualCoins = await wallet.getVtxos()
+const virtualUtxos = await wallet.getVtxos()
 
 // Get boarding UTXOs
 const boardingUtxos = await wallet.getBoardingUtxos()
@@ -250,60 +244,73 @@ const boardingUtxos = await wallet.getBoardingUtxos()
 ### Sending Bitcoin
 
 ```typescript
-// Send bitcoin via Ark
-const txid = await wallet.sendBitcoin({
-  address: 'ark1qq4...', // ark address
-  amount: 50000,         // in satoshis
+// Send bitcoin instantly offchain
+const txid = await wallet.send({
+  address: 'ark1q...',  // arkade address
+  amount: 50_000,       // in satoshis
 })
 ```
 
 ### Assets (Issue, Reissue, Burn, Send)
 
-The wallet's `assetManager` lets you create and manage assets on Ark. `send` method supports sending assets.
+The wallet's `assetManager` lets you create and manage assets on Arkade. The `send` method supports sending assets.
 
 ```typescript
 // Issue a new asset (non-reissuable by default)
-const controlAssetIssuance = await wallet.assetManager.issue({
-  amount: 1000,
-  metadata: { name: 'My Token', ticker: 'MTK', decimals: 8 },
+const { assetId: controlAssetId } = await wallet.assetManager.issue({
+  amount: 1,
+  metadata: {
+    ticker: 'ctrl-MTK'
+  }
 })
 
-// Issue a new asset using the control asset as reference
-const assetIssuance = await wallet.assetManager.issue({
+// Issue a new asset referencing the control asset
+const { assetId } = await wallet.assetManager.issue({
   amount: 500,
-  controlAssetId: controlAssetIssuance.assetId,
+  controlAssetId,
 })
 
-// Reissue more supply of the asset, need ownership of the control asset
-const reissuanceTxid = await wallet.assetManager.reissue({
-  assetId: assetIssuance.assetId,
+// Reissue more supply of the asset (requires ownership of the control asset)
+const reissuanceTxId = await wallet.assetManager.reissue({
+  assetId,
   amount: 500,
 })
 
 // Burn some of the asset
-const burnTxid = await wallet.assetManager.burn({
-  assetId: assetIssuance.assetId,
+const burnTxId = await wallet.assetManager.burn({
+  assetId,
   amount: 200,
 })
 
-// Send asset to another Ark address
-const sendTxid = await wallet.send({
-  address: 'ark1qq4...',
-  assets: [{ assetId: assetIssuance.assetId, amount: 100 }],
+// Send asset to another Arkade address
+const sendTxId = await wallet.send({
+  address: 'ark1q...',
+  assets: [{ assetId, amount: 100 }],
 })
+
+// Check remaining balance
+const { assets } = await wallet.getBalance()
+const assetBalance = assets.find(asset => asset.assetId === assetId)?.amount
 ```
 
-### Batch Settlements
+### Batch Settlement
 
-This can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs and VTXOs.
+The `settle` method can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs to VTXOs.
 
 ```typescript
+// Fetch offchain preconfirmed VTXOs and onchain boarding UTXOs
+const [virtualUtxos, boardingUtxos] = await Promise.all([
+  wallet.getVtxos(),
+  wallet.getBoardingUtxos()
+])
+
 // For settling transactions
-const settleTxid = await wallet.settle({
-  inputs, // from getVtxos() or getBoardingUtxos()
+const settlementTxId = await wallet.settle({
+  inputs: [...virtualUtxos, ...boardingUtxos],
+  // Optional: specify a mainnet output
   outputs: [{
-    address: destinationAddress,
-    amount: BigInt(amount)
+    address: "bc1p...",
+    amount: 100_000n
   }]
 })
 ```
@@ -325,9 +332,16 @@ VTXO renewal at 3 days and boarding UTXO sweep enabled.
 ```typescript
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  // Enable settlement with defaults explicitly
-  settlementConfig: {},
+  arkServerUrl: 'https://arkade.computer',
+  // Enable settlement with defaults explicitly:
+  settlementConfig: {
+    // Seconds before VTXO expiry to trigger renewal
+    vtxoThreshold: 259200, // 3 days
+    // Whether to sweep expired boarding UTXOs back to a fresh boarding address
+    boardingUtxoSweep: true,
+    // Polling interval in milliseconds for checking boarding UTXOs
+    pollIntervalMs: 60000 // 1 minute
+  },
 })
 ```
 
@@ -335,7 +349,7 @@ const wallet = await Wallet.create({
 // Enable both VTXO renewal and boarding UTXO sweep
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkServerUrl: 'https://arkade.computer',
   settlementConfig: {
     vtxoThreshold: 86400,      // renew when 24 hours remain (in seconds)
     boardingUtxoSweep: true,   // sweep expired boarding UTXOs
@@ -347,7 +361,7 @@ const wallet = await Wallet.create({
 // Explicitly disable all settlement
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkServerUrl: 'https://arkade.computer',
   settlementConfig: false,
 })
 ```
@@ -359,7 +373,7 @@ import { VtxoManager } from '@arkade-os/sdk'
 
 const manager = new VtxoManager(
   wallet,
-  undefined,               // deprecated renewalConfig
+  undefined,               // renewalConfig (deprecated)
   wallet.settlementConfig  // new settlementConfig
 )
 ```
@@ -374,17 +388,15 @@ This settles expiring and recoverable VTXOs back to your wallet, refreshing thei
 ```typescript
 // Renew all VTXOs to prevent expiration
 const txid = await manager.renewVtxos()
-console.log('Renewed:', txid)
-
 // Check which VTXOs are expiring soon
 const expiringVtxos = await manager.getExpiringVtxos()
-// Override thresholdMs (e.g., renew when 5 seconds of time remains)
-const urgentlyExpiring = await manager.getExpiringVtxos(5_000)
+// Override thresholdMs (e.g., get VTXOs expiring in the next 60 seconds)
+const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 ```
 
 #### Boarding UTXO Sweep
 
-When a boarding UTXO's CSV timelock expires, it can no longer be onboarded into Ark cooperatively. The sweep feature detects these expired UTXOs and builds a raw on-chain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
+When a boarding UTXO's CSV timelock expires, it can no longer be onboarded into Arkade cooperatively. The sweep feature detects these expired UTXOs and builds a raw on-chain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
 
 - Multiple expired UTXOs are batched into a single transaction (many inputs, one output)
 - A dust check ensures the sweep is skipped if fees would consume the entire value
@@ -422,19 +434,19 @@ const balance = await manager.getRecoverableBalance()
 
 Delegation allows you to outsource VTXO renewal to a third-party delegator service. Instead of renewing VTXOs yourself, the delegator will automatically settle them before they expire, sending the funds back to your wallet address (minus a service fee). This is useful for wallets that cannot be online 24/7.
 
-When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Ark server.
+When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Arkade server.
+
+To run a delegator, you'll need to set up a [Fulmine server](https://github.com/ArkLabsHQ/fulmine) with the [Delegation API](https://github.com/ArkLabsHQ/fulmine?tab=readme-ov-file#-delegate-api) enabled.
 
 #### Setting Up a Wallet with Delegation
 
 ```typescript
-import { Wallet, SingleKey, RestDelegatorProvider } from '@arkade-os/sdk'
-
-const identity = SingleKey.fromHex('your_private_key_hex')
+import { Wallet, MnemonicIdentity, RestDelegatorProvider } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  delegatorProvider: new RestDelegatorProvider('https://delegator.example.com'),
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer',
+  delegatorProvider: new RestDelegatorProvider('http://localhost:7001'),
 })
 ```
 
@@ -445,13 +457,14 @@ const wallet = await Wallet.create({
 Once the wallet is configured with a delegator, use `wallet.delegatorManager` to delegate your VTXOs:
 
 ```typescript
-// Get spendable VTXOs
+// Get spendable VTXOs (including recoverable)
 const vtxos = (await wallet.getVtxos({ withRecoverable: true }))
   .filter(v => v.virtualStatus.type === 'confirmed')
 
 // Delegate all VTXOs — the delegator will renew them before expiry
-const myAddress = await wallet.getAddress()
-const result = await wallet.delegatorManager.delegate(vtxos, myAddress)
+const arkadeAddress = await wallet.getAddress()
+const delegatorManager = await wallet.getDelegatorManager();
+const delegationResult = await delegatorManager.delegate(vtxos, arkadeAddress)
 
 console.log('Delegated:', result.delegated.length)
 console.log('Failed:', result.failed.length)
@@ -462,7 +475,7 @@ The `delegate` method groups VTXOs by expiry date and submits them to the delega
 ```typescript
 // Delegate with a specific renewal time
 const delegateAt = new Date(Date.now() + 12 * 60 * 60 * 1000) // 12 hours from now
-await wallet.delegatorManager.delegate(vtxos, myAddress, delegateAt)
+await delegatorManager.delegate(vtxos, arkadeAddress, delegateAt)
 ```
 
 #### Service Worker Integration
@@ -470,13 +483,13 @@ await wallet.delegatorManager.delegate(vtxos, myAddress, delegateAt)
 When using a service worker wallet, pass the `delegatorUrl` option. The service worker will automatically delegate VTXOs after each VTXO update:
 
 ```typescript
-import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
+import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity: SingleKey.fromHex('your_private_key_hex'),
-  delegatorUrl: 'https://delegator.example.com',
+  arkServerUrl: 'https://arkade.computer',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  delegatorUrl: 'http://localhost:7001',
 })
 ```
 
@@ -500,9 +513,9 @@ console.log('Fee address:', info.delegatorAddress)
 Sign and verify messages using [BIP-322](https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki). Supports P2TR (Taproot) signing, and verification for P2TR, P2WPKH, and legacy P2PKH addresses.
 
 ```typescript
-import { BIP322, SingleKey } from '@arkade-os/sdk'
+import { BIP322, MnemonicIdentity } from '@arkade-os/sdk'
 
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 // Sign a message (P2TR key-spend)
 const signature = await BIP322.sign('Hello Bitcoin!', identity)
@@ -520,6 +533,23 @@ BIP322.verify('Hello Bitcoin!', sig, '1A1zP1...')  // legacy P2PKH
 ```typescript
 // Get transaction history
 const history = await wallet.getTransactionHistory()
+/*
+{
+    key: {
+        boardingTxid: string;
+        commitmentTxid: string;
+        arkTxid: string;
+    };
+    type: "SENT" | "RECEIVED";
+    amount: number;
+    settled: boolean;
+    createdAt: number;
+    assets?: Array<{
+        assetId: string,
+        amount: number
+    }>
+}
+*/
 ```
 
 ### Offboarding
@@ -527,20 +557,25 @@ const history = await wallet.getTransactionHistory()
 Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an on-chain address:
 
 ```typescript
-import { Ramps } from '@arkade-os/sdk'
+import { Wallet, MnemonicIdentity, Ramps } from '@arkade-os/sdk'
+
+const wallet = await Wallet.create({
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer'
+})
 
 // Get fee information from the server
-const info = await wallet.arkProvider.getInfo();
+const { fees } = await wallet.arkProvider.getInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
-  onchainAddress,
-  info.fees
+  'bc1p...',
+  fees
 );
 ```
 
 ### Unilateral Exit
 
-Unilateral exit allows you to withdraw your funds from the Ark protocol back to the Bitcoin blockchain without requiring cooperation from the Ark server. This process involves two main steps:
+Unilateral exit allows you to withdraw your funds from the Arkade protocol back to the Bitcoin blockchain without requiring cooperation from the Arkade server. This process involves two main steps:
 
 1. **Unrolling**: Broadcasting the transaction chain from off-chain back to on-chain
 2. **Completing the exit**: Spending the unrolled VTXOs after the timelock expires
@@ -548,10 +583,10 @@ Unilateral exit allows you to withdraw your funds from the Ark protocol back to 
 #### Step 1: Unrolling VTXOs
 
 ```typescript
-import { Unroll, OnchainWallet, SingleKey } from '@arkade-os/sdk'
+import { MnemonicIdentity, OnchainWallet, Unroll } from '@arkade-os/sdk'
 
 // Create an identity for the onchain wallet
-const onchainIdentity = SingleKey.fromHex('your_onchain_private_key_hex');
+const onchainIdentity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 // Create an onchain wallet to pay for P2A outputs in VTXO branches
 // OnchainWallet implements the AnchorBumper interface
@@ -643,15 +678,13 @@ bus.start()
 
 ```typescript
 // app.ts
-import { ServiceWorkerWallet, SingleKey } from '@arkade-os/sdk'
-
-const identity = SingleKey.fromHex('your_private_key_hex')
+import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
 
 // One-liner: registers the SW, initializes the MessageBus, and creates the wallet
 const wallet = await ServiceWorkerWallet.setup({
   serviceWorkerPath: '/service-worker.js',
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  identity,
+  arkServerUrl: 'https://arkade.computer',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
 })
 
 // Use like any other wallet — calls are proxied to the service worker
@@ -677,12 +710,9 @@ differ in orchestration and communication.
 See the platform READMEs for architecture details, runtime flow, and usage
 examples.
 
-
-
 ### Repositories (Storage)
 
-The `StorageAdapter` API is deprecated. Use repositories instead. If you omit
-`storage`, the SDK uses IndexedDB repositories with the default database name.
+The `StorageAdapter` API is deprecated. Use repositories instead. If you omit `storage`, the SDK uses IndexedDB repositories with the default database name.
 
 #### Migration from v1 StorageAdapter
 
@@ -778,7 +808,7 @@ See [examples/node/multiple-wallets.ts](examples/node/multiple-wallets.ts) for
 a full working example using `better-sqlite3`.
 
 ```typescript
-import { SingleKey, Wallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 import { SQLiteWalletRepository, SQLiteContractRepository, SQLExecutor } from '@arkade-os/sdk/repositories/sqlite'
 import Database from 'better-sqlite3'
 
@@ -792,8 +822,8 @@ const executor: SQLExecutor = {
 }
 
 const wallet = await Wallet.create({
-  identity: SingleKey.fromHex('your_private_key_hex'),
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
     contractRepository: new SQLiteContractRepository(executor),
@@ -811,7 +841,7 @@ import { RealmWalletRepository, RealmContractRepository, ArkRealmSchemas } from 
 const realm = await Realm.open({ schema: [...ArkRealmSchemas, ...yourSchemas] })
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new RealmWalletRepository(realm),
     contractRepository: new RealmContractRepository(realm),
@@ -825,11 +855,11 @@ In the browser, the SDK defaults to IndexedDB repositories when no `storage`
 is provided:
 
 ```typescript
-import { SingleKey, Wallet } from '@arkade-os/sdk'
+import { MnemonicIdentity, Wallet } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
-  identity: SingleKey.fromHex('your_private_key_hex'),
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer',
   // Uses IndexedDB by default in the browser
 })
 ```
@@ -841,14 +871,15 @@ For ephemeral storage (no persistence), pass the in-memory repositories:
 
 ```typescript
 import {
+  MnemonicIdentity,
+  Wallet,
   InMemoryWalletRepository,
-  InMemoryContractRepository,
-  Wallet
+  InMemoryContractRepository
 } from '@arkade-os/sdk'
 
 const wallet = await Wallet.create({
-  identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
+  identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+  arkServerUrl: 'https://arkade.computer',
   storage: {
     walletRepository: new InMemoryWalletRepository(),
     contractRepository: new InMemoryContractRepository()
@@ -869,7 +900,7 @@ import { EventSource } from "eventsource";
 (globalThis as any).EventSource = EventSource;
 
 // Use dynamic import so the polyfill is set before the SDK evaluates
-const { Wallet, SingleKey, Ramps } = await import("@arkade-os/sdk");
+const { Wallet } = await import("@arkade-os/sdk");
 ```
 
 If you also need IndexedDB persistence (e.g. for `WalletRepository`), set up the shim before any SDK import:
@@ -895,16 +926,15 @@ See [`examples/node/multiple-wallets.ts`](examples/node/multiple-wallets.ts) for
 For React Native and Expo applications where standard EventSource and fetch streaming may not work properly, use the Expo-compatible providers:
 
 ```typescript
-import { Wallet, SingleKey } from '@arkade-os/sdk'
+import { Wallet, MnemonicIdentity } from '@arkade-os/sdk'
 import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo'
 
-const identity = SingleKey.fromHex('your_private_key_hex')
+const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
 const wallet = await Wallet.create({
   identity: identity,
-  esploraUrl: 'https://mutinynet.com/api',
-  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'), // For settlement events and transactions streaming
-  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'), // For address subscriptions and VTXO updates
+  arkProvider: new ExpoArkProvider('https://arkade.computer'), // For settlement events and transactions streaming
+  indexerProvider: new ExpoIndexerProvider('https://arkade.computer'), // For address subscriptions and VTXO updates
 })
 
 // use expo/fetch for streaming support (SSE)
@@ -933,9 +963,9 @@ const executor = {
 
 const wallet = await Wallet.create({
   identity,
-  arkServerUrl: 'https://mutinynet.arkade.sh',
-  arkProvider: new ExpoArkProvider('https://mutinynet.arkade.sh'),
-  indexerProvider: new ExpoIndexerProvider('https://mutinynet.arkade.sh'),
+  arkServerUrl: 'https://arkade.computer',
+  arkProvider: new ExpoArkProvider('https://arkade.computer'),
+  indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
   storage: {
     walletRepository: new SQLiteWalletRepository(executor),
     contractRepository: new SQLiteContractRepository(executor),
@@ -958,7 +988,7 @@ if (!global.crypto) global.crypto = {} as any;
 global.crypto.getRandomValues = Crypto.getRandomValues;
 
 // Now import the SDK
-import { Wallet, SingleKey } from '@arkade-os/sdk';
+import { Wallet, MnemonicIdentity } from '@arkade-os/sdk';
 import { ExpoArkProvider, ExpoIndexerProvider } from '@arkade-os/sdk/adapters/expo';
 ```
 
@@ -1069,7 +1099,7 @@ await wallet.contractRepository.saveToContractCollection(
 const swaps = await wallet.contractRepository.getContractCollection('swaps')
 ```
 
-_For complete API documentation, visit our [TypeScript documentation](https://arkade-os.github.io/ts-sdk/)._
+_For complete API documentation, visit our [TypeDoc documentation](https://arkade-os.github.io/ts-sdk/)._
 
 ## Development
 

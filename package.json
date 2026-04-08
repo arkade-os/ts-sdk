@@ -1,7 +1,7 @@
 {
     "name": "@arkade-os/sdk",
     "version": "0.4.14",
-    "description": "Bitcoin wallet SDK with Taproot and Ark integration",
+    "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
     "type": "module",
     "main": "./dist/cjs/index.js",
     "module": "./dist/esm/index.js",
@@ -165,12 +165,20 @@
         }
     },
     "keywords": [
-        "bitcoin",
-        "wallet",
-        "taproot",
         "ark",
+        "arkade",
+        "bip39",
+        "bitcoin",
+        "btc",
+        "crypto",
+        "lightning",
         "sdk",
-        "arkade"
+        "stablecoin",
+        "taproot",
+        "typescript",
+        "utxo",
+        "vtxo",
+        "wallet"
     ],
     "author": "Ark Labs",
     "license": "MIT",
