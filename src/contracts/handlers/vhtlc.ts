@@ -8,6 +8,7 @@ import {
     PathSelection,
 } from "../types";
 import {
+    isCltvSatisfied,
     isCsvSpendable,
     resolveRole,
     sequenceToTimelock,
@@ -104,7 +105,6 @@ export const VHTLCContractHandler: ContractHandler<
         const role = resolveRole(contract, context);
         const preimage = contract.params?.preimage;
         const refundLocktime = BigInt(contract.params.refundLocktime);
-        const currentTimeSec = Math.floor(context.currentTime / 1000);
 
         if (!role) {
             return null;
@@ -118,7 +118,7 @@ export const VHTLCContractHandler: ContractHandler<
                 };
             }
 
-            if (role === "sender" && BigInt(currentTimeSec) >= refundLocktime) {
+            if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
                 return {
                     leaf: script.refundWithoutReceiver(),
                 };
@@ -219,7 +219,6 @@ export const VHTLCContractHandler: ContractHandler<
 
         const preimage = contract.params?.preimage;
         const refundLocktime = BigInt(contract.params.refundLocktime);
-        const currentTimeSec = Math.floor(context.currentTime / 1000);
 
         if (context.collaborative) {
             if (role === "receiver" && preimage) {
@@ -228,7 +227,7 @@ export const VHTLCContractHandler: ContractHandler<
                     extraWitness: [hex.decode(preimage)],
                 });
             }
-            if (role === "sender" && BigInt(currentTimeSec) >= refundLocktime) {
+            if (role === "sender" && isCltvSatisfied(context, refundLocktime)) {
                 paths.push({
                     leaf: script.refundWithoutReceiver(),
                 });
