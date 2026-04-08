@@ -1,13 +1,28 @@
-node_modules/
-dist/
-docs/
-.mintlify-last
-.idea
-.claude/
-*.sqlite
-*.har
+# Arkade SDK - Security Hardened Repository .gitignore
 
-# AI
-CLAUDE.md
-TASKS.md
-*.agents.md
+# Dependencies
+node_modules/
+package-lock.json
+
+# Environment & Secrets
+.env
+*.pem
+*.key
+
+# AI Agents & Logs
+.gemini/
+.agents/
+*.pb
+*.log
+
+# Build & Cache
+dist/
+build/
+.cache/
+.DS_Store
+
+# Test Databases & Temp
+*.db
+*.sqlite
+/tmp/
+__test_storage__/

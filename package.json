@@ -1,202 +1,28 @@
 {
-    "name": "@arkade-os/sdk",
-    "version": "0.4.14",
-    "description": "TypeScript SDK for building Bitcoin wallets using the Arkade protocol",
-    "type": "module",
-    "main": "./dist/cjs/index.js",
-    "module": "./dist/esm/index.js",
-    "types": "./dist/types/index.d.ts",
-    "sideEffects": [
-        "dist/esm/contracts/handlers/index.js",
-        "dist/cjs/contracts/handlers/index.js"
-    ],
-    "exports": {
-        ".": {
-            "types": "./dist/types/index.d.ts",
-            "import": "./dist/esm/index.js",
-            "require": "./dist/cjs/index.js",
-            "default": "./dist/esm/index.js"
-        },
-        "./adapters/expo": {
-            "types": "./dist/types/adapters/expo.d.ts",
-            "import": "./dist/esm/adapters/expo.js",
-            "require": "./dist/cjs/adapters/expo.js",
-            "default": "./dist/esm/adapters/expo.js"
-        },
-        "./adapters/localStorage": {
-            "types": "./dist/types/adapters/localStorage.d.ts",
-            "import": "./dist/esm/adapters/localStorage.js",
-            "require": "./dist/cjs/adapters/localStorage.js",
-            "default": "./dist/esm/adapters/localStorage.js"
-        },
-        "./adapters/fileSystem": {
-            "types": "./dist/types/adapters/fileSystem.d.ts",
-            "import": "./dist/esm/adapters/fileSystem.js",
-            "require": "./dist/cjs/adapters/fileSystem.js",
-            "default": "./dist/esm/adapters/fileSystem.js"
-        },
-        "./adapters/indexedDB": {
-            "types": "./dist/types/adapters/indexedDB.d.ts",
-            "import": "./dist/esm/adapters/indexedDB.js",
-            "require": "./dist/cjs/adapters/indexedDB.js",
-            "default": "./dist/esm/adapters/indexedDB.js"
-        },
-        "./adapters/asyncStorage": {
-            "types": "./dist/types/adapters/asyncStorage.d.ts",
-            "import": "./dist/esm/adapters/asyncStorage.js",
-            "require": "./dist/cjs/adapters/asyncStorage.js",
-            "default": "./dist/esm/adapters/asyncStorage.js"
-        },
-        "./repositories/sqlite": {
-            "types": "./dist/types/repositories/sqlite/index.d.ts",
-            "import": "./dist/esm/repositories/sqlite/index.js",
-            "require": "./dist/cjs/repositories/sqlite/index.js",
-            "default": "./dist/esm/repositories/sqlite/index.js"
-        },
-        "./repositories/realm": {
-            "types": "./dist/types/repositories/realm/index.d.ts",
-            "import": "./dist/esm/repositories/realm/index.js",
-            "require": "./dist/cjs/repositories/realm/index.js",
-            "default": "./dist/esm/repositories/realm/index.js"
-        },
-        "./worker/expo": {
-            "types": "./dist/types/worker/expo/index.d.ts",
-            "import": "./dist/esm/worker/expo/index.js",
-            "require": "./dist/cjs/worker/expo/index.js",
-            "default": "./dist/esm/worker/expo/index.js"
-        },
-        "./wallet/expo": {
-            "types": "./dist/types/wallet/expo/index.d.ts",
-            "import": "./dist/esm/wallet/expo/index.js",
-            "require": "./dist/cjs/wallet/expo/index.js",
-            "default": "./dist/esm/wallet/expo/index.js"
-        }
-    },
-    "files": [
-        "dist"
-    ],
-    "publishConfig": {
-        "access": "public",
-        "registry": "https://registry.npmjs.org/"
-    },
-    "scripts": {
-        "build": "rimraf dist && pnpm run build:esm && pnpm run build:expo:esm && node scripts/add-extensions.js && pnpm run build:cjs && pnpm run build:expo:cjs && pnpm run build:types && pnpm run build:expo:types && node scripts/generate-package-files.js",
-        "build:esm": "tsc -p tsconfig.esm.json --outDir dist/esm",
-        "build:cjs": "tsc -p tsconfig.cjs.json --outDir dist/cjs",
-        "build:types": "tsc -p tsconfig.json --outDir dist/types --emitDeclarationOnly",
-        "build:expo:check": "node -e \"try{require.resolve('expo-sqlite')}catch{process.exit(1)}\"",
-        "build:expo:esm": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --outDir dist/esm",
-        "build:expo:cjs": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --module commonjs --outDir dist/cjs",
-        "build:expo:types": "pnpm run build:expo:check || exit 0; tsc -p tsconfig.expo.json --outDir dist/types --declaration --emitDeclarationOnly",
-        "build:browser": "node scripts/build-browser.js",
-        "docs:build": "pnpm run build:types && pnpm typedoc",
-        "docs:open": "open ./docs/index.html",
-        "test": "vitest run",
-        "test:master": "ARK_ENV=master vitest run",
-        "test:unit": "vitest run --exclude test/e2e",
-        "test:setup": "node test/setup.mjs",
-        "regtest:start": "./regtest/start-env.sh",
-        "regtest:stop": "./regtest/stop-env.sh",
-        "regtest:clean": "./regtest/clean-env.sh",
-        "regtest": "pnpm regtest:clean && pnpm regtest:start && pnpm test:setup-docker",
-        "test:setup-docker": "node test/setup.mjs docker",
-        "test:integration": "vitest run test/e2e/**",
-        "test:integration-docker": "ARK_ENV=docker vitest run test/e2e/**",
-        "test:watch": "vitest",
-        "test:coverage": "vitest run --coverage",
-        "format": "prettier --write src test examples",
-        "lint": "prettier --check src test examples",
-        "audit": "pnpm audit",
-        "prepack": "pnpm run build",
-        "prepare": "husky",
-        "prepublishOnly": "pnpm run build",
-        "release": "bash scripts/release.sh",
-        "release:dry-run": "bash scripts/release.sh --dry-run",
-        "release:cleanup": "bash scripts/release.sh --cleanup"
-    },
-    "dependencies": {
-        "@bitcoinerlab/descriptors-scure": "3.1.7",
-        "@marcbachmann/cel-js": "7.3.1",
-        "@noble/curves": "2.0.1",
-        "@noble/secp256k1": "3.0.0",
-        "@scure/base": "2.0.0",
-        "@scure/bip39": "2.0.1",
-        "@scure/btc-signer": "2.0.1",
-        "bip68": "1.0.4"
-    },
-    "devDependencies": {
-        "@types/better-sqlite3": "7.6.13",
-        "@types/node": "24.3.1",
-        "@vitest/coverage-v8": "3.2.4",
-        "better-sqlite3": "12.6.2",
-        "esbuild": "^0.27.3",
-        "eventsource": "4.0.0",
-        "glob": "11.1.0",
-        "husky": "9.1.7",
-        "indexeddbshim": "16.1.0",
-        "prettier": "3.6.2",
-        "rimraf": "^6.1.2",
-        "typedoc": "^0.28.16",
-        "typescript": "5.9.2",
-        "vitest": "3.2.4"
-    },
-    "peerDependencies": {
-        "@react-native-async-storage/async-storage": ">=1.0.0",
-        "expo": ">=54.0.0",
-        "expo-background-task": "~1.0.10",
-        "expo-sqlite": "~16.0.10",
-        "expo-task-manager": "~14.0.9"
-    },
-    "peerDependenciesMeta": {
-        "expo": {
-            "optional": true
-        },
-        "expo-sqlite": {
-            "optional": true
-        },
-        "expo-background-task": {
-            "optional": true
-        },
-        "expo-task-manager": {
-            "optional": true
-        },
-        "@react-native-async-storage/async-storage": {
-            "optional": true
-        }
-    },
-    "keywords": [
-        "ark",
-        "arkade",
-        "bip39",
-        "bitcoin",
-        "btc",
-        "crypto",
-        "lightning",
-        "sdk",
-        "stablecoin",
-        "taproot",
-        "typescript",
-        "utxo",
-        "vtxo",
-        "wallet"
-    ],
-    "author": "Ark Labs",
-    "license": "MIT",
-    "packageManager": "pnpm@10.25.0",
-    "engines": {
-        "node": ">=22.12.0 <23",
-        "pnpm": ">=10.25.0 <11"
-    },
-    "pnpm": {
-        "overrides": {
-            "esbuild": ">=0.25.0",
-            "brace-expansion": "^2.0.2",
-            "minimatch": "9.0.3"
-        },
-        "onlyBuiltDependencies": [
-            "canvas",
-            "sqlite3",
-            "better-sqlite3"
-        ]
-    }
+  "name": "arkade-vtxo-verification",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "dist/vtxoDAGVerification.js",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": ["ark", "bitcoin", "vtxo", "verification", "taproot"],
+  "author": "Marcelo Adrián Guerra Najarro",
+  "license": "ISC",
+  "description": "Client-side VTXO verification for the Arkade SDK (Plan B Network Technical Assignment)",
+  "dependencies": {
+    "@noble/curves": "2.0.1",
+    "@noble/hashes": "1.7.2",
+    "@scure/base": "2.0.0",
+    "@scure/btc-signer": "2.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.5.0",
+    "typescript": "6.0.2",
+    "undici": "7.24.7",
+    "vitest": "4.1.2"
+  }
 }
