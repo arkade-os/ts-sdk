@@ -743,4 +743,147 @@ describe("VHTLCContractHandler", () => {
         expect(mature).toHaveLength(1);
         expect(mature[0].sequence).toBe(Number(params.claimDelay));
     });
+
+    describe("collaborative refundWithoutReceiver CLTV gating", () => {
+        const receiverXOnly =
+            "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+        const senderXOnly =
+            "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+        const serverXOnly =
+            "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+
+        const buildContract = (refundLocktime: string): Contract => {
+            const params = {
+                sender: senderXOnly,
+                receiver: receiverXOnly,
+                server: serverXOnly,
+                hash: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+                refundLocktime,
+                claimDelay: "10",
+                refundDelay: "12",
+                refundNoReceiverDelay: "14",
+            };
+            const script = VHTLCContractHandler.createScript(params);
+            return {
+                type: "vhtlc",
+                params,
+                script: hex.encode(script.pkScript),
+                address: "address",
+                state: "active",
+                createdAt: Date.now(),
+            };
+        };
+
+        it("treats locktime < 500_000_000 as a block height (not yet reached)", () => {
+            const contract = buildContract("800000");
+            const script = VHTLCContractHandler.createScript(contract.params);
+
+            const paths = VHTLCContractHandler.getSpendablePaths(
+                script,
+                contract,
+                {
+                    collaborative: true,
+                    currentTime: Date.now(), // Unix seconds far above 800000
+                    blockHeight: 799_999,
+                    walletPubKey: senderXOnly,
+                }
+            );
+
+            expect(paths).toHaveLength(0);
+        });
+
+        it("treats locktime < 500_000_000 as a block height (reached)", () => {
+            const contract = buildContract("800000");
+            const script = VHTLCContractHandler.createScript(contract.params);
+
+            const paths = VHTLCContractHandler.getSpendablePaths(
+                script,
+                contract,
+                {
+                    collaborative: true,
+                    currentTime: Date.now(),
+                    blockHeight: 800_000,
+                    walletPubKey: senderXOnly,
+                }
+            );
+
+            expect(paths).toHaveLength(1);
+        });
+
+        it("returns no path for block-height locktime when blockHeight is missing", () => {
+            const contract = buildContract("800000");
+            const script = VHTLCContractHandler.createScript(contract.params);
+
+            const paths = VHTLCContractHandler.getSpendablePaths(
+                script,
+                contract,
+                {
+                    collaborative: true,
+                    currentTime: Date.now(),
+                    walletPubKey: senderXOnly,
+                }
+            );
+
+            expect(paths).toHaveLength(0);
+        });
+
+        it("treats locktime >= 500_000_000 as a Unix timestamp (not yet reached)", () => {
+            const future = Math.floor(Date.now() / 1000) + 3600;
+            const contract = buildContract(future.toString());
+            const script = VHTLCContractHandler.createScript(contract.params);
+
+            const paths = VHTLCContractHandler.getSpendablePaths(
+                script,
+                contract,
+                {
+                    collaborative: true,
+                    currentTime: Date.now(),
+                    blockHeight: 1_000_000_000, // irrelevant for timestamp locktime
+                    walletPubKey: senderXOnly,
+                }
+            );
+
+            expect(paths).toHaveLength(0);
+        });
+
+        it("treats locktime >= 500_000_000 as a Unix timestamp (reached)", () => {
+            const past = Math.floor(Date.now() / 1000) - 3600;
+            const contract = buildContract(past.toString());
+            const script = VHTLCContractHandler.createScript(contract.params);
+
+            const paths = VHTLCContractHandler.getSpendablePaths(
+                script,
+                contract,
+                {
+                    collaborative: true,
+                    currentTime: Date.now(),
+                    walletPubKey: senderXOnly,
+                }
+            );
+
+            expect(paths).toHaveLength(1);
+        });
+
+        it("selectPath returns refundWithoutReceiver only after block-height locktime", () => {
+            const contract = buildContract("800000");
+            const script = VHTLCContractHandler.createScript(contract.params);
+
+            const before = VHTLCContractHandler.selectPath(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: 799_999,
+                walletPubKey: senderXOnly,
+            });
+            expect(before).toBeNull();
+
+            const after = VHTLCContractHandler.selectPath(script, contract, {
+                collaborative: true,
+                currentTime: Date.now(),
+                blockHeight: 800_001,
+                walletPubKey: senderXOnly,
+            });
+            expect(after).not.toBeNull();
+            expect(after?.leaf).toBeDefined();
+        });
+    });
 });

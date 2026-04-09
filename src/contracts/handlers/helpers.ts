@@ -53,6 +53,33 @@ export function resolveRole(
 }
 
 /**
+ * BIP65 threshold: locktime values below this are interpreted as block heights,
+ * values at or above are interpreted as Unix timestamps (seconds).
+ */
+const CLTV_HEIGHT_THRESHOLD = 500_000_000n;
+
+/**
+ * Check if an absolute (CLTV) locktime is currently satisfied.
+ *
+ * Following the BIP65 convention:
+ * - locktime < 500_000_000  → interpreted as a block height; compared against `context.blockHeight`
+ * - locktime >= 500_000_000 → interpreted as a Unix timestamp (seconds); compared against `context.currentTime`
+ *
+ * Returns false if the relevant context field is missing.
+ */
+export function isCltvSatisfied(
+    context: PathContext,
+    locktime: bigint
+): boolean {
+    if (locktime < CLTV_HEIGHT_THRESHOLD) {
+        if (context.blockHeight === undefined) return false;
+        return BigInt(context.blockHeight) >= locktime;
+    }
+    const currentTimeSec = BigInt(Math.floor(context.currentTime / 1000));
+    return currentTimeSec >= locktime;
+}
+
+/**
  * Check if a CSV timelock is currently satisfied for the given context/VTXO.
  */
 export function isCsvSpendable(
