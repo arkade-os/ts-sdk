@@ -1,4 +1,5 @@
 import { base64, hex } from "@scure/base";
+import * as bip68 from "bip68";
 import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
@@ -275,11 +276,16 @@ export namespace Unroll {
             }
 
             totalAmount += BigInt(vtxo.value);
+            const sequence = bip68.encode(
+                exit.params.timelock.type === "blocks"
+                    ? { blocks: Number(exit.params.timelock.value) }
+                    : { seconds: Number(exit.params.timelock.value) }
+            );
             inputs.push({
                 txid: vtxo.txid,
                 index: vtxo.vout,
                 tapLeafScript: [spendingLeaf],
-                sequence: 0xffffffff - 1,
+                sequence,
                 witnessUtxo: {
                     amount: BigInt(vtxo.value),
                     script: VtxoScript.decode(vtxo.tapTree).pkScript,
