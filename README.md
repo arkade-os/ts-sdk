@@ -197,6 +197,42 @@ const balance = await readonlyWallet.getBalance()
 
 The descriptor format (`tr([fingerprint/path']xpub.../0/0)`) is HD-ready — future versions will support deriving multiple addresses and change outputs from the same seed.
 
+### Batch Signing for Browser Wallets
+
+Arkade send transactions require N+1 PSBT signatures (N checkpoints + 1 main tx). With local identities like `SingleKey` or `SeedIdentity` this is invisible, but browser wallet extensions (Xverse, UniSat, OKX, etc.) show a confirmation popup per signature. The `BatchSignableIdentity` interface lets wallet providers reduce N+1 popups to a single batch confirmation.
+
+```typescript
+import {
+  BatchSignableIdentity,
+  SignRequest,
+  isBatchSignable,
+  Wallet
+} from '@arkade-os/sdk'
+
+// Implement the interface in your wallet provider
+class MyBrowserWallet implements BatchSignableIdentity {
+  // ... implement Identity methods (sign, signMessage, xOnlyPublicKey, etc.)
+
+  async signMultiple(requests: SignRequest[]): Promise<Transaction[]> {
+    // Convert all PSBTs to your wallet's batch signing API format
+    const psbts = requests.map(r => r.tx.toPSBT())
+    // Single wallet popup for all signatures
+    const signedPsbts = await myWalletExtension.signAllPSBTs(psbts)
+    return signedPsbts.map(psbt => Transaction.fromPSBT(psbt))
+  }
+}
+
+// The SDK automatically detects batch-capable identities
+const identity = new MyBrowserWallet()
+console.log(isBatchSignable(identity)) // true
+
+// Wallet.send() uses one popup instead of N+1
+const wallet = await Wallet.create({ identity, arkServerUrl: '...' })
+await wallet.sendBitcoin({ address: arkAddress, amount: 1000 })
+```
+
+Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
+
 ### Receiving Bitcoin
 
 ```typescript
