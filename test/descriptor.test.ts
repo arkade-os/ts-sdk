@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import {
-    scureBIP32 as BIP32,
+    HDKey,
     networks,
     scriptExpressions,
-} from "@kukks/bitcoin-descriptors";
+} from "@bitcoinerlab/descriptors-scure";
 import { hex } from "@scure/base";
 import {
     isDescriptor,
@@ -25,7 +25,7 @@ function makeDescriptor(opts: {
     const { isMainnet = true, change = 0, index = 0 } = opts;
     const network = isMainnet ? networks.bitcoin : networks.testnet;
     const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-    const masterNode = BIP32.fromSeed(seed, network);
+    const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
     return scriptExpressions.trBIP32({
         masterNode,
         network,
@@ -39,10 +39,10 @@ function makeDescriptor(opts: {
 function getXOnlyPubKey(isMainnet = true): string {
     const network = isMainnet ? networks.bitcoin : networks.testnet;
     const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-    const root = BIP32.fromSeed(seed, network);
-    const account = root.derivePath(isMainnet ? "m/86'/0'/0'" : "m/86'/1'/0'");
-    const child = account.derive(0).derive(0);
-    return hex.encode(child.publicKey.slice(1));
+    const root = HDKey.fromMasterSeed(seed, network.bip32);
+    const account = root.derive(isMainnet ? "m/86'/0'/0'" : "m/86'/1'/0'");
+    const child = account.deriveChild(0).deriveChild(0);
+    return hex.encode(child.publicKey!.slice(1));
 }
 
 describe("isDescriptor", () => {

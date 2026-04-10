@@ -1,26 +1,10 @@
-/**
- * Descriptor utility functions for working with output descriptors.
- *
- * Output descriptors provide a standardized way to represent Bitcoin addresses
- * and their spending conditions. This module supports:
- * - Simple descriptors: tr(pubkey) — for static/external keys
- * - HD descriptors: tr([fingerprint/path']xpub/derivation) — for HD wallets
- *
- * Uses @kukks/bitcoin-descriptors for parsing — no manual regex.
- *
- * @module
- */
-
-import { defaultFactory, networks } from "@kukks/bitcoin-descriptors";
-import type { Network } from "@kukks/bitcoin-descriptors";
+import {
+    expand,
+    networks,
+    type Network,
+} from "@bitcoinerlab/descriptors-scure";
 import { hex } from "@scure/base";
 
-const { expand } = defaultFactory;
-
-/**
- * Infer the network from a descriptor string.
- * tpub → testnet, xpub or raw hex → mainnet (default).
- */
 function inferNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
 }
