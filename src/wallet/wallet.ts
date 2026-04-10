@@ -600,12 +600,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // whose state may have changed since the cursor so that
         // getVtxos()/getTransactionHistory() don't serve stale state.
         if (hasDelta) {
-            const { vtxos: pendingVtxos } = await this.indexerProvider.getVtxos(
-                {
+            const { vtxos: pendingVtxos, page: pendingPage } =
+                await this.indexerProvider.getVtxos({
                     scripts: deltaScripts,
                     pendingOnly: true,
-                }
-            );
+                });
             const pendingExtended: ExtendedVirtualCoin[] = [];
             for (const vtxo of pendingVtxos) {
                 const vtxoScript = vtxo.script
@@ -619,6 +618,51 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     tapTree: vtxoScript.encode(),
                 });
             }
+
+            // Only reconcile if the pending set is complete (not
+            // paginated).  If the server truncated the response, skip
+            // rather than risk marking live VTXOs as spent based on
+            // incomplete data.
+            const pendingSetComplete = !pendingPage || pendingPage.total <= 1;
+            if (pendingSetComplete) {
+                // Build a set of outpoints the server still considers
+                // pending.
+                const pendingOutpoints = new Set(
+                    pendingVtxos.map((v) => `${v.txid}:${v.vout}`)
+                );
+
+                // Mark locally-cached "preconfirmed" VTXOs as spent if
+                // the server no longer lists them as pending.  This
+                // happens when a preconfirmed VTXO is consumed by a
+                // round (e.g. via VtxoManager auto-settlement) between
+                // syncs: the delta fetch misses the update because the
+                // VTXO was created before the cursor, and the
+                // pendingOnly query no longer returns it.
+                //
+                // Only reconcile VTXOs belonging to delta scripts.
+                // Bootstrapped scripts already got a full fetch, so
+                // their preconfirmed state is already fresh — marking
+                // them against a pendingOnly set that only covers
+                // deltaScripts would incorrectly flag them as spent.
+                const deltaScriptSet = new Set(deltaScripts);
+                const cachedVtxos =
+                    await this.walletRepository.getVtxos(address);
+                for (const cached of cachedVtxos) {
+                    if (
+                        cached.script &&
+                        deltaScriptSet.has(cached.script) &&
+                        cached.virtualStatus.state === "preconfirmed" &&
+                        !cached.isSpent &&
+                        !pendingOutpoints.has(`${cached.txid}:${cached.vout}`)
+                    ) {
+                        pendingExtended.push({
+                            ...cached,
+                            isSpent: true,
+                        });
+                    }
+                }
+            }
+
             if (pendingExtended.length > 0) {
                 await this.walletRepository.saveVtxos(address, pendingExtended);
             }
