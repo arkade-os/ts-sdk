@@ -95,7 +95,7 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  */
 function buildWildcardDescriptor(seed: Uint8Array, isMainnet: boolean): string {
     const network = isMainnet ? networks.bitcoin : networks.testnet;
-    const masterNode = BIP32.fromSeed(seed, network);
+    const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
     return scriptExpressions.trBIP32({
         masterNode,
         network,
@@ -216,7 +216,7 @@ export class SeedIdentity implements Identity {
         const seed = mnemonicToSeedSync(phrase, passphrase);
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet);
+            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
         return new SeedIdentity(seed, descriptor, phrase);
     }
 
@@ -271,7 +271,7 @@ export class SeedIdentity implements Identity {
      */
     toJSON(): SeedIdentityJSON {
         const network = detectNetwork(this.descriptor);
-        const masterNode = BIP32.fromSeed(this.seed, network);
+        const masterNode = HDKey.fromMasterSeed(this.seed, network.bip32);
         const templateDescriptor = scriptExpressions.trBIP32({
             masterNode,
             network,
@@ -307,7 +307,7 @@ export class SeedIdentity implements Identity {
             throw new Error("Index must be non-negative");
         }
         const network = detectNetwork(this.descriptor);
-        const masterNode = BIP32.fromSeed(this.seed, network);
+        const masterNode = HDKey.fromMasterSeed(this.seed, network.bip32);
         return scriptExpressions.trBIP32({
             masterNode,
             network,
@@ -493,25 +493,17 @@ export class SeedIdentity implements Identity {
      */
     private derivePrivateKeyFromDescriptor(descriptor: string): Uint8Array {
         const network = detectNetwork(descriptor);
-        const masterNode = BIP32.fromSeed(this.seed, network);
+        const masterNode = HDKey.fromMasterSeed(this.seed, network.bip32);
         const expansion = expand({ descriptor, network });
         const keyInfo = expansion.expansionMap?.["@0"];
-        if (!keyInfo?.originPath) {
-            throw new Error("Invalid descriptor: missing origin path");
+        if (!keyInfo?.path) {
+            throw new Error("Invalid descriptor: missing derivation path");
         }
-        const accountNode = masterNode.derivePath(`m${keyInfo.originPath}`);
-        // keyPath is like "/0/5", extract the index
-        const keyPath = keyInfo.keyPath;
-        if (!keyPath) {
-            throw new Error("Invalid descriptor: missing key path");
-        }
-        const segments = keyPath.split("/").filter(Boolean);
-        const childIndex = segments[segments.length - 1];
-        const addressNode = accountNode.derivePath(`m/0/${childIndex}`);
-        if (!addressNode.privateKey) {
+        const derivedNode = masterNode.derive(keyInfo.path);
+        if (!derivedNode.privateKey) {
             throw new Error("Failed to derive private key");
         }
-        return addressNode.privateKey;
+        return derivedNode.privateKey;
     }
 }
 
@@ -581,9 +573,12 @@ export class MnemonicIdentity extends SeedIdentity {
 export class ReadonlySeedIdentity implements ReadonlyIdentity {
     private readonly xOnlyPubKey: Uint8Array;
     private readonly compressedPubKey: Uint8Array;
-    /** The account-level BIP32 node extracted from the descriptor. */
     private readonly accountBip32:
-        | ReturnType<typeof BIP32.fromSeed>
+        | {
+              derivePath(path: string): { publicKey: Uint8Array };
+              toBase58(): string;
+              publicKey: Uint8Array;
+          }
         | undefined;
 
     private constructor(readonly descriptor: string) {
