@@ -42,17 +42,15 @@ export class StaticDescriptorProvider implements DescriptorProvider {
     }
 
     async signWithDescriptor(
-        descriptor: string,
         requests: DescriptorSigningRequest[]
     ): Promise<Transaction[]> {
-        if (!this.isOurs(descriptor)) {
-            throw new Error(
-                `Descriptor ${descriptor} does not belong to this provider`
-            );
-        }
-
         const results: Transaction[] = [];
         for (const request of requests) {
+            if (!this.isOurs(request.descriptor)) {
+                throw new Error(
+                    `Descriptor ${request.descriptor} does not belong to this provider`
+                );
+            }
             const signed = await this.identity.sign(
                 request.tx,
                 request.inputIndexes

@@ -582,8 +582,8 @@ describe("SeedIdentity HD methods", () => {
             });
 
             await expect(
-                identity.signWithDescriptor(otherIdentity.descriptor, [
-                    { tx: null as any },
+                identity.signWithDescriptor([
+                    { descriptor: otherIdentity.descriptor, tx: null as any },
                 ])
             ).rejects.toThrow("Descriptor does not belong to this identity");
         });
@@ -592,10 +592,7 @@ describe("SeedIdentity HD methods", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
-            const results = await identity.signWithDescriptor(
-                identity.descriptor,
-                []
-            );
+            const results = await identity.signWithDescriptor([]);
             expect(results).toEqual([]);
         });
     });
