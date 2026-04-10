@@ -2491,14 +2491,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         let userSignedCheckpoints: Transaction[] | undefined;
 
         if (isBatchSignable(this.identity)) {
-            // Batch-sign arkTx + all checkpoints in one wallet popup
+            // Batch-sign arkTx + all checkpoints in one wallet popup.
+            // Clone so the provider can't mutate originals before submitTx.
             const requests = [
-                { tx: offchainTx.arkTx },
-                ...offchainTx.checkpoints.map((c) => ({ tx: c })),
+                { tx: offchainTx.arkTx.clone() },
+                ...offchainTx.checkpoints.map((c) => ({ tx: c.clone() })),
             ];
             const signed = await this.identity.signMultiple(requests);
-            signedVirtualTx = signed[0];
-            userSignedCheckpoints = signed.slice(1);
+            if (signed.length !== requests.length) {
+                throw new Error(
+                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`
+                );
+            }
+            const [firstSignedTx, ...signedCheckpoints] = signed;
+            signedVirtualTx = firstSignedTx;
+            userSignedCheckpoints = signedCheckpoints;
         } else {
             signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
         }
