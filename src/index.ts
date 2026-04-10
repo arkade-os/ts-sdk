@@ -11,7 +11,13 @@ import type {
     NetworkOptions,
     DescriptorOptions,
 } from "./identity/seedIdentity";
-import { Identity, ReadonlyIdentity } from "./identity";
+import {
+    Identity,
+    ReadonlyIdentity,
+    BatchSignableIdentity,
+    SignRequest,
+    isBatchSignable,
+} from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -263,6 +269,7 @@ export {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
+    isBatchSignable,
     OnchainWallet,
     Ramps,
     VtxoManager,
@@ -400,6 +407,8 @@ export type {
     // Types and Interfaces
     Identity,
     ReadonlyIdentity,
+    BatchSignableIdentity,
+    SignRequest,
     IWallet,
     IReadonlyWallet,
     BaseWalletConfig,

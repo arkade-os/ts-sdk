@@ -28,7 +28,7 @@ import {
     validateVtxoTxGraph,
 } from "../tree/validation";
 import { validateBatchRecipients } from "./validation";
-import { Identity, ReadonlyIdentity } from "../identity";
+import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
 import {
     ArkTransaction,
     Asset,
@@ -62,6 +62,7 @@ import { getSequence, VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import {
     buildOffchainTx,
+    combineTapscriptSigs,
     hasBoardingTxExpired,
     isValidArkAddress,
 } from "../utils/arkTransaction";
@@ -2485,7 +2486,29 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             outputs,
             this.serverUnrollScript
         );
-        const signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
+
+        let signedVirtualTx: Transaction;
+        let userSignedCheckpoints: Transaction[] | undefined;
+
+        if (isBatchSignable(this.identity)) {
+            // Batch-sign arkTx + all checkpoints in one wallet popup.
+            // Clone so the provider can't mutate originals before submitTx.
+            const requests = [
+                { tx: offchainTx.arkTx.clone() },
+                ...offchainTx.checkpoints.map((c) => ({ tx: c.clone() })),
+            ];
+            const signed = await this.identity.signMultiple(requests);
+            if (signed.length !== requests.length) {
+                throw new Error(
+                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`
+                );
+            }
+            const [firstSignedTx, ...signedCheckpoints] = signed;
+            signedVirtualTx = firstSignedTx;
+            userSignedCheckpoints = signedCheckpoints;
+        } else {
+            signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
+        }
 
         // Mark pending before submitting — if we crash between submit and
         // finalize, the next init will recover via finalizePendingTxs.
@@ -2496,13 +2519,27 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 base64.encode(signedVirtualTx.toPSBT()),
                 offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
-        const finalCheckpoints = await Promise.all(
-            signedCheckpointTxs.map(async (c) => {
-                const tx = Transaction.fromPSBT(base64.decode(c));
-                const signedCheckpoint = await this.identity.sign(tx);
-                return base64.encode(signedCheckpoint.toPSBT());
-            })
-        );
+
+        let finalCheckpoints: string[];
+
+        if (userSignedCheckpoints) {
+            // Merge pre-signed user signatures onto server-signed checkpoints
+            finalCheckpoints = signedCheckpointTxs.map((c, i) => {
+                const serverSigned = Transaction.fromPSBT(base64.decode(c));
+                combineTapscriptSigs(userSignedCheckpoints![i], serverSigned);
+                return base64.encode(serverSigned.toPSBT());
+            });
+        } else {
+            // Legacy: sign each checkpoint individually (N popups)
+            finalCheckpoints = await Promise.all(
+                signedCheckpointTxs.map(async (c) => {
+                    const tx = Transaction.fromPSBT(base64.decode(c));
+                    const signedCheckpoint = await this.identity.sign(tx);
+                    return base64.encode(signedCheckpoint.toPSBT());
+                })
+            );
+        }
+
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
         try {
