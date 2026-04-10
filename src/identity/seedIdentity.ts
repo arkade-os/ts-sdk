@@ -41,9 +41,10 @@ export type MnemonicOptions = SeedIdentityOptions & {
 };
 
 /**
- * A signing request pairs a transaction with optional input indexes to sign.
+ * A signing request pairs a descriptor with a transaction and optional input indexes.
  */
 export interface SigningRequest {
+    descriptor: string;
     tx: Transaction;
     inputIndexes?: number[];
 }
@@ -345,30 +346,36 @@ export class SeedIdentity implements Identity {
     }
 
     /**
-     * Signs one or more transactions using the private key derived at the
-     * index embedded in the given descriptor.
+     * Signs one or more transactions, each using the private key derived
+     * from its own descriptor.
      *
-     * @param descriptor - A concrete descriptor belonging to this identity
-     * @param requests - Array of signing requests
-     * @returns Array of signed transactions
-     * @throws If the descriptor does not belong to this identity
+     * @param requests - Array of signing requests, each with its own descriptor
+     * @returns Array of signed transactions (same order as requests)
+     * @throws If any descriptor does not belong to this identity
      */
     async signWithDescriptor(
-        descriptor: string,
         requests: SigningRequest[]
     ): Promise<Transaction[]> {
-        if (!this.isOurs(descriptor)) {
-            throw new Error("Descriptor does not belong to this identity");
-        }
-
         if (requests.length === 0) {
             return [];
         }
 
-        const privateKey = this.derivePrivateKeyFromDescriptor(descriptor);
+        const keyCache = new Map<string, Uint8Array>();
         const results: Transaction[] = [];
 
         for (const request of requests) {
+            if (!this.isOurs(request.descriptor)) {
+                throw new Error("Descriptor does not belong to this identity");
+            }
+
+            let privateKey = keyCache.get(request.descriptor);
+            if (!privateKey) {
+                privateKey = this.derivePrivateKeyFromDescriptor(
+                    request.descriptor
+                );
+                keyCache.set(request.descriptor, privateKey);
+            }
+
             const txCpy = request.tx.clone();
 
             if (!request.inputIndexes) {

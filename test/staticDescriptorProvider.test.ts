@@ -110,16 +110,18 @@ describe("StaticDescriptorProvider", () => {
 
     describe("signWithDescriptor", () => {
         it("should handle empty requests array", async () => {
-            const results = await provider.signWithDescriptor(
-                `tr(${pubKeyHex})`,
-                []
-            );
+            const results = await provider.signWithDescriptor([]);
             expect(results).toEqual([]);
         });
 
         it("should throw for foreign descriptor", async () => {
             await expect(
-                provider.signWithDescriptor("tr(" + "b".repeat(64) + ")", [])
+                provider.signWithDescriptor([
+                    {
+                        descriptor: "tr(" + "b".repeat(64) + ")",
+                        tx: null as any,
+                    },
+                ])
             ).rejects.toThrow("does not belong");
         });
     });

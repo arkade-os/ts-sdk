@@ -1,7 +1,9 @@
 import { Transaction } from "../utils/transaction";
 
-/** A signing request for a transaction with optional specific input indexes. */
+/** A signing request that pairs a descriptor with a transaction. */
 export interface DescriptorSigningRequest {
+    /** Descriptor identifying which key to sign with */
+    descriptor: string;
     /** Transaction to sign */
     tx: Transaction;
     /** Specific input indexes to sign (signs all if omitted) */
@@ -22,9 +24,8 @@ export interface DescriptorProvider {
     /** Checks if a descriptor belongs to this provider. */
     isOurs(descriptor: string): boolean;
 
-    /** Signs transactions using the key derived from the descriptor. */
+    /** Signs transactions, each with its own descriptor-derived key. */
     signWithDescriptor(
-        descriptor: string,
         requests: DescriptorSigningRequest[]
     ): Promise<Transaction[]>;
 
