@@ -4,7 +4,6 @@ import {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
-    ReadonlySeedIdentity,
 } from "./identity/seedIdentity";
 import type {
     SeedIdentityOptions,
@@ -271,7 +270,6 @@ export {
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
     isBatchSignable,
-    ReadonlySeedIdentity,
     OnchainWallet,
     Ramps,
     VtxoManager,

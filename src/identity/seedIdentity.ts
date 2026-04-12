@@ -209,8 +209,8 @@ export class SeedIdentity implements Identity {
     /**
      * Converts to a watch-only identity that cannot sign.
      */
-    async toReadonly(): Promise<ReadonlySeedIdentity> {
-        return ReadonlySeedIdentity.fromDescriptor(this.descriptor);
+    async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
+        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
     }
 }
 
@@ -275,11 +275,11 @@ export class MnemonicIdentity extends SeedIdentity {
  * @example
  * ```typescript
  * const descriptor = "tr([fingerprint/86'/0'/0']xpub.../0/0)";
- * const readonly = ReadonlySeedIdentity.fromDescriptor(descriptor);
+ * const readonly = ReadonlyDescriptorIdentity.fromDescriptor(descriptor);
  * const pubKey = await readonly.xOnlyPublicKey();
  * ```
  */
-export class ReadonlySeedIdentity implements ReadonlyIdentity {
+export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
     private readonly xOnlyPubKey: Uint8Array;
     private readonly compressedPubKey: Uint8Array;
     readonly descriptor: string;
@@ -311,12 +311,12 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
     }
 
     /**
-     * Creates a ReadonlySeedIdentity from an output descriptor.
+     * Creates a ReadonlyDescriptorIdentity from an output descriptor.
      *
      * @param descriptor - Taproot descriptor: tr([fingerprint/path']xpub.../child/path)
      */
-    static fromDescriptor(descriptor: string): ReadonlySeedIdentity {
-        return new ReadonlySeedIdentity(descriptor);
+    static fromDescriptor(descriptor: string): ReadonlyDescriptorIdentity {
+        return new ReadonlyDescriptorIdentity(descriptor);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -327,6 +327,3 @@ export class ReadonlySeedIdentity implements ReadonlyIdentity {
         return this.compressedPubKey;
     }
 }
-
-/** @deprecated Use {@link ReadonlySeedIdentity} instead. */
-export { ReadonlySeedIdentity as ReadonlyDescriptorIdentity };

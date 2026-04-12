@@ -50,7 +50,6 @@ export * from "./singleKey";
 export {
     SeedIdentity,
     MnemonicIdentity,
-    ReadonlySeedIdentity,
     ReadonlyDescriptorIdentity,
 } from "./seedIdentity";
 export type {

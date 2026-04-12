@@ -3,7 +3,6 @@ import {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
-    ReadonlySeedIdentity,
 } from "../src/identity/seedIdentity";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
@@ -377,12 +376,6 @@ describe("module exports", () => {
             "function"
         );
     });
-
-    it("should export ReadonlySeedIdentity from identity module", async () => {
-        const { ReadonlySeedIdentity } = await import("../src/identity");
-        expect(ReadonlySeedIdentity).toBeDefined();
-        expect(typeof ReadonlySeedIdentity.fromDescriptor).toBe("function");
-    });
 });
 
 describe("SeedIdentity", () => {
@@ -423,28 +416,6 @@ describe("MnemonicIdentity.mnemonic", () => {
 });
 
 // ============================================================
-// New tests: ReadonlySeedIdentity
-// ============================================================
-
-describe("ReadonlySeedIdentity", () => {
-    describe("fromDescriptor", () => {
-        it("should create identity from descriptor", async () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-
-            const readonly = ReadonlySeedIdentity.fromDescriptor(
-                identity.descriptor
-            );
-
-            const identityPubKey = await identity.xOnlyPublicKey();
-            const readonlyPubKey = await readonly.xOnlyPublicKey();
-            expect(Array.from(readonlyPubKey)).toEqual(
-                Array.from(identityPubKey)
-            );
-        });
-    });
-});
-
 describe("backwards compatibility", () => {
     it("existing signMessage() API still works", async () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
@@ -454,15 +425,5 @@ describe("backwards compatibility", () => {
         const signature = await identity.signMessage(message);
         expect(signature).toBeInstanceOf(Uint8Array);
         expect(signature).toHaveLength(64);
-    });
-
-    it("ReadonlyDescriptorIdentity alias still works", () => {
-        expect(ReadonlyDescriptorIdentity).toBe(ReadonlySeedIdentity);
-    });
-
-    it("ReadonlyDescriptorIdentity alias is available from identity module", async () => {
-        const { ReadonlyDescriptorIdentity, ReadonlySeedIdentity } =
-            await import("../src/identity");
-        expect(ReadonlyDescriptorIdentity).toBe(ReadonlySeedIdentity);
     });
 });
