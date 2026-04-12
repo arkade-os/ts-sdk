@@ -14,9 +14,7 @@ import {
     createDelegateContractParams,
     createMockVtxo,
     TEST_PUB_KEY,
-    TEST_PUB_KEY_HEX,
     TEST_SERVER_PUB_KEY,
-    TEST_SERVER_PUB_KEY_HEX,
     TEST_DELEGATE_PUB_KEY,
 } from "./helpers";
 import { timelockToSequence } from "../../src/contracts/handlers/helpers";
@@ -74,11 +72,11 @@ describe("DefaultContractHandler", () => {
 
     it("should create script from params", () => {
         const params = {
-            pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-            serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
+            pubKey: hex.encode(TEST_PUB_KEY),
+            serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
             csvTimelock: DefaultContractHandler.serializeParams({
-                pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-                serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
+                pubKey: TEST_PUB_KEY,
+                serverPubKey: TEST_SERVER_PUB_KEY,
                 csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
             }).csvTimelock,
         };
@@ -91,8 +89,8 @@ describe("DefaultContractHandler", () => {
 
     it("should serialize and deserialize params", () => {
         const original = {
-            pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-            serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
             csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         };
 
@@ -100,9 +98,10 @@ describe("DefaultContractHandler", () => {
         const deserialized =
             DefaultContractHandler.deserializeParams(serialized);
 
-        expect(deserialized.pubKey).toBe(`tr(${TEST_PUB_KEY_HEX})`);
-        expect(deserialized.serverPubKey).toBe(
-            `tr(${TEST_SERVER_PUB_KEY_HEX})`
+        expect(deserialized.pubKey).toBeInstanceOf(Uint8Array);
+        expect(deserialized.serverPubKey).toBeInstanceOf(Uint8Array);
+        expect(Array.from(deserialized.pubKey)).toEqual(
+            Array.from(TEST_PUB_KEY)
         );
     });
 
@@ -224,8 +223,8 @@ describe("DefaultContractHandler", () => {
 
     it("should omit sequence on exit path when csvTimelock is missing", () => {
         const params = {
-            pubKey: TEST_PUB_KEY_HEX,
-            serverPubKey: TEST_SERVER_PUB_KEY_HEX,
+            pubKey: hex.encode(TEST_PUB_KEY),
+            serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
         };
         const script = DefaultContractHandler.createScript(params);
         const contract: Contract = {

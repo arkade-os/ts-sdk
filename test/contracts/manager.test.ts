@@ -16,8 +16,8 @@ import {
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
-    TEST_PUB_KEY_HEX,
-    TEST_SERVER_PUB_KEY_HEX,
+    TEST_PUB_KEY,
+    TEST_SERVER_PUB_KEY,
 } from "./helpers";
 
 vi.useFakeTimers();
@@ -71,8 +71,8 @@ describe("ContractManager", () => {
         });
 
         const altParams = DefaultContractHandler.serializeParams({
-            pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-            serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
             csvTimelock: {
                 type: "blocks",
                 value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n,
