@@ -73,15 +73,7 @@ describe("DefaultContractHandler", () => {
     });
 
     it("should create script from params", () => {
-        const params = {
-            pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-            serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
-            csvTimelock: DefaultContractHandler.serializeParams({
-                pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-                serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
-                csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
-            }).csvTimelock,
-        };
+        const params = createDefaultContractParams();
 
         const script = DefaultContractHandler.createScript(params);
 
@@ -91,8 +83,8 @@ describe("DefaultContractHandler", () => {
 
     it("should serialize and deserialize params", () => {
         const original = {
-            pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-            serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
             csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
         };
 
@@ -100,10 +92,8 @@ describe("DefaultContractHandler", () => {
         const deserialized =
             DefaultContractHandler.deserializeParams(serialized);
 
-        expect(deserialized.pubKey).toBe(`tr(${TEST_PUB_KEY_HEX})`);
-        expect(deserialized.serverPubKey).toBe(
-            `tr(${TEST_SERVER_PUB_KEY_HEX})`
-        );
+        expect(deserialized.pubKey).toEqual(TEST_PUB_KEY);
+        expect(deserialized.serverPubKey).toEqual(TEST_SERVER_PUB_KEY);
     });
 
     it("should select forfeit path when collaborative", () => {

@@ -91,39 +91,20 @@ export function parseHDDescriptor(
         return null;
     }
 
-    if (!expansion.expansionMap) {
+    const key = expansion.expansionMap?.["@0"];
+    if (
+        !key?.masterFingerprint ||
+        !key.originPath ||
+        !key.keyPath ||
+        !key.bip32
+    ) {
         return null;
     }
-
-    const key = expansion.expansionMap["@0"];
-    if (!key) {
-        return null;
-    }
-
-    // HD descriptors have originPath and keyPath; simple pubkey descriptors do not
-    if (!key.masterFingerprint || !key.originPath || !key.keyPath) {
-        return null;
-    }
-
-    // Extract xpub from the key expression: strip origin prefix and key path suffix
-    const keyExpr = key.keyExpression;
-    const originEnd = keyExpr.indexOf("]");
-    const afterOrigin = originEnd >= 0 ? keyExpr.slice(originEnd + 1) : keyExpr;
-    const keyPathStart = afterOrigin.indexOf(key.keyPath);
-    const xpub =
-        keyPathStart > 0 ? afterOrigin.slice(0, keyPathStart) : afterOrigin;
-
-    // keyPath comes back as "/0/5" — strip leading slash for our format
-    const derivationPath = key.keyPath.startsWith("/")
-        ? key.keyPath.slice(1)
-        : key.keyPath;
 
     return {
         fingerprint: hex.encode(key.masterFingerprint),
-        basePath: key.originPath.startsWith("/")
-            ? key.originPath.slice(1)
-            : key.originPath,
-        xpub,
-        derivationPath,
+        basePath: key.originPath.replace(/^\//, ""),
+        xpub: key.bip32.toBase58(),
+        derivationPath: key.keyPath.replace(/^\//, ""),
     };
 }

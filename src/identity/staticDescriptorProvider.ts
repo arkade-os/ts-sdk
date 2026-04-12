@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { Identity } from ".";
+import { Identity, isBatchSignable } from ".";
 import {
     DescriptorProvider,
     DescriptorSigningRequest,
@@ -44,13 +44,26 @@ export class StaticDescriptorProvider implements DescriptorProvider {
     async signWithDescriptor(
         requests: DescriptorSigningRequest[]
     ): Promise<Transaction[]> {
-        const results: Transaction[] = [];
         for (const request of requests) {
             if (!this.isOurs(request.descriptor)) {
                 throw new Error(
                     `Descriptor ${request.descriptor} does not belong to this provider`
                 );
             }
+        }
+
+        // Use batch signing when the identity supports it (fewer confirmation popups)
+        if (isBatchSignable(this.identity)) {
+            return this.identity.signMultiple(
+                requests.map((r) => ({
+                    tx: r.tx,
+                    inputIndexes: r.inputIndexes,
+                }))
+            );
+        }
+
+        const results: Transaction[] = [];
+        for (const request of requests) {
             const signed = await this.identity.sign(
                 request.tx,
                 request.inputIndexes

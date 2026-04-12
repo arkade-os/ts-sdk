@@ -446,7 +446,7 @@ describe("ReadonlySeedIdentity", () => {
 });
 
 describe("backwards compatibility", () => {
-    it("existing sign() API still works", async () => {
+    it("existing signMessage() API still works", async () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
         const message = new Uint8Array(32).fill(99);

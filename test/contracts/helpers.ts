@@ -43,8 +43,8 @@ export const TEST_DELEGATE_PUB_KEY = hex.decode(
 // Helper to create valid default contract params
 export const createDefaultContractParams = () =>
     DefaultContractHandler.serializeParams({
-        pubKey: `tr(${TEST_PUB_KEY_HEX})`,
-        serverPubKey: `tr(${TEST_SERVER_PUB_KEY_HEX})`,
+        pubKey: TEST_PUB_KEY,
+        serverPubKey: TEST_SERVER_PUB_KEY,
         csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
     });
 
