@@ -112,15 +112,8 @@ export interface PathContext {
     blockHeight?: number;
 
     /**
-     * Wallet's descriptor for signing.
-     * Format: tr(pubkey) for static keys, tr([fingerprint/path']xpub/0/{index}) for HD.
-     * Used by handlers to determine wallet's role in multi-party contracts.
-     */
-    walletDescriptor?: string;
-
-    /**
      * Wallet's public key (x-only, 32 bytes hex).
-     * @deprecated Use walletDescriptor instead.
+     * Used by handlers to determine wallet's role in multi-party contracts.
      */
     walletPubKey?: string;
 
