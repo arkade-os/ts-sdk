@@ -59,7 +59,6 @@ export type {
     NetworkOptions,
     DescriptorOptions,
     SigningRequest,
-    SeedIdentityJSON,
 } from "./seedIdentity";
 
 // Descriptor utilities

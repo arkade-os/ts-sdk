@@ -7,7 +7,6 @@ import {
 } from "../src/identity/seedIdentity";
 import type { SigningRequest } from "../src/identity/seedIdentity";
 import { mnemonicToSeedSync } from "@scure/bip39";
-import { hex } from "@scure/base";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
 
 const TEST_MNEMONIC =
@@ -388,7 +387,7 @@ describe("module exports", () => {
 
     it("should export SigningRequest type from identity module", async () => {
         // SigningRequest is a type, so we just verify it compiles
-        const req: SigningRequest = { tx: null as any };
+        const req: SigningRequest = { descriptor: "tr(abc)", tx: null as any };
         expect(req).toBeDefined();
     });
 });
@@ -612,99 +611,7 @@ describe("SeedIdentity HD methods", () => {
     });
 });
 
-// ============================================================
-// New tests: SeedIdentity serialization
-// ============================================================
-
-describe("SeedIdentity serialization", () => {
-    describe("toJSON", () => {
-        it("should include mnemonic when created via fromMnemonic", () => {
-            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
-                isMainnet: true,
-            });
-            const json = identity.toJSON();
-
-            expect(json.mnemonic).toBe(TEST_MNEMONIC);
-            expect(json.seed).toBeUndefined();
-            expect(json.descriptor).toBeDefined();
-        });
-
-        it("should include seed hex when created via fromSeed", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const json = identity.toJSON();
-
-            expect(json.mnemonic).toBeUndefined();
-            expect(json.seed).toBe(hex.encode(seed));
-            expect(json.descriptor).toBeDefined();
-        });
-
-        it("should produce a wildcard descriptor with /0/*", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const json = identity.toJSON();
-
-            expect(json.descriptor).toMatch(/\/0\/\*\)$/);
-        });
-    });
-
-    describe("fromJSON", () => {
-        it("should restore from mnemonic JSON", async () => {
-            const original = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
-                isMainnet: true,
-            });
-            const json = original.toJSON();
-            const restored = SeedIdentity.fromJSON(json);
-
-            const origPubKey = await original.xOnlyPublicKey();
-            const restoredPubKey = await restored.xOnlyPublicKey();
-            expect(Array.from(restoredPubKey)).toEqual(Array.from(origPubKey));
-            expect(restored.mnemonic).toBe(TEST_MNEMONIC);
-        });
-
-        it("should restore from seed JSON", async () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const original = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const json = original.toJSON();
-            const restored = SeedIdentity.fromJSON(json);
-
-            const origPubKey = await original.xOnlyPublicKey();
-            const restoredPubKey = await restored.xOnlyPublicKey();
-            expect(Array.from(restoredPubKey)).toEqual(Array.from(origPubKey));
-            expect(restored.mnemonic).toBeUndefined();
-        });
-
-        it("should infer mainnet from descriptor coin type", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const mainnet = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const testnet = SeedIdentity.fromSeed(seed, { isMainnet: false });
-
-            const restoredMainnet = SeedIdentity.fromJSON(mainnet.toJSON());
-            const restoredTestnet = SeedIdentity.fromJSON(testnet.toJSON());
-
-            expect(restoredMainnet.isMainnet).toBe(true);
-            expect(restoredTestnet.isMainnet).toBe(false);
-        });
-
-        it("should throw on xpub mismatch", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const json = identity.toJSON();
-            // Use a different seed to cause mismatch
-            const otherSeed = mnemonicToSeedSync(TEST_MNEMONIC, "different");
-            json.seed = hex.encode(otherSeed);
-            delete (json as any).mnemonic;
-
-            expect(() => SeedIdentity.fromJSON(json)).toThrow("xpub mismatch");
-        });
-
-        it("should throw on missing mnemonic and seed", () => {
-            expect(() =>
-                SeedIdentity.fromJSON({ descriptor: "tr(xpub.../0/0)" } as any)
-            ).toThrow("JSON must contain either mnemonic or seed");
-        });
-    });
-
+describe("SeedIdentity.fromMnemonic", () => {
     describe("SeedIdentity.fromMnemonic", () => {
         it("should store the mnemonic on the identity", () => {
             const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
@@ -755,27 +662,6 @@ describe("ReadonlySeedIdentity", () => {
             expect(Array.from(readonlyPubKey)).toEqual(
                 Array.from(identityPubKey)
             );
-        });
-    });
-
-    describe("fromJSON / toJSON", () => {
-        it("should serialize and restore via JSON", async () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const original = ReadonlySeedIdentity.fromDescriptor(
-                identity.descriptor
-            );
-            const json = original.toJSON();
-            expect(json.descriptor).toBeDefined();
-
-            // The serialized descriptor should have wildcard
-            expect(json.descriptor).toMatch(/\/0\/\*\)$/);
-
-            // Restore from JSON — wildcard gets resolved to index 0
-            const restored = ReadonlySeedIdentity.fromJSON(json);
-            const origPubKey = await original.xOnlyPublicKey();
-            const restoredPubKey = await restored.xOnlyPublicKey();
-            expect(Array.from(restoredPubKey)).toEqual(Array.from(origPubKey));
         });
     });
 

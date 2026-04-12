@@ -12,7 +12,6 @@ import type {
     NetworkOptions,
     DescriptorOptions,
     SigningRequest,
-    SeedIdentityJSON,
 } from "./identity/seedIdentity";
 import {
     Identity,
@@ -443,8 +442,6 @@ export type {
     NetworkOptions,
     DescriptorOptions,
     SigningRequest,
-    SeedIdentityJSON,
-
     // Indexer types
     IndexerProvider,
     PageResponse,
