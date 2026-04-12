@@ -58,7 +58,6 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
-    SigningRequest,
 } from "./seedIdentity";
 
 // Descriptor utilities

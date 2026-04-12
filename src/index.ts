@@ -11,7 +11,6 @@ import type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
-    SigningRequest,
 } from "./identity/seedIdentity";
 import {
     Identity,
@@ -441,7 +440,6 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
-    SigningRequest,
     // Indexer types
     IndexerProvider,
     PageResponse,
