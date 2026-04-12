@@ -119,15 +119,13 @@ export class SeedIdentity implements Identity {
     private readonly derivedKey: Uint8Array;
     private readonly accountXpub: string;
     readonly descriptor: string;
-    readonly mnemonic?: string;
     readonly isMainnet: boolean;
 
-    constructor(seed: Uint8Array, descriptor: string, mnemonic?: string) {
+    constructor(seed: Uint8Array, descriptor: string) {
         if (seed.length !== 64) throw new Error("Seed must be 64 bytes");
 
         this.seed = seed;
         this.descriptor = descriptor;
-        this.mnemonic = mnemonic;
 
         const network = detectNetwork(descriptor);
         this.isMainnet = network === networks.bitcoin;
@@ -161,16 +159,6 @@ export class SeedIdentity implements Identity {
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
         return new SeedIdentity(seed, descriptor);
-    }
-
-    static fromMnemonic(phrase: string, opts: MnemonicOptions): SeedIdentity {
-        if (!validateMnemonic(phrase, wordlist))
-            throw new Error("Invalid mnemonic");
-        const seed = mnemonicToSeedSync(phrase, opts.passphrase);
-        const descriptor = hasDescriptor(opts)
-            ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new SeedIdentity(seed, descriptor, phrase);
     }
 
     deriveSigningDescriptor(index: number): string {
@@ -269,10 +257,17 @@ export class SeedIdentity implements Identity {
     }
 }
 
-/** Convenience subclass that validates a BIP39 mnemonic on creation. */
+/** Convenience subclass that validates and stores a BIP39 mnemonic. */
 export class MnemonicIdentity extends SeedIdentity {
-    private constructor(seed: Uint8Array, descriptor: string) {
+    readonly mnemonic: string;
+
+    private constructor(
+        seed: Uint8Array,
+        descriptor: string,
+        mnemonic: string
+    ) {
         super(seed, descriptor);
+        this.mnemonic = mnemonic;
     }
 
     static fromMnemonic(
@@ -285,7 +280,7 @@ export class MnemonicIdentity extends SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new MnemonicIdentity(seed, descriptor);
+        return new MnemonicIdentity(seed, descriptor, phrase);
     }
 }
 

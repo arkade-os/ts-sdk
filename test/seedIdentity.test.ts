@@ -611,35 +611,24 @@ describe("SeedIdentity HD methods", () => {
     });
 });
 
-describe("SeedIdentity.fromMnemonic", () => {
-    describe("SeedIdentity.fromMnemonic", () => {
-        it("should store the mnemonic on the identity", () => {
-            const identity = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
-                isMainnet: true,
-            });
-            expect(identity.mnemonic).toBe(TEST_MNEMONIC);
+describe("MnemonicIdentity.mnemonic", () => {
+    it("should store the mnemonic on the identity", () => {
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
         });
+        expect(identity.mnemonic).toBe(TEST_MNEMONIC);
+    });
 
-        it("should produce same key as MnemonicIdentity.fromMnemonic", async () => {
-            const fromSeed = SeedIdentity.fromMnemonic(TEST_MNEMONIC, {
-                isMainnet: true,
-            });
-            const fromMnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-                isMainnet: true,
-            });
-
-            const pubKey1 = await fromSeed.xOnlyPublicKey();
-            const pubKey2 = await fromMnemonic.xOnlyPublicKey();
-            expect(Array.from(pubKey1)).toEqual(Array.from(pubKey2));
+    it("should produce same key as SeedIdentity.fromSeed", async () => {
+        const fromMnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
         });
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const fromSeed = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
-        it("should throw for invalid mnemonic", () => {
-            expect(() =>
-                SeedIdentity.fromMnemonic("invalid mnemonic words here", {
-                    isMainnet: false,
-                })
-            ).toThrow("Invalid mnemonic");
-        });
+        const pubKey1 = await fromMnemonic.xOnlyPublicKey();
+        const pubKey2 = await fromSeed.xOnlyPublicKey();
+        expect(Array.from(pubKey1)).toEqual(Array.from(pubKey2));
     });
 });
 
