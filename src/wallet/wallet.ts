@@ -1810,7 +1810,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const vtxos = await this.getVtxos();
+        // Use the inputs array directly (with type guard) instead of
+        // getVtxos() — the inputs may be in _pendingSpendOutpoints
+        // and would be filtered out by getVtxos().
+        const isVtxoInput = (
+            input: ExtendedCoin
+        ): input is ExtendedVirtualCoin => "virtualStatus" in input;
+
         let settlementPsbt = Transaction.fromPSBT(
             base64.decode(event.commitmentTx)
         );
@@ -1821,13 +1827,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const connectorsLeaves = connectorsGraph?.leaves() || [];
 
         for (const input of inputs) {
-            // check if the input is an offchain "virtual" coin
-            const vtxo = vtxos.find(
-                (vtxo) => vtxo.txid === input.txid && vtxo.vout === input.vout
-            );
-
             // boarding utxo, we need to sign the settlement tx
-            if (!vtxo) {
+            if (!isVtxoInput(input)) {
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -1856,7 +1857,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(vtxo) || isSubdust(vtxo, this.dustAmount)) {
+            if (isRecoverable(input) || isSubdust(input, this.dustAmount)) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
@@ -1891,7 +1892,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         txid: input.txid,
                         index: input.vout,
                         witnessUtxo: {
-                            amount: BigInt(vtxo.value),
+                            amount: BigInt(input.value),
                             script: VtxoScript.decode(input.tapTree).pkScript,
                         },
                         sighashType: SigHash.DEFAULT,
