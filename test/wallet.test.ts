@@ -6,13 +6,18 @@ import {
     OnchainWallet,
     RestArkProvider,
     ReadonlyWallet,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    type IndexerProvider,
+    type ArkProvider,
+    type OnchainProvider,
 } from "../src";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import {
     IndexedDBWalletRepository,
     IndexedDBContractRepository,
 } from "../src/repositories";
-import type { Coin } from "../src/wallet";
+import type { Coin, VirtualCoin } from "../src/wallet";
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -684,6 +689,193 @@ describe("Wallet", () => {
 
             const balance = await readonlyWallet.getBalance();
             expect(balance.boarding.total).toBe(100000);
+        });
+    });
+
+    describe("delta-sync reconciliation", () => {
+        const mockArkInfo = {
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            boardingExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+            network: "mutinynet",
+            dust: BigInt(1000),
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        };
+
+        async function createReadonlyTestWallet(
+            indexerProvider: IndexerProvider
+        ) {
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider,
+                onchainProvider: {} as OnchainProvider,
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+            });
+
+            return { wallet, walletRepository };
+        }
+
+        function makeTestVtxo(
+            script: string,
+            state: "preconfirmed" | "settled" = "preconfirmed"
+        ): VirtualCoin {
+            return {
+                txid: "11".repeat(32),
+                vout: 0,
+                value: 50_000,
+                status: {
+                    confirmed: state !== "preconfirmed",
+                    isLeaf: state !== "preconfirmed",
+                },
+                virtualStatus: {
+                    state,
+                    commitmentTxIds: ["22".repeat(32)],
+                    batchExpiry: Date.now() + 60_000,
+                },
+                spentBy: "",
+                settledBy: state === "settled" ? "33".repeat(32) : undefined,
+                arkTxId: "",
+                createdAt: new Date("2026-01-01T00:00:00.000Z"),
+                isUnrolled: false,
+                isSpent: false,
+                script,
+            };
+        }
+
+        it("keeps a preconfirmed VTXO when full re-fetch still returns it", async () => {
+            let walletScript = "";
+            let callCount = 0;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    callCount += 1;
+                    const script = opts?.scripts?.[0] ?? walletScript;
+                    walletScript = script;
+
+                    switch (callCount) {
+                        case 1: // bootstrap
+                            return { vtxos: [makeTestVtxo(script)] };
+                        case 2: // delta — no changes
+                            return { vtxos: [] };
+                        case 3: // full re-fetch — VTXO still present
+                            return { vtxos: [makeTestVtxo(script)] };
+                        default:
+                            throw new Error(
+                                `unexpected getVtxos call ${callCount}`
+                            );
+                    }
+                });
+
+            const { wallet } = await createReadonlyTestWallet({
+                getVtxos,
+            } as Partial<IndexerProvider> as IndexerProvider);
+
+            expect(await wallet.getVtxos()).toHaveLength(1);
+            expect(await wallet.getVtxos()).toHaveLength(1);
+            expect(getVtxos).toHaveBeenCalledTimes(3);
+        });
+
+        it("updates VTXO state when full re-fetch shows it settled", async () => {
+            let walletScript = "";
+            let callCount = 0;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    callCount += 1;
+                    const script = opts?.scripts?.[0] ?? walletScript;
+                    walletScript = script;
+
+                    switch (callCount) {
+                        case 1: // bootstrap — preconfirmed
+                            return { vtxos: [makeTestVtxo(script)] };
+                        case 2: // delta — no changes
+                            return { vtxos: [] };
+                        case 3: // full re-fetch — now settled
+                            return { vtxos: [makeTestVtxo(script, "settled")] };
+                        default:
+                            throw new Error(
+                                `unexpected getVtxos call ${callCount}`
+                            );
+                    }
+                });
+
+            const { wallet, walletRepository } = await createReadonlyTestWallet(
+                {
+                    getVtxos,
+                } as Partial<IndexerProvider> as IndexerProvider
+            );
+
+            expect((await wallet.getVtxos())[0].virtualStatus.state).toBe(
+                "preconfirmed"
+            );
+
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].virtualStatus.state).toBe("settled");
+            expect(vtxos[0].isSpent).toBe(false);
+
+            const cached = await walletRepository.getVtxos(
+                await wallet.getAddress()
+            );
+            expect(cached).toHaveLength(1);
+            expect(cached[0].virtualStatus.state).toBe("settled");
+        });
+
+        it("marks a cached preconfirmed VTXO as spent when full re-fetch no longer returns it", async () => {
+            let walletScript = "";
+            let callCount = 0;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    callCount += 1;
+                    const script = opts?.scripts?.[0] ?? walletScript;
+                    walletScript = script;
+
+                    switch (callCount) {
+                        case 1: // bootstrap — preconfirmed
+                            return { vtxos: [makeTestVtxo(script)] };
+                        case 2: // delta — no changes
+                        case 3: // full re-fetch — VTXO gone
+                            return { vtxos: [] };
+                        default:
+                            throw new Error(
+                                `unexpected getVtxos call ${callCount}`
+                            );
+                    }
+                });
+
+            const { wallet, walletRepository } = await createReadonlyTestWallet(
+                {
+                    getVtxos,
+                } as Partial<IndexerProvider> as IndexerProvider
+            );
+
+            expect(await wallet.getVtxos()).toHaveLength(1);
+            expect(await wallet.getVtxos()).toEqual([]);
+
+            const cached = await walletRepository.getVtxos(
+                await wallet.getAddress()
+            );
+            expect(cached).toHaveLength(1);
+            expect(cached[0].isSpent).toBe(true);
         });
     });
 });

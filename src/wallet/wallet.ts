@@ -550,7 +550,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const requestStartedAt = Date.now();
         const allVtxos: VirtualCoin[] = [];
-        let deltaVtxos: VirtualCoin[] = [];
 
         const extendWithScript = (
             vtxo: VirtualCoin
@@ -586,8 +585,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     scripts: deltaScripts,
                     after: window.after,
                 });
-                deltaVtxos = response.vtxos;
-                allVtxos.push(...deltaVtxos);
+                allVtxos.push(...response.vtxos);
             }
         }
 
@@ -605,103 +603,86 @@ export class ReadonlyWallet implements IReadonlyWallet {
             Object.fromEntries(allScripts.map((s) => [s, cutoff]))
         );
 
-        // For delta syncs, reconcile pending (preconfirmed/spent) VTXOs
-        // whose state may have changed since the cursor so that
-        // getVtxos()/getTransactionHistory() don't serve stale state.
+        // Delta-sync reconciliation: full re-fetch for delta scripts.
+        //
+        // The delta fetch (above) only returns VTXOs changed after the
+        // cursor, so it can miss preconfirmed VTXOs that were consumed
+        // by a round between syncs.  Rather than layering targeted
+        // queries (pendingOnly, spendableOnly) with pagination guards
+        // and set algebra, we perform a single unfiltered re-fetch for
+        // delta scripts.  This is slightly more data over the wire but
+        // gives us complete, authoritative state in one call and keeps
+        // the reconciliation logic simple.
+        //
+        // Any cached preconfirmed VTXO that is absent from the full
+        // result set is marked spent; any VTXO whose state changed
+        // (e.g. preconfirmed → confirmed) is updated in place.
         if (hasDelta) {
-            const { vtxos: pendingVtxos, page: pendingPage } =
+            const { vtxos: fullVtxos, page: fullPage } =
                 await this.indexerProvider.getVtxos({
                     scripts: deltaScripts,
-                    pendingOnly: true,
                 });
-            const reconciledExtended: ExtendedVirtualCoin[] = [];
-            for (const vtxo of pendingVtxos) {
-                const extended = extendWithScript(vtxo);
-                if (extended) reconciledExtended.push(extended);
-            }
 
-            // Only reconcile if the pending set is complete (not
-            // paginated).  If the server truncated the response, skip
-            // rather than risk marking live VTXOs as spent based on
-            // incomplete data.
-            const pendingSetComplete = !pendingPage || pendingPage.total <= 1;
-            if (pendingSetComplete) {
-                // Build a set of outpoints the server still considers
-                // pending.
-                const pendingOutpoints = new Set(
-                    pendingVtxos.map((v) => `${v.txid}:${v.vout}`)
+            // If the response is paginated we don't have a complete
+            // picture — skip reconciliation rather than act on partial
+            // data.  The next sync will retry.
+            const fullSetComplete = !fullPage || fullPage.total <= 1;
+            if (fullSetComplete) {
+                const fullOutpoints = new Map(
+                    fullVtxos.map((v) => [`${v.txid}:${v.vout}`, v])
                 );
-                const deltaOutpoints = new Set(
-                    deltaVtxos.map((v) => `${v.txid}:${v.vout}`)
-                );
-
-                // Only reconcile VTXOs belonging to delta scripts.
-                // Bootstrapped scripts already got a full fetch, so
-                // their preconfirmed state is already fresh.
                 const deltaScriptSet = new Set(deltaScripts);
                 const cachedVtxos =
                     await this.walletRepository.getVtxos(address);
 
-                const unresolvedPreconfirmed = cachedVtxos.filter((cached) => {
+                const reconciledExtended: ExtendedVirtualCoin[] = [];
+
+                for (const cached of cachedVtxos) {
+                    if (
+                        !cached.script ||
+                        !deltaScriptSet.has(cached.script) ||
+                        cached.virtualStatus.state !== "preconfirmed" ||
+                        cached.isSpent
+                    ) {
+                        continue;
+                    }
+
                     const outpoint = `${cached.txid}:${cached.vout}`;
-                    return (
-                        !!cached.script &&
-                        deltaScriptSet.has(cached.script) &&
-                        cached.virtualStatus.state === "preconfirmed" &&
-                        !cached.isSpent &&
-                        !deltaOutpoints.has(outpoint) &&
-                        !pendingOutpoints.has(outpoint)
-                    );
-                });
+                    const fresh = fullOutpoints.get(outpoint);
 
-                // Only pay for a broader spendableOnly fetch when the
-                // delta window and pendingOnly frontier both fail to
-                // explain a cached preconfirmed VTXO.
-                if (unresolvedPreconfirmed.length > 0) {
-                    const { vtxos: spendableVtxos, page: spendablePage } =
-                        await this.indexerProvider.getVtxos({
-                            scripts: deltaScripts,
-                            spendableOnly: true,
+                    if (!fresh) {
+                        // Server no longer knows about this VTXO —
+                        // it was spent between syncs.
+                        reconciledExtended.push({
+                            ...cached,
+                            isSpent: true,
                         });
-                    const spendableSetComplete =
-                        !spendablePage || spendablePage.total <= 1;
+                        continue;
+                    }
 
-                    if (spendableSetComplete) {
-                        const spendableByOutpoint = new Map(
-                            spendableVtxos.map((v) => [
-                                `${v.txid}:${v.vout}`,
-                                v,
-                            ])
-                        );
-
-                        for (const cached of unresolvedPreconfirmed) {
-                            const outpoint = `${cached.txid}:${cached.vout}`;
-                            const spendable = spendableByOutpoint.get(outpoint);
-
-                            if (!spendable) {
-                                reconciledExtended.push({
-                                    ...cached,
-                                    isSpent: true,
-                                });
-                                continue;
-                            }
-
-                            const extended = extendWithScript(spendable);
-                            if (
-                                extended &&
-                                extended.virtualStatus.state !== "preconfirmed"
-                            ) {
-                                reconciledExtended.push(extended);
-                            }
-                        }
+                    const extended = extendWithScript(fresh);
+                    if (
+                        extended &&
+                        extended.virtualStatus.state !== "preconfirmed"
+                    ) {
+                        // State transitioned (e.g. confirmed by a
+                        // round) — update the cached entry.
+                        reconciledExtended.push(extended);
                     }
                 }
-            }
 
-            if (reconciledExtended.length > 0) {
-                await this.walletRepository.saveVtxos(
-                    address,
-                    reconciledExtended
+                if (reconciledExtended.length > 0) {
+                    console.warn(
+                        `[ark-sdk] delta sync: reconciled ${reconciledExtended.length} stale preconfirmed VTXO(s) via full re-fetch`
+                    );
+                    await this.walletRepository.saveVtxos(
+                        address,
+                        reconciledExtended
+                    );
+                }
+            } else {
+                console.warn(
+                    "[ark-sdk] delta sync: skipping reconciliation — full re-fetch was paginated"
                 );
             }
         }
