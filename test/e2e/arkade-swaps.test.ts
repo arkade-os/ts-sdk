@@ -1472,6 +1472,13 @@ describe("ArkadeSwaps", () => {
                         15_000
                     );
 
+                    // VtxoManager's SSE may have triggered an additional
+                    // auto-settlement round, leaving stale VTXOs in the
+                    // delta-sync cache.  Clear the cursors so the next
+                    // getVtxos() does a full bootstrap and sees only the
+                    // current indexer state.
+                    await defaultWallet.clearSyncCursors();
+
                     const { invoice } = await getNewLightningInvoice(amount);
                     const result = await defaultSwaps.sendLightningPayment({
                         invoice,
