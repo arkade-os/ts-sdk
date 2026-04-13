@@ -596,6 +596,38 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const extended = extendWithScript(vtxo);
             if (extended) fetchedExtended.push(extended);
         }
+        // Preserve confirmed local spend marks that the indexer hasn't
+        // caught up with yet.  Without this, a stale indexer response
+        // (isSpent=false) would overwrite the SDK's first-hand knowledge
+        // that a VTXO was consumed by a successful settle/send.
+        const cached = await this.walletRepository.getVtxos(address);
+        if (cached.length > 0) {
+            const confirmedSpent = new Map<string, ExtendedVirtualCoin>();
+            for (const v of cached) {
+                if (
+                    v.isSpent &&
+                    (v.virtualStatus.state === "spent" ||
+                        v.virtualStatus.state === "settled")
+                ) {
+                    confirmedSpent.set(`${v.txid}:${v.vout}`, v);
+                }
+            }
+            if (confirmedSpent.size > 0) {
+                for (const vtxo of fetchedExtended) {
+                    const local = confirmedSpent.get(
+                        `${vtxo.txid}:${vtxo.vout}`
+                    );
+                    if (local && !vtxo.isSpent) {
+                        vtxo.isSpent = true;
+                        vtxo.virtualStatus = local.virtualStatus;
+                        vtxo.settledBy = local.settledBy;
+                        vtxo.spentBy = local.spentBy;
+                        vtxo.arkTxId = local.arkTxId;
+                    }
+                }
+            }
+        }
+
         // Save VTXOs first, then advance cursors only on success.
         const cutoff = cursorCutoff(requestStartedAt);
         await this.walletRepository.saveVtxos(address, fetchedExtended);
