@@ -19,10 +19,8 @@ import {
     TEST_SERVER_PUB_KEY_HEX,
     TEST_DELEGATE_PUB_KEY,
 } from "./helpers";
-import {
-    resolveRole,
-    timelockToSequence,
-} from "../../src/contracts/handlers/helpers";
+import { resolveRole } from "../../src/contracts/handlers/helpers";
+import { timelockToSequence } from "../../src/utils/timelock";
 
 describe("Contract Registry", () => {
     it("should have default handler registered", () => {

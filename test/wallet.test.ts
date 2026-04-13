@@ -24,7 +24,7 @@ import {
 } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
 import { MockEventSource } from "./mocks/eventSource";
-import { timelockToSequence } from "../src/contracts/handlers/helpers";
+import { timelockToSequence } from "../src/utils/timelock";
 
 // Mock fetch
 const mockFetch = vi.fn();

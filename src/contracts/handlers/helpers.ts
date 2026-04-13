@@ -1,8 +1,4 @@
-import { RelativeTimelock } from "../../script/tapscript";
-import {
-    timelockToSequence as timelockToSequenceImpl,
-    sequenceToTimelock as sequenceToTimelockImpl,
-} from "../../utils/timelock";
+import { sequenceToTimelock } from "../../utils/timelock";
 import { Contract, PathContext } from "../types";
 import { isDescriptor, extractPubKey } from "../../identity/descriptor";
 
@@ -20,20 +16,6 @@ function extractRawPubKey(value: string): string | undefined {
     } catch {
         return undefined;
     }
-}
-
-/**
- * Convert RelativeTimelock to BIP68 sequence number.
- */
-export function timelockToSequence(timelock: RelativeTimelock): number {
-    return timelockToSequenceImpl(timelock);
-}
-
-/**
- * Convert BIP68 sequence number back to RelativeTimelock.
- */
-export function sequenceToTimelock(sequence: number): RelativeTimelock {
-    return sequenceToTimelockImpl(sequence);
 }
 
 /**
