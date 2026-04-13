@@ -585,7 +585,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             fetchedExtended.push({
                 ...vtxo,
                 forfeitTapLeafScript: vtxoScript.forfeit(),
-                intentTapLeafScript: vtxoScript.forfeit(),
+                intentTapLeafScript: vtxoScript.exit(),
                 tapTree: vtxoScript.encode(),
             });
         }
@@ -616,7 +616,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 pendingExtended.push({
                     ...vtxo,
                     forfeitTapLeafScript: vtxoScript.forfeit(),
-                    intentTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.exit(),
                     tapTree: vtxoScript.encode(),
                 });
             }
@@ -2122,7 +2122,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 allExtended.push({
                     ...vtxo,
                     forfeitTapLeafScript: vtxoScript.forfeit(),
-                    intentTapLeafScript: vtxoScript.forfeit(),
+                    intentTapLeafScript: vtxoScript.exit(),
                     tapTree: vtxoScript.encode(),
                 });
             }
@@ -2634,7 +2634,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     vout: changeVout,
                     createdAt: new Date(createdAt),
                     forfeitTapLeafScript: this.offchainTapscript.forfeit(),
-                    intentTapLeafScript: this.offchainTapscript.forfeit(),
+                    intentTapLeafScript: this.offchainTapscript.exit(),
                     isUnrolled: false,
                     isSpent: false,
                     tapTree: this.offchainTapscript.encode(),
