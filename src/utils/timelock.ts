@@ -1,5 +1,5 @@
 import * as bip68 from "bip68";
-import { RelativeTimelock } from "../script/tapscript";
+import type { RelativeTimelock } from "../script/tapscript";
 
 /**
  * Convert RelativeTimelock to BIP68 sequence number.
