@@ -595,11 +595,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const extended = extendWithScript(vtxo);
             if (extended) fetchedExtended.push(extended);
         }
-        // Save fetched VTXOs immediately; cursors are advanced after
-        // reconciliation so that a failed or skipped reconciliation
-        // (e.g. paginated full re-fetch) retries on the next sync.
+        // Save VTXOs first, then advance cursors only on success.
         const cutoff = cursorCutoff(requestStartedAt);
         await this.walletRepository.saveVtxos(address, fetchedExtended);
+        await advanceSyncCursors(
+            this.walletRepository,
+            Object.fromEntries(allScripts.map((s) => [s, cutoff]))
+        );
 
         // Delta-sync reconciliation: full re-fetch for delta scripts.
         //
@@ -621,10 +623,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     scripts: deltaScripts,
                 });
 
-            // If the response is paginated we don't have a complete
-            // picture — skip reconciliation rather than act on partial
-            // data.  Cursors are advanced after this block, so the
-            // next sync will retry with the same window.
+            // Reconciliation is best-effort: if the response is
+            // paginated we don't have a complete picture, so we skip
+            // rather than act on partial data.  Wallets with enough
+            // VTXOs to exceed a single page rely solely on the
+            // cursor-based delta mechanism for state updates.
             const fullSetComplete = !fullPage || fullPage.total <= 1;
             if (fullSetComplete) {
                 const fullOutpoints = new Map(
@@ -685,11 +688,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 );
             }
         }
-
-        await advanceSyncCursors(
-            this.walletRepository,
-            Object.fromEntries(allScripts.map((s) => [s, cutoff]))
-        );
 
         return {
             isDelta: hasDelta || bootstrapScripts.length === 0,
