@@ -550,6 +550,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const requestStartedAt = Date.now();
         const allVtxos: VirtualCoin[] = [];
+        let deltaVtxos: VirtualCoin[] = [];
+
+        const extendWithScript = (
+            vtxo: VirtualCoin
+        ): ExtendedVirtualCoin | undefined => {
+            const vtxoScript = vtxo.script
+                ? scriptMap.get(vtxo.script)
+                : undefined;
+            if (!vtxoScript) return undefined;
+            return {
+                ...vtxo,
+                forfeitTapLeafScript: vtxoScript.forfeit(),
+                intentTapLeafScript: vtxoScript.forfeit(),
+                tapTree: vtxoScript.encode(),
+            };
+        };
 
         // Full fetch for scripts with no cursor.
         if (bootstrapScripts.length > 0) {
@@ -570,23 +586,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     scripts: deltaScripts,
                     after: window.after,
                 });
-                allVtxos.push(...response.vtxos);
+                deltaVtxos = response.vtxos;
+                allVtxos.push(...deltaVtxos);
             }
         }
 
         // Extend every fetched VTXO and upsert into the cache.
         const fetchedExtended: ExtendedVirtualCoin[] = [];
         for (const vtxo of allVtxos) {
-            const vtxoScript = vtxo.script
-                ? scriptMap.get(vtxo.script)
-                : undefined;
-            if (!vtxoScript) continue;
-            fetchedExtended.push({
-                ...vtxo,
-                forfeitTapLeafScript: vtxoScript.forfeit(),
-                intentTapLeafScript: vtxoScript.forfeit(),
-                tapTree: vtxoScript.encode(),
-            });
+            const extended = extendWithScript(vtxo);
+            if (extended) fetchedExtended.push(extended);
         }
         // Save VTXOs first, then advance cursors only on success.
         const cutoff = cursorCutoff(requestStartedAt);
@@ -605,18 +614,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     scripts: deltaScripts,
                     pendingOnly: true,
                 });
-            const pendingExtended: ExtendedVirtualCoin[] = [];
+            const reconciledExtended: ExtendedVirtualCoin[] = [];
             for (const vtxo of pendingVtxos) {
-                const vtxoScript = vtxo.script
-                    ? scriptMap.get(vtxo.script)
-                    : undefined;
-                if (!vtxoScript) continue;
-                pendingExtended.push({
-                    ...vtxo,
-                    forfeitTapLeafScript: vtxoScript.forfeit(),
-                    intentTapLeafScript: vtxoScript.forfeit(),
-                    tapTree: vtxoScript.encode(),
-                });
+                const extended = extendWithScript(vtxo);
+                if (extended) reconciledExtended.push(extended);
             }
 
             // Only reconcile if the pending set is complete (not
@@ -630,41 +631,78 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 const pendingOutpoints = new Set(
                     pendingVtxos.map((v) => `${v.txid}:${v.vout}`)
                 );
+                const deltaOutpoints = new Set(
+                    deltaVtxos.map((v) => `${v.txid}:${v.vout}`)
+                );
 
-                // Mark locally-cached "preconfirmed" VTXOs as spent if
-                // the server no longer lists them as pending.  This
-                // happens when a preconfirmed VTXO is consumed by a
-                // round (e.g. via VtxoManager auto-settlement) between
-                // syncs: the delta fetch misses the update because the
-                // VTXO was created before the cursor, and the
-                // pendingOnly query no longer returns it.
-                //
                 // Only reconcile VTXOs belonging to delta scripts.
                 // Bootstrapped scripts already got a full fetch, so
-                // their preconfirmed state is already fresh — marking
-                // them against a pendingOnly set that only covers
-                // deltaScripts would incorrectly flag them as spent.
+                // their preconfirmed state is already fresh.
                 const deltaScriptSet = new Set(deltaScripts);
                 const cachedVtxos =
                     await this.walletRepository.getVtxos(address);
-                for (const cached of cachedVtxos) {
-                    if (
-                        cached.script &&
+
+                const unresolvedPreconfirmed = cachedVtxos.filter((cached) => {
+                    const outpoint = `${cached.txid}:${cached.vout}`;
+                    return (
+                        !!cached.script &&
                         deltaScriptSet.has(cached.script) &&
                         cached.virtualStatus.state === "preconfirmed" &&
                         !cached.isSpent &&
-                        !pendingOutpoints.has(`${cached.txid}:${cached.vout}`)
-                    ) {
-                        pendingExtended.push({
-                            ...cached,
-                            isSpent: true,
+                        !deltaOutpoints.has(outpoint) &&
+                        !pendingOutpoints.has(outpoint)
+                    );
+                });
+
+                // Only pay for a broader spendableOnly fetch when the
+                // delta window and pendingOnly frontier both fail to
+                // explain a cached preconfirmed VTXO.
+                if (unresolvedPreconfirmed.length > 0) {
+                    const { vtxos: spendableVtxos, page: spendablePage } =
+                        await this.indexerProvider.getVtxos({
+                            scripts: deltaScripts,
+                            spendableOnly: true,
                         });
+                    const spendableSetComplete =
+                        !spendablePage || spendablePage.total <= 1;
+
+                    if (spendableSetComplete) {
+                        const spendableByOutpoint = new Map(
+                            spendableVtxos.map((v) => [
+                                `${v.txid}:${v.vout}`,
+                                v,
+                            ])
+                        );
+
+                        for (const cached of unresolvedPreconfirmed) {
+                            const outpoint = `${cached.txid}:${cached.vout}`;
+                            const spendable = spendableByOutpoint.get(outpoint);
+
+                            if (!spendable) {
+                                reconciledExtended.push({
+                                    ...cached,
+                                    isSpent: true,
+                                });
+                                continue;
+                            }
+
+                            const extended = extendWithScript(spendable);
+                            if (
+                                extended &&
+                                extended.virtualStatus.state !== "preconfirmed"
+                            ) {
+                                reconciledExtended.push(extended);
+                            }
+                        }
                     }
                 }
             }
 
-            if (pendingExtended.length > 0) {
-                await this.walletRepository.saveVtxos(address, pendingExtended);
+            if (reconciledExtended.length > 0) {
+                await this.walletRepository.saveVtxos(
+                    address,
+                    reconciledExtended
+                );
             }
         }
 
