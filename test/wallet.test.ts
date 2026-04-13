@@ -877,6 +877,50 @@ describe("Wallet", () => {
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
+
+        it("marks a cached settled VTXO as spent when full re-fetch no longer returns it", async () => {
+            let walletScript = "";
+            let callCount = 0;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    callCount += 1;
+                    const script = opts?.scripts?.[0] ?? walletScript;
+                    walletScript = script;
+
+                    switch (callCount) {
+                        case 1: // bootstrap — settled VTXO
+                            return {
+                                vtxos: [makeTestVtxo(script, "settled")],
+                            };
+                        case 2: // delta — no changes
+                        case 3: // full re-fetch — VTXO gone
+                            return { vtxos: [] };
+                        default:
+                            throw new Error(
+                                `unexpected getVtxos call ${callCount}`
+                            );
+                    }
+                });
+
+            const { wallet, walletRepository } = await createReadonlyTestWallet(
+                {
+                    getVtxos,
+                } as Partial<IndexerProvider> as IndexerProvider
+            );
+
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].virtualStatus.state).toBe("settled");
+
+            expect(await wallet.getVtxos()).toEqual([]);
+
+            const cached = await walletRepository.getVtxos(
+                await wallet.getAddress()
+            );
+            expect(cached).toHaveLength(1);
+            expect(cached[0].isSpent).toBe(true);
+        });
     });
 });
 

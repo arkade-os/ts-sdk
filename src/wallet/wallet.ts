@@ -614,9 +614,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // gives us complete, authoritative state in one call and keeps
         // the reconciliation logic simple.
         //
-        // Any cached preconfirmed VTXO that is absent from the full
+        // Any cached non-spent VTXO that is absent from the full
         // result set is marked spent; any VTXO whose state changed
-        // (e.g. preconfirmed → confirmed) is updated in place.
+        // (e.g. preconfirmed → settled) is updated in place.
         if (hasDelta) {
             const { vtxos: fullVtxos, page: fullPage } =
                 await this.indexerProvider.getVtxos({
@@ -641,7 +641,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     if (
                         !cached.script ||
                         !deltaScriptSet.has(cached.script) ||
-                        cached.virtualStatus.state !== "preconfirmed" ||
                         cached.isSpent
                     ) {
                         continue;
@@ -663,17 +662,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     const extended = extendWithScript(fresh);
                     if (
                         extended &&
-                        extended.virtualStatus.state !== "preconfirmed"
+                        extended.virtualStatus.state !==
+                            cached.virtualStatus.state
                     ) {
-                        // State transitioned (e.g. confirmed by a
-                        // round) — update the cached entry.
+                        // State transitioned (e.g. preconfirmed →
+                        // settled) — update the cached entry.
                         reconciledExtended.push(extended);
                     }
                 }
 
                 if (reconciledExtended.length > 0) {
                     console.warn(
-                        `[ark-sdk] delta sync: reconciled ${reconciledExtended.length} stale preconfirmed VTXO(s) via full re-fetch`
+                        `[ark-sdk] delta sync: reconciled ${reconciledExtended.length} stale VTXO(s) via full re-fetch`
                     );
                     await this.walletRepository.saveVtxos(
                         address,
