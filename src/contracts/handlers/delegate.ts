@@ -10,9 +10,11 @@ import {
 } from "../types";
 import {
     isCsvSpendable,
+} from "./helpers";
+import {
     sequenceToTimelock,
     timelockToSequence,
-} from "./helpers";
+} from "../../utils/timelock";
 
 /**
  * Typed parameters for DelegateVtxo contracts.

@@ -17,7 +17,7 @@ import {
     TEST_SERVER_PUB_KEY,
     TEST_DELEGATE_PUB_KEY,
 } from "./helpers";
-import { timelockToSequence } from "../../src/contracts/handlers/helpers";
+import { timelockToSequence } from "../../src/utils/timelock";
 
 describe("Contract Registry", () => {
     it("should have default handler registered", () => {
