@@ -565,7 +565,10 @@ describe("Common", () => {
                     );
 
                     execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
-                    await new Promise((resolve) => setTimeout(resolve, 5000));
+                    await waitFor(async () => {
+                        const b = await onchainAlice.getBalance();
+                        return b > 0;
+                    });
 
                     const session = await Unroll.Session.create(
                         { txid: vtxo.txid, vout: vtxo.vout },
@@ -598,6 +601,8 @@ describe("Common", () => {
                     );
                     expect(txStatus.confirmed).toBe(true);
 
+                    // Keep this aligned with availableExitPath() selection logic,
+                    // which currently returns the first mature exit path.
                     const exitTimelock = exits[0].params.timelock;
                     if (exitTimelock.type === "blocks") {
                         const chainTip =
@@ -616,6 +621,9 @@ describe("Common", () => {
                     } else {
                         const requiredTime =
                             txStatus.blockTime + Number(exitTimelock.value);
+                        const initialTip =
+                            await alice.wallet.onchainProvider.getChainTip();
+                        let blocksMined = 0;
                         for (let i = 0; i < 300; i += 1) {
                             const chainTip =
                                 await alice.wallet.onchainProvider.getChainTip();
@@ -623,10 +631,14 @@ describe("Common", () => {
                                 break;
                             }
                             execCommand(`nigiri rpc --generate 1`);
+                            blocksMined += 1;
                         }
                         const finalTip =
                             await alice.wallet.onchainProvider.getChainTip();
                         expect(finalTip.time).toBeGreaterThanOrEqual(requiredTime);
+                        if (initialTip.time < requiredTime) {
+                            expect(blocksMined).toBeGreaterThan(0);
+                        }
                     }
 
                     const beforeBalance = await onchainAlice.getBalance();
