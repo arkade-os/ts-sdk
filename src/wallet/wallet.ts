@@ -144,6 +144,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
+    protected _pendingSpendOutpoints = new Set<string>();
     private _syncVtxosInflight?: Promise<{
         isDelta: boolean;
         fetchedExtended: ExtendedVirtualCoin[];
@@ -464,6 +465,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
             : fetchedExtended;
 
         return vtxos.filter((vtxo) => {
+            // Skip VTXOs that are being spent by an in-flight operation.
+            if (this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                return false;
+            }
             if (isSpendable(vtxo)) {
                 if (
                     !f.withRecoverable &&
@@ -1224,6 +1229,24 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private _txLock: Promise<void> = Promise.resolve();
 
+    private _addPendingSpends(inputs: ExtendedCoin[]): void {
+        for (const input of inputs) {
+            if ("virtualStatus" in input) {
+                this._pendingSpendOutpoints.add(`${input.txid}:${input.vout}`);
+            }
+        }
+    }
+
+    private _removePendingSpends(inputs: ExtendedCoin[]): void {
+        for (const input of inputs) {
+            if ("virtualStatus" in input) {
+                this._pendingSpendOutpoints.delete(
+                    `${input.txid}:${input.vout}`
+                );
+            }
+        }
+    }
+
     private _withTxLock<T>(fn: () => Promise<T>): Promise<T> {
         let release!: () => void;
         const lock = new Promise<void>((r) => (release = r));
@@ -1773,6 +1796,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const intentId = await this.safeRegisterIntent(intent);
 
+            // Optimistic mark: hide these inputs from concurrent
+            // getVtxos() callers while the batch is in progress.
+            this._addPendingSpends(params.inputs);
+
             const handler = this.createBatchHandler(
                 intentId,
                 params.inputs,
@@ -1789,9 +1816,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
+            this._removePendingSpends(params.inputs);
 
             return commitmentTxid;
         } catch (error) {
+            this._removePendingSpends(params.inputs);
             // delete the intent to not be stuck in the queue
             await this.arkProvider.deleteIntent(deleteIntent).catch(() => {});
             throw error;
@@ -2549,20 +2578,27 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        const { arkTxid, signedCheckpointTxs } =
-            await this.buildAndSubmitOffchainTx(selectedCoins, outputs);
+        // Optimistic mark: hide selected coins from concurrent
+        // getVtxos() callers while the offchain tx is in flight.
+        this._addPendingSpends(selectedCoins);
+        try {
+            const { arkTxid, signedCheckpointTxs } =
+                await this.buildAndSubmitOffchainTx(selectedCoins, outputs);
 
-        await this.updateDbAfterOffchainTx(
-            selectedCoins,
-            arkTxid,
-            signedCheckpointTxs,
-            sentAmount,
-            BigInt(changeAmount),
-            changeReceiver ? changeIndex : 0,
-            changeReceiver?.assets
-        );
+            await this.updateDbAfterOffchainTx(
+                selectedCoins,
+                arkTxid,
+                signedCheckpointTxs,
+                sentAmount,
+                BigInt(changeAmount),
+                changeReceiver ? changeIndex : 0,
+                changeReceiver?.assets
+            );
 
-        return arkTxid;
+            return arkTxid;
+        } finally {
+            this._removePendingSpends(selectedCoins);
+        }
     }
 
     /**
