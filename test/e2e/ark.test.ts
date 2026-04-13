@@ -14,6 +14,7 @@ import {
     ArkAddress,
     buildOffchainTx,
     CSVMultisigTapscript,
+    VtxoScript,
     Wallet,
     EsploraProvider,
     InMemoryWalletRepository,
@@ -515,6 +516,143 @@ describe("Common", () => {
                 expect(virtualCoinsAfterExit).toHaveLength(1);
                 expect(virtualCoinsAfterExit[0].isUnrolled).toBe(true);
             });
+
+            it(
+                "should complete unroll after unilateral exit delay",
+                { timeout: 120000 },
+                async () => {
+                    const alice = await factory();
+
+                    const boardingAddress =
+                        await alice.wallet.getBoardingAddress();
+                    const offchainAddress = await alice.wallet.getAddress();
+
+                    execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
+
+                    await waitFor(async () => {
+                        const b = await alice.wallet.getBoardingUtxos();
+                        return b.length > 0;
+                    });
+
+                    const boardingInputs = await alice.wallet.getBoardingUtxos();
+                    expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+
+                    await alice.wallet.settle({
+                        inputs: boardingInputs,
+                        outputs: [
+                            {
+                                address: offchainAddress!,
+                                amount: BigInt(10000),
+                            },
+                        ],
+                    });
+
+                    execCommand(`nigiri rpc --generate 1`);
+
+                    await waitFor(async () => {
+                        const v = await alice.wallet.getVtxos();
+                        return v.length > 0;
+                    });
+
+                    const virtualCoins = await alice.wallet.getVtxos();
+                    expect(virtualCoins).toHaveLength(1);
+                    const vtxo = virtualCoins[0];
+                    expect(vtxo.txid).toBeDefined();
+
+                    const onchainAlice = await OnchainWallet.create(
+                        alice.identity,
+                        "regtest"
+                    );
+
+                    execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
+                    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+                    const session = await Unroll.Session.create(
+                        { txid: vtxo.txid, vout: vtxo.vout },
+                        onchainAlice,
+                        onchainAlice.provider,
+                        new RestIndexerProvider("http://localhost:7070")
+                    );
+
+                    for await (const done of session) {
+                        switch (done.type) {
+                            case Unroll.StepType.WAIT:
+                            case Unroll.StepType.UNROLL:
+                                execCommand(`nigiri rpc --generate 1`);
+                                break;
+                        }
+                    }
+
+                    const virtualCoinsAfterExit = await alice.wallet.getVtxos({
+                        withUnrolled: true,
+                    });
+                    expect(virtualCoinsAfterExit).toHaveLength(1);
+                    const unrolled = virtualCoinsAfterExit[0];
+                    expect(unrolled.isUnrolled).toBe(true);
+
+                    const exits = VtxoScript.decode(unrolled.tapTree).exitPaths();
+                    expect(exits.length).toBeGreaterThan(0);
+
+                    const txStatus = await alice.wallet.onchainProvider.getTxStatus(
+                        unrolled.txid
+                    );
+                    expect(txStatus.confirmed).toBe(true);
+
+                    const exitTimelock = exits[0].params.timelock;
+                    if (exitTimelock.type === "blocks") {
+                        const chainTip =
+                            await alice.wallet.onchainProvider.getChainTip();
+                        const requiredHeight =
+                            txStatus.blockHeight + Number(exitTimelock.value);
+                        const remainingBlocks = Math.max(
+                            0,
+                            requiredHeight - chainTip.height
+                        );
+                        if (remainingBlocks > 0) {
+                            execCommand(
+                                `nigiri rpc --generate ${remainingBlocks}`
+                            );
+                        }
+                    } else {
+                        const requiredTime =
+                            txStatus.blockTime + Number(exitTimelock.value);
+                        for (let i = 0; i < 300; i += 1) {
+                            const chainTip =
+                                await alice.wallet.onchainProvider.getChainTip();
+                            if (chainTip.time >= requiredTime) {
+                                break;
+                            }
+                            execCommand(`nigiri rpc --generate 1`);
+                        }
+                        const finalTip =
+                            await alice.wallet.onchainProvider.getChainTip();
+                        expect(finalTip.time).toBeGreaterThanOrEqual(requiredTime);
+                    }
+
+                    const beforeBalance = await onchainAlice.getBalance();
+                    const completeTxid = await Unroll.completeUnroll(
+                        alice.wallet,
+                        [unrolled.txid],
+                        onchainAlice.address
+                    );
+                    expect(completeTxid).toBeDefined();
+
+                    execCommand(`nigiri rpc --generate 1`);
+
+                    await waitFor(async () => {
+                        const status =
+                            await alice.wallet.onchainProvider.getTxStatus(
+                                completeTxid
+                            );
+                        return status.confirmed;
+                    });
+
+                    await waitFor(async () => {
+                        const afterBalance = await onchainAlice.getBalance();
+                        return afterBalance > beforeBalance;
+                    });
+                }
+            );
 
             it("should exit collaboratively", { timeout: 60000 }, async () => {
                 const alice = await factory();
