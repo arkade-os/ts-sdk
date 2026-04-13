@@ -867,6 +867,130 @@ describe("Wallet", () => {
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
         });
+
+        it("should preserve a confirmed spend mark when the indexer still reports isSpent=false", async () => {
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                // 1st call: bootstrap — returns a preconfirmed VTXO
+                .mockImplementationOnce(async (opts) => {
+                    walletScript = opts?.scripts?.[0] ?? "";
+                    return {
+                        vtxos: [createMockVtxo(walletScript)],
+                    };
+                })
+                // 2nd call: bootstrap after clearSyncCursors — indexer
+                // still returns it with isSpent=false (stale)
+                .mockImplementationOnce(async () => ({
+                    vtxos: [createMockVtxo(walletScript)],
+                }));
+
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
+
+            // First sync: VTXO cached as spendable
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+
+            // Simulate a confirmed spend (as updateDbAfterSettle would)
+            const address = await wallet.getAddress();
+            const cached = await walletRepository.getVtxos(address);
+            await walletRepository.saveVtxos(address, [
+                {
+                    ...cached[0],
+                    isSpent: true,
+                    virtualStatus: {
+                        ...cached[0].virtualStatus,
+                        state: "settled",
+                    },
+                    settledBy: "cc".repeat(32),
+                },
+            ]);
+
+            // Clear cursors to force a full bootstrap on next sync
+            await wallet.clearSyncCursors();
+
+            // Next getVtxos triggers a new bootstrap; the indexer
+            // returns the VTXO with isSpent=false but the local
+            // confirmed mark should be preserved.
+            expect(await wallet.getVtxos()).toHaveLength(0);
+
+            const afterSync = await walletRepository.getVtxos(address);
+            expect(afterSync).toHaveLength(1);
+            expect(afterSync[0].isSpent).toBe(true);
+            expect(afterSync[0].virtualStatus.state).toBe("settled");
+            expect(afterSync[0].settledBy).toBe("cc".repeat(32));
+        });
+
+        it("should not preserve an unconfirmed spend mark across syncs", async () => {
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                // 1st call: bootstrap
+                .mockImplementationOnce(async (opts) => {
+                    walletScript = opts?.scripts?.[0] ?? "";
+                    return {
+                        vtxos: [createMockVtxo(walletScript)],
+                    };
+                })
+                // 2nd call: bootstrap after clearSyncCursors
+                .mockImplementationOnce(async () => ({
+                    vtxos: [createMockVtxo(walletScript)],
+                }));
+
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
+
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+
+            // Mark isSpent=true WITHOUT a confirmed state (no
+            // settledBy, state still "preconfirmed").  This simulates
+            // an optimistic mark that wasn't rolled back.
+            const address = await wallet.getAddress();
+            const cached = await walletRepository.getVtxos(address);
+            await walletRepository.saveVtxos(address, [
+                { ...cached[0], isSpent: true },
+            ]);
+
+            await wallet.clearSyncCursors();
+
+            // The unconfirmed mark should be overwritten by the
+            // indexer (self-healing).
+            expect(await wallet.getVtxos()).toHaveLength(1);
+        });
+
+        it("should filter out VTXOs in _pendingSpendOutpoints", async () => {
+            let walletScript = "";
+            // Use a persistent mock so delta + reconciliation calls
+            // always return the same VTXO.
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    walletScript = opts?.scripts?.[0] ?? walletScript;
+                    return {
+                        vtxos: [createMockVtxo(walletScript)],
+                    };
+                });
+
+            const { wallet } = await createReadonlyTestWallet(getVtxos);
+
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+
+            // Simulate an in-flight spend by adding to the set
+            const outpoint = `${vtxos[0].txid}:${vtxos[0].vout}`;
+            (wallet as any)._pendingSpendOutpoints.add(outpoint);
+
+            // The VTXO should be hidden from getVtxos.
+            const filtered = await wallet.getVtxos();
+            expect(filtered).toHaveLength(0);
+
+            // Removing from the set restores visibility.
+            (wallet as any)._pendingSpendOutpoints.delete(outpoint);
+            const restored = await wallet.getVtxos();
+            expect(restored).toHaveLength(1);
+        });
     });
 });
 
