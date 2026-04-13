@@ -518,6 +518,114 @@ describe("Common", () => {
             });
 
             it(
+                "should reject complete-unroll before unilateral exit delay matures",
+                { timeout: 120000 },
+                async () => {
+                    const alice = await factory();
+
+                    const boardingAddress =
+                        await alice.wallet.getBoardingAddress();
+                    const offchainAddress = await alice.wallet.getAddress();
+
+                    execCommand(`nigiri faucet ${boardingAddress} 0.0001`);
+
+                    await waitFor(async () => {
+                        const b = await alice.wallet.getBoardingUtxos();
+                        return b.length > 0;
+                    });
+
+                    const boardingInputs = await alice.wallet.getBoardingUtxos();
+                    expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
+
+                    await alice.wallet.settle({
+                        inputs: boardingInputs,
+                        outputs: [
+                            {
+                                address: offchainAddress!,
+                                amount: BigInt(10000),
+                            },
+                        ],
+                    });
+
+                    execCommand(`nigiri rpc --generate 1`);
+
+                    await waitFor(async () => {
+                        const v = await alice.wallet.getVtxos();
+                        return v.length > 0;
+                    });
+
+                    const virtualCoins = await alice.wallet.getVtxos();
+                    expect(virtualCoins).toHaveLength(1);
+                    const vtxo = virtualCoins[0];
+                    expect(vtxo.txid).toBeDefined();
+
+                    const onchainAlice = await OnchainWallet.create(
+                        alice.identity,
+                        "regtest"
+                    );
+
+                    execCommand(`nigiri faucet ${onchainAlice.address} 0.001`);
+                    await waitFor(async () => {
+                        const b = await onchainAlice.getBalance();
+                        return b > 0;
+                    });
+
+                    const session = await Unroll.Session.create(
+                        { txid: vtxo.txid, vout: vtxo.vout },
+                        onchainAlice,
+                        onchainAlice.provider,
+                        new RestIndexerProvider("http://localhost:7070")
+                    );
+
+                    for await (const done of session) {
+                        switch (done.type) {
+                            case Unroll.StepType.WAIT:
+                            case Unroll.StepType.UNROLL:
+                                execCommand(`nigiri rpc --generate 1`);
+                                break;
+                        }
+                    }
+
+                    const virtualCoinsAfterExit = await alice.wallet.getVtxos({
+                        withUnrolled: true,
+                    });
+                    expect(virtualCoinsAfterExit).toHaveLength(1);
+                    const unrolled = virtualCoinsAfterExit[0];
+                    expect(unrolled.isUnrolled).toBe(true);
+
+                    const exits = VtxoScript.decode(unrolled.tapTree).exitPaths();
+                    expect(exits.length).toBeGreaterThan(0);
+
+                    const txStatus = await alice.wallet.onchainProvider.getTxStatus(
+                        unrolled.txid
+                    );
+                    expect(txStatus.confirmed).toBe(true);
+
+                    // Keep this aligned with availableExitPath() selection logic,
+                    // which currently returns the first mature exit path.
+                    const exitTimelock = exits[0].params.timelock;
+                    const chainTip = await alice.wallet.onchainProvider.getChainTip();
+                    if (exitTimelock.type === "blocks") {
+                        const requiredHeight =
+                            txStatus.blockHeight + Number(exitTimelock.value);
+                        expect(chainTip.height).toBeLessThan(requiredHeight);
+                    } else {
+                        const requiredTime =
+                            txStatus.blockTime + Number(exitTimelock.value);
+                        expect(chainTip.time).toBeLessThan(requiredTime);
+                    }
+
+                    await expect(
+                        Unroll.completeUnroll(
+                            alice.wallet,
+                            [unrolled.txid],
+                            onchainAlice.address
+                        )
+                    ).rejects.toThrow(/no available exit path found/i);
+                }
+            );
+
+            it(
                 "should complete unroll after unilateral exit delay",
                 { timeout: 120000 },
                 async () => {
