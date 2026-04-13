@@ -143,6 +143,7 @@ describe("Wallet", () => {
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                settlementConfig: false,
             });
 
             const balance = await wallet.getBalance();
@@ -523,6 +524,7 @@ describe("Wallet", () => {
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                settlementConfig: false,
             });
 
             const address = await wallet.getAddress();
@@ -566,19 +568,15 @@ describe("Wallet", () => {
         });
 
         it("should convert Wallet to ReadonlyWallet", async () => {
-            mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockArkInfo),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockArkInfo),
+            });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                settlementConfig: false,
             });
 
             const readonlyWallet = await wallet.toReadonly();
@@ -600,19 +598,15 @@ describe("Wallet", () => {
         });
 
         it("should not have sendBitcoin method on ReadonlyWallet type", async () => {
-            mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockArkInfo),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                });
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockArkInfo),
+            });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                settlementConfig: false,
             });
 
             const readonlyWallet = await wallet.toReadonly();
