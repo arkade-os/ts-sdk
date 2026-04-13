@@ -706,9 +706,10 @@ describe("Wallet", () => {
             checkpointTapscript:
                 "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
         };
+        const mockBatchExpiry = 1767225600000;
 
         async function createReadonlyTestWallet(
-            indexerProvider: IndexerProvider
+            getVtxos: IndexerProvider["getVtxos"]
         ) {
             const compressedPubKey = await mockIdentity.compressedPublicKey();
             const readonlyIdentity =
@@ -722,7 +723,9 @@ describe("Wallet", () => {
                 arkProvider: {
                     getInfo: vi.fn().mockResolvedValue(mockArkInfo),
                 } as Partial<ArkProvider> as ArkProvider,
-                indexerProvider,
+                indexerProvider: {
+                    getVtxos,
+                } as Partial<IndexerProvider> as IndexerProvider,
                 onchainProvider: {} as OnchainProvider,
                 storage: {
                     walletRepository,
@@ -733,7 +736,7 @@ describe("Wallet", () => {
             return { wallet, walletRepository };
         }
 
-        function makeTestVtxo(
+        function createMockVtxo(
             script: string,
             state: "preconfirmed" | "settled" = "preconfirmed"
         ): VirtualCoin {
@@ -748,7 +751,7 @@ describe("Wallet", () => {
                 virtualStatus: {
                     state,
                     commitmentTxIds: ["22".repeat(32)],
-                    batchExpiry: Date.now() + 60_000,
+                    batchExpiry: mockBatchExpiry,
                 },
                 spentBy: "",
                 settledBy: state === "settled" ? "33".repeat(32) : undefined,
@@ -760,68 +763,41 @@ describe("Wallet", () => {
             };
         }
 
-        it("keeps a preconfirmed VTXO when full re-fetch still returns it", async () => {
+        it("should keep a preconfirmed VTXO when the full re-fetch still returns it", async () => {
             let walletScript = "";
-            let callCount = 0;
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementation(async (opts) => {
-                    callCount += 1;
-                    const script = opts?.scripts?.[0] ?? walletScript;
-                    walletScript = script;
+                .mockImplementationOnce(async (opts) => {
+                    walletScript = opts?.scripts?.[0] ?? "";
+                    return { vtxos: [createMockVtxo(walletScript)] };
+                })
+                .mockResolvedValueOnce({ vtxos: [] })
+                .mockImplementationOnce(async () => ({
+                    vtxos: [createMockVtxo(walletScript)],
+                }));
 
-                    switch (callCount) {
-                        case 1: // bootstrap
-                            return { vtxos: [makeTestVtxo(script)] };
-                        case 2: // delta — no changes
-                            return { vtxos: [] };
-                        case 3: // full re-fetch — VTXO still present
-                            return { vtxos: [makeTestVtxo(script)] };
-                        default:
-                            throw new Error(
-                                `unexpected getVtxos call ${callCount}`
-                            );
-                    }
-                });
-
-            const { wallet } = await createReadonlyTestWallet({
-                getVtxos,
-            } as Partial<IndexerProvider> as IndexerProvider);
+            const { wallet } = await createReadonlyTestWallet(getVtxos);
 
             expect(await wallet.getVtxos()).toHaveLength(1);
             expect(await wallet.getVtxos()).toHaveLength(1);
             expect(getVtxos).toHaveBeenCalledTimes(3);
         });
 
-        it("updates VTXO state when full re-fetch shows it settled", async () => {
+        it("should update VTXO state when the full re-fetch shows it settled", async () => {
             let walletScript = "";
-            let callCount = 0;
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementation(async (opts) => {
-                    callCount += 1;
-                    const script = opts?.scripts?.[0] ?? walletScript;
-                    walletScript = script;
+                .mockImplementationOnce(async (opts) => {
+                    walletScript = opts?.scripts?.[0] ?? "";
+                    return { vtxos: [createMockVtxo(walletScript)] };
+                })
+                .mockResolvedValueOnce({ vtxos: [] })
+                .mockImplementationOnce(async () => ({
+                    vtxos: [createMockVtxo(walletScript, "settled")],
+                }));
 
-                    switch (callCount) {
-                        case 1: // bootstrap — preconfirmed
-                            return { vtxos: [makeTestVtxo(script)] };
-                        case 2: // delta — no changes
-                            return { vtxos: [] };
-                        case 3: // full re-fetch — now settled
-                            return { vtxos: [makeTestVtxo(script, "settled")] };
-                        default:
-                            throw new Error(
-                                `unexpected getVtxos call ${callCount}`
-                            );
-                    }
-                });
-
-            const { wallet, walletRepository } = await createReadonlyTestWallet(
-                {
-                    getVtxos,
-                } as Partial<IndexerProvider> as IndexerProvider
-            );
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
 
             expect((await wallet.getVtxos())[0].virtualStatus.state).toBe(
                 "preconfirmed"
@@ -839,34 +815,19 @@ describe("Wallet", () => {
             expect(cached[0].virtualStatus.state).toBe("settled");
         });
 
-        it("marks a cached preconfirmed VTXO as spent when full re-fetch no longer returns it", async () => {
+        it("should mark a cached preconfirmed VTXO as spent when the full re-fetch no longer returns it", async () => {
             let walletScript = "";
-            let callCount = 0;
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementation(async (opts) => {
-                    callCount += 1;
-                    const script = opts?.scripts?.[0] ?? walletScript;
-                    walletScript = script;
+                .mockImplementationOnce(async (opts) => {
+                    walletScript = opts?.scripts?.[0] ?? "";
+                    return { vtxos: [createMockVtxo(walletScript)] };
+                })
+                .mockResolvedValueOnce({ vtxos: [] })
+                .mockResolvedValueOnce({ vtxos: [] });
 
-                    switch (callCount) {
-                        case 1: // bootstrap — preconfirmed
-                            return { vtxos: [makeTestVtxo(script)] };
-                        case 2: // delta — no changes
-                        case 3: // full re-fetch — VTXO gone
-                            return { vtxos: [] };
-                        default:
-                            throw new Error(
-                                `unexpected getVtxos call ${callCount}`
-                            );
-                    }
-                });
-
-            const { wallet, walletRepository } = await createReadonlyTestWallet(
-                {
-                    getVtxos,
-                } as Partial<IndexerProvider> as IndexerProvider
-            );
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
 
             expect(await wallet.getVtxos()).toHaveLength(1);
             expect(await wallet.getVtxos()).toEqual([]);
@@ -878,36 +839,21 @@ describe("Wallet", () => {
             expect(cached[0].isSpent).toBe(true);
         });
 
-        it("marks a cached settled VTXO as spent when full re-fetch no longer returns it", async () => {
+        it("should mark a cached settled VTXO as spent when the full re-fetch no longer returns it", async () => {
             let walletScript = "";
-            let callCount = 0;
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementation(async (opts) => {
-                    callCount += 1;
-                    const script = opts?.scripts?.[0] ?? walletScript;
-                    walletScript = script;
+                .mockImplementationOnce(async (opts) => {
+                    walletScript = opts?.scripts?.[0] ?? "";
+                    return {
+                        vtxos: [createMockVtxo(walletScript, "settled")],
+                    };
+                })
+                .mockResolvedValueOnce({ vtxos: [] })
+                .mockResolvedValueOnce({ vtxos: [] });
 
-                    switch (callCount) {
-                        case 1: // bootstrap — settled VTXO
-                            return {
-                                vtxos: [makeTestVtxo(script, "settled")],
-                            };
-                        case 2: // delta — no changes
-                        case 3: // full re-fetch — VTXO gone
-                            return { vtxos: [] };
-                        default:
-                            throw new Error(
-                                `unexpected getVtxos call ${callCount}`
-                            );
-                    }
-                });
-
-            const { wallet, walletRepository } = await createReadonlyTestWallet(
-                {
-                    getVtxos,
-                } as Partial<IndexerProvider> as IndexerProvider
-            );
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
 
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
