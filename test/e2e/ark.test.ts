@@ -534,7 +534,8 @@ describe("Common", () => {
                         return b.length > 0;
                     });
 
-                    const boardingInputs = await alice.wallet.getBoardingUtxos();
+                    const boardingInputs =
+                        await alice.wallet.getBoardingUtxos();
                     expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
                     await alice.wallet.settle({
@@ -593,18 +594,22 @@ describe("Common", () => {
                     const unrolled = virtualCoinsAfterExit[0];
                     expect(unrolled.isUnrolled).toBe(true);
 
-                    const exits = VtxoScript.decode(unrolled.tapTree).exitPaths();
+                    const exits = VtxoScript.decode(
+                        unrolled.tapTree
+                    ).exitPaths();
                     expect(exits.length).toBeGreaterThan(0);
 
-                    const txStatus = await alice.wallet.onchainProvider.getTxStatus(
-                        unrolled.txid
-                    );
+                    const txStatus =
+                        await alice.wallet.onchainProvider.getTxStatus(
+                            unrolled.txid
+                        );
                     expect(txStatus.confirmed).toBe(true);
 
                     // Keep this aligned with availableExitPath() selection logic,
                     // which currently returns the first mature exit path.
                     const exitTimelock = exits[0].params.timelock;
-                    const chainTip = await alice.wallet.onchainProvider.getChainTip();
+                    const chainTip =
+                        await alice.wallet.onchainProvider.getChainTip();
                     if (exitTimelock.type === "blocks") {
                         const requiredHeight =
                             txStatus.blockHeight + Number(exitTimelock.value);
@@ -642,7 +647,8 @@ describe("Common", () => {
                         return b.length > 0;
                     });
 
-                    const boardingInputs = await alice.wallet.getBoardingUtxos();
+                    const boardingInputs =
+                        await alice.wallet.getBoardingUtxos();
                     expect(boardingInputs.length).toBeGreaterThanOrEqual(1);
 
                     await alice.wallet.settle({
@@ -701,12 +707,15 @@ describe("Common", () => {
                     const unrolled = virtualCoinsAfterExit[0];
                     expect(unrolled.isUnrolled).toBe(true);
 
-                    const exits = VtxoScript.decode(unrolled.tapTree).exitPaths();
+                    const exits = VtxoScript.decode(
+                        unrolled.tapTree
+                    ).exitPaths();
                     expect(exits.length).toBeGreaterThan(0);
 
-                    const txStatus = await alice.wallet.onchainProvider.getTxStatus(
-                        unrolled.txid
-                    );
+                    const txStatus =
+                        await alice.wallet.onchainProvider.getTxStatus(
+                            unrolled.txid
+                        );
                     expect(txStatus.confirmed).toBe(true);
 
                     // Keep this aligned with availableExitPath() selection logic,
@@ -743,7 +752,9 @@ describe("Common", () => {
                         }
                         const finalTip =
                             await alice.wallet.onchainProvider.getChainTip();
-                        expect(finalTip.time).toBeGreaterThanOrEqual(requiredTime);
+                        expect(finalTip.time).toBeGreaterThanOrEqual(
+                            requiredTime
+                        );
                         if (initialTip.time < requiredTime) {
                             expect(blocksMined).toBeGreaterThan(0);
                         }
