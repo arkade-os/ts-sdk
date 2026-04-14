@@ -1788,6 +1788,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const abortController = new AbortController();
 
+        // Optimistic mark: hide these inputs from concurrent
+        // getVtxos() callers while the settlement is in progress.
+        this._addPendingSpends(params.inputs);
+
         try {
             const stream = this.arkProvider.getEventStream(
                 abortController.signal,
@@ -1795,10 +1799,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             );
 
             const intentId = await this.safeRegisterIntent(intent);
-
-            // Optimistic mark: hide these inputs from concurrent
-            // getVtxos() callers while the batch is in progress.
-            this._addPendingSpends(params.inputs);
 
             const handler = this.createBatchHandler(
                 intentId,
@@ -1816,15 +1816,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
-            this._removePendingSpends(params.inputs);
 
             return commitmentTxid;
         } catch (error) {
-            this._removePendingSpends(params.inputs);
             // delete the intent to not be stuck in the queue
             await this.arkProvider.deleteIntent(deleteIntent).catch(() => {});
             throw error;
         } finally {
+            this._removePendingSpends(params.inputs);
             // close the stream
             abortController.abort();
         }
