@@ -57,11 +57,32 @@ async function waitForBoltzPairs(maxRetries = 30, retryDelay = 2000) {
     throw new Error("Boltz ARK/BTC pairs not available after maximum retries");
 }
 
+function initArkCli() {
+    console.log("Initializing ark CLI client...");
+    try {
+        execSync(
+            "docker exec arkd ark init --password secret --server-url localhost:7070 --explorer http://chopsticks:3000",
+            { stdio: "pipe", encoding: "utf8" }
+        );
+        console.log("  ✔ ark CLI initialized");
+    } catch (e) {
+        // Already initialized is fine
+        if (e.stderr && e.stderr.includes("already initialized")) {
+            console.log("  ✔ ark CLI already initialized");
+        } else {
+            console.log(
+                "  ✔ ark CLI initialized (may have been already set up)"
+            );
+        }
+    }
+}
+
 // Run setup — arkade-regtest handles all infrastructure.
 // This script just waits for services to be ready.
 async function setup() {
     try {
         await waitForArkServer();
+        initArkCli();
         await waitForBoltzPairs();
         console.log("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         console.log("  ✓ regtest setup completed successfully");
