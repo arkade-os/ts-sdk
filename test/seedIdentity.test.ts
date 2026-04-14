@@ -377,3 +377,53 @@ describe("module exports", () => {
         );
     });
 });
+
+describe("SeedIdentity", () => {
+    describe("isMainnet", () => {
+        it("should be true for mainnet identity", () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            expect(identity.isMainnet).toBe(true);
+        });
+
+        it("should be false for testnet identity", () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
+            expect(identity.isMainnet).toBe(false);
+        });
+    });
+});
+
+describe("MnemonicIdentity.mnemonic", () => {
+    it("should store the mnemonic on the identity", () => {
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        expect(identity.mnemonic).toBe(TEST_MNEMONIC);
+    });
+
+    it("should produce same key as SeedIdentity.fromSeed", async () => {
+        const fromMnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const fromSeed = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        const pubKey1 = await fromMnemonic.xOnlyPublicKey();
+        const pubKey2 = await fromSeed.xOnlyPublicKey();
+        expect(Array.from(pubKey1)).toEqual(Array.from(pubKey2));
+    });
+});
+
+// ============================================================
+describe("backwards compatibility", () => {
+    it("existing signMessage() API still works", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const message = new Uint8Array(32).fill(99);
+
+        const signature = await identity.signMessage(message);
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature).toHaveLength(64);
+    });
+});

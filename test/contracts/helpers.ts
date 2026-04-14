@@ -28,9 +28,13 @@ export const createMockIndexerProvider = (): IndexerProvider => ({
     unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
 });
 
-// Test keys for creating valid contracts
-export const TEST_PUB_KEY = new Uint8Array(32).fill(1);
-export const TEST_SERVER_PUB_KEY = new Uint8Array(32).fill(2);
+// Test keys for creating valid contracts (valid secp256k1 x-only public keys)
+export const TEST_PUB_KEY_HEX =
+    "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+export const TEST_SERVER_PUB_KEY_HEX =
+    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+export const TEST_PUB_KEY = hex.decode(TEST_PUB_KEY_HEX);
+export const TEST_SERVER_PUB_KEY = hex.decode(TEST_SERVER_PUB_KEY_HEX);
 // Real-looking x-only pubkey (needed for 3-key multisig in DelegateVtxo)
 export const TEST_DELEGATE_PUB_KEY = hex.decode(
     "f8352deebdf5658d95875d89656112b1dd150f176c702eea4f91a91527e48e26"
