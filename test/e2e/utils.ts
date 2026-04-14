@@ -19,6 +19,21 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 
 export const arkdExec = "docker exec -t arkd";
 
+let arkCliInitialized = false;
+
+function ensureArkCliInitialized(): void {
+    if (arkCliInitialized) return;
+    try {
+        execSync(
+            `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://chopsticks:3000`,
+            { stdio: "pipe" }
+        );
+    } catch {
+        // already initialized — ignore
+    }
+    arkCliInitialized = true;
+}
+
 export interface TestArkWallet {
     wallet: Wallet;
     identity: Identity;
@@ -165,6 +180,7 @@ export async function createVtxo(
 // before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
 // if not, fund it with 100.000
 export async function beforeEachFaucet(): Promise<void> {
+    ensureArkCliInitialized();
     const receiveOutput = execCommand(`${arkdExec} ark receive`);
     const receive = JSON.parse(receiveOutput);
     const receiveAddress = receive.offchain_address;
