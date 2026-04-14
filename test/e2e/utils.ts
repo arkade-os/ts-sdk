@@ -1,4 +1,3 @@
-import { hex } from "@scure/base";
 import {
     Wallet,
     SingleKey,
@@ -6,8 +5,6 @@ import {
     Identity,
     OnchainWallet,
     EsploraProvider,
-    RestIndexerProvider,
-    ArkAddress,
     IntentFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
@@ -45,8 +42,15 @@ export interface TestOnchainWallet {
 }
 
 export function execCommand(command: string): string {
-    command += " | grep -v WARN";
-    const result = execSync(command).toString().trim();
+    const result = execSync(command, { encoding: "utf8" })
+        .replace(/\r/g, "")
+        .split("\n")
+        .filter((line) => !line.includes("WARN"))
+        .join("\n")
+        .trim();
+    if (result.startsWith("error:")) {
+        throw new Error(result);
+    }
     return result;
 }
 
@@ -177,31 +181,13 @@ export async function createVtxo(
     return settleTxid;
 }
 
-// before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
-// if not, fund it with 100.000
+// before each test, ensure the faucet wallet has fresh spendable VTXOs.
+// After rounds, existing VTXOs can become stale (balance shows them but
+// ark send can't spend them), so we always redeem a fresh note.
 export async function beforeEachFaucet(): Promise<void> {
     ensureArkCliInitialized();
-    const receiveOutput = execCommand(`${arkdExec} ark receive`);
-    const receive = JSON.parse(receiveOutput);
-    const receiveAddress = receive.offchain_address;
-
-    const { vtxos } = await new RestIndexerProvider(
-        "http://localhost:7070"
-    ).getVtxos({
-        scripts: [hex.encode(ArkAddress.decode(receiveAddress).pkScript)],
-        spendableOnly: true,
-    });
-    const offchainBalance = vtxos.reduce(
-        (sum: number, vtxo) => sum + vtxo.value,
-        0
-    );
-
-    if (offchainBalance <= 20_000) {
-        const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
-        execCommand(
-            `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
-        );
-    }
+    const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
+    execCommand(`${arkdExec} ark redeem-notes -n ${noteStr} --password secret`);
 }
 
 export function setFees(fees: IntentFeeConfig): void {

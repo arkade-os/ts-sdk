@@ -21,6 +21,7 @@ import {
     beforeEachFaucet,
     createTestArkWallet,
     createTestIdentity,
+    execCommand,
     faucetOffchain,
 } from "./utils";
 import { execSync } from "child_process";
@@ -71,9 +72,11 @@ describe("vhtlc", () => {
 
         // fund the vhtlc address
         const fundAmount = 1000;
-        execSync(
+        execCommand(
             `${arkdExec} ark send --to ${address} --amount ${fundAmount} --password secret`
         );
+
+        await new Promise((resolve) => setTimeout(resolve, 1000));
 
         // bob special identity to sign with the preimage
         const bobVHTLCIdentity: Identity = {
