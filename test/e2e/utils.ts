@@ -17,7 +17,7 @@ import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 
-export const arkdExec = "docker exec -t ark";
+export const arkdExec = "docker exec -t arkd";
 
 export interface TestArkWallet {
     wallet: Wallet;

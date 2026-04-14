@@ -144,6 +144,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
+    protected _pendingSpendOutpoints = new Set<string>();
     private _syncVtxosInflight?: Promise<{
         isDelta: boolean;
         fetchedExtended: ExtendedVirtualCoin[];
@@ -464,6 +465,10 @@ export class ReadonlyWallet implements IReadonlyWallet {
             : fetchedExtended;
 
         return vtxos.filter((vtxo) => {
+            // Skip VTXOs that are being spent by an in-flight operation.
+            if (this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)) {
+                return false;
+            }
             if (isSpendable(vtxo)) {
                 if (
                     !f.withRecoverable &&
@@ -596,6 +601,38 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const extended = extendWithScript(vtxo);
             if (extended) fetchedExtended.push(extended);
         }
+        // Preserve confirmed local spend marks that the indexer hasn't
+        // caught up with yet.  Without this, a stale indexer response
+        // (isSpent=false) would overwrite the SDK's first-hand knowledge
+        // that a VTXO was consumed by a successful settle/send.
+        const cached = await this.walletRepository.getVtxos(address);
+        if (cached.length > 0) {
+            const confirmedSpent = new Map<string, ExtendedVirtualCoin>();
+            for (const v of cached) {
+                if (
+                    v.isSpent &&
+                    (v.virtualStatus.state === "spent" ||
+                        v.virtualStatus.state === "settled")
+                ) {
+                    confirmedSpent.set(`${v.txid}:${v.vout}`, v);
+                }
+            }
+            if (confirmedSpent.size > 0) {
+                for (const vtxo of fetchedExtended) {
+                    const local = confirmedSpent.get(
+                        `${vtxo.txid}:${vtxo.vout}`
+                    );
+                    if (local && !vtxo.isSpent) {
+                        vtxo.isSpent = true;
+                        vtxo.virtualStatus = local.virtualStatus;
+                        vtxo.settledBy = local.settledBy;
+                        vtxo.spentBy = local.spentBy;
+                        vtxo.arkTxId = local.arkTxId;
+                    }
+                }
+            }
+        }
+
         // Save VTXOs first, then advance cursors only on success.
         const cutoff = cursorCutoff(requestStartedAt);
         await this.walletRepository.saveVtxos(address, fetchedExtended);
@@ -1192,6 +1229,24 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private _txLock: Promise<void> = Promise.resolve();
 
+    private _addPendingSpends(inputs: ExtendedCoin[]): void {
+        for (const input of inputs) {
+            if ("virtualStatus" in input) {
+                this._pendingSpendOutpoints.add(`${input.txid}:${input.vout}`);
+            }
+        }
+    }
+
+    private _removePendingSpends(inputs: ExtendedCoin[]): void {
+        for (const input of inputs) {
+            if ("virtualStatus" in input) {
+                this._pendingSpendOutpoints.delete(
+                    `${input.txid}:${input.vout}`
+                );
+            }
+        }
+    }
+
     private _withTxLock<T>(fn: () => Promise<T>): Promise<T> {
         let release!: () => void;
         const lock = new Promise<void>((r) => (release = r));
@@ -1733,6 +1788,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const abortController = new AbortController();
 
+        // Optimistic mark: hide these inputs from concurrent
+        // getVtxos() callers while the settlement is in progress.
+        this._addPendingSpends(params.inputs);
+
         try {
             const stream = this.arkProvider.getEventStream(
                 abortController.signal,
@@ -1764,6 +1823,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             await this.arkProvider.deleteIntent(deleteIntent).catch(() => {});
             throw error;
         } finally {
+            this._removePendingSpends(params.inputs);
             // close the stream
             abortController.abort();
         }
@@ -1778,7 +1838,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const vtxos = await this.getVtxos();
+        // Use the inputs array directly (with type guard) instead of
+        // getVtxos() — the inputs may be in _pendingSpendOutpoints
+        // and would be filtered out by getVtxos().
+        const isVtxoInput = (
+            input: ExtendedCoin
+        ): input is ExtendedVirtualCoin => "virtualStatus" in input;
+
         let settlementPsbt = Transaction.fromPSBT(
             base64.decode(event.commitmentTx)
         );
@@ -1789,13 +1855,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const connectorsLeaves = connectorsGraph?.leaves() || [];
 
         for (const input of inputs) {
-            // check if the input is an offchain "virtual" coin
-            const vtxo = vtxos.find(
-                (vtxo) => vtxo.txid === input.txid && vtxo.vout === input.vout
-            );
-
             // boarding utxo, we need to sign the settlement tx
-            if (!vtxo) {
+            if (!isVtxoInput(input)) {
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -1824,7 +1885,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(vtxo) || isSubdust(vtxo, this.dustAmount)) {
+            if (isRecoverable(input) || isSubdust(input, this.dustAmount)) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
@@ -1859,7 +1920,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         txid: input.txid,
                         index: input.vout,
                         witnessUtxo: {
-                            amount: BigInt(vtxo.value),
+                            amount: BigInt(input.value),
                             script: VtxoScript.decode(input.tapTree).pkScript,
                         },
                         sighashType: SigHash.DEFAULT,
@@ -2516,20 +2577,27 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        const { arkTxid, signedCheckpointTxs } =
-            await this.buildAndSubmitOffchainTx(selectedCoins, outputs);
+        // Optimistic mark: hide selected coins from concurrent
+        // getVtxos() callers while the offchain tx is in flight.
+        this._addPendingSpends(selectedCoins);
+        try {
+            const { arkTxid, signedCheckpointTxs } =
+                await this.buildAndSubmitOffchainTx(selectedCoins, outputs);
 
-        await this.updateDbAfterOffchainTx(
-            selectedCoins,
-            arkTxid,
-            signedCheckpointTxs,
-            sentAmount,
-            BigInt(changeAmount),
-            changeReceiver ? changeIndex : 0,
-            changeReceiver?.assets
-        );
+            await this.updateDbAfterOffchainTx(
+                selectedCoins,
+                arkTxid,
+                signedCheckpointTxs,
+                sentAmount,
+                BigInt(changeAmount),
+                changeReceiver ? changeIndex : 0,
+                changeReceiver?.assets
+            );
 
-        return arkTxid;
+            return arkTxid;
+        } finally {
+            this._removePendingSpends(selectedCoins);
+        }
     }
 
     /**
