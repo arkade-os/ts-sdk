@@ -27,45 +27,6 @@ import {
 
 const DEFAULT_PAGE_SIZE = 500;
 
-/**
- * Contract lifecycle and VTXO orchestration API.
- *
- * Responsibilities:
- * - Create and persist contracts
- * - Query stored contracts (optionally with their VTXOs)
- * - Provide spendable path selection for a contract
- * - Emit contract-related events (VTXO received/spent, expiry, connection reset)
- *
- * Notes:
- * - Implementations typically start watching automatically during initialization
- *   (so `onContractEvent()` is just for subscribing).
- *
- * @example
- * ```typescript
- * const manager = await ContractManager.create({
- *   indexerProvider,
- *   contractRepository,
- *   walletRepository,
- *   getDefaultAddress,
- * });
- *
- * const unsubscribe = manager.onContractEvent((event) => {
- *   console.log(event.type, event.timestamp);
- * });
- *
- * const contract = await manager.createContract({
- *   label: "Lightning Receive",
- *   type: "vhtlc",
- *   params: { sender: "ab12...", receiver: "cd34..." },
- *   script: "5120...",
- *   address: "tark1...",
- * });
- *
- * // Later:
- * unsubscribe();
- * manager.dispose();
- * ```
- */
 export type RefreshVtxosOptions = {
     scripts?: string[];
     after?: number;
