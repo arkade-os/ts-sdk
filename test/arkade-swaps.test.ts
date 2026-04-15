@@ -2671,7 +2671,7 @@ describe("ArkadeSwaps", () => {
                 expect(joinBatch.mock.calls[0][4]).toBe(false);
             });
 
-            it("should throw when Boltz rejects and CLTV still not passed", async () => {
+            it("should skip when Boltz rejects and CLTV still not passed", async () => {
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
                 vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
@@ -2685,8 +2685,12 @@ describe("ArkadeSwaps", () => {
                 // Both checks return pre-CLTV
                 vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(10);
 
-                await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                    /Boltz rejected VTXO outpoint.*locktime has not passed/
+                await swaps.refundVHTLC(refundableSwap);
+
+                const joinBatch = vi.mocked((swaps as any).joinBatch);
+                expect(joinBatch).not.toHaveBeenCalled();
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({ refunded: false })
                 );
             });
 
@@ -2707,7 +2711,7 @@ describe("ArkadeSwaps", () => {
             });
         });
 
-        it("should throw when a recoverable VTXO is pre-CLTV", async () => {
+        it("should skip a recoverable VTXO when pre-CLTV", async () => {
             vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(5);
             const vtxo = makeVtxo(lockupTxid, 0);
 
@@ -2715,12 +2719,13 @@ describe("ArkadeSwaps", () => {
                 vtxos: [vtxo] as any,
             });
 
-            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
-                /recoverable VTXO .* cannot be refunded yet/
-            );
+            await swaps.refundVHTLC(refundableSwap);
 
             const joinBatch = vi.mocked((swaps as any).joinBatch);
             expect(joinBatch).not.toHaveBeenCalled();
+            expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                expect.objectContaining({ refunded: false })
+            );
         });
 
         it("should fail early on VHTLC address mismatch", async () => {
