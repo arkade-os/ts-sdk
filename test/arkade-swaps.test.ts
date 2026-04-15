@@ -757,7 +757,7 @@ describe("ArkadeSwaps", () => {
                 });
                 vi.spyOn(arkProvider, "finalizeTx").mockResolvedValueOnce();
                 await expect(swaps.claimVHTLC(pendingSwap)).rejects.toThrow(
-                    "Boltz is trying to scam us"
+                    /VHTLC address mismatch. Expected/
                 );
             });
         });
@@ -960,7 +960,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    "Destination address is required"
+                    `Swap ${mockArkBtcChainSwap.id}: destination address is required`
                 );
             });
 
@@ -983,7 +983,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    "Missing swap tree in claim details"
+                    `Swap ${mockArkBtcChainSwap.id}: missing swap tree in claim details`
                 );
             });
 
@@ -1006,7 +1006,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    "Missing server public key in claim details"
+                    `Swap ${mockArkBtcChainSwap.id}: missing server public key in claim details`
                 );
             });
         });
@@ -1370,7 +1370,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "Destination address is required"
+                    `Swap ${mockBtcArkChainSwap.id}: destination address is required`
                 );
             });
 
@@ -1393,7 +1393,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "Missing timeouts in claim details"
+                    `Swap ${mockBtcArkChainSwap.id}: missing timeouts in claim details`
                 );
             });
 
@@ -1416,7 +1416,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "Missing server public key in claim details"
+                    `Swap ${mockBtcArkChainSwap.id}: missing server public key in claim details`
                 );
             });
 
@@ -1438,7 +1438,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "No spendable virtual coins found"
+                    `Swap ${mockBtcArkChainSwap.id}: no spendable virtual coins found`
                 );
             });
         });
@@ -2685,9 +2685,7 @@ describe("ArkadeSwaps", () => {
                 // Both checks return pre-CLTV
                 vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(10);
 
-                await expect(
-                    swaps.refundVHTLC(refundableSwap)
-                ).rejects.toThrow(
+                await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
                     /Boltz rejected VTXO outpoint.*locktime has not passed/
                 );
             });
@@ -2703,9 +2701,9 @@ describe("ArkadeSwaps", () => {
                     new Error("local signing failure")
                 );
 
-                await expect(
-                    swaps.refundVHTLC(refundableSwap)
-                ).rejects.toThrow(/local signing failure/);
+                await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                    /local signing failure/
+                );
             });
         });
 
