@@ -12,7 +12,7 @@ export { UnknownPacket } from "./packet";
 
 /**
  * ArkadeMagic is the 3-byte magic prefix ("ARK") that identifies an OP_RETURN
- * output as an ark extension blob.
+ * output as an Arkade extension blob.
  */
 export const ARKADE_MAGIC = new Uint8Array([0x41, 0x52, 0x4b]); // "ARK"
 
