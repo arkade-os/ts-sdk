@@ -5,6 +5,13 @@ import {
 } from "@scure/btc-signer/psbt.js";
 import { P2A } from "./utils/anchor";
 
+/**
+ * Build a forfeit transaction that spends the provided inputs to a single forfeit output.
+ *
+ * @param inputs - Inputs to include in the forfeit transaction
+ * @param forfeitPkScript - ScriptPubKey for the forfeit output
+ * @param txLocktime - Optional locktime to apply to the transaction
+ */
 export function buildForfeitTx(
     inputs: TransactionInputUpdate[],
     forfeitPkScript: Uint8Array,
@@ -28,6 +35,13 @@ export function buildForfeitTx(
     );
 }
 
+/**
+ * Build a forfeit transaction using an explicit output descriptor (used for delegated renewals)
+ *
+ * @param inputs - Inputs to include in the forfeit transaction
+ * @param output - Primary transaction output
+ * @param txLocktime - Optional locktime to apply to the transaction
+ */
 export function buildForfeitTxWithOutput(
     inputs: TransactionInputUpdate[],
     output: TransactionOutput,
