@@ -45,6 +45,7 @@ export namespace DefaultVtxo {
         readonly forfeitScript: string;
         readonly exitScript: string;
 
+        /** Create the default virtual output script with one forfeit path and one exit path. */
         constructor(readonly options: Options) {
             const {
                 pubKey,
@@ -67,10 +68,12 @@ export namespace DefaultVtxo {
             this.exitScript = hex.encode(exitScript);
         }
 
+        /** Return the forfeit tapleaf script. */
         forfeit(): TapLeafScript {
             return this.findLeaf(this.forfeitScript);
         }
 
+        /** Return the unilateral exit tapleaf script. */
         exit(): TapLeafScript {
             return this.findLeaf(this.exitScript);
         }
