@@ -284,6 +284,7 @@ export type GetSwapStatusResponse = {
     transaction?: {
         id: string;
         hex?: string;
+        confirmed?: boolean;
         eta?: number;
         preimage?: string;
     };
@@ -302,6 +303,8 @@ export const isGetSwapStatusResponse = (
             (data.transaction &&
                 typeof data.transaction === "object" &&
                 typeof data.transaction.id === "string" &&
+                (data.transaction.confirmed === undefined ||
+                    typeof data.transaction.confirmed === "boolean") &&
                 (data.transaction.eta === undefined ||
                     typeof data.transaction.eta === "number") &&
                 (data.transaction.hex === undefined ||
@@ -411,16 +414,18 @@ export type CreateSubmarineSwapRequest = {
 export type CreateSubmarineSwapResponse = {
     /** Unique swap ID. */
     id: string;
-    /** ARK lockup address to send funds to. */
-    address: string;
     /** Amount in satoshis to send. */
     expectedAmount: number;
+    /** ARK lockup address to send funds to. */
+    address?: string;
     /** Boltz's public key for the claim path. */
-    claimPublicKey: string;
+    claimPublicKey?: string;
     /** Whether zero-conf transactions are accepted. */
-    acceptZeroConf: boolean;
+    acceptZeroConf?: boolean;
+    /** Block height for the onchain HTLC timeout. */
+    timeoutBlockHeight?: number;
     /** Block heights for various timeout/refund scenarios. */
-    timeoutBlockHeights: TimeoutBlockHeights;
+    timeoutBlockHeights?: TimeoutBlockHeights;
 };
 
 export const isCreateSubmarineSwapResponse = (
@@ -430,11 +435,16 @@ export const isCreateSubmarineSwapResponse = (
         data &&
         typeof data === "object" &&
         typeof data.id === "string" &&
-        typeof data.address === "string" &&
         typeof data.expectedAmount === "number" &&
-        typeof data.claimPublicKey === "string" &&
-        typeof data.acceptZeroConf === "boolean" &&
-        isTimeoutBlockHeights(data.timeoutBlockHeights)
+        (data.address === undefined || typeof data.address === "string") &&
+        (data.claimPublicKey === undefined ||
+            typeof data.claimPublicKey === "string") &&
+        (data.acceptZeroConf === undefined ||
+            typeof data.acceptZeroConf === "boolean") &&
+        (data.timeoutBlockHeight === undefined ||
+            typeof data.timeoutBlockHeight === "number") &&
+        (data.timeoutBlockHeights === undefined ||
+            isTimeoutBlockHeights(data.timeoutBlockHeights))
     );
 };
 
@@ -469,13 +479,15 @@ export type CreateReverseSwapResponse = {
     /** BOLT11-encoded Lightning invoice to be paid. */
     invoice: string;
     /** On-chain amount in satoshis (after Boltz fees). */
-    onchainAmount: number;
+    onchainAmount?: number;
     /** ARK lockup address where Boltz will lock funds. */
-    lockupAddress: string;
+    lockupAddress?: string;
     /** Boltz's public key for the refund path. */
-    refundPublicKey: string;
+    refundPublicKey?: string;
+    /** Block height for the onchain HTLC timeout. */
+    timeoutBlockHeight?: number;
     /** Block heights for various timeout/refund scenarios. */
-    timeoutBlockHeights: TimeoutBlockHeights;
+    timeoutBlockHeights?: TimeoutBlockHeights;
 };
 
 export const isCreateReverseSwapResponse = (
@@ -486,10 +498,16 @@ export const isCreateReverseSwapResponse = (
         typeof data === "object" &&
         typeof data.id === "string" &&
         typeof data.invoice === "string" &&
-        typeof data.onchainAmount === "number" &&
-        typeof data.lockupAddress === "string" &&
-        typeof data.refundPublicKey === "string" &&
-        isTimeoutBlockHeights(data.timeoutBlockHeights)
+        (data.onchainAmount === undefined ||
+            typeof data.onchainAmount === "number") &&
+        (data.lockupAddress === undefined ||
+            typeof data.lockupAddress === "string") &&
+        (data.refundPublicKey === undefined ||
+            typeof data.refundPublicKey === "string") &&
+        (data.timeoutBlockHeight === undefined ||
+            typeof data.timeoutBlockHeight === "number") &&
+        (data.timeoutBlockHeights === undefined ||
+            isTimeoutBlockHeights(data.timeoutBlockHeights))
     );
 };
 
@@ -798,10 +816,11 @@ const isLeaf = (data: any): data is Leaf => {
 export type Tree = {
     claimLeaf: Leaf;
     refundLeaf: Leaf;
-    refundWithoutBoltzLeaf: Leaf;
-    unilateralClaimLeaf: Leaf;
-    unilateralRefundLeaf: Leaf;
-    unilateralRefundWithoutBoltzLeaf: Leaf;
+    covenantClaimLeaf?: Leaf;
+    refundWithoutBoltzLeaf?: Leaf;
+    unilateralClaimLeaf?: Leaf;
+    unilateralRefundLeaf?: Leaf;
+    unilateralRefundWithoutBoltzLeaf?: Leaf;
 };
 
 export const isTree = (data: any): data is Tree => {
@@ -810,10 +829,16 @@ export const isTree = (data: any): data is Tree => {
         typeof data === "object" &&
         isLeaf(data.claimLeaf) &&
         isLeaf(data.refundLeaf) &&
-        isLeaf(data.refundWithoutBoltzLeaf) &&
-        isLeaf(data.unilateralClaimLeaf) &&
-        isLeaf(data.unilateralRefundLeaf) &&
-        isLeaf(data.unilateralRefundWithoutBoltzLeaf)
+        (data.covenantClaimLeaf === undefined ||
+            isLeaf(data.covenantClaimLeaf)) &&
+        (data.refundWithoutBoltzLeaf === undefined ||
+            isLeaf(data.refundWithoutBoltzLeaf)) &&
+        (data.unilateralClaimLeaf === undefined ||
+            isLeaf(data.unilateralClaimLeaf)) &&
+        (data.unilateralRefundLeaf === undefined ||
+            isLeaf(data.unilateralRefundLeaf)) &&
+        (data.unilateralRefundWithoutBoltzLeaf === undefined ||
+            isLeaf(data.unilateralRefundWithoutBoltzLeaf))
     );
 };
 

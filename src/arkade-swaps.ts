@@ -449,6 +449,11 @@ export class ArkadeSwaps {
         if (!pendingSwap.preimage)
             throw new Error("Preimage is required to claim VHTLC");
 
+        const { refundPublicKey, lockupAddress, timeoutBlockHeights } =
+            pendingSwap.response;
+        if (!refundPublicKey || !lockupAddress || !timeoutBlockHeights)
+            throw new Error("Incomplete reverse swap response");
+
         const preimage = hex.decode(pendingSwap.preimage);
         const arkInfo = await this.arkProvider.getInfo();
         const address = await this.wallet.getAddress();
@@ -460,7 +465,7 @@ export class ArkadeSwaps {
         );
 
         const senderXOnly = normalizeToXOnlyKey(
-            hex.decode(pendingSwap.response.refundPublicKey),
+            hex.decode(refundPublicKey),
             "boltz",
             pendingSwap.id
         );
@@ -478,12 +483,12 @@ export class ArkadeSwaps {
             receiverPubkey: hex.encode(receiverXOnly),
             senderPubkey: hex.encode(senderXOnly),
             serverPubkey: hex.encode(serverXOnly),
-            timeoutBlockHeights: pendingSwap.response.timeoutBlockHeights,
+            timeoutBlockHeights,
         });
 
         if (!vhtlcScript.claimScript)
             throw new Error("Failed to create VHTLC script for reverse swap");
-        if (vhtlcAddress !== pendingSwap.response.lockupAddress)
+        if (vhtlcAddress !== lockupAddress)
             throw new Error("Boltz is trying to scam us");
 
         // get spendable VTXOs from the lockup address
@@ -662,6 +667,8 @@ export class ArkadeSwaps {
         args: SendLightningPaymentRequest
     ): Promise<SendLightningPaymentResponse> {
         const pendingSwap = await this.createSubmarineSwap(args);
+        if (!pendingSwap.response.address)
+            throw new Error("Missing address in submarine swap response");
 
         // save pending swap to storage
         await this.savePendingSubmarineSwap(pendingSwap);
@@ -773,8 +780,12 @@ export class ArkadeSwaps {
             pendingSwap.id
         );
 
+        const { claimPublicKey, timeoutBlockHeights } = pendingSwap.response;
+        if (!claimPublicKey || !timeoutBlockHeights)
+            throw new Error("Incomplete submarine swap response");
+
         const boltzXOnlyPublicKey = normalizeToXOnlyKey(
-            hex.decode(pendingSwap.response.claimPublicKey),
+            hex.decode(claimPublicKey),
             "boltz",
             pendingSwap.id
         );
@@ -785,7 +796,7 @@ export class ArkadeSwaps {
             receiverPubkey: hex.encode(boltzXOnlyPublicKey),
             senderPubkey: hex.encode(ourXOnlyPublicKey),
             serverPubkey: hex.encode(serverXOnlyPublicKey),
-            timeoutBlockHeights: pendingSwap.response.timeoutBlockHeights,
+            timeoutBlockHeights,
         });
 
         if (!vhtlcScript.claimScript)
@@ -2108,6 +2119,7 @@ export class ArkadeSwaps {
                     preimageHash,
                     serverPublicKey,
                     tree,
+                    timeoutBlockHeights,
                 } = swap.claimDetails;
 
                 reverseSwaps.push({
@@ -2124,19 +2136,20 @@ export class ArkadeSwaps {
                         onchainAmount: amount,
                         lockupAddress,
                         refundPublicKey: serverPublicKey,
-                        timeoutBlockHeights: {
+                        timeoutBlockHeights: timeoutBlockHeights ?? {
                             refund: extractTimeLockFromLeafOutput(
-                                tree.refundWithoutBoltzLeaf.output
+                                tree.refundWithoutBoltzLeaf?.output ?? ""
                             ),
                             unilateralClaim: extractTimeLockFromLeafOutput(
-                                tree.unilateralClaimLeaf.output
+                                tree.unilateralClaimLeaf?.output ?? ""
                             ),
                             unilateralRefund: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundLeaf.output
+                                tree.unilateralRefundLeaf?.output ?? ""
                             ),
                             unilateralRefundWithoutReceiver:
                                 extractTimeLockFromLeafOutput(
-                                    tree.unilateralRefundWithoutBoltzLeaf.output
+                                    tree.unilateralRefundWithoutBoltzLeaf
+                                        ?.output ?? ""
                                 ),
                         },
                     },
@@ -2145,8 +2158,13 @@ export class ArkadeSwaps {
                     preimage: "",
                 } as BoltzReverseSwap);
             } else if (isRestoredSubmarineSwap(swap)) {
-                const { amount, lockupAddress, serverPublicKey, tree } =
-                    swap.refundDetails;
+                const {
+                    amount,
+                    lockupAddress,
+                    serverPublicKey,
+                    tree,
+                    timeoutBlockHeights,
+                } = swap.refundDetails;
 
                 let preimage = "";
                 // Skip preimage fetch for terminal swaps — nothing actionable
@@ -2181,19 +2199,20 @@ export class ArkadeSwaps {
                         address: lockupAddress,
                         expectedAmount: amount,
                         claimPublicKey: serverPublicKey,
-                        timeoutBlockHeights: {
+                        timeoutBlockHeights: timeoutBlockHeights ?? {
                             refund: extractTimeLockFromLeafOutput(
-                                tree.refundWithoutBoltzLeaf.output
+                                tree.refundWithoutBoltzLeaf?.output ?? ""
                             ),
                             unilateralClaim: extractTimeLockFromLeafOutput(
-                                tree.unilateralClaimLeaf.output
+                                tree.unilateralClaimLeaf?.output ?? ""
                             ),
                             unilateralRefund: extractTimeLockFromLeafOutput(
-                                tree.unilateralRefundLeaf.output
+                                tree.unilateralRefundLeaf?.output ?? ""
                             ),
                             unilateralRefundWithoutReceiver:
                                 extractTimeLockFromLeafOutput(
-                                    tree.unilateralRefundWithoutBoltzLeaf.output
+                                    tree.unilateralRefundWithoutBoltzLeaf
+                                        ?.output ?? ""
                                 ),
                         },
                     },
