@@ -1,5 +1,5 @@
 /**
- * @deprecated Use StorageConfig instead
+ * @deprecated Use `StorageConfig` with repository implementations such as `IndexedDBWalletRepository` and `IndexedDBContractRepository` instead.
  */
 export interface StorageAdapter {
     getItem(key: string): Promise<string | null>;
