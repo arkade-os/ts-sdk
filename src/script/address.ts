@@ -3,12 +3,19 @@ import { Bytes } from "@scure/btc-signer/utils.js";
 import { Script } from "@scure/btc-signer/script.js";
 
 /**
- * ArkAddress allows to create and decode bech32m encoded ark address.
- * An ark address is composed of:
+ * ArkAddress allows creating and decoding bech32m-encoded Arkade addresses.
+ *
+ * An Arkade address is composed of:
  * - a human readable prefix (hrp)
  * - a version byte (1 byte)
  * - a server public key (32 bytes)
  * - a vtxo taproot public key (32 bytes)
+ *
+ * @remarks
+ * This is an Arkade-specific address format.
+ * It is distinct from the Taproot onchain address returned by `VtxoScript.onchainAddress`.
+ *
+ * @see VtxoScript
  *
  * @example
  * ```typescript
@@ -25,6 +32,16 @@ import { Script } from "@scure/btc-signer/script.js";
  * ```
  */
 export class ArkAddress {
+    /**
+     * Create an Arkade address from its server key, vtxo taproot public key, and prefix.
+     *
+     * @param serverPubKey - 32-byte Arkade server public key
+     * @param vtxoTaprootKey - 32-byte tweaked vtxo taproot public key
+     * @param hrp - Bech32 human-readable prefix
+     * @param version - Address version byte
+     * @defaultValue `version = 0`
+     * @throws Error if either public key is not 32 bytes long
+     */
     constructor(
         readonly serverPubKey: Bytes,
         readonly vtxoTaprootKey: Bytes,
@@ -45,6 +62,14 @@ export class ArkAddress {
         }
     }
 
+    /**
+     * Decode an Arkade address from its bech32m string form.
+     *
+     * @param address - Bech32m-encoded Arkade address
+     * @returns Decoded Arkade address
+     * @throws Error if the address is malformed or has an invalid payload length
+     * @see encode
+     */
     static decode(address: string): ArkAddress {
         const decoded = bech32m.decodeUnsafe(address, 1023);
         if (!decoded) {
@@ -52,7 +77,7 @@ export class ArkAddress {
         }
         const data = new Uint8Array(bech32m.fromWords(decoded.words));
 
-        // First the version byte, then 32 bytes server pubkey, then 32 bytes vtxo taproot pubkey
+        // First the version byte, then 32 bytes server pubkey, then 32 bytes vtxo taproot public key.
         if (data.length !== 1 + 32 + 32) {
             throw new Error(
                 "Invalid data length, expected 65 bytes, got " + data.length
@@ -71,8 +96,14 @@ export class ArkAddress {
         );
     }
 
+    /**
+     * Encode the address to its bech32m string form.
+     *
+     * @returns Bech32m-encoded Arkade address
+     * @see decode
+     */
     encode(): string {
-        // Combine version byte, server pubkey, and vtxo taproot pubkey
+        // Combine version byte, server pubkey, and vtxo taproot public key.
         const data = new Uint8Array(1 + 32 + 32);
         data[0] = this.version;
         data.set(this.serverPubKey, 1);
@@ -82,12 +113,12 @@ export class ArkAddress {
         return bech32m.encode(this.hrp, words, 1023);
     }
 
-    // pkScript is the script that should be used to send non-dust funds to the address
+    /** ScriptPubKey used to send non-dust funds to the address. */
     get pkScript(): Bytes {
         return Script.encode(["OP_1", this.vtxoTaprootKey]);
     }
 
-    // subdustPkScript is the script that should be used to send sub-dust funds to the address
+    /** ScriptPubKey used to send sub-dust funds to the address. */
     get subdustPkScript(): Bytes {
         return Script.encode(["RETURN", this.vtxoTaprootKey]);
     }
