@@ -891,12 +891,13 @@ export class ArkadeSwaps {
             // Pre-CLTV: recoverable VTXOs can't use the Boltz 3-of-3 path
             // (Boltz can't co-sign a swept-batch refund), so we must wait.
             if (isRecoverableVtxo) {
-                throw new Error(
+                logger.error(
                     `Swap ${pendingSwap.id}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
                         `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
                         `(refundLocktime=${timeoutBlockHeights.refund}, ` +
                         `currentBlockHeight=${currentBlockHeight}). Refund will be retried after locktime.`
                 );
+                continue;
             }
 
             // Pre-CLTV, non-recoverable: try the 3-of-3 refund via Boltz.
@@ -935,13 +936,14 @@ export class ArkadeSwaps {
                 // to Boltz.
                 const tipNow = await this.swapProvider.getChainHeight();
                 if (BigInt(tipNow) < refundLocktime) {
-                    throw new Error(
+                    logger.error(
                         `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint and ` +
                             `refundWithoutReceiver locktime has not passed yet ` +
                             `(currentBlockHeight=${tipNow}, ` +
                             `locktime=${timeoutBlockHeights.refund}). ` +
                             `Refund will be retried after locktime.`
                     );
+                    continue;
                 }
 
                 logger.warn(
