@@ -292,7 +292,7 @@ export type ResponseContractEvent = ResponseEnvelope & {
 // Asset operations
 export type RequestSend = RequestEnvelope & {
     type: "SEND";
-    payload: { recipients: Recipient[] };
+    payload: { recipients: [Recipient, ...Recipient[]] };
 };
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
