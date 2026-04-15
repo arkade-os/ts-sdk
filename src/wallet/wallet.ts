@@ -235,14 +235,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
             if (identityIsMainnet && !serverIsMainnet) {
                 throw new Error(
                     `Network mismatch: identity uses mainnet derivation (coin type 0) ` +
-                        `but Ark server is on ${info.network}. ` +
+                        `but the Arkade server is on ${info.network}. ` +
                         `Create identity with { isMainnet: false } to use testnet derivation.`
                 );
             }
             if (!identityIsMainnet && serverIsMainnet) {
                 throw new Error(
                     `Network mismatch: identity uses testnet derivation (coin type 1) ` +
-                        `but Ark server is on mainnet. ` +
+                        `but the Arkade server is on mainnet. ` +
                         `Create identity with { isMainnet: true } or omit isMainnet (defaults to mainnet).`
                 );
             }
@@ -336,6 +336,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
     }
 
+    /**
+     * Create a readonly wallet for querying balances, addresses, and history.
+     *
+     * @param config - Readonly wallet configuration
+     * @returns A readonly wallet instance
+     */
     static async create(config: ReadonlyWalletConfig): Promise<ReadonlyWallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
@@ -375,14 +381,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return hex.encode(this.offchainTapscript.pkScript);
     }
 
+    /** Returns the wallet's Arkade address. */
     async getAddress(): Promise<string> {
         return this.arkAddress.encode();
     }
 
+    /** Returns the onchain boarding address used to move funds into Arkade. */
     async getBoardingAddress(): Promise<string> {
         return this.boardingTapscript.onchainAddress(this.network);
     }
 
+    /**
+     * Return the wallet's combined onchain and offchain balances.
+     */
     async getBalance(): Promise<WalletBalance> {
         const [boardingUtxos, vtxos] = await Promise.all([
             this.getBoardingUtxos(),
@@ -420,7 +431,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const totalBoarding = confirmed + unconfirmed;
         const totalOffchain = settled + preconfirmed + recoverable;
 
-        // aggregate asset balances from spendable vtxos
+        // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, number>();
         for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) continue;
@@ -453,12 +464,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
     }
 
+    /**
+     * Return virtual outputs tracked by the wallet.
+     *
+     * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
+     */
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const { isDelta, fetchedExtended, address } = await this.syncVtxos();
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
 
         // For delta syncs, read the full merged set from cache so old
-        // VTXOs that weren't in the delta are still returned.
+        // Virtual outputs that weren't in the delta are still returned.
         const vtxos = isDelta
             ? await this.walletRepository.getVtxos(address)
             : fetchedExtended;
@@ -477,8 +493,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         });
     }
 
+    /**
+     * Return wallet transaction history derived from Arkade state and boarding transactions.
+     */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        // Delta-sync VTXOs into cache, then build history from the cache.
+        // Delta-sync virtual outputs into cache, then build history from the cache.
         const { isDelta, fetchedExtended, address } = await this.syncVtxos();
 
         const allVtxos = isDelta
@@ -502,7 +521,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Delta-sync wallet VTXOs: fetch only changed VTXOs since the last
+     * Delta-sync wallet virtual outputs: fetch only changed virtual outputs since the last
      * cursor, or do a full bootstrap when no cursor exists. Upserts
      * the result into the cache and advances the sync cursors.
      *
@@ -590,13 +609,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        // Extend every fetched VTXO and upsert into the cache.
+        // Extend every fetched virtual output and upsert into the cache.
         const fetchedExtended: ExtendedVirtualCoin[] = [];
         for (const vtxo of allVtxos) {
             const extended = extendWithScript(vtxo);
             if (extended) fetchedExtended.push(extended);
         }
-        // Save VTXOs first, then advance cursors only on success.
+        // Save virtual outputs first, then advance cursors only on success.
         const cutoff = cursorCutoff(requestStartedAt);
         await this.walletRepository.saveVtxos(address, fetchedExtended);
         await advanceSyncCursors(
@@ -606,8 +625,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // Delta-sync reconciliation: full re-fetch for delta scripts.
         //
-        // The delta fetch (above) only returns VTXOs changed after the
-        // cursor, so it can miss preconfirmed VTXOs that were consumed
+        // The delta fetch (above) only returns virtual outputs changed after the
+        // cursor, so it can miss preconfirmed virtual outputs that were consumed
         // by a round between syncs.  Rather than layering targeted
         // queries (pendingOnly, spendableOnly) with pagination guards
         // and set algebra, we perform a single unfiltered re-fetch for
@@ -615,8 +634,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         // gives us complete, authoritative state in one call and keeps
         // the reconciliation logic simple.
         //
-        // Any cached non-spent VTXO that is absent from the full
-        // result set is marked spent; any VTXO whose state changed
+        // Any cached non-spent virtual output that is absent from the full
+        // result set is marked spent; any virtual output whose state changed
         // (e.g. preconfirmed → settled) is updated in place.
         if (hasDelta) {
             const { vtxos: fullVtxos, page: fullPage } =
@@ -627,7 +646,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // Reconciliation is best-effort: if the response is
             // paginated we don't have a complete picture, so we skip
             // rather than act on partial data.  Wallets with enough
-            // VTXOs to exceed a single page rely solely on the
+            // virtual outputs to exceed a single page rely solely on the
             // cursor-based delta mechanism for state updates.
             const fullSetComplete = !fullPage || fullPage.total <= 1;
             if (fullSetComplete) {
@@ -653,7 +672,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     const fresh = fullOutpoints.get(outpoint);
 
                     if (!fresh) {
-                        // Server no longer knows about this VTXO —
+                        // Server no longer knows about this virtual output —
                         // it was spent between syncs.
                         reconciledExtended.push({
                             ...cached,
@@ -698,13 +717,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Clear all VTXO sync cursors, forcing a full re-bootstrap on next sync.
+     * Clear all virtual output sync cursors, forcing a full re-bootstrap on next sync.
      * Useful for recovery after indexer reprocessing or debugging.
      */
     async clearSyncCursors(): Promise<void> {
         await clearSyncCursors(this.walletRepository);
     }
 
+    /**
+     * Build a transaction history view for the wallet's boarding address.
+     */
     async getBoardingTxs(): Promise<{
         boardingTxs: ArkTransaction[];
         commitmentsToIgnore: Set<string>;
@@ -789,6 +811,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         };
     }
 
+    /**
+     * Fetch and cache onchain inputs (UTXOs) received at the boarding address.
+     */
     async getBoardingUtxos(): Promise<ExtendedCoin[]> {
         const boardingAddress = await this.getBoardingAddress();
         const boardingUtxos =
@@ -798,12 +823,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
             return extendCoin(this, utxo);
         });
 
-        // Save boardingUtxos using unified repository
+        // Save boarding inputs using unified repository
         await this.walletRepository.saveUtxos(boardingAddress, utxos);
 
         return utxos;
     }
 
+    /**
+     * Subscribe to onchain and offchain notifications for newly received funds.
+     *
+     * @param eventCallback - Callback invoked when matching funds are detected
+     * @returns A function that stops the subscriptions
+     */
     async notifyIncomingFunds(
         eventCallback: (coins: IncomingFunds) => void
     ): Promise<() => void> {
@@ -822,11 +853,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             onchainStopFunc = await this.onchainProvider.watchAddresses(
                 [boardingAddress],
                 (txs) => {
-                    // find all utxos belonging to our boarding address
+                    // find all onchain outputs belonging to our boarding address
                     const coins: Coin[] = txs
                         // filter txs where address is in output
                         .filter((tx) => findVoutOnTx(tx) !== -1)
-                        // return utxo as Coin
+                        // return boarding input as Coin
                         .map((tx) => {
                             const { txid, status } = tx;
                             const vout = findVoutOnTx(tx);
@@ -864,8 +895,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
             // Handle subscription updates asynchronously without blocking.
             // Note: subscription covers all wallet scripts (default + delegate),
-            // but we can't determine which script each VTXO belongs to from the
-            // subscription event. VTXOs are extended with the current offchainTapscript;
+            // but we can't determine which script each virtual output belongs to from the
+            // subscription event. Virtual outputs are extended with the current offchainTapscript;
             // this is for notification/display only — not for spending.
             // For correct extension metadata, use getVtxos() which queries per-script.
             (async () => {
@@ -900,8 +931,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return stopFunc;
     }
 
+    /** Fetch Arkade transaction ids that are still pending final settlement. */
     async fetchPendingTxs(): Promise<string[]> {
-        // get non-swept VTXOs, rely on the indexer only in case DB doesn't have the right state
+        // get non-swept virtual outputs, rely on the indexer only in case DB doesn't have the right state
         const scripts = await this.getWalletScripts();
         let { vtxos } = await this.indexerProvider.getVtxos({
             scripts,
@@ -947,7 +979,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
     /**
      * Build a map of scriptHex → VtxoScript for all wallet contracts,
-     * so VTXOs can be extended with the correct tapscript per contract.
+     * so virtual outputs can be extended with the correct tapscript per contract.
      */
     async getScriptMap(): Promise<
         Map<string, DefaultVtxo.Script | DelegateVtxo.Script>
@@ -1080,7 +1112,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 state: "active",
             });
 
-            // Also register the non-delegate version so old VTXOs remain visible
+            // Also register the non-delegate version so old virtual outputs remain visible
             const nonDelegateScript = new DefaultVtxo.Script({
                 pubKey: delegateScript.options.pubKey,
                 serverPubKey: delegateScript.options.serverPubKey,
@@ -1124,6 +1156,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return manager;
     }
 
+    /** Dispose wallet-owned managers and release background resources. */
     async dispose(): Promise<void> {
         const manager =
             this._contractManager ??
@@ -1136,30 +1169,31 @@ export class ReadonlyWallet implements IReadonlyWallet {
         this._contractManagerInitializing = undefined;
     }
 
+    /** Async-dispose hook that forwards to `dispose()`. */
     async [Symbol.asyncDispose](): Promise<void> {
         await this.dispose();
     }
 }
 
 /**
- * Main wallet implementation for Bitcoin transactions with Ark protocol support.
- * The wallet does not store any data locally and relies on Ark and onchain
- * providers to fetch UTXOs and VTXOs.
+ * Main wallet implementation for Bitcoin transactions with Arkade protocol support.
+ * The wallet does not store any data locally and relies on Arkade and onchain
+ * providers to fetch onchain and virtual outputs.
  *
  * @example
  * ```typescript
  * // Create a wallet with URL configuration
  * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('your_private_key'),
- *   arkServerUrl: 'https://ark.example.com',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+ *   arkServerUrl: 'https://arkade.computer',
  *   esploraUrl: 'https://mempool.space/api'
  * });
  *
  * // Or with custom provider instances (e.g., for Expo/React Native)
  * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('your_private_key'),
- *   arkProvider: new ExpoArkProvider('https://ark.example.com'),
- *   indexerProvider: new ExpoIndexerProvider('https://ark.example.com'),
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+ *   arkProvider: new ExpoArkProvider('https://arkade.computer'),
+ *   indexerProvider: new ExpoIndexerProvider('https://arkade.computer'),
  *   esploraUrl: 'https://mempool.space/api'
  * });
  *
@@ -1168,9 +1202,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
  * const boardingAddress = await wallet.getBoardingAddress();
  *
  * // Send bitcoin
- * const txid = await wallet.sendBitcoin({
- *   address: 'tb1...',
- *   amount: 50000
+ * const txid = await wallet.send({
+ *   address: 'ark1q...',
+ *   amount: 50000,
  * });
  * ```
  */
@@ -1185,7 +1219,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private _walletAssetManager?: IAssetManager;
 
     /**
-     * Async mutex that serializes all operations submitting VTXOs to the Ark
+     * Async mutex that serializes all operations submitting VTXOs to the Arkade
      * server (`settle`, `send`, `sendBitcoin`). This prevents VtxoManager's
      * background renewal from racing with user-initiated transactions for the
      * same VTXO inputs.
@@ -1328,6 +1362,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
     }
 
+    /**
+     * Create a full wallet and initialize its background managers.
+     *
+     * @param config - Wallet configuration
+     * @returns A wallet ready to query balances and send transactions
+     * @example
+     * ```typescript
+     * const wallet = await Wallet.create({
+     *   identity,
+     *   arkServerUrl: 'https://arkade.computer',
+     * });
+     * ```
+     */
     static async create(config: WalletConfig): Promise<Wallet> {
         const pubkey = await config.identity.xOnlyPublicKey();
         if (!pubkey) {
@@ -1387,7 +1434,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @returns A readonly wallet with the same configuration but readonly identity
      * @example
      * ```typescript
-     * const wallet = await Wallet.create({ identity: SingleKey.fromHex('...'), ... });
+     * const wallet = await Wallet.create({ identity: MnemonicIdentity.fromMnemonic('abandon abandon...'), ... });
      * const readonlyWallet = await wallet.toReadonly();
      *
      * // Can query balance and addresses
@@ -1395,7 +1442,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * const address = await readonlyWallet.getAddress();
      *
      * // But cannot send transactions (type error)
-     * // readonlyWallet.sendBitcoin(...); // TypeScript error
+     * // readonlyWallet.send(...); // TypeScript error
      * ```
      */
     async toReadonly(): Promise<ReadonlyWallet> {
@@ -1420,13 +1467,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         );
     }
 
+    /** Returns the delegator manager when delegation support is configured. */
     async getDelegatorManager(): Promise<IDelegatorManager | undefined> {
         return this._delegatorManager;
     }
 
     /**
-     * @deprecated Use `send`
-     * @param params
+     * Send bitcoin to an Arkade address.
+     *
+     * @deprecated Use `send`.
+     * @param params - Send parameters
      */
     async sendBitcoin(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
@@ -1434,7 +1484,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
 
         if (!isValidArkAddress(params.address)) {
-            throw new Error("Invalid Ark address " + params.address);
+            throw new Error("Invalid Arkade address " + params.address);
         }
 
         if (params.selectedVtxos && params.selectedVtxos.length > 0) {
@@ -1505,6 +1555,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         });
     }
 
+    /**
+     * Settle boarding inputs and/or virtual outputs into a finalized mainnet transaction.
+     *
+     * @param params - Optional settlement inputs and outputs. When omitted, the wallet settles all eligible funds.
+     * @param eventCallback - Optional callback invoked for settlement stream events.
+     * @returns The finalized Arkade transaction id
+     */
     async settle(
         params?: SettleParams,
         eventCallback?: (event: SettlementEvent) => void
@@ -1529,7 +1586,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         }
 
-        // if no params are provided, use all non expired boarding utxos and offchain vtxos as inputs
+        // if no params are provided, use all non-expired boarding inputs and offchain virtual outputs as inputs
         // and send all to the offchain address
         if (!params) {
             const { fees } = await this.arkProvider.getInfo();
@@ -1565,7 +1622,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     amount: BigInt(utxo.value),
                 });
                 if (inputFee.value >= utxo.value) {
-                    // skip if fees are greater than the utxo value
+                    // skip if fees are greater than the boarding input value
                     continue;
                 }
 
@@ -1590,7 +1647,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         : new Date(),
                 });
                 if (inputFee.value >= vtxo.value) {
-                    // skip if fees are greater than the vtxo value
+                    // skip if fees are greater than the virtual output value
                     continue;
                 }
 
@@ -1708,7 +1765,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             outputs.push(Extension.create([assetPacket]).txOut());
         }
 
-        // session holds the state of the musig2 signing process of the vtxo tree
+        // session holds the state of the musig2 signing process of the virtual output tree
         let session: SignerSession | undefined;
         const signingPublicKeys: string[] = [];
         if (hasOffchainOutputs) {
@@ -1794,7 +1851,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 (vtxo) => vtxo.txid === input.txid && vtxo.vout === input.vout
             );
 
-            // boarding utxo, we need to sign the settlement tx
+            // boarding input, we need to sign the settlement tx
             if (!vtxo) {
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
@@ -1894,11 +1951,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     /**
-     * @implements Batch.Handler interface.
+     * Create a batch event handler for settlement flows.
+     *
      * @param intentId - The intent ID.
-     * @param inputs - The inputs of the intent.
-     * @param session - The musig2 signing session, if not provided, the signing will be skipped.
-     * @param expectedRecipients - Expected recipients to validate in the vtxo tree.
+     * @param inputs - Inputs used by the intent.
+     * @param expectedRecipients - Expected recipients to validate in the virtual output tree.
+     * @param session - Optional musig2 signing session. When omitted, signing steps are skipped.
      */
     createBatchHandler(
         intentId: string,
@@ -1921,7 +1979,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 for (const idHash of event.intentIdHashes) {
                     if (idHash === intentIdHashStr) {
                         if (!this.arkProvider) {
-                            throw new Error("Ark provider not configured");
+                            throw new Error("Arkade provider not configured");
                         }
                         await this.arkProvider.confirmRegistration(intentId);
                         skip = false;
@@ -1968,13 +2026,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     return { skip: true };
                 }
 
-                // validate the unsigned vtxo tree
+                // validate the unsigned virtual output tree
                 const commitmentTx = Transaction.fromPSBT(
                     base64.decode(event.unsignedCommitmentTx)
                 );
                 validateVtxoTxGraph(vtxoTree, commitmentTx, sweepTapTreeRoot);
 
-                // validate that all expected receivers are in the vtxo tree with correct amounts and assets
+                // validate that all expected receivers are in the virtual output tree with correct amounts and assets
                 if (expectedRecipients && expectedRecipients.length > 0) {
                     validateBatchRecipients(
                         commitmentTx,
@@ -2146,7 +2204,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     /**
      * Finalizes pending transactions by retrieving them from the server and finalizing each one.
      * Skips the server check entirely when no send was interrupted (no pending tx flag set).
-     * @param vtxos - Optional list of VTXOs to use instead of retrieving them from the server
+     * @param vtxos - Optional list of virtual outputs to use instead of retrieving them from the server
      * @returns Array of transaction IDs that were finalized
      */
     async finalizePendingTxs(
@@ -2283,23 +2341,25 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     /**
      * Send BTC and/or assets to one or more recipients.
      *
-     * @param recipients - Array of recipients with their addresses, BTC amounts, and assets
-     * @returns Promise resolving to the ark transaction ID
+     * @param args - Recipients with their addresses, BTC amounts, and assets
+     * @returns Promise resolving to the Arkade transaction ID
      *
      * @example
      * ```typescript
      * const txid = await wallet.send({
-     *     address: 'ark1...',
+     *     address: 'ark1q...',
      *     amount: 1000, // (optional, default to dust) btc amount to send to the output
      *     assets: [{ assetId: 'abc123...', amount: 50 }] // (optional) list of assets to send
      * });
      * ```
      */
-    async send(...args: Recipient[]): Promise<string> {
+    async send(...args: [Recipient, ...Recipient[]]): Promise<string> {
         return this._withTxLock(() => this._sendImpl(...args));
     }
 
-    private async _sendImpl(...args: Recipient[]): Promise<string> {
+    private async _sendImpl(
+        ...args: [Recipient, ...Recipient[]]
+    ): Promise<string> {
         if (args.length === 0) {
             throw new Error("At least one receiver is required");
         }
@@ -2534,8 +2594,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     /**
      * Build an offchain transaction from the given inputs and outputs,
-     * sign it, submit to the ark provider, and finalize.
-     * @returns The ark transaction id and server-signed checkpoint PSBTs (for bookkeeping)
+     * sign it, submit to the Arkade provider, and finalize.
+     * @returns The Arkade transaction id and server-signed checkpoint PSBTs (for bookkeeping)
      */
     async buildAndSubmitOffchainTx(
         inputs: ExtendedVirtualCoin[],
@@ -2616,7 +2676,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return { arkTxid, signedCheckpointTxs };
     }
 
-    // mark vtxo spent and save change vtxo if any
+    // mark virtual outputs as spent, save change outputs if any
     private async updateDbAfterOffchainTx(
         inputs: VirtualCoin[],
         arkTxid: string,
@@ -2690,7 +2750,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const createdAt = Date.now();
             const addr = this.arkAddress.encode();
 
-            // Only save a change VTXO for preconfirmed coins (those with a batchExpiry).
+            // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
             let changeVtxo: ExtendedVirtualCoin | undefined;
             if (changeAmount > 0n && batchExpiry !== Number.MAX_SAFE_INTEGER) {
@@ -2739,7 +2799,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         }
     }
 
-    // mark vtxo spent & settled, remove boarding utxo
+    // mark virtual outputs as spent/settled, remove boarding inputs
     private async updateDbAfterSettle(
         inputs: ExtendedCoin[],
         commitmentTxid: string
@@ -2758,7 +2818,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             for (const input of inputs) {
                 if (isVtxo(input)) {
-                    // vtxo = mark it settled
+                    // virtual output = mark it settled
                     const vtxo = extendVirtualCoin(this, input);
                     if (vtxo.arkTxId) {
                         inputArkTxIds.add(vtxo.arkTxId);
@@ -2773,7 +2833,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         isSpent: true,
                     });
                 } else {
-                    // boarding utxo = remove it
+                    // boarding input = remove it
                     boardingUtxoToRemove.add(`${input.txid}:${input.vout}`);
                 }
             }
@@ -2804,10 +2864,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 }
 
 /**
- * Select virtual coins to reach a target amount, prioritizing those closer to expiry
- * @param coins List of virtual coins to select from
+ * Select virtual outputs to reach a target amount, prioritizing those closer to expiry
+ * @param coins List of virtual outputs to select from
  * @param targetAmount Target amount to reach in satoshis
- * @returns Selected coins and change amount
+ * @returns Selected virtual outputs and change amount
  */
 export function selectVirtualCoins(
     coins: ExtendedVirtualCoin[],
@@ -2816,7 +2876,7 @@ export function selectVirtualCoins(
     inputs: ExtendedVirtualCoin[];
     changeAmount: bigint;
 } {
-    // Sort VTXOs by expiry (ascending) and amount (descending)
+    // Sort virtual outputs by expiry (ascending) and amount (descending)
     const sortedCoins = [...coins].sort((a, b) => {
         // First sort by expiry if available
         const expiryA = a.virtualStatus.batchExpiry || Number.MAX_SAFE_INTEGER;
