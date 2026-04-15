@@ -18,6 +18,7 @@ export class AssetOutput {
         readonly amount: bigint
     ) {}
 
+    /** Create a local asset output referencing a transaction output index. */
     static create(vout: number, amount: bigint | number): AssetOutput {
         const output = new AssetOutput(
             vout,
@@ -27,6 +28,7 @@ export class AssetOutput {
         return output;
     }
 
+    /** Decode an asset output from its hex string form. */
     static fromString(s: string): AssetOutput {
         let buf: Uint8Array;
         try {
@@ -37,6 +39,7 @@ export class AssetOutput {
         return AssetOutput.fromBytes(buf);
     }
 
+    /** Decode an asset output from its serialized bytes. */
     static fromBytes(buf: Uint8Array): AssetOutput {
         if (!buf || buf.length === 0) {
             throw new Error("missing asset output");
@@ -47,16 +50,19 @@ export class AssetOutput {
         return output;
     }
 
+    /** Serialize the asset output to raw bytes. */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
+    /** Encode the asset output to a hex string. */
     toString(): string {
         return hex.encode(this.serialize());
     }
 
+    /** Validate the asset output fields. */
     validate(): void {
         if (
             !Number.isInteger(this.vout) ||
@@ -72,6 +78,7 @@ export class AssetOutput {
         }
     }
 
+    /** Decode an asset output from a buffer reader. */
     static fromReader(reader: BufferReader): AssetOutput {
         if (reader.remaining() < 2) {
             throw new Error("invalid asset output vout length");
@@ -95,6 +102,7 @@ export class AssetOutput {
         return new AssetOutput(vout, amount);
     }
 
+    /** Serialize the asset output into an existing buffer writer. */
     serializeTo(writer: BufferWriter): void {
         writer.writeByte(0x01);
         writer.writeUint16LE(this.vout);
@@ -111,12 +119,14 @@ export class AssetOutput {
 export class AssetOutputs {
     private constructor(readonly outputs: AssetOutput[]) {}
 
+    /** Create a validated list of asset outputs. */
     static create(outputs: AssetOutput[]): AssetOutputs {
         const list = new AssetOutputs(outputs);
         list.validate();
         return list;
     }
 
+    /** Decode an asset output list from its hex string form. */
     static fromString(s: string): AssetOutputs {
         if (!s || s.length === 0) {
             throw new Error("missing asset outputs");
@@ -131,16 +141,19 @@ export class AssetOutputs {
         return AssetOutputs.fromReader(reader);
     }
 
+    /** Serialize the asset output list to raw bytes. */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
+    /** Encode the asset output list to a hex string. */
     toString(): string {
         return hex.encode(this.serialize());
     }
 
+    /** Validate the asset output list. */
     validate(): void {
         const seen = new Set<number>();
         for (const output of this.outputs) {
@@ -152,6 +165,7 @@ export class AssetOutputs {
         }
     }
 
+    /** Decode an asset output list from a buffer reader. */
     static fromReader(reader: BufferReader): AssetOutputs {
         const count = Number(reader.readVarUint());
         if (count === 0) {
@@ -167,6 +181,7 @@ export class AssetOutputs {
         return result;
     }
 
+    /** Serialize the asset output list into an existing buffer writer. */
     serializeTo(writer: BufferWriter): void {
         this.validate();
         writer.writeVarUint(this.outputs.length);
