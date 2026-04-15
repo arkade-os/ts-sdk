@@ -45,7 +45,7 @@ The SDK supports read-only wallets that allow you to query wallet state without 
 #### Creating a Read-Only Wallet
 
 ```typescript
-import { ReadonlySingleKey, ReadonlyWallet } from '@arkade-os/sdk'
+import { SingleKey, ReadonlySingleKey, ReadonlyWallet } from '@arkade-os/sdk'
 
 // Create a read-only identity from a public key
 const identity = SingleKey.fromHex('e09ca...56609')
@@ -221,8 +221,8 @@ const identity = new MyBrowserWallet()
 console.log(isBatchSignable(identity)) // true
 
 // Wallet.send() uses one popup instead of N+1
-const wallet = await Wallet.create({ identity, arkServerUrl: '...' })
-await wallet.sendBitcoin({ address: arkAddress, amount: 1000 })
+const wallet = await Wallet.create({ identity, arkServerUrl: 'https://arkade.computer' })
+await wallet.send({ address: 'ark1q...', amount: 1000 })
 ```
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
@@ -240,17 +240,17 @@ console.log('Boarding (Mainnet) Address:', boardingAddress)
 
 const incomingFunds = await waitForIncomingFunds(wallet)
 if (incomingFunds.type === "vtxo") {
-  // Virtual UTXOs received 
-  console.log("VTXOs: ", incomingFunds.vtxos)
+  // Virtual outputs received 
+  console.log("VTXOs: ", incomingFunds.newVtxos)
 } else if (incomingFunds.type === "utxo") {
-  // Boarding UTXOs received
+  // Boarding inputs received
   console.log("UTXOs: ", incomingFunds.coins)
 }
 ```
 
 ### Onboarding
 
-Onboarding allows you to swap on-chain funds into VTXOs:
+Onboarding allows you to swap onchain funds into virtual outputs:
 
 ```typescript
 import { Ramps } from '@arkade-os/sdk'
@@ -270,11 +270,11 @@ console.log('Offchain Settled:', balance.settled)
 console.log('Offchain Preconfirmed:', balance.preconfirmed)
 console.log('Recoverable:', balance.recoverable)
 
-// Get virtual UTXOs (off-chain)
-const virtualUtxos = await wallet.getVtxos()
+// Get virtual outputs (available for offchain spending)
+const vtxos = await wallet.getVtxos()
 
-// Get boarding UTXOs
-const boardingUtxos = await wallet.getBoardingUtxos()
+// Get boarding inputs
+const boardingInputs = await wallet.getBoardingUtxos()
 ```
 
 ### Sending Bitcoin
@@ -304,6 +304,9 @@ const { assetId: controlAssetId } = await wallet.assetManager.issue({
 const { assetId } = await wallet.assetManager.issue({
   amount: 500,
   controlAssetId,
+  metadata: {
+    ticker: 'MTK'
+  }
 })
 
 // Reissue more supply of the asset (requires ownership of the control asset)
@@ -331,18 +334,18 @@ const assetBalance = assets.find(asset => asset.assetId === assetId)?.amount
 
 ### Batch Settlement
 
-The `settle` method can be used to move preconfirmed balances into finalized balances and to manually convert UTXOs to VTXOs.
+The `settle` method can be used to move preconfirmed balances into finalized balances and to manually convert onchain funds to virtual outputs.
 
 ```typescript
-// Fetch offchain preconfirmed VTXOs and onchain boarding UTXOs
-const [virtualUtxos, boardingUtxos] = await Promise.all([
+// Fetch offchain preconfirmed outputs and onchain boarding inputs
+const [vtxos, boardingInputs] = await Promise.all([
   wallet.getVtxos(),
   wallet.getBoardingUtxos()
 ])
 
 // For settling transactions
 const settlementTxId = await wallet.settle({
-  inputs: [...virtualUtxos, ...boardingUtxos],
+  inputs: [...vtxos, ...boardingInputs],
   // Optional: specify a mainnet output
   outputs: [{
     address: "bc1p...",
@@ -351,19 +354,21 @@ const settlementTxId = await wallet.settle({
 })
 ```
 
-### VTXO Management (Renewal & Recovery)
+### Virtual Output Management (Renewal & Recovery)
 
-VTXOs have an expiration time (batch expiry). The SDK provides the `VtxoManager` class to handle:
+Virtual outputs have an expiration time (batch expiry).
 
-- **Renewal**: Renew VTXOs before they expire to maintain unilateral control of the funds.
-- **Recovery**: Reclaim swept or expired VTXOs back to the wallet in case renewal window was missed.
-- **Boarding UTXO Sweep**: Sweep expired boarding UTXOs back to a fresh boarding address to restart the timelock.
+The SDK provides the `VtxoManager` class to handle:
+
+- **Renewal**: Renew virtual outputs before they expire to maintain unilateral control of the funds.
+- **Recovery**: Reclaim swept or expired virtual outputs back to the wallet in case renewal window was missed.
+- **Boarding Input Sweep**: Sweep expired boarding inputs back to a fresh boarding address to restart the timelock.
 
 #### Settlement Configuration
 
 The recommended way to configure `VtxoManager` is via `settlementConfig` on the wallet.
 If you omit `settlementConfig`, settlement is enabled with the default behavior:
-VTXO renewal at 3 days and boarding UTXO sweep enabled.
+Virtual output renewal at 3 days and boarding input sweep enabled.
 
 ```typescript
 const wallet = await Wallet.create({
@@ -371,24 +376,24 @@ const wallet = await Wallet.create({
   arkServerUrl: 'https://arkade.computer',
   // Enable settlement with defaults explicitly:
   settlementConfig: {
-    // Seconds before VTXO expiry to trigger renewal
-    vtxoThreshold: 259200, // 3 days
-    // Whether to sweep expired boarding UTXOs back to a fresh boarding address
+    // Seconds before virtual output expiry to trigger renewal
+    vtxoThreshold: 60 * 60 * 24 * 3, // 3 days
+    // Whether to sweep expired boarding inputs back to a fresh boarding address
     boardingUtxoSweep: true,
-    // Polling interval in milliseconds for checking boarding UTXOs
-    pollIntervalMs: 60000 // 1 minute
+    // Polling interval in milliseconds for checking boarding inputs
+    pollIntervalMs: 60_000 // 1 minute
   },
 })
 ```
 
 ```typescript
-// Enable both VTXO renewal and boarding UTXO sweep
+// Enable both virtual output renewal and boarding input sweep
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://arkade.computer',
   settlementConfig: {
-    vtxoThreshold: 86400,      // renew when 24 hours remain (in seconds)
-    boardingUtxoSweep: true,   // sweep expired boarding UTXOs
+    vtxoThreshold: 60 * 60 * 24,  // renew when 24 hours remain (in seconds)
+    boardingUtxoSweep: true,      // sweep expired boarding inputs
   },
 })
 ```
@@ -402,61 +407,55 @@ const wallet = await Wallet.create({
 })
 ```
 
-Create the `VtxoManager` by passing the wallet and its settlement config:
+Access the `VtxoManager` from the wallet after configuring `settlementConfig`:
 
 ```typescript
-import { VtxoManager } from '@arkade-os/sdk'
-
-const manager = new VtxoManager(
-  wallet,
-  undefined,               // renewalConfig (deprecated)
-  wallet.settlementConfig  // new settlementConfig
-)
+const manager = await wallet.getVtxoManager()
 ```
 
-> **Migration from `renewalConfig`:** The old `renewalConfig` with `enabled` and `thresholdMs` (milliseconds) is still supported but deprecated. If both are provided, `settlementConfig` takes precedence. The new `vtxoThreshold` uses **seconds** instead of milliseconds.
+> **Migration from `renewalConfig`:** Directly initializing a `VtxoManager` with `renewalConfig` is still supported but deprecated. Prefer `settlementConfig` where `vtxoThreshold` is expressed in **seconds** instead of milliseconds.
 
 #### Renewal: Prevent Expiration
 
-Renew VTXOs before they expire to retain unilateral control of funds.
-This settles expiring and recoverable VTXOs back to your wallet, refreshing their expiration time.
+Renew virtual outputs before they expire to retain unilateral control of funds.
+This settles expiring and recoverable virtual outputs back to your wallet, refreshing their expiration time.
 
 ```typescript
-// Renew all VTXOs to prevent expiration
+// Renew all virtual outputs to prevent expiration
 const txid = await manager.renewVtxos()
-// Check which VTXOs are expiring soon
+// Check which virtual outputs are expiring soon
 const expiringVtxos = await manager.getExpiringVtxos()
-// Override thresholdMs (e.g., get VTXOs expiring in the next 60 seconds)
+// Override thresholdMs (e.g., get virtual outputs expiring in the next 60 seconds)
 const urgentlyExpiring = await manager.getExpiringVtxos(60_000)
 ```
 
-#### Boarding UTXO Sweep
+#### Boarding Input Sweep
 
-When a boarding UTXO's CSV timelock expires, it can no longer be onboarded into Arkade cooperatively. The sweep feature detects these expired UTXOs and builds a raw on-chain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
+When a boarding input's CSV timelock expires, it can no longer be onboarded into Arkade cooperatively. The sweep feature detects these expired UTXOs and builds a raw onchain transaction that spends them via the unilateral exit path back to a fresh boarding address, restarting the timelock.
 
 - Multiple expired UTXOs are batched into a single transaction (many inputs, one output)
 - A dust check ensures the sweep is skipped if fees would consume the entire value
 
 ```typescript
-// Check for expired boarding UTXOs
+// Check for expired boarding inputs
 const expired = await manager.getExpiredBoardingUtxos()
-console.log(`${expired.length} expired boarding UTXOs`)
+console.log(`${expired.length} expired boarding inputs`)
 
 // Sweep them back to a fresh boarding address (requires boardingUtxoSweep: true)
 try {
   const txid = await manager.sweepExpiredBoardingUtxos()
-  console.log('Swept expired boarding UTXOs:', txid)
+  console.log('Swept expired boarding inputs:', txid)
 } catch (e) {
-  // "No expired boarding UTXOs to sweep" or "Sweep not economical"
+  // "No expired boarding inputs to sweep" or "Sweep not economical"
 }
 ```
 
 #### Recovery: Reclaim Swept VTXOs
 
-Recover VTXOs that have been swept by the server or consolidate small amounts (subdust).
+Recover virtual outputs that have been swept by the server or consolidate small amounts (subdust).
 
 ```typescript
-// Recover swept VTXOs and preconfirmed subdust
+// Recover swept virtual outputs and preconfirmed subdust
 const txid = await manager.recoverVtxos((event) => {
   console.log('Settlement event:', event.type)
 })
@@ -466,13 +465,17 @@ const balance = await manager.getRecoverableBalance()
 ```
 
 
-### VTXO Delegation
+### Delegation
 
-Delegation allows you to outsource VTXO renewal to a third-party delegator service. Instead of renewing VTXOs yourself, the delegator will automatically settle them before they expire, sending the funds back to your wallet address (minus a service fee). This is useful for wallets that cannot be online 24/7.
+Delegation allows users to outsource virtual output renewal to a third-party delegation service.
 
-When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegator to co-sign renewals alongside the Arkade server.
+Instead of the delegating user renewing virtual outputs by themself, their delegate will automatically settle them before they expire, sending the funds back to the delegator's wallet address (minus a service fee).
 
-To run a delegator, you'll need to set up a [Fulmine server](https://github.com/ArkLabsHQ/fulmine) with the [Delegation API](https://github.com/ArkLabsHQ/fulmine?tab=readme-ov-file#-delegate-api) enabled.
+This is useful for wallets that cannot be online 24/7.
+
+When a `delegatorProvider` is configured, the wallet address includes an extra tapscript path that authorizes the delegate to co-sign renewals alongside the Arkade server.
+
+To run a delegation service, you'll need to set up a [Fulmine server](https://github.com/ArkLabsHQ/fulmine) with the [Delegation API](https://github.com/ArkLabsHQ/fulmine?tab=readme-ov-file#-delegate-api) enabled.
 
 #### Setting Up a Wallet with Delegation
 
@@ -488,16 +491,16 @@ const wallet = await Wallet.create({
 
 > **Note:** Adding a `delegatorProvider` changes your wallet address because the offchain tapscript includes an additional delegation path. Funds sent to an address without delegation cannot be delegated, and vice versa.
 
-#### Delegating VTXOs
+#### Delegating Virtual Outputs
 
-Once the wallet is configured with a delegator, use `wallet.delegatorManager` to delegate your VTXOs:
+Once the wallet is configured with a delegate, use `wallet.delegatorManager` to delegate your virtual outputs:
 
 ```typescript
-// Get spendable VTXOs (including recoverable)
+// Get spendable virtual outputs (including recoverable)
 const vtxos = (await wallet.getVtxos({ withRecoverable: true }))
   .filter(v => v.virtualStatus.type === 'confirmed')
 
-// Delegate all VTXOs — the delegator will renew them before expiry
+// Delegate all virtual outputs — the delegate will renew them before expiry
 const arkadeAddress = await wallet.getAddress()
 const delegatorManager = await wallet.getDelegatorManager();
 const delegationResult = await delegatorManager.delegate(vtxos, arkadeAddress)
@@ -506,7 +509,11 @@ console.log('Delegated:', result.delegated.length)
 console.log('Failed:', result.failed.length)
 ```
 
-The `delegate` method groups VTXOs by expiry date and submits them to the delegator service. By default, delegation is scheduled at 90% of each VTXO's remaining lifetime. You can override this with an explicit date:
+The `delegate` method groups virtual outputs by expiry date and submits them to the delegation service.
+
+By default, delegation is scheduled at 90% of each virtual output's remaining lifetime.
+
+You can override this with an explicit date:
 
 ```typescript
 // Delegate with a specific renewal time
@@ -516,7 +523,7 @@ await delegatorManager.delegate(vtxos, arkadeAddress, delegateAt)
 
 #### Service Worker Integration
 
-When using a service worker wallet, pass the `delegatorUrl` option. The service worker will automatically delegate VTXOs after each VTXO update:
+When using a service worker wallet, pass the `delegatorUrl` option. The service worker will automatically delegate virtual outputs after each update:
 
 ```typescript
 import { ServiceWorkerWallet, MnemonicIdentity } from '@arkade-os/sdk'
@@ -529,9 +536,9 @@ const wallet = await ServiceWorkerWallet.setup({
 })
 ```
 
-#### Querying Delegator Info
+#### Querying Delegate Info
 
-You can query the delegator service directly to inspect its public key, fee, and payment address:
+You can query the delegation service directly to inspect its public key, fee, and payment address:
 
 ```typescript
 import { RestDelegatorProvider } from '@arkade-os/sdk'
@@ -539,7 +546,7 @@ import { RestDelegatorProvider } from '@arkade-os/sdk'
 const provider = new RestDelegatorProvider('https://delegator.example.com')
 const info = await provider.getDelegateInfo()
 
-console.log('Delegator public key:', info.pubkey)
+console.log('Delegate public key:', info.pubkey)
 console.log('Service fee (sats):', info.fee)
 console.log('Fee address:', info.delegatorAddress)
 ```
@@ -590,7 +597,7 @@ const history = await wallet.getTransactionHistory()
 
 ### Offboarding
 
-Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an on-chain address:
+Collaborative exit or "offboarding" allows you to withdraw your virtual funds to an onchain address:
 
 ```typescript
 import { Wallet, MnemonicIdentity, Ramps } from '@arkade-os/sdk'
@@ -601,11 +608,11 @@ const wallet = await Wallet.create({
 })
 
 // Get fee information from the server
-const { fees } = await wallet.arkProvider.getInfo();
+const { fees: feeInfo } = await wallet.arkProvider.getInfo();
 
 const exitTxid = await new Ramps(wallet).offboard(
   'bc1p...',
-  fees
+  feeInfo
 );
 ```
 
@@ -613,10 +620,10 @@ const exitTxid = await new Ramps(wallet).offboard(
 
 Unilateral exit allows you to withdraw your funds from the Arkade protocol back to the Bitcoin blockchain without requiring cooperation from the Arkade server. This process involves two main steps:
 
-1. **Unrolling**: Broadcasting the transaction chain from off-chain back to on-chain
-2. **Completing the exit**: Spending the unrolled VTXOs after the timelock expires
+1. **Unrolling**: Broadcasting the transaction chain from offchain back to onchain
+2. **Completing the exit**: Spending the unrolled virtual outputs after the timelock expires
 
-#### Step 1: Unrolling VTXOs
+#### Step 1: Unrolling Virtual Outputs
 
 ```typescript
 import { MnemonicIdentity, OnchainWallet, Unroll } from '@arkade-os/sdk'
@@ -624,11 +631,11 @@ import { MnemonicIdentity, OnchainWallet, Unroll } from '@arkade-os/sdk'
 // Create an identity for the onchain wallet
 const onchainIdentity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 
-// Create an onchain wallet to pay for P2A outputs in VTXO branches
+// Create an onchain wallet to pay for P2A outputs in virtual output branches
 // OnchainWallet implements the AnchorBumper interface
 const onchainWallet = await OnchainWallet.create(onchainIdentity, 'regtest');
 
-// Unroll a specific VTXO
+// Unroll a specific virtual output
 const vtxo = { txid: 'your_vtxo_txid', vout: 0 };
 const session = await Unroll.Session.create(
   vtxo,
@@ -647,7 +654,7 @@ for await (const step of session) {
       console.log(`Broadcasting transaction ${step.tx.id}`);
       break;
     case Unroll.StepType.DONE:
-      console.log(`Unrolling complete for VTXO ${step.vtxoTxid}`);
+      console.log(`Unrolling complete for virtual output ${step.vtxoTxid}`);
       break;
   }
 }
@@ -656,29 +663,29 @@ for await (const step of session) {
 The unrolling process works by:
 
 - Traversing the transaction chain from the root (most recent) to the leaf (oldest)
-- Broadcasting each transaction that isn't already on-chain
+- Broadcasting each transaction that isn't already onchain
 - Waiting for confirmations between steps
 - Using P2A (Pay-to-Anchor) transactions to pay for fees
 
 #### Step 2: Completing the Exit
 
-Once VTXOs are fully unrolled and the unilateral exit timelock has expired, you can complete the exit:
+Once virtual outputs are fully unrolled and the unilateral exit timelock has expired, you can complete the exit:
 
 ```typescript
-// Complete the exit for specific VTXOs
+// Complete the exit for specific virtual outputs
 await Unroll.completeUnroll(
   wallet,
-  [vtxo.txid], // Array of VTXO transaction IDs to complete
+  [vtxo.txid], // Array of virtual output transaction IDs to complete
   onchainWallet.address // Address to receive the exit amount
 );
 ```
 
 **Important Notes:**
 
-- Each VTXO may require multiple unroll steps depending on the transaction chain length
+- Each virtual output may require multiple unroll steps depending on the transaction chain length
 - Each unroll step must be confirmed before proceeding to the next
-- The `completeUnroll` method can only be called after VTXOs are fully unrolled and the timelock has expired
-- You need sufficient on-chain funds in the `OnchainWallet` to pay for P2A transaction fees
+- The `completeUnroll` method can only be called after all virtual outputs are fully unrolled and the timelock has expired
+- You need sufficient onchain funds in the `OnchainWallet` to pay for P2A transaction fees
 
 ### Running the wallet in a service worker
 
@@ -970,7 +977,7 @@ const identity = MnemonicIdentity.fromMnemonic('abandon abandon...')
 const wallet = await Wallet.create({
   identity: identity,
   arkProvider: new ExpoArkProvider('https://arkade.computer'), // For settlement events and transactions streaming
-  indexerProvider: new ExpoIndexerProvider('https://arkade.computer'), // For address subscriptions and VTXO updates
+  indexerProvider: new ExpoIndexerProvider('https://arkade.computer'), // For address subscriptions and virtual output state updates
 })
 
 // use expo/fetch for streaming support (SSE)
@@ -982,7 +989,7 @@ const address = await wallet.getAddress()
 Both ExpoArkProvider and ExpoIndexerProvider are available as adapters following the SDK's modular architecture pattern. This keeps the main SDK bundle clean while providing opt-in functionality for specific environments:
 
 - **ExpoArkProvider**: Handles settlement events and transaction streaming using expo/fetch for Server-Sent Events
-- **ExpoIndexerProvider**: Handles address subscriptions and VTXO updates using expo/fetch for JSON streaming
+- **ExpoIndexerProvider**: Handles address subscriptions and virtual output state updates using expo/fetch for JSON streaming
 
 For persistence in Expo/React Native, use the SQLite repository with `expo-sqlite`:
 
@@ -1032,7 +1039,7 @@ This is required for MuSig2 settlements and cryptographic operations.
 
 ### Contract Management
 
-Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for VTXOs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
+Both `Wallet` and `ServiceWorkerWallet` use a `ContractManager` internally to watch for virtual outputs. This provides resilient connection handling with automatic reconnection and failsafe polling - for your wallet's default address and any external contracts you register (Boltz swaps, HTLCs, etc.).
 
 When you call `wallet.notifyIncomingFunds()` or use `waitForIncomingFunds()`, it uses the ContractManager under the hood, giving you automatic reconnection and failsafe polling for free - no code changes needed.
 
@@ -1063,10 +1070,10 @@ const contract = await manager.createContract({
 const unsubscribe = await manager.onContractEvent((event) => {
   switch (event.type) {
     case 'vtxo_received':
-      console.log(`Received ${event.vtxos.length} VTXOs on ${event.contractScript}`)
+      console.log(`Received ${event.vtxos.length} virtual outputs to ${event.contractScript}`)
       break
     case 'vtxo_spent':
-      console.log(`Spent VTXOs on ${event.contractScript}`)
+      console.log(`Spent virtual outputs from ${event.contractScript}`)
       break
     case 'contract_expired':
       console.log(`Contract ${event.contractScript} expired`)
@@ -1077,7 +1084,7 @@ const unsubscribe = await manager.onContractEvent((event) => {
 // Update contract data (e.g., set preimage when revealed)
 await manager.updateContractParams(contract.script, { preimage: revealedPreimage })
 
-// Check spendable paths (requires a specific VTXO)
+// Check spendable paths (requires a specific virtual output)
 const [withVtxos] = await manager.getContractsWithVtxos({ script: contract.script })
 const vtxo = withVtxos.vtxos[0]
 const paths = manager.getSpendablePaths({
@@ -1091,17 +1098,17 @@ if (paths.length > 0) {
 }
 
 // Or list all possible paths for the current context (no spendability checks)
-const allPaths = manager.getAllSpendingPaths({
+const allPaths = await manager.getAllSpendingPaths({
   contractScript: contract.script,
   collaborative: true,
   walletPubKey: myPubKey,
 })
 
-// Get balances across all contracts
-const balances = await manager.getAllBalances()
+// Fetch contracts together with their current virtual outputs
+const contractsWithVtxos = await manager.getContractsWithVtxos()
 
-// Manually sweep all eligible contracts
-const sweepResults = await manager.sweepAll()
+// Force a full refresh from the indexer when needed
+await manager.refreshVtxos()
 
 // Stop watching
 unsubscribe()
@@ -1117,7 +1124,7 @@ The watcher features:
 Access low-level data management through repositories:
 
 ```typescript
-// VTXO management (automatically cached for performance)
+// Virtual output management (automatically cached for performance)
 const addr = await wallet.getAddress()
 const vtxos = await wallet.walletRepository.getVtxos(addr)
 await wallet.walletRepository.saveVtxos(addr, vtxos)
