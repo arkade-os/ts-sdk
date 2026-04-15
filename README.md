@@ -497,16 +497,15 @@ Once the wallet is configured with a delegate, use `wallet.delegatorManager` to 
 
 ```typescript
 // Get spendable virtual outputs (including recoverable)
-const vtxos = (await wallet.getVtxos({ withRecoverable: true }))
-  .filter(v => v.virtualStatus.type === 'confirmed')
+const vtxos = await wallet.getVtxos({ withRecoverable: true })
 
 // Delegate all virtual outputs — the delegate will renew them before expiry
 const arkadeAddress = await wallet.getAddress()
 const delegatorManager = await wallet.getDelegatorManager();
 const delegationResult = await delegatorManager.delegate(vtxos, arkadeAddress)
 
-console.log('Delegated:', result.delegated.length)
-console.log('Failed:', result.failed.length)
+console.log('Delegated:', delegationResult.delegated.length)
+console.log('Failed:', delegationResult.failed.length)
 ```
 
 The `delegate` method groups virtual outputs by expiry date and submits them to the delegation service.
