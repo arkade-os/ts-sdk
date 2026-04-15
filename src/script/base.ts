@@ -36,28 +36,45 @@ export function scriptFromTapLeafScript(leaf: TapLeafScript): Bytes {
 
 /**
  * VtxoScript is a script that contains a list of tapleaf scripts.
- * It is used to create vtxo scripts.
+ * It is used to create virtual output scripts.
+ *
+ * @see ArkAddress
  *
  * @example
  * ```typescript
  * const vtxoScript = new VtxoScript([new Uint8Array(32), new Uint8Array(32)]);
+ * ```
  */
 export class VtxoScript {
     readonly leaves: TapLeafScript[];
     readonly tweakedPublicKey: Bytes;
 
+    /**
+     * Decode a virtual output script from an encoded TapTree.
+     *
+     * @param tapTree - Encoded TapTree bytes
+     * @returns Decoded virtual output script
+     * @throws Error if the TapTree cannot be decoded into a valid script set
+     * @see encode
+     */
     static decode(tapTree: Bytes): VtxoScript {
         const leaves = TapTreeCoder.decode(tapTree);
         const scripts = leaves.map((leaf) => leaf.script);
         return new VtxoScript(scripts);
     }
 
+    /**
+     * Create a virtual output script from its tapleaf scripts.
+     *
+     * @param scripts - Raw tapscript bytes for each leaf
+     * @throws Error if the provided leaves cannot produce a valid Taproot tree
+     */
     constructor(readonly scripts: Bytes[]) {
         // reverse the scripts if the number of scripts is odd
-        // this is to be compatible with arkd algorithm computing taproot tree from list of tapscripts
-        // the scripts must be reversed only HERE while we compute the tweaked public key
-        // but the original order should be preserved while encoding as taptree
-        // note: .slice().reverse() is used instead of .reverse() to avoid mutating the original array
+        // This is compatible with the arkd algorithm that computes a Taproot tree from a list of tapscripts.
+        // Reverse only here while computing the tweaked public key.
+        // Preserve the original order when re-encoding as a TapTree.
+        // Use `.slice().reverse()` instead of `.reverse()` to avoid mutating the original array.
         const list =
             scripts.length % 2 !== 0 ? scripts.slice().reverse() : scripts;
 
@@ -81,6 +98,12 @@ export class VtxoScript {
         this.tweakedPublicKey = payment.tweakedPubkey;
     }
 
+    /**
+     * Encode the virtual output script to a TapTree byte representation.
+     *
+     * @returns Encoded TapTree bytes
+     * @see decode
+     */
     encode(): Bytes {
         const tapTree = TapTreeCoder.encode(
             this.scripts.map((script) => ({
@@ -92,6 +115,14 @@ export class VtxoScript {
         return tapTree;
     }
 
+    /**
+     * Build the Arkade address corresponding to this virtual output script.
+     *
+     * @param prefix - Bech32 human-readable prefix
+     * @param serverPubKey - 32-byte Arkade server public key
+     * @returns Arkade address for this script
+     * @see ArkAddress
+     */
     address(prefix: string, serverPubKey: Bytes): ArkAddress {
         return new ArkAddress(serverPubKey, this.tweakedPublicKey, prefix);
     }
@@ -100,6 +131,13 @@ export class VtxoScript {
         return Script.encode(["OP_1", this.tweakedPublicKey]);
     }
 
+    /**
+     * Build the Taproot onchain address corresponding to this virtual output script.
+     *
+     * @param network - Bitcoin network descriptor
+     * @returns Taproot onchain address
+     * @see address
+     */
     onchainAddress(network: typeof NETWORK): string {
         return Address(network).encode({
             type: "tr",
@@ -107,6 +145,13 @@ export class VtxoScript {
         });
     }
 
+    /**
+     * Look up a tapleaf script by its hex-encoded tapscript body.
+     *
+     * @param scriptHex - Hex-encoded tapscript body without the leaf version byte
+     * @returns Matching tapleaf script
+     * @throws Error if no matching leaf exists
+     */
     findLeaf(scriptHex: string): TapLeafScript {
         const leaf = this.leaves.find(
             (leaf) => hex.encode(scriptFromTapLeafScript(leaf)) === scriptHex
@@ -117,6 +162,12 @@ export class VtxoScript {
         return leaf;
     }
 
+    /**
+     * Return all unilateral exit paths embedded in the virtual output script.
+     *
+     * @returns CSV-based exit paths found in the leaves
+     * @see getSequence
+     */
     exitPaths(): Array<
         CSVMultisigTapscript.Type | ConditionCSVMultisigTapscript.Type
     > {
@@ -147,6 +198,13 @@ export class VtxoScript {
 
 export type EncodedVtxoScript = { tapTree: Bytes };
 
+/**
+ * Extract the relative sequence value encoded in a CSV-based tapleaf, if present.
+ *
+ * @param tapLeafScript - Tapleaf script to inspect
+ * @returns Relative sequence number, or `undefined` when no CSV path is present
+ * @see VtxoScript.exitPaths
+ */
 export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
     let sequence: number | undefined = undefined;
 
