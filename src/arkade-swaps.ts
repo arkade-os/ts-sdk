@@ -860,6 +860,7 @@ export class ArkadeSwaps {
         // Refund every unspent VTXO at the contract address.
         // Throttle between Boltz API calls to avoid 429 rate-limiting.
         let boltzCallCount = 0;
+        let skippedCount = 0;
 
         for (const vtxo of spendableVtxos) {
             const isRecoverableVtxo = isRecoverable(vtxo);
@@ -897,6 +898,7 @@ export class ArkadeSwaps {
                         `(refundLocktime=${timeoutBlockHeights.refund}, ` +
                         `currentBlockHeight=${currentBlockHeight}). Refund will be retried after locktime.`
                 );
+                skippedCount++;
                 continue;
             }
 
@@ -943,6 +945,7 @@ export class ArkadeSwaps {
                             `locktime=${timeoutBlockHeights.refund}). ` +
                             `Refund will be retried after locktime.`
                     );
+                    skippedCount++;
                     continue;
                 }
 
@@ -966,11 +969,12 @@ export class ArkadeSwaps {
         }
 
         // update the pending swap on storage
+        const fullyRefunded = skippedCount === 0;
         await updateSubmarineSwapStatus(
             pendingSwap,
             pendingSwap.status, // Keep current status
             this.savePendingSubmarineSwap.bind(this),
-            { refundable: true, refunded: true }
+            { refundable: true, refunded: fullyRefunded }
         );
     }
 
