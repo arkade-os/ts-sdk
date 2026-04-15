@@ -37,6 +37,7 @@ export {
     NetworkError,
     PreimageFetchError,
     TransactionFailedError,
+    BoltzRefundError,
 } from "./errors";
 export {
     decodeInvoice,

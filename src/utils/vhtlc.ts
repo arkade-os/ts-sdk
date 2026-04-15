@@ -17,6 +17,7 @@ import {
     TapLeafScript,
 } from "@arkade-os/sdk";
 import { logger } from "../logger";
+import { BoltzRefundError } from "../errors";
 import { hex, base64 } from "@scure/base";
 import { createVHTLCBatchHandler } from "../batch";
 import { ripemd160 } from "@noble/hashes/legacy.js";
@@ -348,10 +349,22 @@ export const refundVHTLCwithOffchainTx = async (
     const unsignedCheckpointTx = checkpointPtxs[0];
 
     // get Boltz to sign its part
-    const {
-        transaction: boltzSignedRefundTx,
-        checkpoint: boltzSignedCheckpointTx,
-    } = await refundFunc(swapId, unsignedRefundTx, unsignedCheckpointTx);
+    let boltzSignedRefundTx: Transaction;
+    let boltzSignedCheckpointTx: Transaction;
+    try {
+        const result = await refundFunc(
+            swapId,
+            unsignedRefundTx,
+            unsignedCheckpointTx
+        );
+        boltzSignedRefundTx = result.transaction;
+        boltzSignedCheckpointTx = result.checkpoint;
+    } catch (error) {
+        throw new BoltzRefundError(
+            `Boltz rejected refund for swap ${swapId}`,
+            error
+        );
+    }
 
     // Verify Boltz signatures before combining
     const boltzXOnlyPublicKeyHex = hex.encode(boltzXOnlyPublicKey);
