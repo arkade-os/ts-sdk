@@ -18,7 +18,7 @@ interface Program {
 }
 
 /**
- * Estimator evaluates CEL expressions to calculate fees for Ark intents
+ * Estimator evaluates CEL expressions to calculate fees for Arkade intents
  */
 export class Estimator {
     private intentOffchainInput?: Program;
