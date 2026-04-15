@@ -86,7 +86,7 @@ export function validateRecipients(
         try {
             address = ArkAddress.decode(recipient.address);
         } catch (e) {
-            throw new Error(`Invalid Ark address: ${recipient.address}`);
+            throw new Error(`Invalid Arkade address: ${recipient.address}`);
         }
 
         const amount = recipient.amount || dustAmount;
