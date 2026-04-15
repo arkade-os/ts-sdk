@@ -86,7 +86,7 @@ export class AsyncStorageTaskQueue implements TaskQueue {
 
     /**
      * Persist a config blob alongside the queue data.
-     * Used by {@link ExpoWallet.setup} to store the wallet parameters
+     * Used by @see ExpoWallet.setup to store the wallet parameters
      * that the background handler needs to reconstruct providers.
      */
     async persistConfig(
