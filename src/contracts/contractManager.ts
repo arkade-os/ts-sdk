@@ -46,7 +46,6 @@ const DEFAULT_PAGE_SIZE = 500;
  *   indexerProvider,
  *   contractRepository,
  *   walletRepository,
- *   getDefaultAddress,
  * });
  *
  * const unsubscribe = manager.onContractEvent((event) => {
@@ -207,9 +206,6 @@ export interface ContractManagerConfig {
     /** The wallet repository for VTXO storage (single source of truth) */
     walletRepository: WalletRepository;
 
-    /** Function to get the wallet's default Ark address */
-    getDefaultAddress: () => Promise<string>;
-
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -235,7 +231,6 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
  * const manager = new ContractManager({
  *   indexerProvider: wallet.indexerProvider,
  *   contractRepository: wallet.contractRepository,
- *   getDefaultAddress: () => wallet.getAddress(),
  * });
  *
  * // Initialize (loads persisted contracts)
