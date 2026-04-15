@@ -2199,12 +2199,15 @@ export class ArkadeSwaps {
                     },
                 } as BoltzSubmarineSwap);
             } else if (isRestoredChainSwap(swap)) {
+                const refundDetails = swap.refundDetails;
+                if (!refundDetails) continue;
+
                 const {
                     amount,
                     lockupAddress,
                     serverPublicKey,
                     timeoutBlockHeight,
-                } = swap.refundDetails;
+                } = refundDetails;
 
                 chainSwaps.push({
                     id,

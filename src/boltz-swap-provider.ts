@@ -827,7 +827,7 @@ export type Details = {
     };
     lockupAddress: string;
     serverPublicKey: string;
-    timeoutBlockHeight: number;
+    timeoutBlockHeight?: number;
     timeoutBlockHeights?: TimeoutBlockHeights;
     preimageHash?: string;
 };
@@ -846,7 +846,8 @@ export const isDetails = (data: any): data is Details => {
                 typeof data.transaction.vout === "number")) &&
         typeof data.lockupAddress === "string" &&
         typeof data.serverPublicKey === "string" &&
-        typeof data.timeoutBlockHeight === "number" &&
+        (data.timeoutBlockHeight === undefined ||
+            typeof data.timeoutBlockHeight === "number") &&
         (data.timeoutBlockHeights === undefined ||
             isTimeoutBlockHeights(data.timeoutBlockHeights)) &&
         (data.preimageHash === undefined ||
@@ -861,19 +862,10 @@ export type RestoredChainSwap = {
     createdAt: number;
     from: "ARK" | "BTC";
     to: "ARK" | "BTC";
-    preimageHash: string;
-    refundDetails: {
-        amount: number;
-        keyIndex: number;
-        lockupAddress: string;
-        serverPublicKey: string;
-        timeoutBlockHeight: number;
-        transaction?: {
-            id: string;
-            vout: number;
-        };
-        tree: Tree;
-    };
+    preimageHash?: string;
+    invoice?: string;
+    refundDetails?: Details;
+    claimDetails?: Details;
 };
 
 export const isRestoredChainSwap = (data: any): data is RestoredChainSwap => {
@@ -886,20 +878,11 @@ export const isRestoredChainSwap = (data: any): data is RestoredChainSwap => {
         typeof data.createdAt === "number" &&
         (data.from === "ARK" || data.from === "BTC") &&
         (data.to === "ARK" || data.to === "BTC") &&
-        typeof data.preimageHash === "string" &&
-        data.refundDetails &&
-        typeof data.refundDetails === "object" &&
-        isTree(data.refundDetails.tree) &&
-        typeof data.refundDetails.amount === "number" &&
-        typeof data.refundDetails.keyIndex === "number" &&
-        (data.refundDetails.transaction === undefined ||
-            (data.refundDetails.transaction &&
-                typeof data.refundDetails.transaction === "object" &&
-                typeof data.refundDetails.transaction.id === "string" &&
-                typeof data.refundDetails.transaction.vout === "number")) &&
-        typeof data.refundDetails.lockupAddress === "string" &&
-        typeof data.refundDetails.serverPublicKey === "string" &&
-        typeof data.refundDetails.timeoutBlockHeight === "number"
+        (data.preimageHash === undefined ||
+            typeof data.preimageHash === "string") &&
+        (data.invoice === undefined || typeof data.invoice === "string") &&
+        (data.refundDetails === undefined || isDetails(data.refundDetails)) &&
+        (data.claimDetails === undefined || isDetails(data.claimDetails))
     );
 };
 
@@ -909,7 +892,7 @@ export type RestoredSubmarineSwap = {
     from: "ARK";
     type: "submarine";
     createdAt: number;
-    preimageHash: string;
+    preimageHash?: string;
     status: BoltzSwapStatus;
     refundDetails: Details;
     invoice?: string;
@@ -926,7 +909,8 @@ export const isRestoredSubmarineSwap = (
         data.from === "ARK" &&
         data.type === "submarine" &&
         typeof data.createdAt === "number" &&
-        typeof data.preimageHash === "string" &&
+        (data.preimageHash === undefined ||
+            typeof data.preimageHash === "string") &&
         typeof data.status === "string" &&
         isDetails(data.refundDetails) &&
         (data.invoice === undefined || typeof data.invoice === "string")
@@ -939,7 +923,7 @@ export type RestoredReverseSwap = {
     from: "BTC";
     type: "reverse";
     createdAt: number;
-    preimageHash: string;
+    preimageHash?: string;
     status: BoltzSwapStatus;
     claimDetails: Details;
     invoice?: string;
@@ -956,7 +940,8 @@ export const isRestoredReverseSwap = (
         data.from === "BTC" &&
         data.type === "reverse" &&
         typeof data.createdAt === "number" &&
-        typeof data.preimageHash === "string" &&
+        (data.preimageHash === undefined ||
+            typeof data.preimageHash === "string") &&
         typeof data.status === "string" &&
         isDetails(data.claimDetails) &&
         (data.invoice === undefined || typeof data.invoice === "string")
