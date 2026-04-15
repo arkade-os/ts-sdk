@@ -29,7 +29,7 @@ const TAG_BIP322 = "BIP0322-signed-message";
  *
  * Reuses the same toSpend/toSign transaction construction as Intent proofs,
  * but with the standard BIP-322 tagged hash ("BIP0322-signed-message")
- * instead of the Ark-specific tag.
+ * instead of the Arkade-specific tag.
  *
  * @see https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki
  *
