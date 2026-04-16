@@ -250,13 +250,13 @@ function craftToSignTx(
 ): Transaction {
     const firstInput = inputs[0];
 
-    const lockTime = inputs
-        .map((input) => input.sequence || 0)
-        .reduce((a, b) => Math.max(a, b), 0);
-
+    // Proof tx is never broadcast; match BIP-322 by setting lockTime to 0.
+    // Per-input nSequence already carries any BIP-68 relative timelock for
+    // the tapscript being spent; it must not be copied into nLockTime, which
+    // has unrelated (absolute) semantics.
     const tx = new Transaction({
         version: 2,
-        lockTime,
+        lockTime: 0,
     });
 
     // add the first "toSpend" input

@@ -71,10 +71,10 @@ export class VtxoScript {
      */
     constructor(readonly scripts: Bytes[]) {
         // reverse the scripts if the number of scripts is odd
-        // This is compatible with the arkd algorithm that computes a Taproot tree from a list of tapscripts.
-        // Reverse only here while computing the tweaked public key.
-        // Preserve the original order when re-encoding as a TapTree.
-        // Use `.slice().reverse()` instead of `.reverse()` to avoid mutating the original array.
+        // this is to be compatible with arkd algorithm computing taproot tree from list of tapscripts
+        // the scripts must be reversed only HERE while we compute the tweaked public key
+        // but the original order should be preserved while encoding as taptree
+        // note: .slice().reverse() is used instead of .reverse() to avoid mutating the original array
         const list =
             scripts.length % 2 !== 0 ? scripts.slice().reverse() : scripts;
 
