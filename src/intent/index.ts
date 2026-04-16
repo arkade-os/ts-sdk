@@ -250,13 +250,15 @@ function craftToSignTx(
 ): Transaction {
     const firstInput = inputs[0];
 
-    const lockTime = inputs
-        .map((input) => input.sequence || 0)
-        .reduce((a, b) => Math.max(a, b), 0);
-
+    // Proof tx is never broadcast onchain — toSpend references a zero-hash
+    // outpoint (see BIP-322). The tx exists only as a sighash commitment
+    // the server verifies signatures against; nLockTime and nSequence carry
+    // no consensus meaning here, they only need to match between signer and
+    // verifier. Use lockTime = 0 (BIP-322 convention) and leave each input's
+    // nSequence untouched.
     const tx = new Transaction({
         version: 2,
-        lockTime,
+        lockTime: 0,
     });
 
     // add the first "toSpend" input

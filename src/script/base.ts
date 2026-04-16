@@ -71,10 +71,10 @@ export class VtxoScript {
      */
     constructor(readonly scripts: Bytes[]) {
         // reverse the scripts if the number of scripts is odd
-        // This is compatible with the arkd algorithm that computes a Taproot tree from a list of tapscripts.
-        // Reverse only here while computing the tweaked public key.
-        // Preserve the original order when re-encoding as a TapTree.
-        // Use `.slice().reverse()` instead of `.reverse()` to avoid mutating the original array.
+        // this is to be compatible with arkd algorithm computing taproot tree from list of tapscripts
+        // the scripts must be reversed only HERE while we compute the tweaked public key
+        // but the original order should be preserved while encoding as taptree
+        // note: .slice().reverse() is used instead of .reverse() to avoid mutating the original array
         const list =
             scripts.length % 2 !== 0 ? scripts.slice().reverse() : scripts;
 
@@ -199,12 +199,23 @@ export class VtxoScript {
 export type EncodedVtxoScript = { tapTree: Bytes };
 
 /**
- * Extract the relative sequence value encoded in a CSV-based tapleaf, if present.
+ * Extract the timelock value encoded in a timelocked tapleaf, if any.
+ *
+ * The return value is unit-ambiguous: for a CSV leaf it is a BIP-68
+ * nSequence (relative timelock); for a CLTV leaf it is an absolute
+ * nLockTime. Callers must know which leaf shape they are inspecting to
+ * interpret the number correctly, and must not copy a CSV result into
+ * `Transaction.lockTime` (or vice versa).
  *
  * @param tapLeafScript - Tapleaf script to inspect
- * @returns Relative sequence number, or `undefined` when no CSV path is present
+ * @returns The encoded timelock value, or `undefined` when neither a CSV
+ *          nor CLTV path is present
  * @see VtxoScript.exitPaths
  */
+// TODO(next-major): return a discriminated union
+// (`{ kind: "relative", nSequence } | { kind: "absolute", lockTime }`)
+// so callers can't conflate the two. Deferred because changing the
+// return type is a breaking change.
 export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
     let sequence: number | undefined = undefined;
 
