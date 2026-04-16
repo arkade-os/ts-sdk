@@ -94,7 +94,11 @@ export interface PathSelection {
     /** Additional witness elements, for example a preimage for HTLC-like paths. */
     extraWitness?: Bytes[];
 
-    /** Sequence number override, for example for CSV timelocks. */
+    /**
+     * nSequence for the spending input, BIP-68 encoded when the leaf
+     * uses CSV. Decode with `sequenceToTimelock`; do NOT use as an
+     * absolute `Transaction.lockTime`.
+     */
     sequence?: number;
 }
 

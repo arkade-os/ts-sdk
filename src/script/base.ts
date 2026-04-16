@@ -199,12 +199,23 @@ export class VtxoScript {
 export type EncodedVtxoScript = { tapTree: Bytes };
 
 /**
- * Extract the relative sequence value encoded in a CSV-based tapleaf, if present.
+ * Extract the timelock value encoded in a timelocked tapleaf, if any.
+ *
+ * The return value is unit-ambiguous: for a CSV leaf it is a BIP-68
+ * nSequence (relative timelock); for a CLTV leaf it is an absolute
+ * nLockTime. Callers must know which leaf shape they are inspecting to
+ * interpret the number correctly, and must not copy a CSV result into
+ * `Transaction.lockTime` (or vice versa).
  *
  * @param tapLeafScript - Tapleaf script to inspect
- * @returns Relative sequence number, or `undefined` when no CSV path is present
+ * @returns The encoded timelock value, or `undefined` when neither a CSV
+ *          nor CLTV path is present
  * @see VtxoScript.exitPaths
  */
+// TODO(next-major): return a discriminated union
+// (`{ kind: "relative", nSequence } | { kind: "absolute", lockTime }`)
+// so callers can't conflate the two. Deferred because changing the
+// return type is a breaking change.
 export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
     let sequence: number | undefined = undefined;
 
