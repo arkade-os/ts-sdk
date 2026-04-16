@@ -250,10 +250,12 @@ function craftToSignTx(
 ): Transaction {
     const firstInput = inputs[0];
 
-    // Proof tx is never broadcast; match BIP-322 by setting lockTime to 0.
-    // Per-input nSequence already carries any BIP-68 relative timelock for
-    // the tapscript being spent; it must not be copied into nLockTime, which
-    // has unrelated (absolute) semantics.
+    // Proof tx is never broadcast onchain — toSpend references a zero-hash
+    // outpoint (see BIP-322). The tx exists only as a sighash commitment
+    // the server verifies signatures against; nLockTime and nSequence carry
+    // no consensus meaning here, they only need to match between signer and
+    // verifier. Use lockTime = 0 (BIP-322 convention) and leave each input's
+    // nSequence untouched.
     const tx = new Transaction({
         version: 2,
         lockTime: 0,
