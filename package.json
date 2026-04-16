@@ -1,6 +1,6 @@
 {
     "name": "@arkade-os/boltz-swap",
-    "version": "0.3.13",
+    "version": "0.3.16",
     "type": "module",
     "description": "A production-ready TypeScript package that brings Boltz submarine-swaps to Arkade.",
     "main": "./dist/index.js",
@@ -57,22 +57,16 @@
         "prepack": "pnpm run build",
         "test": "vitest run",
         "test:unit": "vitest run --exclude test/e2e",
-        "test:setup": "test/setupRegtestEnv.sh",
         "test:integration": "vitest run test/e2e/**",
-        "test:down": "test/setupRegtestEnv.sh down",
-        "test:build-docker": "docker compose -f test.docker-compose.yml build --no-cache",
-        "test:up-docker": "docker compose -f test.docker-compose.yml up arkd arkd-wallet nbxplorer pgnbxplorer -d",
         "test:setup-docker": "node test/e2e/setup.mjs",
         "test:integration-docker": "vitest run test/e2e/**",
-        "test:down-docker": "docker compose -f test.docker-compose.yml down -v",
         "release": "pnpm run build && bash scripts/release.sh",
         "release:dry-run": "bash scripts/release.sh --dry-run",
         "release:cleanup": "bash scripts/release.sh --cleanup",
-        "regtest": "pnpm regtest:down && pnpm regtest:build && pnpm regtest:up && pnpm regtest:setup",
-        "regtest:build": "docker compose -f test.docker-compose.yml build",
-        "regtest:up": "docker compose -f test.docker-compose.yml up arkd arkd-wallet nbxplorer pgnbxplorer -d",
-        "regtest:down": "docker compose -f test.docker-compose.yml down -v",
-        "regtest:setup": "node test/e2e/setup.mjs"
+        "regtest:start": "./regtest/start-env.sh",
+        "regtest:stop": "./regtest/stop-env.sh",
+        "regtest:clean": "./regtest/clean-env.sh",
+        "regtest": "pnpm regtest:clean && pnpm regtest:start && pnpm test:setup-docker"
     },
     "keywords": [
         "arkade",
@@ -84,7 +78,7 @@
     "author": "Arkade-OS",
     "license": "MIT",
     "dependencies": {
-        "@arkade-os/sdk": "0.4.14",
+        "@arkade-os/sdk": "0.4.15",
         "@noble/hashes": "2.0.1",
         "@scure/base": "2.0.0",
         "@scure/btc-signer": "2.0.1",

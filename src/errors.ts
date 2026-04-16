@@ -132,11 +132,16 @@ export class TransactionRefundedError extends SwapError {
     }
 }
 
-/** Returns true if the error is a Boltz 400 "transaction is not for this swap". */
-export function isVtxoMismatchError(error: unknown): boolean {
-    return (
-        error instanceof NetworkError &&
-        error.statusCode === 400 &&
-        error.errorData?.error === "transaction is not for this swap"
-    );
+/**
+ * Thrown when the Boltz API rejects a refund request
+ * (e.g. outpoint mismatch after an Ark round).
+ */
+export class BoltzRefundError extends Error {
+    constructor(
+        message: string,
+        public override readonly cause?: unknown
+    ) {
+        super(message);
+        this.name = "BoltzRefundError";
+    }
 }

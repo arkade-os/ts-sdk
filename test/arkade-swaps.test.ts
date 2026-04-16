@@ -34,6 +34,7 @@ import { ripemd160 } from "@noble/hashes/legacy.js";
 import { decodeInvoice } from "../src/utils/decoding";
 import { pubECDSA } from "@scure/btc-signer/utils.js";
 import { refundVHTLCwithOffchainTx } from "../src/utils/vhtlc";
+import { BoltzRefundError } from "../src/errors";
 
 // Mock the @arkade-os/sdk modules
 vi.mock("@arkade-os/sdk", async () => {
@@ -756,7 +757,7 @@ describe("ArkadeSwaps", () => {
                 });
                 vi.spyOn(arkProvider, "finalizeTx").mockResolvedValueOnce();
                 await expect(swaps.claimVHTLC(pendingSwap)).rejects.toThrow(
-                    "Boltz is trying to scam us"
+                    /VHTLC address mismatch. Expected/
                 );
             });
         });
@@ -959,7 +960,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    "Destination address is required"
+                    `Swap ${mockArkBtcChainSwap.id}: destination address is required`
                 );
             });
 
@@ -982,7 +983,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    "Missing swap tree in claim details"
+                    `Swap ${mockArkBtcChainSwap.id}: missing swap tree in claim details`
                 );
             });
 
@@ -1005,7 +1006,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimBtc(pendingSwap)).rejects.toThrow(
-                    "Missing server public key in claim details"
+                    `Swap ${mockArkBtcChainSwap.id}: missing server public key in claim details`
                 );
             });
         });
@@ -1369,7 +1370,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "Destination address is required"
+                    `Swap ${mockBtcArkChainSwap.id}: destination address is required`
                 );
             });
 
@@ -1392,7 +1393,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "Missing timeouts in claim details"
+                    `Swap ${mockBtcArkChainSwap.id}: missing timeouts in claim details`
                 );
             });
 
@@ -1415,7 +1416,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "Missing server public key in claim details"
+                    `Swap ${mockBtcArkChainSwap.id}: missing server public key in claim details`
                 );
             });
 
@@ -1437,7 +1438,7 @@ describe("ArkadeSwaps", () => {
 
                 // act & assert
                 await expect(swaps.claimArk(pendingSwap)).rejects.toThrow(
-                    "No spendable virtual coins found"
+                    `Swap ${mockBtcArkChainSwap.id}: no spendable virtual coins found`
                 );
             });
         });
@@ -2467,9 +2468,16 @@ describe("ArkadeSwaps", () => {
                     refundWithoutReceiver: () =>
                         [{}, new Uint8Array([4]), 0xc0] as any,
                     encode: () => [] as any,
+                    options: {
+                        refundLocktime:
+                            refundableSwap.response.timeoutBlockHeights.refund,
+                    },
                 },
                 vhtlcAddress: refundableSwap.response.address,
             });
+
+            // Default: chain height past CLTV (refundLocktime=17)
+            vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(100);
 
             // stub the actual refund call so we don't need real crypto
             vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
@@ -2505,19 +2513,23 @@ describe("ArkadeSwaps", () => {
             expect(joinBatch.mock.calls[1][1].txid).toBe(otherTxid);
         });
 
-        it("should skip spent VTXOs and refund only unspent ones", async () => {
-            const spentVtxo = { ...makeVtxo(lockupTxid, 0), isSpent: true };
-            const unspentVtxo = makeVtxo(otherTxid, 1);
+        it("should process every VTXO returned by the indexer", async () => {
+            // The indexer is queried with spendableOnly:true so spent VTXOs
+            // should never reach the loop in production. Verify the loop
+            // iterates over every VTXO it receives.
+            const vtxoA = { ...makeVtxo(lockupTxid, 0), isSpent: true };
+            const vtxoB = makeVtxo(otherTxid, 1);
 
             vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [spentVtxo, unspentVtxo] as any,
+                vtxos: [vtxoA, vtxoB] as any,
             });
 
             await swaps.refundVHTLC(refundableSwap);
 
             const joinBatch = vi.mocked((swaps as any).joinBatch);
-            expect(joinBatch).toHaveBeenCalledOnce();
-            expect(joinBatch.mock.calls[0][1].txid).toBe(otherTxid);
+            expect(joinBatch).toHaveBeenCalledTimes(2);
+            expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
+            expect(joinBatch.mock.calls[1][1].txid).toBe(otherTxid);
         });
 
         it("should throw when all VTXOs are spent", async () => {
@@ -2573,6 +2585,12 @@ describe("ArkadeSwaps", () => {
                 createdAt: new Date(),
             });
 
+            beforeEach(() => {
+                // Pre-CLTV: chain tip below refundLocktime (17) so the Boltz
+                // 3-of-3 path is attempted for non-recoverable VTXOs.
+                vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(10);
+            });
+
             it("should call refundVHTLCwithOffchainTx for each non-recoverable VTXO", async () => {
                 const vtxoA = makeNonRecoverableVtxo(lockupTxid, 0);
                 const vtxoB = makeNonRecoverableVtxo(otherTxid, 1);
@@ -2609,6 +2627,105 @@ describe("ArkadeSwaps", () => {
                     lockupTxid
                 );
             });
+
+            it("should skip Boltz and use joinBatch when CLTV has passed", async () => {
+                // Chain tip past refundLocktime → refundWithoutReceiver
+                vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(100);
+
+                const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [vtxo] as any,
+                });
+
+                await swaps.refundVHTLC(refundableSwap);
+
+                expect(refundVHTLCwithOffchainTx).not.toHaveBeenCalled();
+                const joinBatch = vi.mocked((swaps as any).joinBatch);
+                expect(joinBatch).toHaveBeenCalledOnce();
+                // isRecoverable arg must be false for non-recoverable VTXOs
+                expect(joinBatch.mock.calls[0][4]).toBe(false);
+            });
+
+            it("should fall back to joinBatch when Boltz rejects and CLTV has since passed", async () => {
+                const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [vtxo] as any,
+                });
+
+                // Boltz rejects the refund
+                vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
+                    new BoltzRefundError("outpoint mismatch")
+                );
+
+                // Re-check shows CLTV now satisfied
+                vi.spyOn(swapProvider, "getChainHeight")
+                    .mockResolvedValueOnce(10) // initial check
+                    .mockResolvedValueOnce(100); // re-check after Boltz rejection
+
+                await swaps.refundVHTLC(refundableSwap);
+
+                const joinBatch = vi.mocked((swaps as any).joinBatch);
+                expect(joinBatch).toHaveBeenCalledOnce();
+                expect(joinBatch.mock.calls[0][4]).toBe(false);
+            });
+
+            it("should skip when Boltz rejects and CLTV still not passed", async () => {
+                const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [vtxo] as any,
+                });
+
+                vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
+                    new BoltzRefundError("outpoint mismatch")
+                );
+
+                // Both checks return pre-CLTV
+                vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(10);
+
+                await swaps.refundVHTLC(refundableSwap);
+
+                const joinBatch = vi.mocked((swaps as any).joinBatch);
+                expect(joinBatch).not.toHaveBeenCalled();
+                expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                    expect.objectContaining({ refunded: false })
+                );
+            });
+
+            it("should re-throw non-Boltz errors without fallback", async () => {
+                const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
+
+                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                    vtxos: [vtxo] as any,
+                });
+
+                vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
+                    new Error("local signing failure")
+                );
+
+                await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                    /local signing failure/
+                );
+            });
+        });
+
+        it("should skip a recoverable VTXO when pre-CLTV", async () => {
+            vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(5);
+            const vtxo = makeVtxo(lockupTxid, 0);
+
+            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
+                vtxos: [vtxo] as any,
+            });
+
+            await swaps.refundVHTLC(refundableSwap);
+
+            const joinBatch = vi.mocked((swaps as any).joinBatch);
+            expect(joinBatch).not.toHaveBeenCalled();
+            expect(mockSwapRepository.saveSwap).toHaveBeenCalledWith(
+                expect.objectContaining({ refunded: false })
+            );
         });
 
         it("should fail early on VHTLC address mismatch", async () => {
