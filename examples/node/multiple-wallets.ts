@@ -100,7 +100,7 @@ async function main() {
     console.log("[Alice]\tFunding boarding address via nigiri faucet...");
     execSync(`nigiri faucet ${boardingAddress} 0.001`);
 
-    // Wait for the boarding UTXOs to be available (timeout after 60s)
+    // Wait for the boarding inputs to be available (timeout after 60s)
     console.log("[Alice]\tWaiting for boarding UTXOs...");
     const deadline = Date.now() + 60_000;
     let utxos = await aliceWallet.getBoardingUtxos();

@@ -46,7 +46,7 @@ export class AssetManager
      * @param params.amount - Amount of asset units to issue
      * @param params.controlAssetId - Optional control asset ID (for reissuable assets)
      * @param params.metadata - Optional metadata to attach to the asset
-     * @returns Promise resolving to the ark transaction ID and asset ID
+     * @returns Promise resolving to the Arkade transaction ID and asset ID
      *
      * @example
      * ```typescript
@@ -170,7 +170,7 @@ export class AssetManager
      * @param params - Parameters for asset reissuance
      * @param params.assetId - The asset ID to reissue (control asset ID is resolved via getAssetDetails)
      * @param params.amount - Amount of additional units to issue
-     * @returns Promise resolving to the ark transaction ID
+     * @returns Promise resolving to the Arkade transaction ID
      *
      * @example
      * ```typescript
@@ -331,7 +331,7 @@ export class AssetManager
      * @param params - Parameters for burning
      * @param params.assetId - The asset ID to burn
      * @param params.amount - Amount of units to burn
-     * @returns Promise resolving to the ark transaction ID
+     * @returns Promise resolving to the Arkade transaction ID
      *
      * @example
      * ```typescript
@@ -354,7 +354,7 @@ export class AssetManager
 
         const assetChanges = new Map<string, bigint>();
 
-        // select vtxos with the asset to burn
+        // select virtual outputs with the asset to burn
         const { selected: assetCoins } = selectCoinsWithAsset(
             virtualCoins,
             params.assetId,

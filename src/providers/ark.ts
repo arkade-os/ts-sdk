@@ -7,9 +7,13 @@ import { maybeArkError } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
 
+/** Output requested during settlement or transaction submission. */
 export type Output = {
-    address: string; // onchain or off-chain
-    amount: bigint; // Amount to send in satoshis
+    /** Destination address, either onchain or Arkade (offchain). */
+    address: string;
+
+    /** Amount to send in satoshis. */
+    amount: bigint;
 };
 
 export enum SettlementEventType {
@@ -54,7 +58,8 @@ export type TreeNoncesEvent = {
     id: string;
     topic: string[];
     txid: string;
-    nonces: TreeNonces; // pubkey -> public nonce
+    /** Musig2 public nonces keyed by cosigner public key. */
+    nonces: TreeNonces;
 };
 
 export type BatchStartedEvent = {
@@ -138,28 +143,57 @@ export interface ArkInfo {
     sessionDuration: bigint;
     signerPubkey: string;
     unilateralExitDelay: bigint;
-    utxoMaxAmount: bigint; // -1 means no limit (default), 0 means boarding not allowed
+    /**
+     * Maximum boarding input amount.
+     *
+     * @remarks
+     * `-1` means unlimited, while `0` disables boarding.
+     */
+    utxoMaxAmount: bigint;
     utxoMinAmount: bigint;
     version: string;
-    vtxoMaxAmount: bigint; // -1 means no limit (default)
+    /**
+     * Maximum virtual output amount.
+     *
+     * @remarks
+     * `-1` means unlimited.
+     */
+    vtxoMaxAmount: bigint;
     vtxoMinAmount: bigint;
 }
 
+/** Signed intent payload sent to the Arkade server. */
 export interface SignedIntent<T extends Intent.Message> {
+    /** Base64-encoded signed proof transaction. */
     proof: string;
+
+    /** Intent message payload associated with the proof. */
     message: T;
 }
 
+/** Transaction notification emitted by the Arkade server stream. */
 export interface TxNotification {
+    /** Transaction id. */
     txid: string;
+
+    /** Raw transaction payload. */
     tx: string;
+
+    /** Virtual outputs spent by the transaction. */
     spentVtxos: Vtxo[];
+
+    /** Virtual outputs made spendable by the transaction. */
     spendableVtxos: Vtxo[];
+
+    /** Optional checkpoint transactions associated with the notification. */
     checkpointTxs?: Record<string, { txid: string; tx: string }>;
 }
 
 export interface ArkProvider {
+    /** Fetch Arkade server configuration and fee settings. */
     getInfo(): Promise<ArkInfo>;
+
+    /** Submit a signed Arkade transaction and its checkpoint transactions. */
     submitTx(
         signedArkTx: string,
         checkpointTxs: string[]
@@ -168,45 +202,66 @@ export interface ArkProvider {
         finalArkTx: string;
         signedCheckpointTxs: string[];
     }>;
+
+    /** Finalize a previously submitted Arkade transaction. */
     finalizeTx(arkTxid: string, finalCheckpointTxs: string[]): Promise<void>;
+
+    /** Register a signed intent with the Arkade server. */
     registerIntent(
         intent: SignedIntent<Intent.RegisterMessage>
     ): Promise<string>;
+
+    /** Delete a previously registered intent. */
     deleteIntent(intent: SignedIntent<Intent.DeleteMessage>): Promise<void>;
+
+    /** Confirm an already registered intent id. */
     confirmRegistration(intentId: string): Promise<void>;
+
+    /** Submit musig2 tree nonces for a batch signing session. */
     submitTreeNonces(
         batchId: string,
         pubkey: string,
         nonces: TreeNonces
     ): Promise<void>;
+
+    /** Submit musig2 partial signatures for a batch signing session. */
     submitTreeSignatures(
         batchId: string,
         pubkey: string,
         signatures: TreePartialSigs
     ): Promise<void>;
+
+    /** Submit signed forfeit transactions for cooperative settlement. */
     submitSignedForfeitTxs(
         signedForfeitTxs: string[],
         signedCommitmentTx?: string
     ): Promise<void>;
+
+    /** Open the settlement event stream for the given topics. */
     getEventStream(
         signal: AbortSignal,
         topics: string[]
     ): AsyncIterableIterator<SettlementEvent>;
+
+    /** Stream transaction notifications emitted by the Arkade server. */
     getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }>;
+
+    /** Fetch pending transactions for a signed get-pending-tx intent. */
     getPendingTxs(
         intent: SignedIntent<Intent.GetPendingTxMessage>
     ): Promise<PendingTx[]>;
 }
 
 /**
- * REST-based Ark provider implementation.
+ * REST-based Arkade provider implementation.
+ *
  * @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.ArkService
  * @example
  * ```typescript
- * const provider = new RestArkProvider('https://ark.example.com');
+ * const provider = new RestArkProvider('https://arkade.computer');
  * const info = await provider.getInfo();
  * ```
  */

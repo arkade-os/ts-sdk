@@ -1,13 +1,20 @@
+/** Known BIP21 parameters including Arkade-specific extensions. */
 export interface BIP21Params {
     address?: string;
     amount?: number;
     label?: string;
     message?: string;
-    ark?: string; // ARK address
-    sp?: string; // Silent Payment address
+
+    /** Optional Arkade address parameter. */
+    ark?: string;
+
+    /** Optional Silent Payment address parameter. */
+    sp?: string;
+
     [key: string]: string | number | undefined;
 }
 
+/** Result returned by `BIP21.parse`. */
 export interface BIP21ParseResult {
     originalString: string;
     params: BIP21Params;
@@ -19,6 +26,12 @@ export enum BIP21Error {
 }
 
 export class BIP21 {
+    /**
+     * Create a BIP21 URI from the provided parameters.
+     *
+     * @param params - BIP21 parameters to encode
+     * @returns Encoded BIP21 URI
+     */
     static create(params: BIP21Params): string {
         const { address, ...options } = params;
 
@@ -37,7 +50,7 @@ export class BIP21 {
                 }
                 queryParams[key] = value;
             } else if (key === "ark") {
-                // Validate ARK address format
+                // Validate Arkade address format
                 if (
                     typeof value === "string" &&
                     (value.startsWith("ark") || value.startsWith("tark"))
@@ -74,12 +87,19 @@ export class BIP21 {
         return `bitcoin:${address ? address.toLowerCase() : ""}${query}`;
     }
 
+    /**
+     * Parse a BIP21 URI and return its decoded parameters.
+     *
+     * @param uri - BIP21 URI to parse
+     * @returns Parsed BIP21 URI data
+     * @throws Error if the URI does not start with the `bitcoin:` scheme
+     */
     static parse(uri: string): BIP21ParseResult {
         if (!uri.toLowerCase().startsWith("bitcoin:")) {
             throw new Error(BIP21Error.INVALID_URI);
         }
 
-        // Remove bitcoin: prefix, preserving case of the rest
+        // Remove the `bitcoin:` prefix while preserving the case of the rest.
         const withoutPrefix = uri.slice(
             uri.toLowerCase().indexOf("bitcoin:") + 8
         );
@@ -106,7 +126,7 @@ export class BIP21 {
                     }
                     params[key] = amount;
                 } else if (key === "ark") {
-                    // Validate ARK address format
+                    // Validate Arkade address format
                     if (value.startsWith("ark") || value.startsWith("tark")) {
                         params[key] = value;
                     } else {

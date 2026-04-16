@@ -13,7 +13,7 @@ const ARKCONTRACT_PREFIX = "arkcontract";
  * Format: arkcontract={type}&{key1}={value1}&{key2}={value2}...
  *
  * This format is compatible with NArk and allows contracts to be
- * shared/imported across different Ark implementations.
+ * shared/imported across different Arkade SDKs.
  *
  * @example
  * ```typescript

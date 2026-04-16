@@ -23,7 +23,7 @@ import { ArkAddress } from "../script/address";
 import { Extension } from "../extension";
 
 export type ArkTxInput = {
-    // the script used to spend the vtxo
+    // the script used to spend the virtual output
     tapLeafScript: TapLeafScript;
 } & EncodedVtxoScript &
     Pick<VirtualCoin, "txid" | "vout" | "value">;
@@ -38,7 +38,7 @@ export type OffchainTx = {
  *
  * Creates one checkpoint transaction per input and a virtual transaction that
  * combines all the checkpoints, sending to the specified outputs. This is the
- * core function for creating Ark transactions.
+ * core function for creating Arkade transactions.
  *
  * @param inputs - Array of virtual transaction inputs
  * @param outputs - Array of transaction outputs
@@ -146,12 +146,12 @@ function buildCheckpointTx(
     vtxo: ArkTxInput,
     serverUnrollScript: CSVMultisigTapscript.Type
 ): { tx: Transaction; input: ArkTxInput } {
-    // create the checkpoint vtxo script from collaborative closure
+    // create the checkpoint virtual output script from collaborative closure
     const collaborativeClosure = decodeTapscript(
         scriptFromTapLeafScript(vtxo.tapLeafScript)
     );
 
-    // create the checkpoint vtxo script combining collaborative closure and server unroll script
+    // create the checkpoint virtual output script combining collaborative closure and server unroll script
     const checkpointVtxoScript = new VtxoScript([
         serverUnrollScript.script,
         collaborativeClosure.script,
@@ -377,8 +377,8 @@ export function combineTapscriptSigs(
 }
 
 /**
- * Validates if a given string is a valid Ark address by attempting to decode it.
- * @param address The Ark address to validate.
+ * Validates if a given string is a valid Arkade address by attempting to decode it.
+ * @param address The Arkade address to validate.
  * @returns True if the address is valid, false otherwise.
  */
 export function isValidArkAddress(address: string): boolean {

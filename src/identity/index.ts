@@ -2,17 +2,29 @@ import { Transaction } from "../utils/transaction";
 import { SignerSession } from "../tree/signingSession";
 
 export interface Identity extends ReadonlyIdentity {
+    /** Returns a signer session used for musig2 tree signing flows. */
     signerSession(): SignerSession;
+
+    /** Sign an arbitrary message using the requested signature type. */
     signMessage(
         message: Uint8Array,
         signatureType: "schnorr" | "ecdsa"
     ): Promise<Uint8Array>;
-    // if inputIndexes is not provided, try to sign all inputs
+
+    /**
+     * Sign the provided transaction inputs.
+     *
+     * @param tx - Transaction to sign
+     * @param inputIndexes - Optional input indexes to sign. When omitted, the implementation should sign every signable input.
+     */
     sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction>;
 }
 
 export interface ReadonlyIdentity {
+    /** Returns the x-only public key used by Taproot scripts. */
     xOnlyPublicKey(): Promise<Uint8Array>;
+
+    /** Returns the compressed public key for this identity. */
     compressedPublicKey(): Promise<Uint8Array>;
 }
 
@@ -33,6 +45,12 @@ export interface SignRequest {
  * will throw if the lengths do not match.
  */
 export interface BatchSignableIdentity extends Identity {
+    /**
+     * Sign multiple transactions in a single wallet interaction.
+     *
+     * @param requests - Transactions and optional input indexes to sign
+     * @returns Signed transactions in the same order as the input requests
+     */
     signMultiple(requests: SignRequest[]): Promise<Transaction[]>;
 }
 

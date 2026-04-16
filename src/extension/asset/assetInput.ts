@@ -21,13 +21,17 @@ type AssetInputIntent = Pick<AssetInputLocal, "vin" | "amount"> & {
 export class AssetInput {
     private constructor(readonly input: AssetInputLocal | AssetInputIntent) {}
 
+    /** Gets the transaction input index for an asset input, e.g. 0 */
     get vin(): number {
         return this.input.vin;
     }
+
+    /** Gets the amount for an input (in most cases, 330 sats) */
     get amount(): bigint {
         return this.input.amount;
     }
 
+    /** Create a local asset input that points at a transaction input index. */
     static create(vin: number, amount: bigint | number): AssetInput {
         const input = new AssetInput({
             type: AssetInputType.Local,
@@ -38,6 +42,7 @@ export class AssetInput {
         return input;
     }
 
+    /** Create an intent-backed asset input referencing an external intent transaction. */
     static createIntent(
         txid: string,
         vin: number,
@@ -68,6 +73,7 @@ export class AssetInput {
         return input;
     }
 
+    /** Decode an asset input from its hex string form. */
     static fromString(s: string): AssetInput {
         let buf: Uint8Array;
         try {
@@ -78,21 +84,25 @@ export class AssetInput {
         return AssetInput.fromBytes(buf);
     }
 
+    /** Decode an asset input from its serialized bytes. */
     static fromBytes(buf: Uint8Array): AssetInput {
         const reader = new BufferReader(buf);
         return AssetInput.fromReader(reader);
     }
 
+    /** Serialize the asset input to raw bytes. */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
+    /** Encode the asset input to a hex string. */
     toString(): string {
         return hex.encode(this.serialize());
     }
 
+    /** Validate the asset input fields. */
     validate(): void {
         switch (this.input.type) {
             case AssetInputType.Local:
@@ -105,6 +115,7 @@ export class AssetInput {
         }
     }
 
+    /** Decode an asset input from a buffer reader. */
     static fromReader(reader: BufferReader): AssetInput {
         const type = reader.readByte() as AssetInputType;
 
@@ -145,6 +156,7 @@ export class AssetInput {
         return input;
     }
 
+    /** Serialize the asset input into an existing buffer writer. */
     serializeTo(writer: BufferWriter): void {
         writer.writeByte(this.input.type);
         if (this.input.type === AssetInputType.Intent) {
@@ -161,12 +173,14 @@ export class AssetInput {
 export class AssetInputs {
     private constructor(readonly inputs: AssetInput[]) {}
 
+    /** Create a validated list of asset inputs. */
     static create(inputs: AssetInput[]): AssetInputs {
         const list = new AssetInputs(inputs);
         list.validate();
         return list;
     }
 
+    /** Decode an asset input list from its hex string form. */
     static fromString(s: string): AssetInputs {
         if (!s || s.length === 0) {
             throw new Error("missing asset inputs");
@@ -181,16 +195,19 @@ export class AssetInputs {
         return AssetInputs.fromReader(reader);
     }
 
+    /** Serialize the asset input list to raw bytes. */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
+    /** Encode the asset input list to a hex string. */
     toString(): string {
         return hex.encode(this.serialize());
     }
 
+    /** Validate the asset input list. */
     validate(): void {
         const seen = new Set<number>();
         let listType = AssetInputType.Unspecified;
@@ -217,6 +234,7 @@ export class AssetInputs {
         }
     }
 
+    /** Decode an asset input list from a buffer reader. */
     static fromReader(reader: BufferReader): AssetInputs {
         const count = Number(reader.readVarUint());
         const inputs: AssetInput[] = [];
@@ -226,6 +244,7 @@ export class AssetInputs {
         return AssetInputs.create(inputs);
     }
 
+    /** Serialize the asset input list into an existing buffer writer. */
     serializeTo(writer: BufferWriter): void {
         writer.writeVarUint(this.inputs.length);
         for (const input of this.inputs) {

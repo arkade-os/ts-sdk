@@ -23,7 +23,7 @@ export interface DefaultContractParams {
 }
 
 /**
- * Handler for default wallet VTXOs.
+ * Handler for default wallet virtual outputs.
  *
  * Default contracts use the standard forfeit + exit tapscript:
  * - forfeit: (Alice + Server) multisig for collaborative spending

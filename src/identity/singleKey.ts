@@ -37,14 +37,17 @@ export class SingleKey implements Identity {
         this.key = key || randomPrivateKeyBytes();
     }
 
+    /** Create a signing identity from raw private key bytes. */
     static fromPrivateKey(privateKey: Uint8Array): SingleKey {
         return new SingleKey(privateKey);
     }
 
+    /** Create a signing identity from a hex-encoded private key. */
     static fromHex(privateKeyHex: string): SingleKey {
         return new SingleKey(hex.decode(privateKeyHex));
     }
 
+    /** Create a signing identity with a freshly generated random private key. */
     static fromRandomBytes(): SingleKey {
         return new SingleKey(randomPrivateKeyBytes());
     }
@@ -115,6 +118,7 @@ export class SingleKey implements Identity {
 }
 
 export class ReadonlySingleKey implements ReadonlyIdentity {
+    /** Create a readonly identity from a compressed public key. */
     constructor(private readonly publicKey: Uint8Array) {
         if (publicKey.length !== 33) {
             throw new Error("Invalid public key length");

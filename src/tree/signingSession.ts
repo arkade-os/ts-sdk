@@ -16,7 +16,7 @@ export type TreePartialSigs = Map<string, musig2.PartialSig>;
 
 // Signer session defines the methods to participate in a cooperative signing process
 // with participants of a settlement. It holds the state of the musig2 nonces and allows to
-// create the partial signatures for each transaction in the vtxo tree
+// create the partial signatures for each transaction in the virtual output tree
 export interface SignerSession {
     getPublicKey(): Promise<Uint8Array>;
     init(

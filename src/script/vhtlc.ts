@@ -11,33 +11,7 @@ import {
 import { hex } from "@scure/base";
 import { TapLeafScript, VtxoScript } from "./base";
 
-/**
- * Virtual Hash Time Lock Contract (VHTLC) implementation.
- *
- * VHTLC is a contract that enables atomic swaps and conditional payments
- * in the Ark protocol. It provides multiple spending paths:
- *
- * - **claim**: Receiver can claim funds by revealing the preimage
- * - **refund**: Sender and receiver can collaboratively refund
- * - **refundWithoutReceiver**: Sender can refund after locktime expires
- * - **unilateralClaim**: Receiver can claim unilaterally after delay
- * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
- * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
- *
- * @example
- * ```typescript
- * const vhtlc = new VHTLC.Script({
- *   sender: alicePubKey,
- *   receiver: bobPubKey,
- *   server: serverPubKey,
- *   preimageHash: hash160(secret),
- *   refundLocktime: BigInt(chainTip + 10),
- *   unilateralClaimDelay: { type: 'blocks', value: 100n },
- *   unilateralRefundDelay: { type: 'blocks', value: 102n },
- *   unilateralRefundWithoutReceiverDelay: { type: 'blocks', value: 103n }
- * });
- * ```
- */
+/** Virtual Hash Time Lock Contract (VHTLC) namespace. */
 export namespace VHTLC {
     export interface Options {
         sender: Bytes;
@@ -50,6 +24,33 @@ export namespace VHTLC {
         unilateralRefundWithoutReceiverDelay: RelativeTimelock;
     }
 
+    /**
+     * Virtual Hash Time Lock Contract (VHTLC) script implementation.
+     *
+     * VHTLC enables atomic swaps and conditional payments in the Arkade protocol.
+     * It provides multiple spending paths:
+     *
+     * - **claim**: Receiver can claim funds by revealing the preimage
+     * - **refund**: Sender and receiver can collaboratively refund
+     * - **refundWithoutReceiver**: Sender can refund after locktime expires
+     * - **unilateralClaim**: Receiver can claim unilaterally after delay
+     * - **unilateralRefund**: Sender and receiver can refund unilaterally after delay
+     * - **unilateralRefundWithoutReceiver**: Sender can refund unilaterally after delay
+     *
+     * @example
+     * ```typescript
+     * const vhtlc = new VHTLC.Script({
+     *   sender: alicePubKey,
+     *   receiver: bobPubKey,
+     *   server: serverPubKey,
+     *   preimageHash: hash160(secret),
+     *   refundLocktime: BigInt(chainTip + 10),
+     *   unilateralClaimDelay: { type: 'blocks', value: 100n },
+     *   unilateralRefundDelay: { type: 'blocks', value: 102n },
+     *   unilateralRefundWithoutReceiverDelay: { type: 'blocks', value: 103n }
+     * });
+     * ```
+     */
     export class Script extends VtxoScript {
         readonly claimScript: string;
         readonly refundScript: string;
@@ -58,6 +59,7 @@ export namespace VHTLC {
         readonly unilateralRefundScript: string;
         readonly unilateralRefundWithoutReceiverScript: string;
 
+        /** Create a VHTLC script from the supplied participant keys, hash, and timelocks. */
         constructor(readonly options: Options) {
             validateOptions(options);
 
@@ -126,26 +128,32 @@ export namespace VHTLC {
             );
         }
 
+        /** Return the collaborative claim tapleaf script. */
         claim(): TapLeafScript {
             return this.findLeaf(this.claimScript);
         }
 
+        /** Return the collaborative refund tapleaf script. */
         refund(): TapLeafScript {
             return this.findLeaf(this.refundScript);
         }
 
+        /** Return the refund-without-receiver tapleaf script. */
         refundWithoutReceiver(): TapLeafScript {
             return this.findLeaf(this.refundWithoutReceiverScript);
         }
 
+        /** Return the unilateral claim tapleaf script. */
         unilateralClaim(): TapLeafScript {
             return this.findLeaf(this.unilateralClaimScript);
         }
 
+        /** Return the unilateral refund tapleaf script. */
         unilateralRefund(): TapLeafScript {
             return this.findLeaf(this.unilateralRefundScript);
         }
 
+        /** Return the unilateral refund-without-receiver tapleaf script. */
         unilateralRefundWithoutReceiver(): TapLeafScript {
             return this.findLeaf(this.unilateralRefundWithoutReceiverScript);
         }

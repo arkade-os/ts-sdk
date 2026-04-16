@@ -52,7 +52,7 @@ export function validateConnectorsTxGraph(
         throw ErrWrongSettlementTxid;
 }
 
-// ValidateVtxoTxGraph checks if the given vtxo graph is valid.
+// ValidateVtxoTxGraph checks if the given virtual output tx graph is valid.
 // The function validates:
 // - the number of nodes
 // - the number of leaves

@@ -8,7 +8,7 @@ export const CONTRACT_POLL_TASK_TYPE = "contract-poll";
  * Polls the indexer for the latest VTXO state of every contract and
  * persists the results to the wallet repository.
  *
- * Replicates the polling subset of {@link ContractManager.initialize}:
+ * Replicates the polling subset of @see ContractManager.initialize:
  * 1. Load all contracts from the contract repository.
  * 2. Mark expired active contracts as inactive.
  * 3. Paginated fetch of spendable VTXOs from the indexer.
@@ -45,7 +45,7 @@ export const contractPollProcessor: TaskProcessor = {
                 await contractRepository.saveContract(contract);
             }
 
-            // Paginated fetch of spendable VTXOs
+            // Paginated fetch of spendable virtual outputs
             const pageSize = 100;
             let pageIndex = 0;
             let hasMore = true;

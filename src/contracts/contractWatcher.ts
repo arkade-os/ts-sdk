@@ -10,38 +10,52 @@ import {
 
 /**
  * Configuration for the ContractWatcher.
+ *
+ * @see ContractWatcher
+ *
+ * @example
+ * ```typescript
+ * const watcher = new ContractWatcher({
+ *   indexerProvider,
+ *   walletRepository,
+ * })
+ * ```
  */
 export interface ContractWatcherConfig {
-    /** The indexer provider to use for subscriptions and queries */
+    /** Indexer provider used for subscriptions and queries. */
     indexerProvider: IndexerProvider;
 
-    /** The wallet repository for VTXO persistence (optional) */
+    /** Wallet repository used to store virtual output state between watcher updates. */
     walletRepository: WalletRepository;
 
     /**
      * Interval for failsafe polling (ms).
      * Polls even when subscription is active to catch missed events.
-     * Default: 60000 (1 minute)
+     *
+     * @defaultValue `60_000` (1 minute)
      */
     failsafePollIntervalMs?: number;
 
     /**
      * Initial reconnection delay (ms).
      * Uses exponential backoff on repeated failures.
-     * Default: 1000 (1 second)
+     *
+     * @defaultValue `1_000` (1 second)
      */
     reconnectDelayMs?: number;
 
     /**
      * Maximum reconnection delay (ms).
-     * Default: 30000 (30 seconds)
+     *
+     * @defaultValue `30_000` (30 seconds)
      */
     maxReconnectDelayMs?: number;
 
     /**
      * Maximum reconnection attempts before giving up.
      * Set to 0 for unlimited attempts.
-     * Default: 0 (unlimited)
+     *
+     * @defaultValue `0` (unlimited)
      */
     maxReconnectAttempts?: number;
 }
@@ -51,7 +65,9 @@ export interface ContractWatcherConfig {
  */
 interface ContractState {
     contract: Contract;
-    lastKnownVtxos: Map<string, VirtualCoin>; // "txid:vout" -> vtxo
+
+    /** Last known virtual outputs keyed by `txid:vout`. */
+    lastKnownVtxos: Map<string, VirtualCoin>;
 }
 
 /**
@@ -64,7 +80,7 @@ type ConnectionState =
     | "reconnecting";
 
 /**
- * Watches multiple contracts for VTXO changes with resilient connection handling.
+ * Watches multiple contracts for virtual output state changes with resilient connection handling.
  *
  * Features:
  * - Automatic reconnection with exponential backoff
@@ -106,11 +122,17 @@ export class ContractWatcher {
     private reconnectTimeoutId?: ReturnType<typeof setTimeout>;
     private failsafePollIntervalId?: ReturnType<typeof setInterval>;
 
+    /**
+     * Create a contract watcher with the given providers and polling settings.
+     *
+     * @param config - Contract watcher configuration
+     * @see ContractWatcherConfig
+     */
     constructor(config: ContractWatcherConfig) {
         this.config = {
-            failsafePollIntervalMs: 60000, // 1 minute
+            failsafePollIntervalMs: 60_000, // 1 minute
             reconnectDelayMs: 1000, // 1 second
-            maxReconnectDelayMs: 30000, // 30 seconds
+            maxReconnectDelayMs: 30_000, // 30 seconds
             maxReconnectAttempts: 0, // unlimited
             ...config,
         };
@@ -119,9 +141,10 @@ export class ContractWatcher {
     /**
      * Add a contract to be watched.
      *
-     * Active contracts are immediately subscribed. All contracts are polled
-     * to discover any existing VTXOs (which may cause them to be watched
-     * even if inactive).
+     * Active contracts are immediately subscribed.
+     *
+     * All contracts are polled to discover any existing virtual outputs
+     * (which may cause them to be watched even if inactive).
      */
     async addContract(contract: Contract): Promise<void> {
         const state: ContractState = {
@@ -131,11 +154,11 @@ export class ContractWatcher {
 
         this.contracts.set(contract.script, state);
 
-        // If we're already watching, poll to discover VTXOs and update subscription
+        // If we're already watching, poll to discover virtual outputs and update subscription
         if (this.isWatching) {
-            // Poll first to discover VTXOs (may affect whether we watch this contract)
+            // Poll first to discover virtual outputs (may affect whether we watch this contract).
             await this.pollContracts([contract.script]);
-            // Update subscription based on active state and VTXOs
+            // Update subscription based on active state and virtual outputs.
             await this.tryUpdateSubscription();
         }
     }
@@ -189,10 +212,10 @@ export class ContractWatcher {
      *
      * Returns scripts for:
      * - All active contracts
-     * - All contracts with known VTXOs (regardless of state)
+     * - All contracts with known virtual outputs (regardless of state)
      *
      * This ensures we continue monitoring contracts even after they're
-     * deactivated, as long as they have unspent VTXOs.
+     * deactivated, as long as they have unspent virtual outputs.
      */
     private getScriptsToWatch(): string[] {
         const scripts = new Set<string>();
@@ -204,7 +227,7 @@ export class ContractWatcher {
                 continue;
             }
 
-            // Also watch inactive/expired contracts that have VTXOs
+            // Also watch inactive/expired contracts that have virtual outputs.
             if (state.lastKnownVtxos.size > 0) {
                 scripts.add(state.contract.script);
             }
@@ -214,8 +237,8 @@ export class ContractWatcher {
     }
 
     /**
-     * Get VTXOs for contracts, grouped by contract script.
-     * Uses Repository.
+     * Get virtual outputs for contracts, grouped by contract script.
+     * @see WalletRepository for `repo`
      */
     private async getContractVtxos(options: {
         includeSpent?: boolean;
@@ -257,7 +280,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Start watching for VTXO events across all active contracts.
+     * Start watching for virtual output events across all active contracts.
      */
     async startWatching(callback: ContractEventCallback): Promise<() => void> {
         if (this.isWatching) {
@@ -474,7 +497,7 @@ export class ContractWatcher {
         const now = Date.now();
 
         try {
-            // Load all the VTXOs for these contracts, from DB
+            // Load all the virtual outputs for these contracts, from DB
             const vtxosMap = await this.getContractVtxos({
                 contractScripts,
                 includeSpent: false, // only spendable ones!
@@ -489,7 +512,7 @@ export class ContractWatcher {
                     currentVtxos.map((v) => `${v.txid}:${v.vout}`)
                 );
 
-                // Find new VTXOs and add them to the contract's state
+                // Find new virtual outputs and add them to the contract's state
                 const newVtxos: VirtualCoin[] = [];
                 for (const vtxo of currentVtxos) {
                     const key = `${vtxo.txid}:${vtxo.vout}`;
@@ -499,7 +522,7 @@ export class ContractWatcher {
                     }
                 }
 
-                // Find spent VTXOs and remove them from the contract's state
+                // Find spent virtual outputs and remove them from the contract's state
                 const spentVtxos: VirtualCoin[] = [];
                 for (const [key, vtxo] of state.lastKnownVtxos) {
                     if (!currentKeys.has(key)) {
@@ -546,7 +569,7 @@ export class ContractWatcher {
     /**
      * Update the subscription with scripts that should be watched.
      *
-     * Watches both active contracts and contracts with VTXOs.
+     * Watches both active contracts and contracts with virtual outputs.
      */
     private async updateSubscription(): Promise<void> {
         const scriptsToWatch = this.getScriptsToWatch();
@@ -650,7 +673,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Process VTXOs from subscription and route to correct contracts.
+     * Process virtual outputs from subscription and route to correct contracts.
      * Uses the scripts from the subscription response to determine contract ownership.
      */
     private processSubscriptionVtxos(
@@ -659,7 +682,7 @@ export class ContractWatcher {
         eventType: ContractEvent["type"],
         timestamp: number
     ): void {
-        // If we have exactly one script, all VTXOs belong to that contract
+        // If we have exactly one script, all virtual outputs belong to that contract
         // Otherwise, we can't reliably determine ownership without script in VirtualCoin
         if (scripts.length === 1) {
             const contractScript = scripts[0];
@@ -681,8 +704,8 @@ export class ContractWatcher {
             return;
         }
 
-        // Multiple scripts - assign VTXOs to all matching contracts
-        // This is a limitation: we can't know which VTXO belongs to which script
+        // Multiple scripts - assign virtual outputs to all matching contracts
+        // This is a limitation: we can't know which virtual output belongs to which script
         // In practice, subscription events usually come with a single script context
         for (const script of scripts) {
             const contractScript = script;
@@ -704,7 +727,7 @@ export class ContractWatcher {
     }
 
     /**
-     * Emit a VTXO event for a contract.
+     * Emit a virtual output event for a contract.
      */
     private emitVtxoEvent(
         contractScript: string,
