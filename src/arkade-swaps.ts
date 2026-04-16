@@ -830,24 +830,47 @@ export class ArkadeSwaps {
 
         // Query VTXOs using the locally-reconstructed script (not the Boltz
         // response address). The VHTLC script is unique per swap, so every
-        // unspent VTXO at this script belongs to this swap and must be refunded.
-        // We treat the Boltz API as adversarial for refunds — selection relies
-        // solely on what we can verify locally.
+        // refundable VTXO at this script belongs to this swap and must be
+        // processed locally. The indexer exposes "spendable" and
+        // "recoverable" VTXOs through separate filters, so merge both views
+        // before deciding whether the swap still has refundable funds.
         const vhtlcPkScriptHex = hex.encode(vhtlcScript.pkScript);
-        const { vtxos: spendableVtxos } = await this.indexerProvider.getVtxos({
-            scripts: [vhtlcPkScriptHex],
-            spendableOnly: true,
-        });
+        const [spendableResult, recoverableResult] = await Promise.all([
+            this.indexerProvider.getVtxos({
+                scripts: [vhtlcPkScriptHex],
+                spendableOnly: true,
+            }),
+            this.indexerProvider.getVtxos({
+                scripts: [vhtlcPkScriptHex],
+                recoverableOnly: true,
+            }),
+        ]);
+        const refundableVtxos = [
+            ...new Map(
+                [...spendableResult.vtxos, ...recoverableResult.vtxos].map(
+                    (vtxo) => [`${vtxo.txid}:${vtxo.vout}`, vtxo] as const
+                )
+            ).values(),
+        ];
 
-        if (spendableVtxos.length === 0) {
-            // Distinguish "all spent" from "never funded" for diagnostics
+        if (refundableVtxos.length === 0) {
+            // Distinguish "all spent" from "never funded" (or not yet
+            // refundable) for diagnostics.
             const { vtxos: allVtxos } = await this.indexerProvider.getVtxos({
                 scripts: [vhtlcPkScriptHex],
             });
+            if (allVtxos.length === 0) {
+                throw new Error(
+                    `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.address}`
+                );
+            }
+            if (allVtxos.every((vtxo) => vtxo.isSpent)) {
+                throw new Error(
+                    `Swap ${pendingSwap.id}: VHTLC is already spent`
+                );
+            }
             throw new Error(
-                allVtxos.length > 0
-                    ? `Swap ${pendingSwap.id}: VHTLC is already spent`
-                    : `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.address}`
+                `Swap ${pendingSwap.id}: VHTLC has no refundable VTXOs yet`
             );
         }
 
@@ -862,7 +885,7 @@ export class ArkadeSwaps {
         let boltzCallCount = 0;
         let skippedCount = 0;
 
-        for (const vtxo of spendableVtxos) {
+        for (const vtxo of refundableVtxos) {
             const isRecoverableVtxo = isRecoverable(vtxo);
 
             const output = {

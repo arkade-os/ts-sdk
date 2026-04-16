@@ -2455,6 +2455,32 @@ describe("ArkadeSwaps", () => {
             status: "invoice.failedToPay",
         };
 
+        const mockRefundSelection = (args: {
+            spendable?: any[];
+            recoverable?: any[];
+            all?: any[];
+        }) => {
+            const spendable = args.spendable ?? [];
+            const recoverable = args.recoverable ?? [];
+            const all = args.all ?? [
+                ...new Map(
+                    [...spendable, ...recoverable].map((vtxo) => [
+                        `${vtxo.txid}:${vtxo.vout}`,
+                        vtxo,
+                    ])
+                ).values(),
+            ];
+
+            vi.mocked(indexerProvider.getVtxos).mockImplementation(
+                async (opts: any) => {
+                    if (opts?.spendableOnly) return { vtxos: spendable } as any;
+                    if (opts?.recoverableOnly)
+                        return { vtxos: recoverable } as any;
+                    return { vtxos: all } as any;
+                }
+            );
+        };
+
         beforeEach(() => {
             vi.mocked(arkProvider.getInfo).mockResolvedValue(mockArkInfo);
             vi.mocked(wallet.getAddress).mockResolvedValue(mock.address.ark);
@@ -2483,11 +2509,11 @@ describe("ArkadeSwaps", () => {
             vi.spyOn(swaps as any, "joinBatch").mockResolvedValue(undefined);
         });
 
-        it("should refund a single unspent VTXO (recoverable path)", async () => {
+        it("should refund a recoverable VTXO even when spendableOnly is empty", async () => {
             const vtxo = makeVtxo(lockupTxid, 0);
 
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [vtxo] as any,
+            mockRefundSelection({
+                recoverable: [vtxo],
             });
 
             await swaps.refundVHTLC(refundableSwap);
@@ -2495,14 +2521,17 @@ describe("ArkadeSwaps", () => {
             const joinBatch = vi.mocked((swaps as any).joinBatch);
             expect(joinBatch).toHaveBeenCalledOnce();
             expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
+            expect(indexerProvider.getVtxos).toHaveBeenCalledWith(
+                expect.objectContaining({ recoverableOnly: true })
+            );
         });
 
         it("should refund all unspent VTXOs at the contract address", async () => {
             const vtxoA = makeVtxo(lockupTxid, 0);
             const vtxoB = makeVtxo(otherTxid, 1);
 
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [vtxoA, vtxoB] as any,
+            mockRefundSelection({
+                recoverable: [vtxoA, vtxoB],
             });
 
             await swaps.refundVHTLC(refundableSwap);
@@ -2513,33 +2542,32 @@ describe("ArkadeSwaps", () => {
             expect(joinBatch.mock.calls[1][1].txid).toBe(otherTxid);
         });
 
-        it("should process every VTXO returned by the indexer", async () => {
-            // The indexer is queried with spendableOnly:true so spent VTXOs
-            // should never reach the loop in production. Verify the loop
-            // iterates over every VTXO it receives.
-            const vtxoA = { ...makeVtxo(lockupTxid, 0), isSpent: true };
-            const vtxoB = makeVtxo(otherTxid, 1);
+        it("should process every refundable VTXO returned by the indexer", async () => {
+            const recoverableVtxo = makeVtxo(lockupTxid, 0);
+            const spendableVtxo = {
+                ...makeVtxo(otherTxid, 1),
+                virtualStatus: { state: "settled" as const },
+            };
 
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [vtxoA, vtxoB] as any,
+            mockRefundSelection({
+                spendable: [spendableVtxo],
+                recoverable: [recoverableVtxo],
             });
 
             await swaps.refundVHTLC(refundableSwap);
 
             const joinBatch = vi.mocked((swaps as any).joinBatch);
             expect(joinBatch).toHaveBeenCalledTimes(2);
-            expect(joinBatch.mock.calls[0][1].txid).toBe(lockupTxid);
-            expect(joinBatch.mock.calls[1][1].txid).toBe(otherTxid);
+            expect(joinBatch.mock.calls[0][1].txid).toBe(otherTxid);
+            expect(joinBatch.mock.calls[1][1].txid).toBe(lockupTxid);
         });
 
         it("should throw when all VTXOs are spent", async () => {
             const spentVtxo = { ...makeVtxo(lockupTxid, 0), isSpent: true };
 
-            vi.mocked(indexerProvider.getVtxos)
-                // first call: spendableOnly=true → empty
-                .mockResolvedValueOnce({ vtxos: [] as any })
-                // second call: all VTXOs → has the spent one
-                .mockResolvedValueOnce({ vtxos: [spentVtxo] as any });
+            mockRefundSelection({
+                all: [spentVtxo],
+            });
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
                 /VHTLC is already spent/
@@ -2547,20 +2575,33 @@ describe("ArkadeSwaps", () => {
         });
 
         it("should throw when no VTXOs exist at the address", async () => {
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [] as any,
-            });
+            mockRefundSelection({});
 
             await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
                 /VHTLC not found/
             );
         });
 
+        it("should not misclassify non-spent non-refundable VTXOs as spent", async () => {
+            const pendingVtxo = {
+                ...makeVtxo(lockupTxid, 0),
+                virtualStatus: { state: "preconfirmed" as const },
+            };
+
+            mockRefundSelection({
+                all: [pendingVtxo],
+            });
+
+            await expect(swaps.refundVHTLC(refundableSwap)).rejects.toThrow(
+                /no refundable VTXOs yet/
+            );
+        });
+
         it("should not query Boltz status — selection is local only", async () => {
             const vtxo = makeVtxo(lockupTxid, 0);
 
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [vtxo] as any,
+            mockRefundSelection({
+                recoverable: [vtxo],
             });
             const statusSpy = vi.spyOn(swapProvider, "getSwapStatus");
 
@@ -2595,8 +2636,8 @@ describe("ArkadeSwaps", () => {
                 const vtxoA = makeNonRecoverableVtxo(lockupTxid, 0);
                 const vtxoB = makeNonRecoverableVtxo(otherTxid, 1);
 
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [vtxoA, vtxoB] as any,
+                mockRefundSelection({
+                    spendable: [vtxoA, vtxoB],
                 });
 
                 await swaps.refundVHTLC(refundableSwap);
@@ -2614,8 +2655,8 @@ describe("ArkadeSwaps", () => {
             it("should refund single non-recoverable VTXO via Boltz co-signing", async () => {
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [vtxo] as any,
+                mockRefundSelection({
+                    spendable: [vtxo],
                 });
 
                 await swaps.refundVHTLC(refundableSwap);
@@ -2634,8 +2675,8 @@ describe("ArkadeSwaps", () => {
 
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [vtxo] as any,
+                mockRefundSelection({
+                    spendable: [vtxo],
                 });
 
                 await swaps.refundVHTLC(refundableSwap);
@@ -2650,8 +2691,8 @@ describe("ArkadeSwaps", () => {
             it("should fall back to joinBatch when Boltz rejects and CLTV has since passed", async () => {
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [vtxo] as any,
+                mockRefundSelection({
+                    spendable: [vtxo],
                 });
 
                 // Boltz rejects the refund
@@ -2674,8 +2715,8 @@ describe("ArkadeSwaps", () => {
             it("should skip when Boltz rejects and CLTV still not passed", async () => {
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [vtxo] as any,
+                mockRefundSelection({
+                    spendable: [vtxo],
                 });
 
                 vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
@@ -2697,8 +2738,8 @@ describe("ArkadeSwaps", () => {
             it("should re-throw non-Boltz errors without fallback", async () => {
                 const vtxo = makeNonRecoverableVtxo(lockupTxid, 0);
 
-                vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                    vtxos: [vtxo] as any,
+                mockRefundSelection({
+                    spendable: [vtxo],
                 });
 
                 vi.mocked(refundVHTLCwithOffchainTx).mockRejectedValueOnce(
@@ -2715,8 +2756,8 @@ describe("ArkadeSwaps", () => {
             vi.spyOn(swapProvider, "getChainHeight").mockResolvedValue(5);
             const vtxo = makeVtxo(lockupTxid, 0);
 
-            vi.mocked(indexerProvider.getVtxos).mockResolvedValue({
-                vtxos: [vtxo] as any,
+            mockRefundSelection({
+                recoverable: [vtxo],
             });
 
             await swaps.refundVHTLC(refundableSwap);
