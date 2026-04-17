@@ -149,6 +149,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
+    protected readonly pendingSettledBoardingOutpoints = new Set<string>();
     private _syncVtxosInflight?: Promise<{
         isDelta: boolean;
         fetchedExtended: ExtendedVirtualCoin[];
@@ -832,9 +833,25 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const boardingUtxos =
             await this.onchainProvider.getCoins(boardingAddress);
 
-        const utxos = boardingUtxos.map((utxo) => {
-            return extendCoin(this, utxo);
-        });
+        const fetchedOutpoints = new Set(
+            boardingUtxos.map((utxo) => `${utxo.txid}:${utxo.vout}`)
+        );
+        for (const outpoint of this.pendingSettledBoardingOutpoints) {
+            if (!fetchedOutpoints.has(outpoint)) {
+                this.pendingSettledBoardingOutpoints.delete(outpoint);
+            }
+        }
+
+        const utxos = boardingUtxos
+            .filter(
+                (utxo) =>
+                    !this.pendingSettledBoardingOutpoints.has(
+                        `${utxo.txid}:${utxo.vout}`
+                    )
+            )
+            .map((utxo) => {
+                return extendCoin(this, utxo);
+            });
 
         // Save boarding inputs using unified repository
         await this.walletRepository.saveUtxos(boardingAddress, utxos);
@@ -2847,7 +2864,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     });
                 } else {
                     // boarding input = remove it
-                    boardingUtxoToRemove.add(`${input.txid}:${input.vout}`);
+                    const outpoint = `${input.txid}:${input.vout}`;
+                    boardingUtxoToRemove.add(outpoint);
+                    this.pendingSettledBoardingOutpoints.add(outpoint);
                 }
             }
 

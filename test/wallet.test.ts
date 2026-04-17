@@ -158,6 +158,66 @@ describe("Wallet", () => {
             expect(balance.recoverable).toBe(0);
             expect(balance.total).toBe(150000);
         });
+
+        it("should ignore locally settled boarding UTXOs while the provider lags", async () => {
+            const staleBoardingUtxo: Coin = {
+                txid: hex.encode(new Uint8Array(32).fill(9)),
+                vout: 0,
+                value: 100000,
+                status: {
+                    confirmed: true,
+                    block_height: 100,
+                    block_hash: hex.encode(new Uint8Array(32).fill(8)),
+                    block_time: 1600000000,
+                },
+            };
+            const mockArkInfo = {
+                signerPubkey: mockServerKeyHex,
+                forfeitPubkey: mockServerKeyHex,
+                batchExpiry: BigInt(144),
+                unilateralExitDelay: BigInt(144),
+                boardingExitDelay: BigInt(144),
+                roundInterval: BigInt(144),
+                network: "mutinynet",
+                dust: BigInt(1000),
+                forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+                checkpointTapscript:
+                    "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+            };
+            const onchainProvider = {
+                getCoins: vi.fn().mockResolvedValue([staleBoardingUtxo]),
+            } as Partial<OnchainProvider> as OnchainProvider;
+            const indexerProvider = {
+                getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+            } as Partial<IndexerProvider> as IndexerProvider;
+            const wallet = await Wallet.create({
+                identity: mockIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider,
+                onchainProvider,
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+                settlementConfig: false,
+            });
+
+            const boardingUtxos = await wallet.getBoardingUtxos();
+            expect(boardingUtxos).toHaveLength(1);
+
+            await (wallet as any).updateDbAfterSettle(
+                boardingUtxos,
+                "11".repeat(32)
+            );
+
+            const balance = await wallet.getBalance();
+            expect(balance.boarding.total).toBe(0);
+
+            await wallet.dispose();
+        });
     });
 
     describe("getCoins", () => {
