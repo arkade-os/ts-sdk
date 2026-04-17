@@ -109,6 +109,11 @@ import {
     updateWalletState,
 } from "../utils/syncCursors";
 
+// Hardcoded unilateral exit delay for mainnet (~7 days in seconds).
+// Pinned here so that address derivation stays stable for existing mainnet
+// wallets even after the server lowers the delay it advertises.
+const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
+
 export type IncomingFunds =
     | {
           type: "utxo";
@@ -267,10 +272,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
+        // On mainnet, pin the unilateral exit delay to the historical value so
+        // that addresses derived by existing wallets remain stable even if the
+        // server starts advertising a shorter delay.
+        const unilateralExitDelay =
+            info.network === "bitcoin"
+                ? MAINNET_UNILATERAL_EXIT_DELAY
+                : info.unilateralExitDelay;
+
         // create unilateral exit timelock
         const exitTimelock: RelativeTimelock = config.exitTimelock ?? {
-            value: info.unilateralExitDelay,
-            type: info.unilateralExitDelay < 512n ? "blocks" : "seconds",
+            value: unilateralExitDelay,
+            type: unilateralExitDelay < 512n ? "blocks" : "seconds",
         };
 
         // validate boarding timelock passed in config if any
