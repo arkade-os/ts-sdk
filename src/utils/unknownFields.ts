@@ -1,7 +1,7 @@
-import * as bip68 from "bip68";
 import { RawWitness, ScriptNum, Transaction } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { hex } from "@scure/base";
+import { sequenceToTimelock } from "./timelock";
 
 /**
  * ArkPsbtFieldKey are the available key names for the Arkade PSBT custom fields.
@@ -186,11 +186,7 @@ export const VtxoTreeExpiry: ArkPsbtFieldCoder<{
                 return null;
             const v = ScriptNum(6, true).decode(unknown[1]);
             if (!v) return null;
-            const { blocks, seconds } = bip68.decode(Number(v));
-            return {
-                type: blocks ? "blocks" : "seconds",
-                value: BigInt(blocks ?? seconds ?? 0),
-            };
+            return sequenceToTimelock(Number(v));
         }),
 };
 

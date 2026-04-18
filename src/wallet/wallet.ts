@@ -99,7 +99,7 @@ import {
 } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
-import { timelockToSequence } from "../contracts/handlers/helpers";
+import { timelockToSequence } from "../utils/timelock";
 import {
     advanceSyncCursors,
     clearSyncCursors,
