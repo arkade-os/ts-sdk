@@ -1,0 +1,52 @@
+{
+  "name": "arkade-monorepo",
+  "private": true,
+  "packageManager": "pnpm@10.25.0",
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=10.25.0 <11"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:unit": "pnpm -r test:unit",
+    "test:integration": "ARK_ENV=docker pnpm -C packages/ts-sdk test:integration && pnpm -C packages/boltz-swap test:integration",
+    "lint": "pnpm -r lint",
+    "release": "bash scripts/release.sh all",
+    "release:ts-sdk": "bash scripts/release.sh ts-sdk",
+    "release:boltz-swap": "bash scripts/release.sh boltz-swap",
+    "regtest:up": "bash regtest/start-env.sh",
+    "regtest:setup": "pnpm -C packages/boltz-swap exec node test/e2e/setup.mjs",
+    "regtest:down": "bash regtest/stop-env.sh",
+    "regtest:reset": "bash regtest/clean-env.sh",
+    "regtest:test": "pnpm run regtest:setup && pnpm run test:integration",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.35.0",
+    "@types/node": "24.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.43.0",
+    "@typescript-eslint/parser": "^8.43.0",
+    "eslint": "^9.35.0",
+    "husky": "9.1.7",
+    "prettier": "3.6.2",
+    "typescript": "5.9.2",
+    "vitest": "3.2.4"
+  },
+  "pnpm": {
+    "overrides": {
+      "esbuild": ">=0.25.0",
+      "brace-expansion": "^2.0.2",
+      "minimatch": "9.0.3"
+    },
+    "onlyBuiltDependencies": [
+      "canvas",
+      "sqlite3",
+      "@arkade-os/sdk"
+    ],
+    "ignoredBuiltDependencies": [
+      "canvas",
+      "esbuild"
+    ]
+  }
+}

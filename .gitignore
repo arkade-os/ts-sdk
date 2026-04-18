@@ -1,0 +1,17 @@
+node_modules
+*.log
+.DS_Store
+dist
+coverage
+.env
+!.env.regtest
+.idea
+.vscode
+.tmp
+.swp
+.nyc_output
+
+# AI
+TASKS.md
+CLAUDE.md
+.claude
