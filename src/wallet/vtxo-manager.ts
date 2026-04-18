@@ -61,6 +61,18 @@ function assertSweepCapable(
     }
 }
 
+/**
+ * Return whether a wallet exposes the surface required for VTXO renewal.
+ *
+ * Renewal re-submits existing VTXOs via `settle()`, so a wallet that can't
+ * settle can't renew. IWallet declares `settle` at the type level, but this
+ * runtime guard keeps auto-renewal paths safe when a proxy or subclass omits
+ * it.
+ */
+function isRenewCapable(wallet: IWallet): boolean {
+    return typeof wallet.settle === "function";
+}
+
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 3 * 24 * 60 * 60;
 
@@ -981,14 +993,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 ]);
 
             const stopWatching = contractManager.onContractEvent((event) => {
+                // Mirror the filter used by renewVtxos so the trigger set can't
+                // be broader than the action set — otherwise a vtxo_spent event
+                // for a fully-spent vtxo would fire a no-op renewal and burn
+                // the cooldown.
                 const shouldRenew =
                     event.type === "vtxo_received" ||
                     (event.type === "vtxo_spent" &&
                         event.vtxos.some(
                             (vtxo) =>
-                                vtxo.virtualStatus.state === "swept" ||
                                 isRecoverable(vtxo) ||
-                                isExpired(vtxo)
+                                (isSpendable(vtxo) && isExpired(vtxo))
                         ));
 
                 if (shouldRenew) {
@@ -1041,6 +1056,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     private async maybeRenewVtxos(): Promise<void> {
+        if (!isRenewCapable(this.wallet)) {
+            return;
+        }
         if (!this.shouldAttemptRenewal()) {
             return;
         }
