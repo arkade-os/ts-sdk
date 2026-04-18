@@ -1,0 +1,9 @@
+node_modules
+dist
+*storage.json
+.idea
+
+# AI
+CLAUDE.md
+.claude
+*.agent.md
