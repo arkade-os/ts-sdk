@@ -1357,6 +1357,7 @@ describe("SettlementConfig", () => {
                 _vtxoManagerInitializing?: Promise<unknown>;
                 _contractManager?: { dispose(): void };
                 _contractManagerInitializing?: Promise<unknown>;
+                pendingSettledBoardingOutpoints: Set<string>;
             };
 
             wallet._vtxoManager = {
@@ -1365,6 +1366,7 @@ describe("SettlementConfig", () => {
             wallet._contractManager = {
                 dispose: contractManagerDispose,
             };
+            wallet.pendingSettledBoardingOutpoints = new Set<string>();
 
             await wallet.dispose();
 

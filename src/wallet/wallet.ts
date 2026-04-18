@@ -1195,6 +1195,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         manager?.dispose();
         this._contractManager = undefined;
         this._contractManagerInitializing = undefined;
+        this.pendingSettledBoardingOutpoints.clear();
     }
 
     /** Async-dispose hook that forwards to `dispose()`. */
