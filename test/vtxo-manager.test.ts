@@ -377,6 +377,209 @@ describe("VtxoManager - Lifecycle", () => {
 
         expect(unsubscribe).toHaveBeenCalledTimes(1);
     });
+
+    it("should auto-renew on swept vtxo_spent events", async () => {
+        let onContractEvent:
+            | ((event: {
+                  type: "vtxo_spent";
+                  vtxos: ExtendedVirtualCoin[];
+                  contractScript: string;
+                  contract: any;
+                  timestamp: number;
+              }) => void)
+            | undefined;
+        const contractManager = {
+            onContractEvent: vi.fn().mockImplementation((callback) => {
+                onContractEvent = callback;
+                return () => {};
+            }),
+        };
+        const wallet = createMockWallet(
+            [createMockVtxo(5000, "swept", false)],
+            "arkade1test",
+            { contractManager }
+        );
+        const manager = new VtxoManager(wallet, undefined, {});
+
+        await flushMicrotasks();
+        onContractEvent?.({
+            type: "vtxo_spent",
+            vtxos: [createMockVtxo(5000, "swept", false)],
+            contractScript: "script",
+            contract: {} as any,
+            timestamp: Date.now(),
+        });
+        await flushMicrotasks();
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+        await manager.dispose();
+    });
+
+    it("should not auto-renew on plain settled vtxo_spent events", async () => {
+        let onContractEvent:
+            | ((event: {
+                  type: "vtxo_spent";
+                  vtxos: ExtendedVirtualCoin[];
+                  contractScript: string;
+                  contract: any;
+                  timestamp: number;
+              }) => void)
+            | undefined;
+        const contractManager = {
+            onContractEvent: vi.fn().mockImplementation((callback) => {
+                onContractEvent = callback;
+                return () => {};
+            }),
+        };
+        const wallet = createMockWallet(
+            [createMockVtxo(5000, "settled", false)],
+            "arkade1test",
+            { contractManager }
+        );
+        const manager = new VtxoManager(wallet, undefined, {});
+
+        await flushMicrotasks();
+        onContractEvent?.({
+            type: "vtxo_spent",
+            vtxos: [createMockVtxo(5000, "settled", false)],
+            contractScript: "script",
+            contract: {} as any,
+            timestamp: Date.now(),
+        });
+        await flushMicrotasks();
+
+        expect(wallet.getVtxos).not.toHaveBeenCalled();
+        expect(wallet.settle).not.toHaveBeenCalled();
+
+        await manager.dispose();
+    });
+
+    it("should apply cooldown after a no-op renewal check", async () => {
+        let onContractEvent:
+            | ((event: {
+                  type: "vtxo_received";
+                  vtxos: ExtendedVirtualCoin[];
+                  contractScript: string;
+                  contract: any;
+                  timestamp: number;
+              }) => void)
+            | undefined;
+        const contractManager = {
+            onContractEvent: vi.fn().mockImplementation((callback) => {
+                onContractEvent = callback;
+                return () => {};
+            }),
+        };
+        const wallet = createMockWallet(
+            [createMockVtxo(5000, "settled", false)],
+            "arkade1test",
+            { contractManager }
+        );
+        const manager = new VtxoManager(wallet, undefined, {});
+
+        await flushMicrotasks();
+        onContractEvent?.({
+            type: "vtxo_received",
+            vtxos: [createMockVtxo(5000, "settled", false)],
+            contractScript: "script",
+            contract: {} as any,
+            timestamp: Date.now(),
+        });
+        await flushMicrotasks();
+
+        onContractEvent?.({
+            type: "vtxo_received",
+            vtxos: [createMockVtxo(5000, "settled", false)],
+            contractScript: "script",
+            contract: {} as any,
+            timestamp: Date.now(),
+        });
+        await flushMicrotasks();
+
+        expect(wallet.getVtxos).toHaveBeenCalledTimes(1);
+        expect(wallet.settle).not.toHaveBeenCalled();
+
+        await manager.dispose();
+    });
+
+    it("should auto-renew during background polling without contract events", async () => {
+        vi.useFakeTimers();
+        try {
+            const now = Date.now();
+            const wallet = createMockWallet([
+                {
+                    txid: "tx1",
+                    vout: 0,
+                    value: 5000,
+                    createdAt: new Date(now - 100_000),
+                    virtualStatus: {
+                        state: "settled",
+                        batchExpiry: now + 5_000,
+                    },
+                    status: { confirmed: true },
+                    isUnrolled: false,
+                    isSpent: false,
+                } as ExtendedVirtualCoin,
+            ]);
+            const manager = new VtxoManager(wallet, undefined, {
+                pollIntervalMs: 1_000,
+            });
+
+            await flushMicrotasks();
+            await vi.advanceTimersByTimeAsync(1_000);
+            await flushMicrotasks();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+            await manager.dispose();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("should back off background polling when boarding fetch fails", async () => {
+        vi.useFakeTimers();
+        const consoleError = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => undefined);
+        try {
+            const getBoardingUtxos = vi
+                .fn()
+                .mockRejectedValue(new Error("fetch failed"));
+            const wallet = {
+                ...createMockWallet([], "arkade1test"),
+                getBoardingUtxos,
+                boardingTapscript: {} as any,
+                onchainProvider: {} as any,
+                network: {} as any,
+            } as IWallet;
+            const manager = new VtxoManager(wallet, undefined, {
+                pollIntervalMs: 1_000,
+            });
+
+            await flushMicrotasks();
+            await vi.advanceTimersByTimeAsync(1_000);
+            await flushMicrotasks();
+
+            expect(getBoardingUtxos).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1_000);
+            await flushMicrotasks();
+
+            expect(getBoardingUtxos).toHaveBeenCalledTimes(1);
+
+            await vi.advanceTimersByTimeAsync(1_000);
+            await flushMicrotasks();
+
+            expect(getBoardingUtxos).toHaveBeenCalledTimes(2);
+
+            await manager.dispose();
+        } finally {
+            consoleError.mockRestore();
+            vi.useRealTimers();
+        }
+    });
 });
 
 describe("VtxoManager - Renewal utilities", () => {
@@ -1154,6 +1357,7 @@ describe("SettlementConfig", () => {
                 _vtxoManagerInitializing?: Promise<unknown>;
                 _contractManager?: { dispose(): void };
                 _contractManagerInitializing?: Promise<unknown>;
+                pendingSettledBoardingOutpoints: Set<string>;
             };
 
             wallet._vtxoManager = {
@@ -1162,6 +1366,7 @@ describe("SettlementConfig", () => {
             wallet._contractManager = {
                 dispose: contractManagerDispose,
             };
+            wallet.pendingSettledBoardingOutpoints = new Set<string>();
 
             await wallet.dispose();
 

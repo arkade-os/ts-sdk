@@ -61,6 +61,18 @@ function assertSweepCapable(
     }
 }
 
+/**
+ * Return whether a wallet exposes the surface required for VTXO renewal.
+ *
+ * Renewal re-submits existing VTXOs via `settle()`, so a wallet that can't
+ * settle can't renew. IWallet declares `settle` at the type level, but this
+ * runtime guard keeps auto-renewal paths safe when a proxy or subclass omits
+ * it.
+ */
+function isRenewCapable(wallet: IWallet): boolean {
+    return typeof wallet.settle === "function";
+}
+
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 3 * 24 * 60 * 60;
 
@@ -965,8 +977,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return undefined;
         }
 
-        // Start polling for boarding inputs independently of contract manager
-        // SSE setup. Use a short delay to let the wallet finish construction.
+        // Start polling for wallet settlement tasks independently of contract
+        // manager SSE setup. Use a short delay to let the wallet finish construction.
         this.startupPollTimeoutId = setTimeout(() => {
             if (this.disposed) return;
             this.startBoardingUtxoPoll();
@@ -981,58 +993,88 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 ]);
 
             const stopWatching = contractManager.onContractEvent((event) => {
-                if (event.type !== "vtxo_received") {
-                    return;
-                }
-
-                const msSinceLastRenewal =
-                    Date.now() - this.lastRenewalTimestamp;
+                // Mirror the filter used by renewVtxos so the trigger set can't
+                // be broader than the action set — otherwise a vtxo_spent event
+                // for a fully-spent vtxo would fire a no-op renewal and burn
+                // the cooldown.
                 const shouldRenew =
-                    !this.renewalInProgress &&
-                    msSinceLastRenewal >= VtxoManager.RENEWAL_COOLDOWN_MS;
+                    event.type === "vtxo_received" ||
+                    (event.type === "vtxo_spent" &&
+                        event.vtxos.some(
+                            (vtxo) =>
+                                isRecoverable(vtxo) ||
+                                (isSpendable(vtxo) && isExpired(vtxo))
+                        ));
 
                 if (shouldRenew) {
-                    this.renewVtxos().catch((e) => {
-                        if (e instanceof Error) {
-                            if (
-                                e.message.includes(
-                                    "No VTXOs available to renew"
-                                )
-                            ) {
-                                // Not an error, just no virtual outputs eligible for renewal.
-                                return;
-                            }
-                            if (e.message.includes("is below dust threshold")) {
-                                // Not an error, just below dust threshold.
-                                // As more virtual outputs are received, the threshold will be raised.
-                                return;
-                            }
-                            if (
-                                e.message.includes("VTXO_ALREADY_REGISTERED") ||
-                                e.message.includes("VTXO_ALREADY_SPENT") ||
-                                e.message.includes("duplicated input")
-                            ) {
-                                // Virtual output is already being used in a concurrent
-                                // user-initiated operation. Skip silently — the
-                                // wallet's tx lock serializes these, but the
-                                // renewal will retry on the next cycle.
-                                return;
-                            }
-                        }
+                    this.maybeRenewVtxos().catch((e) => {
                         console.error("Error renewing VTXOs:", e);
                     });
                 }
-                delegatorManager
-                    ?.delegate(event.vtxos, destination)
-                    .catch((e) => {
-                        console.error("Error delegating VTXOs:", e);
-                    });
+
+                if (event.type === "vtxo_received") {
+                    delegatorManager
+                        ?.delegate(event.vtxos, destination)
+                        .catch((e) => {
+                            console.error("Error delegating VTXOs:", e);
+                        });
+                }
             });
 
             return stopWatching;
         } catch (e) {
             console.error("Error renewing VTXOs from VtxoManager", e);
             return undefined;
+        }
+    }
+
+    private shouldAttemptRenewal(): boolean {
+        const msSinceLastRenewal = Date.now() - this.lastRenewalTimestamp;
+        return (
+            !this.renewalInProgress &&
+            msSinceLastRenewal >= VtxoManager.RENEWAL_COOLDOWN_MS
+        );
+    }
+
+    private isIgnorableRenewalError(error: unknown): boolean {
+        return (
+            error instanceof Error &&
+            (this.isNoopRenewalError(error) ||
+                error.message.includes("VTXO_ALREADY_REGISTERED") ||
+                error.message.includes("VTXO_ALREADY_SPENT") ||
+                error.message.includes("duplicated input") ||
+                error.message.includes("Renewal already in progress"))
+        );
+    }
+
+    private isNoopRenewalError(error: unknown): boolean {
+        return (
+            error instanceof Error &&
+            (error.message.includes("No VTXOs available to renew") ||
+                error.message.includes("is below dust threshold"))
+        );
+    }
+
+    private async maybeRenewVtxos(): Promise<void> {
+        if (!isRenewCapable(this.wallet)) {
+            return;
+        }
+        if (!this.shouldAttemptRenewal()) {
+            return;
+        }
+
+        try {
+            await this.renewVtxos();
+        } catch (error) {
+            if (this.isIgnorableRenewalError(error)) {
+                if (this.isNoopRenewalError(error)) {
+                    // A no-op renewal still means we checked recently, so apply
+                    // the cooldown to avoid repeated scans on every event.
+                    this.lastRenewalTimestamp = Date.now();
+                }
+                return;
+            }
+            throw error;
         }
     }
 
@@ -1052,8 +1094,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Starts a polling loop that:
-     * 1. Auto-settles new boarding inputs into Arkade
-     * 2. Sweeps expired boarding inputs (when boardingUtxoSweep is enabled)
+     * 1. Auto-renews expiring or recoverable VTXOs
+     * 2. Auto-settles new boarding inputs into Arkade
+     * 3. Sweeps expired boarding inputs (when boardingUtxoSweep is enabled)
      *
      * Uses setTimeout chaining (not setInterval) so a slow/blocked poll
      * cannot stack up and the next delay can incorporate backoff.
@@ -1072,8 +1115,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     private async pollBoardingUtxos(): Promise<void> {
-        // Guard: wallet must support boarding input + sweep operations
-        if (!isSweepCapable(this.wallet)) return;
         // Skip if disposed or a previous poll is still running
         if (this.disposed) return;
         if (this.pollInProgress) return;
@@ -1087,39 +1128,53 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         let hadError = false;
 
         try {
-            // Fetch boarding inputs once for the entire poll cycle so that
-            // settle and sweep don't each hit the network independently.
-            const boardingUtxos = await this.wallet.getBoardingUtxos();
-
-            // Settle new (unexpired) boarding inputs first, then sweep expired ones.
-            // Sequential to avoid racing for the same inputs.
             try {
-                await this.settleBoardingUtxos(boardingUtxos);
+                await this.maybeRenewVtxos();
             } catch (e) {
                 hadError = true;
-                console.error("Error auto-settling boarding UTXOs:", e);
+                console.error("Error auto-renewing VTXOs:", e);
             }
 
-            const sweepEnabled =
-                this.settlementConfig !== false &&
-                (this.settlementConfig?.boardingUtxoSweep ??
-                    DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
-            if (sweepEnabled) {
+            if (isSweepCapable(this.wallet)) {
                 try {
-                    await this.sweepExpiredBoardingUtxos(boardingUtxos);
-                } catch (e) {
-                    if (
-                        !(e instanceof Error) ||
-                        !e.message.includes("No expired boarding UTXOs")
-                    ) {
+                    // Fetch boarding inputs once for the entire poll cycle so that
+                    // settle and sweep don't each hit the network independently.
+                    const boardingUtxos = await this.wallet.getBoardingUtxos();
+
+                    // Settle new (unexpired) boarding inputs first, then sweep expired ones.
+                    // Sequential to avoid racing for the same inputs.
+                    try {
+                        await this.settleBoardingUtxos(boardingUtxos);
+                    } catch (e) {
                         hadError = true;
-                        console.error("Error auto-sweeping boarding UTXOs:", e);
+                        console.error("Error auto-settling boarding UTXOs:", e);
                     }
+
+                    const sweepEnabled =
+                        this.settlementConfig !== false &&
+                        (this.settlementConfig?.boardingUtxoSweep ??
+                            DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+                    if (sweepEnabled) {
+                        try {
+                            await this.sweepExpiredBoardingUtxos(boardingUtxos);
+                        } catch (e) {
+                            if (
+                                !(e instanceof Error) ||
+                                !e.message.includes("No expired boarding UTXOs")
+                            ) {
+                                hadError = true;
+                                console.error(
+                                    "Error auto-sweeping boarding UTXOs:",
+                                    e
+                                );
+                            }
+                        }
+                    }
+                } catch (e) {
+                    hadError = true;
+                    console.error("Error fetching boarding UTXOs:", e);
                 }
             }
-        } catch (e) {
-            hadError = true;
-            console.error("Error fetching boarding UTXOs:", e);
         } finally {
             if (hadError) {
                 this.consecutivePollFailures++;
