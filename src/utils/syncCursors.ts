@@ -6,8 +6,10 @@ import {
 /** Lag behind real-time to avoid racing with indexer writes. */
 export const SAFETY_LAG_MS = 30_000;
 
-/** Overlap window so boundary virtual outputs are never missed. */
-export const OVERLAP_MS = 24 * 60 * 60 * 1000;
+/** Overlap window so boundary virtual outputs are never missed.
+ *  Increased to 30 minutes as a safety margin for longer operations like settlement, onboarding, etc.
+ **/
+export const OVERLAP_MS = 30 * 60 * 1000;
 
 type SyncCursors = Record<string, number>;
 
