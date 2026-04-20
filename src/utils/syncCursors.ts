@@ -6,7 +6,7 @@ import {
 /** Lag behind real-time to avoid racing with indexer writes. */
 export const SAFETY_LAG_MS = 30_000;
 
-/** Overlap window so boundary VTXOs are never missed. */
+/** Overlap window so boundary virtual outputs are never missed. */
 export const OVERLAP_MS = 60_000;
 
 type SyncCursors = Record<string, number>;
@@ -145,8 +145,8 @@ export async function clearSyncCursors(
  * Returns `undefined` when the script has no cursor (bootstrap needed).
  *
  * No upper bound (`before`) is applied to the query so that freshly
- * created VTXOs are never excluded. The safety lag is applied only
- * when advancing the cursor (see {@link cursorCutoff}).
+ * created virtual outputs are never excluded. The safety lag is applied only
+ * when advancing the cursor (see @see cursorCutoff).
  */
 export function computeSyncWindow(
     cursor: number | undefined
@@ -158,7 +158,7 @@ export function computeSyncWindow(
 
 /**
  * The safe high-water mark for cursor advancement.
- * Lags behind real-time by {@link SAFETY_LAG_MS} so that VTXOs still
+ * Lags behind real-time by @see SAFETY_LAG_MS so that virtual outputs still
  * being indexed are re-queried on the next sync.
  *
  * When `requestStartedAt` is provided the cutoff is frozen to the

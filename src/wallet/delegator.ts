@@ -32,6 +32,14 @@ import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
 
 export interface IDelegatorManager {
+    /**
+     * Delegate virtual outputs to the remote delegation service.
+     *
+     * @param vtxos - Virtual outputs to delegate
+     * @param destination - Arkade address that should receive renewed funds
+     * @param delegateAt - Optional timestamp to force a specific delegation time
+     * @returns Successfully delegated and failed outpoint groups
+     */
     delegate(
         vtxos: ExtendedVirtualCoin[],
         destination: string,
@@ -41,10 +49,12 @@ export interface IDelegatorManager {
         failed: { outpoints: Outpoint[]; error: unknown }[];
     }>;
 
+    /** Fetch delegate metadata such as pubkey, fee, and delegate address. */
     getDelegateInfo(): Promise<DelegateInfo>;
 }
 
 export class DelegatorManagerImpl implements IDelegatorManager {
+    /** Create a delegator manager from the configured provider, Arkade info source, and wallet identity. */
     constructor(
         readonly delegatorProvider: DelegatorProvider,
         readonly arkInfoProvider: Pick<ArkProvider, "getInfo">,
@@ -73,7 +83,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
         const arkInfo = await this.arkInfoProvider.getInfo();
         const delegateInfo = await this.delegatorProvider.getDelegateInfo();
 
-        // if explicit delegateAt is provided, delegate all vtxos at once without sorting
+        // if explicit delegateAt is provided, delegate all virtual outputs at once without sorting
         if (delegateAt) {
             try {
                 await delegate(
@@ -91,7 +101,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
             return { delegated: vtxos, failed: [] };
         }
 
-        // if no explicit delegateAt is provided, sort vtxos by expiry and delegate in groups of the same expiry day
+        // if no explicit delegateAt is provided, sort virtual outputs by expiry and delegate in groups of the same expiry day
         const groupByExpiry: Map<number, ExtendedVirtualCoin[]> = new Map();
         let recoverableVtxos: ExtendedVirtualCoin[] = [];
 
@@ -111,7 +121,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
             ]);
         }
 
-        // if no groups, it means we only need to delegate the recoverable vtxos
+        // if no groups, it means we only need to delegate the recoverable virtual outputs
         if (groupByExpiry.size === 0) {
             try {
                 await delegate(
@@ -132,7 +142,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
             return { delegated: recoverableVtxos, failed: [] };
         }
 
-        // search for the earliest group, include recoverable vtxos into it
+        // search for the earliest group, include recoverable virtual outputs into it
         const earliestGroup = Math.min(...groupByExpiry.keys());
 
         groupByExpiry.set(earliestGroup, [
@@ -173,9 +183,9 @@ export class DelegatorManagerImpl implements IDelegatorManager {
 }
 
 /**
- * Delegates virtual coins to a delegator provider, allowing them to manage the coins renewal
- * on behalf of the wallet.
- * @param vtxos - Array of extended virtual coins to delegate. Must not be empty.
+ * Delegates virtual outputs to a delegation service, allowing them to manage their renewal
+ * on behalf of the wallet owner.
+ * @param vtxos - Array of extended virtual outputs to delegate. Must not be empty.
  * @param delegateAt - Optional Date specifying when the delegation
  *                     should occur. If not provided, defaults to 12 hours before the earliest
  *                     expiry time of the provided vtxos.
@@ -209,7 +219,7 @@ async function delegate(
                 Number.MAX_SAFE_INTEGER
             );
         if (!expiryTimestamp || expiryTimestamp === Number.MAX_SAFE_INTEGER) {
-            // if no expiry (recoverable vtxos), delegate 1 minute from now
+            // if no expiry (recoverable virtual outputs), delegate 1 minute from now
             delegateAt = new Date(Date.now() + 1 * 60 * 1000);
         } else {
             const remainingTimeMs = expiryTimestamp - Date.now();

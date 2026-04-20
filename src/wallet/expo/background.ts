@@ -63,7 +63,7 @@ function requireBackgroundTask(): BackgroundTaskModule {
 // ── Persisted config ─────────────────────────────────────────────
 
 /**
- * Wallet parameters persisted by {@link ExpoWallet.setup} and read
+ * Wallet parameters persisted by @see ExpoWallet.setup and read
  * by the background handler to reconstruct providers and `extendVtxo`
  * without a network call.
  */
@@ -78,7 +78,7 @@ export interface PersistedBackgroundConfig {
 // ── Public API ───────────────────────────────────────────────────
 
 /**
- * Options for {@link defineExpoBackgroundTask}.
+ * Options for @see defineExpoBackgroundTask.
  */
 export interface DefineBackgroundTaskOptions {
     /** AsyncStorage-backed queue (must match the one passed to ExpoWallet.setup). */
@@ -143,7 +143,7 @@ export function defineExpoBackgroundTask(
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
 
             // Reconstruct default offchainTapscript as fallback
-            // for VTXOs not associated with a contract.
+            // for virtual outputs not associated with a contract.
             const offchainTapscript = new DefaultVtxo.Script({
                 pubKey: hex.decode(config.pubkeyHex),
                 serverPubKey: hex.decode(config.serverPubKeyHex),
@@ -195,8 +195,8 @@ export function defineExpoBackgroundTask(
 /**
  * Activate the OS-level background task scheduler.
  *
- * Call this after {@link defineExpoBackgroundTask} (typically inside
- * {@link ExpoWallet.setup} or in a React component after wallet init).
+ * Call this after @see defineExpoBackgroundTask (typically inside
+ * @see ExpoWallet.setup or in a React component after wallet init).
  *
  * @param minimumInterval - Minimum interval in minutes (default 15).
  */

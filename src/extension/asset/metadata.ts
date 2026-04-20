@@ -14,12 +14,14 @@ export class Metadata {
         readonly value: Uint8Array
     ) {}
 
+    /** Create a metadata entry from raw key and value bytes. */
     static create(key: Bytes, value: Bytes): Metadata {
         const md = new Metadata(key, value);
         md.validate();
         return md;
     }
 
+    /** Decode metadata from its hex string form. */
     static fromString(s: string): Metadata {
         let buf: Uint8Array;
         try {
@@ -30,6 +32,7 @@ export class Metadata {
         return Metadata.fromBytes(buf);
     }
 
+    /** Decode metadata from its serialized bytes. */
     static fromBytes(buf: Uint8Array): Metadata {
         if (!buf || buf.length === 0) {
             throw new Error("missing metadata");
@@ -38,12 +41,14 @@ export class Metadata {
         return Metadata.fromReader(reader);
     }
 
+    /** Serialize metadata to raw bytes. */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
+    /** Encode metadata to a hex string. */
     toString(): string {
         return hex.encode(this.serialize());
     }
@@ -56,6 +61,7 @@ export class Metadata {
         return new TextDecoder().decode(this.value);
     }
 
+    /** Validate the metadata key and value. */
     validate(): void {
         if (this.key.length === 0) {
             throw new Error("missing metadata key");
@@ -65,6 +71,7 @@ export class Metadata {
         }
     }
 
+    /** Decode metadata from a buffer reader. */
     static fromReader(reader: BufferReader): Metadata {
         let key: Uint8Array;
         let value: Uint8Array;
@@ -86,6 +93,7 @@ export class Metadata {
         return md;
     }
 
+    /** Serialize metadata into an existing buffer writer. */
     serializeTo(writer: BufferWriter): void {
         writer.writeVarSlice(this.key);
         writer.writeVarSlice(this.value);
@@ -99,6 +107,7 @@ export class MetadataList {
 
     constructor(readonly items: Metadata[]) {}
 
+    /** Create a metadata list from its hex string form. */
     static fromString(s: string): MetadataList {
         let buf: Uint8Array;
         try {
@@ -109,6 +118,7 @@ export class MetadataList {
         return MetadataList.fromBytes(buf);
     }
 
+    /** Decode a metadata list from its serialized bytes. */
     static fromBytes(buf: Uint8Array): MetadataList {
         if (!buf || buf.length === 0) {
             throw new Error("missing metadata list");
@@ -117,6 +127,7 @@ export class MetadataList {
         return MetadataList.fromReader(reader);
     }
 
+    /** Decode a metadata list from a buffer reader. */
     static fromReader(reader: BufferReader): MetadataList {
         const count = Number(reader.readVarUint());
         const items = Array.from({ length: count }, () =>
@@ -125,6 +136,7 @@ export class MetadataList {
         return new MetadataList(items);
     }
 
+    /** Serialize the metadata list into an existing buffer writer. */
     serializeTo(writer: BufferWriter): void {
         writer.writeVarUint(this.items.length);
         for (const item of this) {
@@ -132,12 +144,14 @@ export class MetadataList {
         }
     }
 
+    /** Serialize the metadata list to raw bytes. */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
+    /** Iterate through metadata entries in insertion order. */
     [Symbol.iterator](): Iterator<Metadata> {
         return this.items[Symbol.iterator]();
     }
@@ -146,6 +160,7 @@ export class MetadataList {
         return this.items.length;
     }
 
+    /** Compute the tagged Merkle root for the metadata list. */
     hash(): Uint8Array {
         if (this.items.length === 0) throw new Error("missing metadata list");
         const levels = buildMetadataMerkleTree(this.items);

@@ -25,22 +25,86 @@ export type ExplorerTransaction = {
 };
 
 export interface OnchainProvider {
+    /**
+     * Fetch spendable onchain outputs for an address.
+     *
+     * @param address - Bitcoin address to query
+     * @returns Spendable onchain outputs for the address
+     * @see Coin
+     */
     getCoins(address: string): Promise<Coin[]>;
+
+    /**
+     * Fetch the current fastest fee rate estimate.
+     *
+     * @returns Fee rate in sats/vB, if available
+     * @remarks
+     * Implementations may return `undefined` when the backing service does not expose
+     * a usable fee estimate.
+     */
     getFeeRate(): Promise<number | undefined>;
+
+    /**
+     * Broadcast a single transaction or a 1P1C package.
+     *
+     * @param txs - One or more raw transaction hex strings
+     * @returns Broadcast transaction id
+     * @throws Error if the broadcast request fails or the package shape is invalid
+     */
     broadcastTransaction(...txs: string[]): Promise<string>;
+
+    /**
+     * Fetch outspend information for every output in a transaction.
+     *
+     * @param txid - Transaction id to inspect
+     * @returns Per-output spend status information
+     * @see getTxStatus
+     */
     getTxOutspends(txid: string): Promise<{ spent: boolean; txid: string }[]>;
+
+    /**
+     * Fetch transactions associated with an address.
+     *
+     * @param address - Bitcoin address to query
+     * @returns Transactions involving the address
+     * @see ExplorerTransaction
+     */
     getTransactions(address: string): Promise<ExplorerTransaction[]>;
+
+    /**
+     * Fetch confirmation status for a transaction.
+     *
+     * @param txid - Transaction id to inspect
+     * @returns Confirmation status and block metadata when confirmed
+     * @see getTxOutspends
+     */
     getTxStatus(
         txid: string
     ): Promise<
         | { confirmed: false }
         | { confirmed: true; blockTime: number; blockHeight: number }
     >;
+    /**
+     * Fetch the current chain tip.
+     *
+     * @returns Current chain height, block time, and block hash
+     */
     getChainTip(): Promise<{
         height: number;
         time: number;
         hash: string;
     }>;
+
+    /**
+     * Watch a set of addresses and invoke the callback when transactions are observed.
+     *
+     * @param addresses - Addresses to monitor
+     * @param eventCallback - Callback invoked when matching transactions are seen
+     * @returns Stop function that cancels the watch
+     * @remarks
+     * Implementations may use websockets, server-sent events, polling, or a hybrid strategy.
+     * @see getTransactions
+     */
     watchAddresses(
         addresses: string[],
         eventCallback: (txs: ExplorerTransaction[]) => void
@@ -49,11 +113,12 @@ export interface OnchainProvider {
 
 /**
  * Implementation of the onchain provider interface for esplora REST API.
+ *
  * @see https://mempool.space/docs/api/rest
  * @example
  * ```typescript
  * const provider = new EsploraProvider("https://mempool.space/api");
- * const utxos = await provider.getCoins("bcrt1q679zsd45msawvr7782r0twvmukns3drlstjt77");
+ * const outputs = await provider.getCoins("bcrt1q679zsd45msawvr7782r0twvmukns3drlstjt77");
  * ```
  */
 export class EsploraProvider implements OnchainProvider {
@@ -63,9 +128,10 @@ export class EsploraProvider implements OnchainProvider {
     constructor(
         private baseUrl: string,
         opts?: {
-            // polling interval in milliseconds
+            /** Polling interval in milliseconds. */
             pollingInterval?: number;
-            // if true, will force polling even if websocket is available
+
+            /** Force polling even when websocket transport is available. */
             forcePolling?: boolean;
         }
     ) {

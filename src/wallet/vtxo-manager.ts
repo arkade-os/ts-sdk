@@ -20,7 +20,7 @@ import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
 
 /**
- * Extended wallet interface for boarding UTXO sweep operations.
+ * Extended wallet interface for boarding input sweep operations.
  * These properties exist on the concrete Wallet class but not on IWallet.
  */
 interface SweepCapableWallet extends IReadonlyWallet {
@@ -29,7 +29,12 @@ interface SweepCapableWallet extends IReadonlyWallet {
     network: Network;
 }
 
-/** Type guard to check if a wallet has the properties needed for sweep operations. */
+/**
+ * Return whether a wallet exposes the properties required for boarding input sweep operations.
+ *
+ * @param wallet - Wallet to inspect
+ * @returns `true` when the wallet supports boarding input sweep operations.
+ */
 function isSweepCapable(
     wallet: IWallet
 ): wallet is IWallet & SweepCapableWallet {
@@ -40,7 +45,12 @@ function isSweepCapable(
     );
 }
 
-/** Asserts that the wallet supports sweep operations, throwing a clear error if not. */
+/**
+ * Assert that the wallet supports boarding input sweep operations.
+ *
+ * @param wallet - Wallet to inspect
+ * @throws Error if the wallet does not support boarding input sweep operations.
+ */
 function assertSweepCapable(
     wallet: IWallet
 ): asserts wallet is IWallet & SweepCapableWallet {
@@ -51,25 +61,36 @@ function assertSweepCapable(
     }
 }
 
-export const DEFAULT_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
-export const DEFAULT_THRESHOLD_SECONDS = 3 * 24 * 60 * 60; // 3 days
+/** Default renewal threshold in seconds (3 days). */
+export const DEFAULT_THRESHOLD_SECONDS = 3 * 24 * 60 * 60;
 
 /**
- * Configuration options for automatic VTXO renewal
- * @deprecated Use SettlementConfig instead
+ * Default renewal threshold in milliseconds (3 days).
+ */
+export const DEFAULT_THRESHOLD_MS = DEFAULT_THRESHOLD_SECONDS * 1000;
+
+/**
+ * Configuration options for automatic virtual output renewal
+ *
+ * @see DEFAULT_RENEWAL_CONFIG
+ * @deprecated Leave `renewalConfig` undefined and use `settlementConfig` instead.
+ * @see SettlementConfig
  */
 export interface RenewalConfig {
     /**
      * Enable automatic renewal monitoring
-     * @default false
+     *
+     * @defaultValue `false`
+     * @deprecated Explicitly set `settlementConfig` to `false` to disable VTXO renewal.
      */
     enabled?: boolean;
 
     /**
      * Threshold in milliseconds to use as threshold for renewal
-     * E.g., 86400000 means renew when 24 hours until expiry remains
-     * @default 86400000 (24 hours)
-     * @deprecated Use SettlementConfig.vtxoThreshold (in seconds) instead
+     * E.g., 86_400_000 means renew when 24 hours until expiry remains
+     *
+     * @defaultValue `259_200_000` (3 days).
+     * @deprecated Use `SettlementConfig.vtxoThreshold` (in seconds) instead.
      */
     thresholdMs?: number;
 }
@@ -78,70 +99,82 @@ export interface RenewalConfig {
  * Configuration for automatic settlement and renewal.
  *
  * Controls two behaviors:
- * 1. **VTXO renewal**: Automatically renew VTXOs that are close to expiry
- * 2. **Boarding UTXO sweep**: Sweep expired boarding UTXOs back to a fresh boarding address
- *    via the unilateral exit path (on-chain self-spend to restart the timelock)
+ * 1. **VTXO renewal**: Automatically renew virtual outputs that are close to expiry
+ * 2. **Boarding UTXO sweep**: Sweep expired boarding inputs back to a fresh boarding address
+ *    via the unilateral exit path (onchain self-spend to restart the timelock)
  *
  * Enabled by default when no config is provided.
  * Pass `false` to explicitly disable all settlement behavior.
  *
+ * @remarks
+ * VTXO renewal and boarding UTXO sweep are both coordinated by `VtxoManager`, which periodically
+ * inspects wallet virtual outputs and boarding inputs and decides whether action is needed.
+ *
+ * @see DEFAULT_SETTLEMENT_CONFIG
+ *
  * @example
  * ```typescript
- * // Default behavior: VTXO renewal at 3 days + boarding sweep enabled
+ * // Default behavior: virtual output renewal at 3 days, boarding sweep enabled, polling every minute
  * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('...'),
- *   arkServerUrl: 'https://ark.example.com',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+ *   arkServerUrl: 'https://arkade.computer',
  * });
  *
- * // Custom threshold
+ * // Custom expiry threshold of 24 hours
  * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('...'),
- *   arkServerUrl: 'https://ark.example.com',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+ *   arkServerUrl: 'https://arkade.computer',
  *   settlementConfig: {
- *     vtxoThreshold: 86400, // 24 hours in seconds
+ *     vtxoThreshold: 60 * 60 * 24, // 24 hours in seconds
  *   },
  * });
  *
  * // Explicitly disable
  * const wallet = await Wallet.create({
- *   identity: SingleKey.fromHex('...'),
- *   arkServerUrl: 'https://ark.example.com',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+ *   arkServerUrl: 'https://arkade.computer',
  *   settlementConfig: false,
  * });
  * ```
  */
 export interface SettlementConfig {
     /**
-     * Seconds before VTXO expiry to trigger renewal.
-     * @default 259200 (3 days)
+     * Seconds before virtual output expiry to trigger renewal.
+     *
+     * @defaultValue `259_200` (3 days)
      */
     vtxoThreshold?: number;
 
     /**
-     * Sweep expired boarding UTXOs back to a fresh boarding address
-     * via the unilateral exit path (on-chain self-spend to restart the timelock).
+     * Sweep expired boarding inputs back to a fresh boarding address
+     * via the unilateral exit path (onchain self-spend to restart the timelock).
      *
-     * When enabled, expired boarding UTXOs are batched into a single on-chain transaction
-     * with multiple inputs and one output. A dust check ensures the sweep is only
-     * performed when the output after fees is above dust.
+     * When enabled, expired boarding inputs are batched into a single onchain
+     * transaction with multiple inputs and one output.
      *
-     * @default true
+     * A dust check ensures the sweep is only performed when the output
+     * after fees is above dust.
+     *
+     * @defaultValue `true`
      */
     boardingUtxoSweep?: boolean;
 
     /**
-     * Polling interval in milliseconds for checking boarding UTXOs.
-     * The poll loop auto-settles new boarding UTXOs into Ark and
+     * Polling interval in milliseconds for checking boarding inputs.
+     * The poll loop auto-settles new boarding inputs into Arkade and
      * sweeps expired ones (when boardingUtxoSweep is enabled).
      *
-     * @default 60000 (1 minute)
+     * @defaultValue `60_000` (1 minute)
      */
     pollIntervalMs?: number;
 }
 
 /**
- * Default renewal configuration values
- * @deprecated Use DEFAULT_SETTLEMENT_CONFIG instead
+ * Default renewal configuration values.
+ *
+ * @see RenewalConfig
+ * @deprecated Leave `renewalConfig` undefined and use `settlementConfig` instead.
+ * @see SettlementConfig
  */
 export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
     {
@@ -149,7 +182,18 @@ export const DEFAULT_RENEWAL_CONFIG: Required<Omit<RenewalConfig, "enabled">> =
     };
 
 /**
- * Default settlement configuration values
+ * Default settlement configuration values.
+ *
+ * @see SettlementConfig
+ *
+ * @example
+ * ```typescript
+ * const wallet = await Wallet.create({
+ *   identity,
+ *   arkServerUrl: 'https://arkade.computer',
+ *   settlementConfig: DEFAULT_SETTLEMENT_CONFIG,
+ * })
+ * ```
  */
 export const DEFAULT_SETTLEMENT_CONFIG: Required<SettlementConfig> = {
     vtxoThreshold: DEFAULT_THRESHOLD_SECONDS,
@@ -163,27 +207,27 @@ function getDustAmount(wallet: IWallet): bigint {
 }
 
 /**
- * Filter VTXOs that are recoverable (swept and still spendable, or preconfirmed subdust)
+ * Filter virtual outputs that are recoverable (swept and still spendable, or preconfirmed subdust)
  *
  * Recovery strategy:
- * - Always recover swept VTXOs (they've been taken by the server)
- * - Only recover subdust preconfirmed VTXOs (to avoid locking liquidity on settled VTXOs with long expiry)
+ * - Always recover swept virtual outputs (they've been taken by the server)
+ * - Only recover subdust preconfirmed virtual outputs (to avoid locking liquidity on settled virtual outputs with long expiry)
  *
- * @param vtxos - Array of virtual coins to check
+ * @param vtxos - Array of virtual outputs to check
  * @param dustAmount - Dust threshold to identify subdust
- * @returns Array of recoverable VTXOs
+ * @returns Array of recoverable virtual outputs
  */
 function getRecoverableVtxos(
     vtxos: ExtendedVirtualCoin[],
     dustAmount: bigint
 ): ExtendedVirtualCoin[] {
     return vtxos.filter((vtxo) => {
-        // Always recover swept VTXOs
+        // Always recover swept virtual outputs
         if (isRecoverable(vtxo)) {
             return true;
         }
 
-        // also include vtxos that are not swept but expired
+        // also include virtual outputs that are not swept but expired
         if (isSpendable(vtxo) && isExpired(vtxo)) {
             return true;
         }
@@ -201,14 +245,14 @@ function getRecoverableVtxos(
 }
 
 /**
- * Get recoverable VTXOs including subdust coins if the total value exceeds dust threshold.
+ * Get recoverable virtual outputs including subdust outputs if the total value exceeds dust threshold.
  *
- * Decision is based on the combined total of ALL recoverable VTXOs (regular + subdust),
+ * Decision is based on the combined total of ALL recoverable virtual outputs (regular + subdust),
  * not just the subdust portion alone.
  *
- * @param vtxos - Array of virtual coins to check
+ * @param vtxos - Array of virtual outputs to check
  * @param dustAmount - Dust threshold amount in satoshis
- * @returns Object containing recoverable VTXOs and whether subdust should be included
+ * @returns Object containing recoverable virtual outputs and whether subdust should be included
  */
 function getRecoverableWithSubdust(
     vtxos: ExtendedVirtualCoin[],
@@ -260,11 +304,11 @@ function getRecoverableWithSubdust(
 }
 
 /**
- * Check if a VTXO is expiring soon based on threshold
+ * Check if a virtual output is expiring soon based on threshold
  *
- * @param vtxo - The virtual coin to check
+ * @param vtxo - The virtual output to check
  * @param thresholdMs - Threshold in milliseconds from now
- * @returns true if VTXO expires within threshold, false otherwise
+ * @returns true if virtual output expires within threshold, false otherwise
  */
 export function isVtxoExpiringSoon(
     vtxo: ExtendedVirtualCoin,
@@ -292,12 +336,12 @@ export function isVtxoExpiringSoon(
 }
 
 /**
- * Filter VTXOs that are expiring soon or are recoverable/subdust
+ * Filter virtual outputs that are expiring soon or are recoverable/subdust
  *
- * @param vtxos - Array of virtual coins to check
+ * @param vtxos - Array of virtual outputs to check
  * @param thresholdMs - Threshold in milliseconds from now
  * @param dustAmount - Dust threshold amount in satoshis
- * @returns Array of VTXOs expiring within threshold
+ * @returns Array of virtual outputs expiring within threshold
  */
 export function getExpiringAndRecoverableVtxos(
     vtxos: ExtendedVirtualCoin[],
@@ -314,26 +358,34 @@ export function getExpiringAndRecoverableVtxos(
 }
 
 /**
- * VtxoManager is a unified class for managing VTXO lifecycle operations including
- * recovery of swept/expired VTXOs and renewal to prevent expiration.
+ * VtxoManager is a unified class for managing virtual output lifecycle operations including
+ * recovery of swept/expired virtual outputs and renewal to prevent expiration.
  *
  * Key Features:
- * - **Recovery**: Reclaim swept or expired VTXOs back to the wallet
- * - **Renewal**: Refresh VTXO expiration time before they expire
- * - **Smart subdust handling**: Automatically includes subdust VTXOs when economically viable
- * - **Expiry monitoring**: Check for VTXOs that are expiring soon
+ * - **Recovery**: Reclaim swept or expired virtual outputs back to the wallet
+ * - **Renewal**: Refresh virtual output expiration time before they expire
+ * - **Smart subdust handling**: Automatically includes subdust virtual outputs when economically viable
+ * - **Expiry monitoring**: Check for virtual outputs that are expiring soon
  *
- * VTXOs become recoverable when:
- * - The Ark server sweeps them (virtualStatus.state === "swept") and they remain spendable
- * - They are preconfirmed subdust (to consolidate small amounts without locking liquidity on settled VTXOs)
+ * Virtual outputs become recoverable when:
+ * - The Arkade server sweeps them (virtualStatus.state === "swept") and they remain spendable
+ * - They are preconfirmed subdust (to consolidate small amounts without locking liquidity on settled virtual outputs)
  *
  * @example
  * ```typescript
- * // Initialize with renewal config
- * const manager = new VtxoManager(wallet, {
- *   enabled: true,
- *   thresholdMs: 86400000
+ * const wallet = await Wallet.create({
+ *   identity,
+ *   arkServerUrl: 'https://arkade.computer',
+ *   settlementConfig: {
+ *      // Seconds before virtual output expiry to trigger renewal
+ *      vtxoThreshold: 259_200, // 3 days
+ *      // Whether to sweep expired boarding inputs back to a fresh boarding address
+ *      boardingUtxoSweep: true,
+ *      // Polling interval in milliseconds for checking boarding inputs
+ *      pollIntervalMs: 60_000 // 1 minute
+ *  },
  * });
+ * const manager = await wallet.getVtxoManager();
  *
  * // Check recoverable balance
  * const balance = await manager.getRecoverableBalance();
@@ -342,10 +394,10 @@ export function getExpiringAndRecoverableVtxos(
  *   const txid = await manager.recoverVtxos();
  * }
  *
- * // Check for expiring VTXOs
+ * // Check for expiring virtual outputs
  * const expiring = await manager.getExpiringVtxos();
  * if (expiring.length > 0) {
- *   console.log(`${expiring.length} VTXOs expiring soon`);
+ *   console.log(`${expiring.length} virtual outputs expiring soon`);
  *   const txid = await manager.renewVtxos();
  * }
  * ```
@@ -431,24 +483,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     // ========== Recovery Methods ==========
 
     /**
-     * Recover swept/expired VTXOs by settling them back to the wallet's Ark address.
+     * Recover swept/expired virtual outputs by settling them back to the wallet's Arkade address.
      *
      * This method:
-     * 1. Fetches all VTXOs (including recoverable ones)
-     * 2. Filters for swept but still spendable VTXOs and preconfirmed subdust
-     * 3. Includes subdust VTXOs if the total value >= dust threshold
-     * 4. Settles everything back to the wallet's Ark address
+     * 1. Fetches all virtual outputs (including recoverable ones)
+     * 2. Filters for swept but still spendable virtual outputs and preconfirmed subdust
+     * 3. Includes subdust virtual outputs if the total value >= dust threshold
+     * 4. Settles everything back to the wallet's Arkade address
      *
-     * Note: Settled VTXOs with long expiry are NOT recovered to avoid locking liquidity unnecessarily.
+     * Note: Settled virtual outputs with long expiry are NOT recovered to avoid locking liquidity unnecessarily.
      * Only preconfirmed subdust is recovered to consolidate small amounts.
      *
      * @param eventCallback - Optional callback to receive settlement events
      * @returns Settlement transaction ID
-     * @throws Error if no recoverable VTXOs found
+     * @throws Error if no recoverable virtual outputs found
      *
      * @example
      * ```typescript
-     * const manager = new VtxoManager(wallet);
+     * const manager = await wallet.getVtxoManager();
      *
      * // Simple recovery
      * const txid = await manager.recoverVtxos();
@@ -462,7 +514,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     async recoverVtxos(
         eventCallback?: (event: SettlementEvent) => void
     ): Promise<string> {
-        // Get all VTXOs including recoverable ones
+        // Get all virtual outputs including recoverable ones
         const allVtxos = await this.wallet.getVtxos({
             withRecoverable: true,
             withUnrolled: false,
@@ -471,7 +523,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         // Get dust amount from wallet
         const dustAmount = getDustAmount(this.wallet);
 
-        // Filter recoverable VTXOs and handle subdust logic
+        // Filter recoverable virtual outputs and handle subdust logic
         const { vtxosToRecover, totalAmount } = getRecoverableWithSubdust(
             allVtxos,
             dustAmount
@@ -483,7 +535,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const arkAddress = await this.wallet.getAddress();
 
-        // Settle all recoverable VTXOs back to the wallet
+        // Settle all recoverable virtual outputs back to the wallet
         return this.wallet.settle(
             {
                 inputs: vtxosToRecover,
@@ -507,13 +559,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      *
      * @example
      * ```typescript
-     * const manager = new VtxoManager(wallet);
+     * const manager = await wallet.getVtxoManager();
      * const balance = await manager.getRecoverableBalance();
      *
      * if (balance.recoverable > 0n) {
      *   console.log(`You can recover ${balance.recoverable} sats`);
      *   if (balance.includesSubdust) {
-     *     console.log(`This includes ${balance.subdust} sats from subdust VTXOs`);
+     *     console.log(`This includes ${balance.subdust} sats from subdust virtual outputs`);
      *   }
      * }
      * ```
@@ -550,17 +602,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     // ========== Renewal Methods ==========
 
     /**
-     * Get VTXOs that are expiring soon based on renewal configuration
+     * Get virtual outputs that are expiring soon based on renewal configuration
      *
      * @param thresholdMs - Optional override for threshold in milliseconds
-     * @returns Array of expiring VTXOs, empty array if renewal is disabled or no VTXOs expiring
+     * @returns Array of expiring virtual outputs, empty array if renewal is disabled or no virtual outputs expiring
      *
      * @example
      * ```typescript
-     * const manager = new VtxoManager(wallet, { enabled: true, thresholdMs: 86400000 });
+     * const wallet = await Wallet.create({
+     *  identity,
+     *  arkServerUrl: 'https://arkade.computer',
+     *  settlementConfig: {
+     *      vtxoThreshold: 86_400 // 24 hours
+     *  },
+     * });
+     * const manager = await wallet.getVtxoManager();
      * const expiringVtxos = await manager.getExpiringVtxos();
      * if (expiringVtxos.length > 0) {
-     *   console.log(`${expiringVtxos.length} VTXOs expiring soon`);
+     *   console.log(`${expiringVtxos.length} virtual outputs expiring soon`);
      * }
      * ```
      */
@@ -598,20 +657,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Renew expiring VTXOs by settling them back to the wallet's address
+     * Renew expiring virtual outputs by settling them back to the wallet's address
      *
-     * This method collects all expiring spendable VTXOs (including recoverable ones) and settles
+     * This method collects all expiring spendable virtual outputs (including recoverable ones) and settles
      * them back to the wallet, effectively refreshing their expiration time. This is the
-     * primary way to prevent VTXOs from expiring.
+     * primary way to prevent virtual outputs from expiring.
      *
      * @param eventCallback - Optional callback for settlement events
      * @returns Settlement transaction ID
-     * @throws Error if no VTXOs available to renew
+     * @throws Error if no virtual outputs available to renew
      * @throws Error if total amount is below dust threshold
      *
      * @example
      * ```typescript
-     * const manager = new VtxoManager(wallet);
+     * const manager = await wallet.getVtxoManager();
      *
      * // Simple renewal
      * const txid = await manager.renewVtxos();
@@ -632,7 +691,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         this.renewalInProgress = true;
 
         try {
-            // Get all VTXOs (including recoverable ones)
+            // Get all virtual outputs (including recoverable ones)
             // Use default threshold to bypass settlementConfig gate (manual API should always work)
             const vtxos = await this.getExpiringVtxos(
                 this.settlementConfig !== false &&
@@ -681,22 +740,22 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
     }
 
-    // ========== Boarding UTXO Sweep Methods ==========
+    // ========== Boarding Input Sweep Methods ==========
 
     /**
-     * Get boarding UTXOs whose timelock has expired.
+     * Get boarding inputs whose timelock has expired.
      *
-     * These UTXOs can no longer be onboarded cooperatively via `settle()` and
+     * These inputs can no longer be onboarded cooperatively via `settle()` and
      * must be swept back to a fresh boarding address using the unilateral exit path.
      *
-     * @returns Array of expired boarding UTXOs
+     * @returns Array of expired boarding inputs
      *
      * @example
      * ```typescript
-     * const manager = new VtxoManager(wallet);
+     * const manager = await wallet.getVtxoManager();
      * const expired = await manager.getExpiredBoardingUtxos();
      * if (expired.length > 0) {
-     *   console.log(`${expired.length} expired boarding UTXOs to sweep`);
+     *   console.log(`${expired.length} expired boarding inputs to sweep`);
      * }
      * ```
      */
@@ -720,31 +779,36 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Sweep expired boarding UTXOs back to a fresh boarding address via
-     * the unilateral exit path (on-chain self-spend).
+     * Sweep expired boarding inputs back to a fresh boarding address via
+     * the unilateral exit path (onchain self-spend).
      *
-     * This builds a raw on-chain transaction that:
-     * - Uses all expired boarding UTXOs as inputs (spent via the CSV exit script path)
+     * This builds a raw onchain transaction that:
+     * - Uses all expired boarding inputs as inputs (spent via the CSV exit script path)
      * - Has a single output to the wallet's boarding address (restarts the timelock)
-     * - Batches multiple expired UTXOs into one transaction
+     * - Batches multiple expired boarding inputs into one transaction
      * - Skips the sweep if the output after fees would be below dust
      *
-     * No Ark server involvement is needed — this is a pure on-chain transaction.
+     * No Arkade server involvement is needed — this is a pure onchain transaction.
      *
      * @returns The broadcast transaction ID
-     * @throws Error if no expired boarding UTXOs found
+     * @throws Error if no expired boarding inputs are found
      * @throws Error if output after fees is below dust (not economical to sweep)
-     * @throws Error if boarding UTXO sweep is not enabled in settlementConfig
+     * @throws Error if boarding input sweep is not enabled in settlementConfig
      *
      * @example
      * ```typescript
-     * const manager = new VtxoManager(wallet, undefined, {
-     *   boardingUtxoSweep: true,
+     * const wallet = await Wallet.create({
+     *   identity,
+     *   arkServerUrl: 'https://arkade.computer',
+     *   settlementConfig: {
+     *     boardingUtxoSweep: true,
+     *   },
      * });
+     * const manager = await wallet.getVtxoManager();
      *
      * try {
      *   const txid = await manager.sweepExpiredBoardingUtxos();
-     *   console.log('Swept expired boarding UTXOs:', txid);
+     *   console.log('Swept expired boarding inputs:', txid);
      * } catch (e) {
      *   console.log('No sweep needed or not economical');
      * }
@@ -764,7 +828,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         const allExpired = await this.getExpiredBoardingUtxos(prefetchedUtxos);
-        // Filter out UTXOs already swept (tx broadcast but not yet confirmed)
+        // Filter out inputs already swept (tx broadcast but not yet confirmed).
         const expiredUtxos = allExpired.filter(
             (u) => !this.sweptBoardingUtxos.has(`${u.txid}:${u.vout}`)
         );
@@ -842,13 +906,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             signedTx.hex
         );
 
-        // Mark UTXOs as swept to prevent duplicate broadcasts on next poll
+        // Mark boarding inputs as swept to prevent duplicate broadcasts on next poll
         for (const u of expiredUtxos) {
             this.sweptBoardingUtxos.add(`${u.txid}:${u.vout}`);
         }
 
         // Mark the sweep output as "known" so the next poll doesn't try to
-        // auto-settle it back into Ark (it lands at the same boarding address).
+        // auto-settle it back into Arkade (it lands at the same boarding address).
         this.knownBoardingUtxos.add(`${txid}:0`);
 
         return txid;
@@ -881,7 +945,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.getSweepWallet().boardingTapscript.pkScript;
     }
 
-    /** Returns the on-chain provider for fee estimation and broadcasting. */
+    /** Returns the onchain provider for fee estimation and broadcasting. */
     private getOnchainProvider() {
         return this.getSweepWallet().onchainProvider;
     }
@@ -901,7 +965,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             return undefined;
         }
 
-        // Start polling for boarding UTXOs independently of contract manager
+        // Start polling for boarding inputs independently of contract manager
         // SSE setup. Use a short delay to let the wallet finish construction.
         this.startupPollTimeoutId = setTimeout(() => {
             if (this.disposed) return;
@@ -935,12 +999,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                                     "No VTXOs available to renew"
                                 )
                             ) {
-                                // Not an error, just no VTXO eligible for renewal.
+                                // Not an error, just no virtual outputs eligible for renewal.
                                 return;
                             }
                             if (e.message.includes("is below dust threshold")) {
                                 // Not an error, just below dust threshold.
-                                // As more VTXOs are received, the threshold will be raised.
+                                // As more virtual outputs are received, the threshold will be raised.
                                 return;
                             }
                             if (
@@ -948,7 +1012,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                                 e.message.includes("VTXO_ALREADY_SPENT") ||
                                 e.message.includes("duplicated input")
                             ) {
-                                // VTXO is already being used in a concurrent
+                                // Virtual output is already being used in a concurrent
                                 // user-initiated operation. Skip silently — the
                                 // wallet's tx lock serializes these, but the
                                 // renewal will retry on the next cycle.
@@ -988,8 +1052,8 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
     /**
      * Starts a polling loop that:
-     * 1. Auto-settles new boarding UTXOs into Ark
-     * 2. Sweeps expired boarding UTXOs (when boardingUtxoSweep is enabled)
+     * 1. Auto-settles new boarding inputs into Arkade
+     * 2. Sweeps expired boarding inputs (when boardingUtxoSweep is enabled)
      *
      * Uses setTimeout chaining (not setInterval) so a slow/blocked poll
      * cannot stack up and the next delay can incorporate backoff.
@@ -1008,7 +1072,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     private async pollBoardingUtxos(): Promise<void> {
-        // Guard: wallet must support boarding UTXO + sweep operations
+        // Guard: wallet must support boarding input + sweep operations
         if (!isSweepCapable(this.wallet)) return;
         // Skip if disposed or a previous poll is still running
         if (this.disposed) return;
@@ -1023,12 +1087,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         let hadError = false;
 
         try {
-            // Fetch boarding UTXOs once for the entire poll cycle so that
+            // Fetch boarding inputs once for the entire poll cycle so that
             // settle and sweep don't each hit the network independently.
             const boardingUtxos = await this.wallet.getBoardingUtxos();
 
-            // Settle new (unexpired) UTXOs first, then sweep expired ones.
-            // Sequential to avoid racing for the same UTXOs.
+            // Settle new (unexpired) boarding inputs first, then sweep expired ones.
+            // Sequential to avoid racing for the same inputs.
             try {
                 await this.settleBoardingUtxos(boardingUtxos);
             } catch (e) {
@@ -1070,7 +1134,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Auto-settle new (unexpired) boarding UTXOs into the Ark.
+     * Auto-settle new (unexpired) boarding inputs into Arkade.
      * Skips UTXOs that are already expired (those are handled by sweep).
      * Only settles UTXOs not already in-flight (tracked in knownBoardingUtxos).
      * UTXOs are marked as known only after a successful settle, so failed
@@ -1079,9 +1143,9 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private async settleBoardingUtxos(
         boardingUtxos: ExtendedCoin[]
     ): Promise<void> {
-        // Exclude expired UTXOs — those should be swept, not settled.
+        // Exclude expired boarding inputs — those should be swept, not settled.
         // If we can't determine expired status, bail out entirely to avoid
-        // accidentally settling expired UTXOs (which would conflict with sweep).
+        // accidentally settling expired inputs (which would conflict with sweep).
         let expiredSet: Set<string>;
         try {
             const boardingTimelock = this.getBoardingTimelock();

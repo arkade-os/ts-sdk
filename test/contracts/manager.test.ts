@@ -34,7 +34,6 @@ describe("ContractManager", () => {
         manager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: {
                 failsafePollIntervalMs: 1000,
@@ -160,7 +159,6 @@ describe("ContractManager", () => {
         const newManager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
         });
 
@@ -199,7 +197,6 @@ describe("ContractManager", () => {
         const newManager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: walletRepo,
         });
 
@@ -245,7 +242,6 @@ describe("ContractManager", () => {
         await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: walletRepo,
         });
 

@@ -1,6 +1,6 @@
 /**
  * Minimal interface for the subset of the Realm API used by the
- * Ark repositories.  Consumers pass their real Realm instance and
+ * Arkade repositories. Consumers pass their real Realm instance and
  * the compiler validates it satisfies this shape.
  */
 
@@ -9,7 +9,7 @@ export interface RealmResults<T = Record<string, unknown>> extends Iterable<T> {
     filtered(query: string, ...args: unknown[]): RealmResults<T>;
 }
 
-/** The Realm API surface used by Ark repositories. */
+/** The Realm API surface used by Arkade repositories. */
 export interface RealmLike {
     write(callback: () => void): void;
     objects<T = Record<string, unknown>>(schemaName: string): RealmResults<T>;

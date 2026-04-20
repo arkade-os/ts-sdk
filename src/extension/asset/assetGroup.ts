@@ -13,11 +13,27 @@ import { Metadata, MetadataList } from "./metadata";
 import { BufferReader, BufferWriter } from "./utils";
 
 /**
- * An asset group contains inputs/outputs and all data related to a given asset id.
+ * An asset group contains inputs, outputs, and all data related to a given asset id.
+ *
+ * @see Packet
+ * @see AssetId
+ * @see AssetRef
+ *
+ * @example
+ * ```typescript
+ * const group = AssetGroup.create(
+ *   null,                              // asset ID: null for new issuance
+ *   null,                              // control asset ID: null when reissuance not needed
+ *   [],                                // asset inputs: empty for new issuance
+ *   [AssetOutput.create(0, 1000)],     // asset outputs: 1000 units at vout index 0
+ *   []                                 // metadata: can be empty
+ * )
+ * ```
  */
 export class AssetGroup {
     private readonly metadataList: MetadataList;
 
+    /** @see create */
     constructor(
         readonly assetId: AssetId | null,
         readonly controlAsset: AssetRef | null,
@@ -28,6 +44,18 @@ export class AssetGroup {
         this.metadataList = new MetadataList(metadata);
     }
 
+    /**
+     * Create and validate an asset group.
+     *
+     * @param assetId - Asset id for this group, or `null` for fresh issuance
+     * @param controlAsset - Optional control asset reference for (re) issuance
+     * @param inputs - Asset inputs in the group
+     * @param outputs - Asset outputs in the group
+     * @param metadata - Metadata entries associated with the group
+     * @returns A validated asset group
+     * @throws Error if the group fails validation
+     * @see validate
+     */
     static create(
         assetId: AssetId | null,
         controlAsset: AssetRef | null,
@@ -46,7 +74,14 @@ export class AssetGroup {
         return ag;
     }
 
-    // from hex encoded
+    /**
+     * Decode an asset group from its hex string form.
+     *
+     * @param s - Hex-encoded asset group
+     * @returns Decoded asset group
+     * @throws Error if the string is not valid hex or does not encode a valid asset group
+     * @see toString
+     */
     static fromString(s: string): AssetGroup {
         let buf: Uint8Array;
         try {
@@ -57,6 +92,13 @@ export class AssetGroup {
         return AssetGroup.fromBytes(buf);
     }
 
+    /**
+     * Decode an asset group from its serialized bytes.
+     *
+     * @param buf - Serialized asset group bytes
+     * @returns Decoded asset group
+     * @throws Error if the buffer is empty or malformed
+     */
     static fromBytes(buf: Uint8Array): AssetGroup {
         if (!buf || buf.length === 0) {
             throw new Error("missing asset group");
@@ -65,13 +107,22 @@ export class AssetGroup {
         return AssetGroup.fromReader(reader);
     }
 
-    // an issuance is a group with null assetId
+    /**
+     * Return true when the group represents an issuance.
+     *
+     * @returns `true` when the group has no asset id
+     */
     isIssuance(): boolean {
         return this.assetId === null;
     }
 
-    // a reissuance is a group that is not an issuance
-    // but where the sum of the outputs is greater than the sum of the inputs
+    /**
+     * Return true when the group represents a reissuance.
+     *
+     * @returns `true` when the group has an asset id and outputs exceed local inputs
+     * @remarks
+     * Only local inputs contribute to the comparison; intent-backed inputs contribute `0` here.
+     */
     isReissuance(): boolean {
         const sumReducer = (s: bigint, { amount }: { amount: bigint }) =>
             s + amount;
@@ -85,6 +136,12 @@ export class AssetGroup {
         return !this.isIssuance() && sumInputs < sumOutputs;
     }
 
+    /**
+     * Serialize the asset group to raw bytes.
+     *
+     * @returns Serialized asset group bytes
+     * @see fromBytes
+     */
     serialize(): Uint8Array {
         this.validate();
         const writer = new BufferWriter();
@@ -92,6 +149,11 @@ export class AssetGroup {
         return writer.toBytes();
     }
 
+    /**
+     * Validate the asset group and its child structures.
+     *
+     * @throws Error if the group is empty or violates issuance invariants
+     */
     validate(): void {
         if (this.inputs.length === 0 && this.outputs.length === 0) {
             throw new Error("empty asset group");
@@ -107,6 +169,13 @@ export class AssetGroup {
         }
     }
 
+    /**
+     * Convert the group into its batch-leaf representation for the given intent txid.
+     *
+     * @param intentTxid - Intent transaction id used to build the leaf input reference
+     * @returns Batch-leaf asset group
+     * @see AssetInput.createIntent
+     */
     toBatchLeafAssetGroup(intentTxid: Uint8Array): AssetGroup {
         const leafInput = AssetInput.createIntent(hex.encode(intentTxid), 0, 0);
         return new AssetGroup(
@@ -118,10 +187,23 @@ export class AssetGroup {
         );
     }
 
+    /**
+     * Encode the asset group to a hex string.
+     *
+     * @returns Hex-encoded asset group
+     * @see fromString
+     */
     toString(): string {
         return hex.encode(this.serialize());
     }
 
+    /**
+     * Decode an asset group from a binary reader.
+     *
+     * @param reader - Reader positioned at an asset group
+     * @returns Decoded asset group
+     * @throws Error if the encoded group is malformed
+     */
     static fromReader(reader: BufferReader): AssetGroup {
         const presence = reader.readByte();
 
@@ -155,6 +237,11 @@ export class AssetGroup {
         return ag;
     }
 
+    /**
+     * Serialize the asset group into an existing binary writer.
+     *
+     * @param writer - Writer to append the asset group to
+     */
     serializeTo(writer: BufferWriter): void {
         let presence = 0;
         if (this.assetId !== null) {

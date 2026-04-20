@@ -25,7 +25,7 @@ export interface DelegateContractParams {
 }
 
 /**
- * Handler for delegate wallet VTXOs.
+ * Handler for delegate wallet virtual outputs.
  *
  * Delegate contracts extend the default tapscript with an additional delegate path:
  * - forfeit: (Alice + Server) multisig for collaborative spending

@@ -4,7 +4,7 @@ import { Bytes } from "@scure/btc-signer/utils";
 
 /**
  * Transaction is a wrapper around the @scure/btc-signer Transaction class.
- * It adds the Ark protocol specific options to the transaction.
+ * It adds the Arkade protocol specific options to the transaction.
  */
 export class Transaction extends BtcSignerTransaction {
     static ARK_TX_OPTS: TxOpts = {

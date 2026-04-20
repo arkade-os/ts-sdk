@@ -4,7 +4,7 @@ import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
 import { hex } from "@scure/base";
 
 /**
- * ArkPsbtFieldKey is the key values for ark psbt fields.
+ * ArkPsbtFieldKey are the available key names for the Arkade PSBT custom fields.
  */
 export enum ArkPsbtFieldKey {
     VtxoTaprootTree = "taptree",
@@ -14,14 +14,14 @@ export enum ArkPsbtFieldKey {
 }
 
 /**
- * ArkPsbtFieldKeyType is the type of the ark psbt field key.
- * Every ark psbt field has key type 222.
+ * ArkPsbtFieldKeyType is the key type of the Arkade PSBT custom field.
+ * Every Arkade PSBT field has key type 222.
  */
 export const ArkPsbtFieldKeyType = 222;
 
 /**
- * ArkPsbtFieldCoder is the coder for the ark psbt fields.
- * each type has its own coder.
+ * ArkPsbtFieldCoder is the coder for the Arkade PSBT custom fields.
+ * Each type has its own coder.
  */
 export interface ArkPsbtFieldCoder<T> {
     key: ArkPsbtFieldKey;
