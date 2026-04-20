@@ -92,19 +92,16 @@ describe("contractPollProcessor", () => {
         expect(indexerProvider.getVtxos).toHaveBeenCalledTimes(3);
         expect(indexerProvider.getVtxos).toHaveBeenNthCalledWith(1, {
             scripts: ["script-a"],
-            spendableOnly: true,
             pageIndex: 0,
             pageSize: 100,
         });
         expect(indexerProvider.getVtxos).toHaveBeenNthCalledWith(2, {
             scripts: ["script-a"],
-            spendableOnly: true,
             pageIndex: 1,
             pageSize: 100,
         });
         expect(indexerProvider.getVtxos).toHaveBeenNthCalledWith(3, {
             scripts: ["script-b"],
-            spendableOnly: true,
             pageIndex: 0,
             pageSize: 100,
         });
