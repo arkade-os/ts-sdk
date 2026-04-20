@@ -18,11 +18,10 @@ import { VirtualCoin } from "../wallet";
 import { extendVtxoFromContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 import {
-    advanceSyncCursors,
-    clearSyncCursors,
+    advanceSyncCursor,
     computeSyncWindow,
     cursorCutoff,
-    getAllSyncCursors,
+    getSyncCursor,
 } from "../utils/syncCursors";
 
 const DEFAULT_PAGE_SIZE = 500;
@@ -270,9 +269,8 @@ export class ContractManager implements IContractManager {
         // Load persisted contracts
         const contracts = await this.config.contractRepository.getContracts();
 
-        // Delta-sync: fetch only virtual outputs that changed since the last cursor,
-        // falling back to a full bootstrap for scripts seen for the first time.
-        await this.deltaSyncContracts(contracts);
+        // Delta-sync: fetch only virtual outputs that changed since the last cursor.
+        await this.syncContracts({ contracts });
 
         // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
         // to catch any that the delta window may have missed.
@@ -363,16 +361,7 @@ export class ContractManager implements IContractManager {
         await this.config.contractRepository.saveContract(contract);
 
         // fetch all virtual outputs (including spent/swept) for this contract
-        const requestStartedAt = Date.now();
         await this.fetchContractVxosFromIndexer([contract], true);
-
-        // Advance the sync cursor so that the watcher's vtxo_received
-        // event (triggered by addContract below) doesn't re-bootstrap
-        // the same script via deltaSyncContracts.
-        const cutoff = cursorCutoff(requestStartedAt);
-        await advanceSyncCursors(this.config.walletRepository, {
-            [contract.script]: cutoff,
-        });
 
         // Add to watcher
         await this.watcher.addContract(contract);
@@ -405,6 +394,7 @@ export class ContractManager implements IContractManager {
         pageSize?: number
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
+        await this.syncContracts({ contracts, pageSize });
         const vtxos = await this.getVtxosForContracts(contracts, pageSize);
         return contracts.map((contract) => ({
             contract,
@@ -588,57 +578,18 @@ export class ContractManager implements IContractManager {
     /**
      * Force refresh virtual outputs from the indexer.
      *
-     * Without options, clears all sync cursors and re-fetches every contract.
+     * Without options, re-fetches every contract.
      * With options, narrows the refresh to specific scripts and/or a time window.
+     * The cursor is updated only if
      */
     async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
-        let contracts = await this.config.contractRepository.getContracts();
-
-        if (opts?.scripts && opts.scripts.length > 0) {
-            const scriptSet = new Set(opts.scripts);
-            contracts = contracts.filter((c) => scriptSet.has(c.script));
-        }
-
-        const syncWindow =
-            opts?.after !== undefined || opts?.before !== undefined
-                ? {
-                      after: opts.after ?? 0,
-                      before: opts.before ?? Date.now(),
-                  }
-                : undefined;
-
-        if (!syncWindow) {
-            // Full refresh — clear cursors so the next delta sync re-bootstraps.
-            if (opts?.scripts && opts.scripts.length > 0) {
-                await clearSyncCursors(
-                    this.config.walletRepository,
-                    opts.scripts
-                );
-            } else {
-                await clearSyncCursors(this.config.walletRepository);
-            }
-        }
-
-        const requestStartedAt = Date.now();
-        const fetched = await this.fetchContractVxosFromIndexer(
+        const contracts = opts?.scripts
+            ? await this.getContracts({ script: opts?.scripts })
+            : undefined;
+        await this.syncContracts({
             contracts,
-            true,
-            undefined,
-            syncWindow
-        );
-
-        // Persist cursors so subsequent incremental syncs don't re-bootstrap.
-        const cutoff = cursorCutoff(requestStartedAt);
-        const cursorUpdates: Record<string, number> = {};
-        for (const script of fetched.keys()) {
-            cursorUpdates[script] = cutoff;
-        }
-        if (Object.keys(cursorUpdates).length > 0) {
-            await advanceSyncCursors(
-                this.config.walletRepository,
-                cursorUpdates
-            );
-        }
+            window: { after: opts?.after, before: opts?.before },
+        });
     }
 
     /**
@@ -669,7 +620,7 @@ export class ContractManager implements IContractManager {
             // Delta-sync only the changed virtual outputs for this contract.
             case "vtxo_received":
             case "vtxo_spent":
-                await this.deltaSyncContracts([event.contract]);
+                await this.syncContracts({ contracts: [event.contract] });
                 break;
             case "connection_reset": {
                 // After a reconnect we don't know what we missed — full refetch.
@@ -696,6 +647,7 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         pageSize?: number
     ): Promise<Map<string, ContractVtxo[]>> {
+        // TODO: very similar to synccontracts
         if (contracts.length === 0) {
             return new Map();
         }
@@ -712,68 +664,34 @@ export class ContractManager implements IContractManager {
      * Uses per-script cursors to fetch only what changed since the last sync.
      * Scripts without a cursor are bootstrapped with a full fetch.
      */
-    private async deltaSyncContracts(
-        contracts: Contract[],
-        pageSize?: number
-    ): Promise<Map<string, ContractVtxo[]>> {
-        if (contracts.length === 0) return new Map();
+    private async syncContracts(options: {
+        contracts?: Contract[];
+        pageSize?: number;
+        // Overrides the cursor
+        window?: { after?: number; before?: number };
+    }): Promise<Map<string, ContractVtxo[]>> {
+        const cursor = await getSyncCursor(this.config.walletRepository);
+        const window = options.window ?? computeSyncWindow(cursor);
 
-        const cursors = await getAllSyncCursors(this.config.walletRepository);
+        // IMPORTANT! Only update cursor if we're syncing ALL the contracts and the window overlaps the current cursor
+        const mustUpdateCursor =
+            options.contracts === undefined && (window.after ?? 0) < cursor;
 
-        // Partition into bootstrap (no cursor) and delta (has cursor) groups.
-        const bootstrap: Contract[] = [];
-        const delta: Contract[] = [];
-        for (const c of contracts) {
-            if (cursors[c.script] !== undefined) {
-                delta.push(c);
-            } else {
-                bootstrap.push(c);
-            }
-        }
+        const contracts =
+            options.contracts ??
+            (await this.config.contractRepository.getContracts());
 
-        const result = new Map<string, ContractVtxo[]>();
-        const cursorUpdates: Record<string, number> = {};
+        const requestStartedAt = Date.now();
+        const result = await this.fetchContractVxosFromIndexer(
+            contracts,
+            true,
+            options.pageSize,
+            window
+        );
 
-        // Full bootstrap for new scripts.
-        if (bootstrap.length > 0) {
-            const requestStartedAt = Date.now();
-            const fetched = await this.fetchContractVxosFromIndexer(
-                bootstrap,
-                true
-            );
+        if (mustUpdateCursor) {
             const cutoff = cursorCutoff(requestStartedAt);
-            for (const [script, vtxos] of fetched) {
-                result.set(script, vtxos);
-                cursorUpdates[script] = cutoff;
-            }
-        }
-
-        // Delta sync for scripts with an existing cursor.
-        if (delta.length > 0) {
-            // Use the oldest cursor so the shared window covers every script.
-            const minCursor = Math.min(...delta.map((c) => cursors[c.script]));
-            const window = computeSyncWindow(minCursor);
-            if (window) {
-                const requestStartedAt = Date.now();
-                const fetched = await this.fetchContractVxosFromIndexer(
-                    delta,
-                    true,
-                    pageSize,
-                    window
-                );
-                const cutoff = cursorCutoff(requestStartedAt);
-                for (const [script, vtxos] of fetched) {
-                    result.set(script, vtxos);
-                    cursorUpdates[script] = cutoff;
-                }
-            }
-        }
-
-        if (Object.keys(cursorUpdates).length > 0) {
-            await advanceSyncCursors(
-                this.config.walletRepository,
-                cursorUpdates
-            );
+            await advanceSyncCursor(this.config.walletRepository, cutoff);
         }
 
         return result;

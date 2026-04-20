@@ -2,10 +2,13 @@ import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
 
 export interface WalletState {
     /** Timestamp of the last successful wallet sync, in milliseconds. */
-    lastSyncTime?: number;
+    // lastSyncTime?: number;
 
     /** Arbitrary stored wallet settings. */
     settings?: Record<string, any>;
+
+    /** Lat updated time of VTXOs from the indexer, in milliseconds. */
+    vtxosIndexerUpdatedAt?: number;
 }
 
 /** Stored commitment transaction metadata. */

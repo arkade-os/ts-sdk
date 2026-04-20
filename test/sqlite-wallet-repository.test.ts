@@ -782,7 +782,6 @@ describe("SQLiteWalletRepository", () => {
 
         it("should save and retrieve wallet state", async () => {
             const state: WalletState = {
-                lastSyncTime: 1700000000,
                 settings: { theme: "dark" },
             };
 
@@ -790,35 +789,22 @@ describe("SQLiteWalletRepository", () => {
             const retrieved = await repository.getWalletState();
 
             expect(retrieved).toEqual(state);
-            expect(retrieved?.lastSyncTime).toBe(1700000000);
             expect(retrieved?.settings).toEqual({ theme: "dark" });
         });
 
         it("should update existing wallet state", async () => {
             const state1: WalletState = {
-                lastSyncTime: 1700000000,
                 settings: { theme: "dark" },
             };
             await repository.saveWalletState(state1);
 
             const state2: WalletState = {
-                lastSyncTime: 1700001000,
                 settings: { theme: "light" },
             };
             await repository.saveWalletState(state2);
 
             const retrieved = await repository.getWalletState();
             expect(retrieved?.settings?.theme).toBe("light");
-            expect(retrieved?.lastSyncTime).toBe(1700001000);
-        });
-
-        it("should handle wallet state with only lastSyncTime", async () => {
-            const state: WalletState = { lastSyncTime: 1234567890 };
-            await repository.saveWalletState(state);
-
-            const retrieved = await repository.getWalletState();
-            expect(retrieved?.lastSyncTime).toBe(1234567890);
-            expect(retrieved?.settings).toBeUndefined();
         });
 
         it("should handle wallet state with only settings", async () => {
@@ -828,7 +814,6 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveWalletState(state);
 
             const retrieved = await repository.getWalletState();
-            expect(retrieved?.lastSyncTime).toBeUndefined();
             expect(retrieved?.settings).toEqual({
                 key: "value",
                 nested: { a: 1 },
@@ -854,8 +839,6 @@ describe("SQLiteWalletRepository", () => {
                     1000
                 ),
             ]);
-            await repository.saveWalletState({ lastSyncTime: 1234 });
-
             await repository.clear();
 
             expect(await repository.getVtxos(testAddress)).toEqual([]);

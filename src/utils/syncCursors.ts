@@ -7,7 +7,7 @@ import {
 export const SAFETY_LAG_MS = 30_000;
 
 /** Overlap window so boundary virtual outputs are never missed. */
-export const OVERLAP_MS = 60_000;
+export const OVERLAP_MS = 60 * 60 * 1000;
 
 type SyncCursors = Record<string, number>;
 
@@ -42,100 +42,36 @@ export async function updateWalletState(
 }
 
 /**
- * Read the high-water mark for a single script.
- * Returns `undefined` when the script has never been synced (bootstrap case).
- */
-export async function getSyncCursor(
-    repo: WalletRepository,
-    script: string
-): Promise<number | undefined> {
-    const state = await repo.getWalletState();
-    return (state?.settings?.vtxoSyncCursors as SyncCursors | undefined)?.[
-        script
-    ];
-}
-
-/**
  * Read cursors for every previously-synced script.
  */
-export async function getAllSyncCursors(
-    repo: WalletRepository
-): Promise<SyncCursors> {
+export async function getSyncCursor(repo: WalletRepository): Promise<number> {
     const state = await repo.getWalletState();
-    return (state?.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
-}
-
-/**
- * Advance the cursor for one script after a successful delta sync.
- * `cursor` should be the `before` cutoff used in the request.
- */
-export async function advanceSyncCursor(
-    repo: WalletRepository,
-    script: string,
-    cursor: number
-): Promise<void> {
-    await updateWalletState(repo, (state) => {
-        const existing =
-            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
-        return {
-            ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: { ...existing, [script]: cursor },
-            },
-        };
-    });
+    return state?.vtxosIndexerUpdatedAt ?? 0;
 }
 
 /**
  * Advance cursors for multiple scripts in a single write.
  */
-export async function advanceSyncCursors(
+export async function advanceSyncCursor(
     repo: WalletRepository,
-    updates: Record<string, number>
+    lastUpdatedAt: number
 ): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const existing =
-            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
         return {
             ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: { ...existing, ...updates },
-            },
+            vtxosIndexerUpdatedAt: lastUpdatedAt,
         };
     });
 }
 
 /**
- * Remove sync cursors, forcing a full re-bootstrap on next sync.
- * When `scripts` is provided, only those cursors are cleared.
+ * Remove sync cursor, forcing a full re-bootstrap on next sync.
  */
-export async function clearSyncCursors(
-    repo: WalletRepository,
-    scripts?: string[]
-): Promise<void> {
+export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
     await updateWalletState(repo, (state) => {
-        if (!scripts) {
-            const { vtxoSyncCursors: _, ...restSettings } =
-                state.settings ?? {};
-            return {
-                ...state,
-                settings: restSettings,
-            };
-        }
-        const existing =
-            (state.settings?.vtxoSyncCursors as
-                | Record<string, number>
-                | undefined) ?? {};
-        const filtered = { ...existing };
-        for (const s of scripts) delete filtered[s];
         return {
             ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: filtered,
-            },
+            vtxosIndexerUpdatedAt: undefined,
         };
     });
 }
@@ -148,10 +84,7 @@ export async function clearSyncCursors(
  * created virtual outputs are never excluded. The safety lag is applied only
  * when advancing the cursor (see @see cursorCutoff).
  */
-export function computeSyncWindow(
-    cursor: number | undefined
-): { after: number } | undefined {
-    if (cursor === undefined) return undefined;
+export function computeSyncWindow(cursor: number): { after: number } {
     const after = Math.max(0, cursor - OVERLAP_MS);
     return { after };
 }

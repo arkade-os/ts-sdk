@@ -323,9 +323,6 @@ export class SQLiteWalletRepository implements WalletRepository {
         if (!row) return null;
 
         const state: WalletState = {};
-        if (row.last_sync_time !== null && row.last_sync_time !== undefined) {
-            state.lastSyncTime = row.last_sync_time;
-        }
         if (row.settings_json) {
             state.settings = JSON.parse(row.settings_json);
         }
@@ -338,11 +335,7 @@ export class SQLiteWalletRepository implements WalletRepository {
             `INSERT OR REPLACE INTO ${this.tables.walletState}
                 (key, last_sync_time, settings_json)
              VALUES (?, ?, ?)`,
-            [
-                "state",
-                state.lastSyncTime ?? null,
-                state.settings ? JSON.stringify(state.settings) : null,
-            ]
+            ["state", state.settings ? JSON.stringify(state.settings) : null]
         );
     }
 }

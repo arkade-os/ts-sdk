@@ -226,9 +226,6 @@ export class RealmWalletRepository implements WalletRepository {
 
         const obj = items[0];
         const state: WalletState = {};
-        if (obj.lastSyncTime !== null && obj.lastSyncTime !== undefined) {
-            state.lastSyncTime = obj.lastSyncTime;
-        }
         if (obj.settingsJson) {
             state.settings = JSON.parse(obj.settingsJson);
         }
@@ -242,7 +239,6 @@ export class RealmWalletRepository implements WalletRepository {
                 "ArkWalletState",
                 {
                     key: "state",
-                    lastSyncTime: state.lastSyncTime ?? null,
                     settingsJson: state.settings
                         ? JSON.stringify(state.settings)
                         : null,
