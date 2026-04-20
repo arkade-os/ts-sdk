@@ -94,7 +94,6 @@ describe("Contracts", () => {
             manager = await ContractManager.create({
                 indexerProvider: mockIndexer,
                 contractRepository: repository,
-                getDefaultAddress: async () => "default-address",
                 walletRepository: new InMemoryWalletRepository(),
             });
         });
@@ -146,7 +145,6 @@ describe("Contracts", () => {
             manager = await ContractManager.create({
                 indexerProvider: mockIndexer,
                 contractRepository: repository,
-                getDefaultAddress: async () => "default-address",
                 walletRepository: new InMemoryWalletRepository(),
             });
         });

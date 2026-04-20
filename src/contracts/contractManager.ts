@@ -168,9 +168,6 @@ export interface ContractManagerConfig {
     /** The wallet repository for virtual output storage (single source of truth) */
     walletRepository: WalletRepository;
 
-    /** Function to get the wallet's default Arkade address */
-    getDefaultAddress: () => Promise<string>;
-
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -201,8 +198,6 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
  * const manager = await ContractManager.create({
  *   indexerProvider: wallet.indexerProvider,
  *   contractRepository: wallet.contractRepository,
- *   walletRepository: wallet.walletRepository,
- *   getDefaultAddress: () => wallet.getAddress(),
  * });
  *
  * // Create a new VHTLC contract

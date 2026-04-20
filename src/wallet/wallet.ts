@@ -1090,7 +1090,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
-            getDefaultAddress: () => this.getAddress(),
             watcherConfig: this.watcherConfig,
         });
 
