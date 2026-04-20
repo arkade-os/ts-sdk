@@ -33,6 +33,9 @@ export const ArkVtxoSchema = {
         isUnrolled: "bool",
         isSpent: "bool?",
         assetsJson: "string?",
+        // scriptPubKey (hex) locking this VTXO, indexed so contract-scoped
+        // queries can resolve ownership without touching address mapping.
+        script: { type: "string?", indexed: true },
     },
 } as const;
 

@@ -97,6 +97,7 @@ export class RealmWalletRepository implements WalletRepository {
                             ? JSON.stringify(s.extraWitness)
                             : null,
                         assetsJson: s.assets ? JSON.stringify(s.assets) : null,
+                        script: s.script ?? null,
                     },
                     "modified"
                 );
@@ -286,6 +287,7 @@ function vtxoObjectToDomain(obj: any): ExtendedVirtualCoin {
             ? JSON.parse(obj.extraWitnessJson)
             : undefined,
         assets: obj.assetsJson ? JSON.parse(obj.assetsJson) : undefined,
+        script: obj.script ?? undefined,
     };
 
     return deserializeVtxo(serialized);
