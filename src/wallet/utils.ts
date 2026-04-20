@@ -59,6 +59,33 @@ export function extendVtxoFromContract(
     };
 }
 
+/**
+ * Extend a VirtualCoin with the tap scripts of whichever contract locks it,
+ * falling back to the wallet's default offchain tapscript.
+ *
+ * When the wallet owns multiple contracts (e.g. default + delegate, or
+ * several active vHTLCs) a raw `extendVirtualCoin` call uses only the
+ * default tapscript, which silently overwrites the correct forfeit/intent
+ * data for any VTXO locked to a non-default contract. Resolving by
+ * `vtxo.script` — now always populated by the indexer and persisted —
+ * keeps the extension aligned with the contract that actually owns the
+ * VTXO, which is a correctness requirement before the vtxo is used for
+ * spending or saved back to the repository.
+ */
+export function extendVirtualCoinForContract(
+    wallet: { offchainTapscript: ReadonlyWallet["offchainTapscript"] },
+    vtxo: VirtualCoin,
+    contractsByScript?: ReadonlyMap<string, Contract>
+): ExtendedVirtualCoin {
+    if (vtxo.script && contractsByScript) {
+        const contract = contractsByScript.get(vtxo.script);
+        if (contract) {
+            return extendVtxoFromContract(vtxo, contract);
+        }
+    }
+    return extendVirtualCoin(wallet, vtxo);
+}
+
 export function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
     return hex.encode(randomValue);
