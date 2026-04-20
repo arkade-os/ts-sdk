@@ -288,20 +288,18 @@ class ServiceWorkerAssetManager
  * @example
  * ```typescript
  * // SIMPLE: Recommended approach
- * const identity = SingleKey.fromHex('your_private_key_hex');
  * const wallet = await ServiceWorkerWallet.setup({
  *   serviceWorkerPath: '/service-worker.js',
- *   arkServerUrl: 'https://mutinynet.arkade.sh',
- *   identity
+ *   arkServerUrl: 'https://arkade.computer',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
  * // ADVANCED: Manual setup with service worker control
- * const worker = await setupServiceWorker("/service-worker.js");
- * const identity = SingleKey.fromHex('your_private_key_hex');
+ * const serviceWorker = await setupServiceWorker("/service-worker.js");
  * const wallet = await ServiceWorkerWallet.create({
- *   worker,
- *   identity,
- *   arkServerUrl: 'https://mutinynet.arkade.sh'
+ *   serviceWorker,
+ *   arkServerUrl: 'https://arkade.computer',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
  * // Use like any other wallet
@@ -310,26 +308,62 @@ class ServiceWorkerAssetManager
  * ```
  */
 interface ServiceWorkerWalletOptions {
+    /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
+    /** Base URL of the Arkade server. */
     arkServerUrl: string;
+    /** Optional override for the indexer URL. */
     indexerUrl?: string;
+    /** Optional override for the Esplora API URL. */
     esploraUrl?: string;
+    /**
+     * Repository-backed storage configuration overrides.
+     * Defaults to IndexedDB if unset.
+     */
     storage?: StorageConfig;
+    /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
+    /** Optional delegation service URL. */
     delegatorUrl?: string;
-    // Override the default tag for the messages sent and received from the SW
+    /**
+     * Override the default tag used for messages sent to and received from the service worker.
+     * @see DEFAULT_MESSAGE_TAG
+     */
     walletUpdaterTag?: string;
+    /** Timeout used while bootstrapping the message bus inside the service worker. */
     messageBusTimeoutMs?: number;
+    /** Optional settlement configuration forwarded to the worker wallet. */
     settlementConfig?: SettlementConfig | false;
+    /** Optional contract watcher configuration forwarded to the worker wallet. */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /**
+     * Per-request timeout overrides for wallet-updater messages.
+     * @see DEFAULT_MESSAGE_TIMEOUTS
+     */
     messageTimeouts?: MessageTimeouts;
 }
+
+/**
+ * Options for creating a service-worker wallet with an existing worker instance.
+ *
+ * @see ServiceWorkerReadonlyWallet.create
+ * @see ServiceWorkerWallet.create
+ */
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
+    /** Existing service worker instance used for messaging. */
     serviceWorker: ServiceWorker;
 };
 
+/**
+ * Options for registering a service worker and then creating a wallet around it.
+ *
+ * @see ServiceWorkerReadonlyWallet.setup
+ * @see ServiceWorkerWallet.setup
+ */
 export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
+    /** Path to the service worker script to register. */
     serviceWorkerPath: string;
+    /** Timeout while waiting for the service worker to activate. */
     serviceWorkerActivationTimeoutMs?: number;
 };
 
@@ -432,6 +466,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         return this.messageTimeouts[request.type] ?? 30_000;
     }
 
+    /**
+     * Create a readonly service-worker wallet bound to an already-registered worker.
+     *
+     * @param options - Service worker, identity, and backend configuration
+     * @returns Initialized readonly service-worker wallet
+     * @throws Error if service-worker initialization fails
+     */
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
@@ -517,23 +558,17 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Simplified setup method that handles service worker registration,
-     * identity creation, and wallet initialization automatically.
+     * Simplified setup method that handles service worker registration
+     * and wallet initialization automatically.
+     *
+     * @see ServiceWorkerReadonlyWallet.create
      *
      * @example
      * ```typescript
-     * // One-liner setup - handles everything automatically!
      * const wallet = await ServiceWorkerReadonlyWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh'
-     * });
-     *
-     * // With custom readonly identity
-     * const identity = ReadonlySingleKey.fromPublicKey('your_public_key_hex');
-     * const wallet = await ServiceWorkerReadonlyWallet.setup({
-     *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh',
-     *   identity
+     *   arkServerUrl: 'https://arkade.computer',
+     *   identity: ReadonlySingleKey.fromPublicKey('your_public_key_hex')
      * });
      * ```
      */
@@ -820,6 +855,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         return this.reinitPromise;
     }
 
+    /** Clear cached wallet state from both the page and service worker storage. */
     async clear() {
         const message: RequestClear = {
             id: getRandomId(),
@@ -897,6 +933,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Return service-worker wallet status, including connectivity and sync state.
+     *
+     * @returns Current service-worker wallet status payload including `walletInitalized` and `xOnlyPublicKey`
+     */
     async getStatus(): Promise<ResponseGetStatus["payload"]> {
         const message: RequestGetStatus = {
             id: getRandomId(),
@@ -943,6 +984,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Trigger a wallet reload inside the service worker.
+     *
+     * @returns `true` when the wallet was reloaded
+     */
     async reload(): Promise<boolean> {
         const message: RequestReloadWallet = {
             id: getRandomId(),
@@ -1311,23 +1357,15 @@ export class ServiceWorkerWallet
     }
 
     /**
-     * Simplified setup method that handles service worker registration,
-     * identity creation, and wallet initialization automatically.
+     * Simplified setup method that handles service worker registration
+     * and wallet initialization automatically.
      *
      * @example
      * ```typescript
-     * // One-liner setup - handles everything automatically!
      * const wallet = await ServiceWorkerWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh'
-     * });
-     *
-     * // With custom identity
-     * const identity = SingleKey.fromHex('your_private_key_hex');
-     * const wallet = await ServiceWorkerWallet.setup({
-     *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh',
-     *   identity
+     *   arkServerUrl: 'https://arkade.computer',
+     *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
      * });
      * ```
      */
@@ -1386,7 +1424,7 @@ export class ServiceWorkerWallet
         }
     }
 
-    async send(...recipients: Recipient[]): Promise<string> {
+    async send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
         const message: RequestSend = {
             tag: this.messageTag,
             type: "SEND",

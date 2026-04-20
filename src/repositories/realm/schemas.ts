@@ -1,5 +1,5 @@
 /**
- * Realm object schemas for the Ark wallet.
+ * Realm object schemas for the Arkade wallet.
  *
  * All schema names are prefixed with "Ark" to avoid collisions with
  * other Realm schemas in the consuming application.
@@ -99,7 +99,7 @@ export const ArkContractSchema = {
 } as const;
 
 /**
- * All Realm schemas needed by the Ark wallet repositories.
+ * All Realm schemas needed by the Arkade wallet repositories.
  * Pass this array to your Realm configuration's `schema` property.
  */
 export const ArkRealmSchemas = [

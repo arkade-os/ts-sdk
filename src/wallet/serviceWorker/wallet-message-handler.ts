@@ -292,7 +292,7 @@ export type ResponseContractEvent = ResponseEnvelope & {
 // Asset operations
 export type RequestSend = RequestEnvelope & {
     type: "SEND";
-    payload: { recipients: Recipient[] };
+    payload: { recipients: [Recipient, ...Recipient[]] };
 };
 export type ResponseSend = ResponseEnvelope & {
     type: "SEND_SUCCESS";
@@ -545,7 +545,7 @@ export class WalletMessageHandler
         }
 
         // Dispose the wallet to stop VtxoManager background tasks
-        // (auto-renewal, boarding UTXO polling) and ContractWatcher.
+        // (auto-renewal, boarding input polling) and ContractWatcher.
         try {
             if (this.wallet) {
                 await this.wallet.dispose();
@@ -1045,7 +1045,7 @@ export class WalletMessageHandler
         const totalBoarding = confirmed + unconfirmed;
         const totalOffchain = settled + preconfirmed + recoverable;
 
-        // aggregate asset balances from spendable vtxos
+        // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, number>();
         for (const vtxo of spendableVtxos) {
             if (vtxo.assets) {
@@ -1096,10 +1096,10 @@ export class WalletMessageHandler
         }
 
         // Initialize contract manager FIRST — this populates the repository
-        // with full VTXO history for all contracts (one indexer call per contract)
+        // with full virtual output history for all contracts (one indexer call per contract)
         await this.ensureContractEventBroadcasting();
 
-        // Refresh cached data (VTXOs, boarding UTXOs, tx history)
+        // Refresh cached data (virtual outputs, boarding inputs, tx history)
         await this.refreshCachedData();
 
         // Recover pending transactions (init-only, not on reload).
@@ -1147,13 +1147,13 @@ export class WalletMessageHandler
 
                     if ([...newVtxos, ...spentVtxos].length === 0) return;
 
-                    // save vtxos using unified repository
+                    // save virtual outputs using unified repository
                     await this.walletRepository?.saveVtxos(address, [
                         ...newVtxos,
                         ...spentVtxos,
                     ]);
 
-                    // notify all clients about the vtxo update
+                    // notify all clients about the virtual output state update
                     this.scheduleForNextTick(() =>
                         this.tagged({
                             type: "VTXO_UPDATE",
@@ -1168,15 +1168,15 @@ export class WalletMessageHandler
                     );
                     const boardingAddress =
                         await this.readonlyWallet!.getBoardingAddress();
-                    // save utxos using unified repository
-                    // TODO: remove UTXOS by address
+                    // save boarding inputs using unified repository
+                    // TODO: remove UTXOs by address
                     //  await this.walletRepository.clearUtxos(boardingAddress);
                     await this.walletRepository?.saveUtxos(
                         boardingAddress,
                         utxos
                     );
 
-                    // notify all clients about the utxo update
+                    // notify all clients about the boarding input state update
                     this.scheduleForNextTick(() =>
                         this.tagged({
                             type: "UTXO_UPDATE",
@@ -1188,8 +1188,8 @@ export class WalletMessageHandler
             });
 
         // Eagerly start the VtxoManager so its background tasks (auto-renewal,
-        // boarding UTXO polling/sweep) run inside the service worker without
-        // waiting for a client to send a vtxo-manager message first.
+        // boarding input polling/sweep) run inside the service worker without
+        // waiting for a client to send a VtxoManager message first.
         if (this.wallet) {
             try {
                 await this.wallet.getVtxoManager();
@@ -1200,7 +1200,7 @@ export class WalletMessageHandler
     }
 
     /**
-     * Refresh VTXOs, boarding UTXOs, and transaction history from cache.
+     * Refresh virtual outputs, boarding inputs, and transaction history from cache.
      * Shared by onWalletInitialized (full bootstrap) and reloadWallet
      * (post-refresh), avoiding duplicate subscriptions and VtxoManager restarts.
      */
@@ -1209,10 +1209,10 @@ export class WalletMessageHandler
             return;
         }
 
-        // Read VTXOs from repository (now populated by contract manager)
+        // Read virtual outputs from repository (now populated by contract manager)
         const vtxos = await this.getVtxosFromRepo();
 
-        // Fetch boarding utxos and save using unified repository
+        // Fetch boarding inputs and save using unified repository
         const boardingAddress = await this.readonlyWallet.getBoardingAddress();
         const coins =
             await this.readonlyWallet.onchainProvider.getCoins(boardingAddress);
@@ -1222,7 +1222,7 @@ export class WalletMessageHandler
             coins.map((utxo) => extendCoin(this.readonlyWallet!, utxo))
         );
 
-        // Build transaction history from cached VTXOs (no indexer call)
+        // Build transaction history from cached virtual outputs (no indexer call)
         const address = await this.readonlyWallet.getAddress();
         const txs = await this.buildTransactionHistoryFromCache(vtxos);
         if (txs) await this.walletRepository.saveTransactions(address, txs);
@@ -1386,7 +1386,7 @@ export class WalletMessageHandler
     }
 
     /**
-     * Read all VTXOs from the repository, aggregated across all contract
+     * Read all virtual outputs from the repository, aggregated across all contract
      * addresses and the wallet's primary address, with deduplication.
      */
     private async getVtxosFromRepo(): Promise<ExtendedVirtualCoin[]> {
@@ -1404,7 +1404,7 @@ export class WalletMessageHandler
             }
         };
 
-        // Aggregate VTXOs from all contract addresses
+        // Aggregate virtual outputs from all contract addresses
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
         for (const contract of contracts) {
@@ -1423,7 +1423,7 @@ export class WalletMessageHandler
     }
 
     /**
-     * Build transaction history from cached VTXOs without hitting the indexer.
+     * Build transaction history from cached virtual outputs without hitting the indexer.
      * Falls back to indexer only for uncached transaction timestamps.
      */
     private async buildTransactionHistoryFromCache(
@@ -1434,8 +1434,8 @@ export class WalletMessageHandler
         const { boardingTxs, commitmentsToIgnore } =
             await this.readonlyWallet.getBoardingTxs();
 
-        // Build a lookup for cached VTXO timestamps, keyed by txid.
-        // Multiple VTXOs can share a txid (different vouts) — we keep the
+        // Build a lookup for cached virtual output timestamps, keyed by txid.
+        // Multiple virtual outputs can share a txid (different vouts) — we keep the
         // earliest createdAt so the history ordering is stable.
         const vtxoCreatedAt = new Map<string, number>();
         for (const vtxo of vtxos) {
@@ -1447,8 +1447,8 @@ export class WalletMessageHandler
         }
 
         // Pre-fetch uncached timestamps in a single batched indexer call.
-        // buildTransactionHistory needs these for spent-offchain VTXOs with
-        // no change outputs (i.e. arkTxId is set but no VTXO has txid === arkTxId).
+        // buildTransactionHistory needs these for spent-offchain virtual outputs with
+        // no change outputs (i.e. arkTxId is set but no virtual output has txid === arkTxId).
         if (this.indexerProvider) {
             const uncachedTxids = new Set<string>();
             for (const vtxo of vtxos) {

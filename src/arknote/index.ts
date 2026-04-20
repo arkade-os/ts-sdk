@@ -5,10 +5,12 @@ import { TapLeafScript, VtxoScript } from "../script/base";
 import { ExtendedCoin, Status } from "../wallet";
 
 /**
- * ArkNotes are special virtual coins in the Ark protocol that can be created
- * and spent without requiring any transactions. The server mints them, and they
- * are encoded as base58 strings with a human-readable prefix. It contains a
- * preimage and value.
+ * ArkNotes are special virtual outputs in the Arkade protocol that
+ * can be created and spent without requiring any transactions.
+ * The server mints them, and they are encoded as base58 strings
+ * with a human-readable prefix, a preimage and a value.
+ *
+ * @see VtxoScript
  *
  * @example
  * ```typescript
@@ -31,7 +33,7 @@ export class ArkNote implements ExtendedCoin {
 
     readonly vtxoScript: VtxoScript;
 
-    // ExtendedCoin properties
+    /** Hashlock script backing the note. */
     readonly txid: string;
     readonly vout = 0;
     readonly forfeitTapLeafScript: TapLeafScript;
@@ -40,6 +42,13 @@ export class ArkNote implements ExtendedCoin {
     readonly status: Status;
     readonly extraWitness?: Bytes[] | undefined;
 
+    /**
+     * Create an ArkNote from a preimage and value.
+     *
+     * @param preimage - 32-byte preimage revealed to spend the note
+     * @param value - Note value in satoshis
+     * @param HRP - Optional human-readable prefix for string encoding
+     */
     constructor(
         public preimage: Uint8Array,
         public value: number,
@@ -59,6 +68,12 @@ export class ArkNote implements ExtendedCoin {
         this.extraWitness = [this.preimage];
     }
 
+    /**
+     * Encode the note as raw bytes.
+     *
+     * @returns Serialized note bytes
+     * @see decode
+     */
     encode(): Uint8Array {
         const result = new Uint8Array(ArkNote.Length);
         result.set(this.preimage, 0);
@@ -66,6 +81,15 @@ export class ArkNote implements ExtendedCoin {
         return result;
     }
 
+    /**
+     * Decode a note from raw bytes.
+     *
+     * @param data - Serialized note bytes
+     * @param hrp - Human-readable prefix expected for future string encoding
+     * @returns Decoded ArkNote
+     * @throws Error if the payload length is invalid
+     * @see encode
+     */
     static decode(data: Uint8Array, hrp = ArkNote.DefaultHRP): ArkNote {
         if (data.length !== ArkNote.Length) {
             throw new Error(
@@ -79,6 +103,15 @@ export class ArkNote implements ExtendedCoin {
         return new ArkNote(preimage, value, hrp);
     }
 
+    /**
+     * Decode a note from its base58 string form.
+     *
+     * @param noteStr - Base58-encoded note string
+     * @param hrp - Human-readable prefix expected on the note string
+     * @returns Decoded ArkNote
+     * @throws Error if the prefix or base58 payload is invalid
+     * @see toString
+     */
     static fromString(noteStr: string, hrp = ArkNote.DefaultHRP): ArkNote {
         noteStr = noteStr.trim();
         if (!noteStr.startsWith(hrp)) {
@@ -97,6 +130,12 @@ export class ArkNote implements ExtendedCoin {
         return ArkNote.decode(decoded, hrp);
     }
 
+    /**
+     * Encode the note to its human-readable base58 string form.
+     *
+     * @returns Base58-encoded note string
+     * @see fromString
+     */
     toString(): string {
         return this.HRP + base58.encode(this.encode());
     }

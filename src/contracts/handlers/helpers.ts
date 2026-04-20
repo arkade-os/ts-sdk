@@ -80,7 +80,7 @@ export function isCltvSatisfied(
 }
 
 /**
- * Check if a CSV timelock is currently satisfied for the given context/VTXO.
+ * Check if a CSV timelock is currently satisfied for the given context/virtual output.
  */
 export function isCsvSpendable(
     context: PathContext,

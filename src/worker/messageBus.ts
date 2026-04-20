@@ -44,9 +44,8 @@ export interface MessageHandler<
 
     /**
      * Called once when the SW is starting up
-     * @param opts.arkProvider
-     * @param opts.wallet Wallet with signature cababilities
-     * @param opts.readonlyWallet Read-only Wallet
+     * @param services - Providers and wallet instances available to the handler.
+     * @param repositories - Repositories available to the handler.
      **/
     start(
         services: {
@@ -129,6 +128,7 @@ export class MessageBus {
     }>;
     private readonly boundOnMessage = this.onMessage.bind(this);
 
+    /** Create the service-worker message bus with repositories and handler configuration. */
     constructor(
         private readonly walletRepository: WalletRepository,
         private readonly contractRepository: ContractRepository,
@@ -147,6 +147,7 @@ export class MessageBus {
         this.buildServicesFn = buildServices ?? this.buildServices.bind(this);
     }
 
+    /** Start the message bus and attach service-worker event listeners. */
     async start() {
         if (this.running) return;
         this.running = true;
@@ -168,6 +169,7 @@ export class MessageBus {
         });
     }
 
+    /** Stop the message bus, cancel ticks, and stop all registered handlers. */
     async stop() {
         if (this.debug) console.log("MessageBus stopping");
         this.running = false;

@@ -56,7 +56,7 @@ export namespace Unroll {
           } & WaitStep);
 
     /**
-     * Manages the unrolling process of a VTXO back to the Bitcoin blockchain.
+     * Manages the unrolling process of a virtual output back to the Bitcoin blockchain.
      *
      * The Session class implements an async iterator that processes the unrolling steps:
      * 1. **WAIT**: Waits for a transaction to be confirmed onchain (if it's in mempool)
@@ -80,13 +80,14 @@ export namespace Unroll {
      *       console.log(`Broadcasting transaction ${doneStep.tx.id}`);
      *       break;
      *     case Unroll.StepType.DONE:
-     *       console.log(`Unrolling complete for VTXO ${doneStep.vtxoTxid}`);
+     *       console.log(`Unrolling complete for virtual output ${doneStep.vtxoTxid}`);
      *       break;
      *   }
      * }
      * ```
      **/
     export class Session implements AsyncIterable<Step> {
+        /** Create an unroll session from a virtual output outpoint and its dependency chain. */
         constructor(
             readonly toUnroll: Outpoint & { chain: ChainTx[] },
             readonly bumper: AnchorBumper,
@@ -94,6 +95,7 @@ export namespace Unroll {
             readonly indexer: IndexerProvider
         ) {}
 
+        /** Create an unroll session by loading the virtual output chain from the indexer. */
         static async create(
             toUnroll: Outpoint,
             bumper: AnchorBumper,
@@ -185,7 +187,7 @@ export namespace Unroll {
                     finalScriptWitness: [tapKeySig],
                 });
             } else {
-                // finalize ark transaction
+                // finalize Arkade transaction
                 tx.finalize();
             }
 
@@ -217,11 +219,11 @@ export namespace Unroll {
     }
 
     /**
-     * Complete the unroll of a VTXO by broadcasting the transaction that spends the CSV path.
-     * @param wallet the wallet owning the VTXO(s)
-     * @param vtxoTxids the txids of the VTXO(s) to complete unroll
+     * Complete the unroll of a virtual output by broadcasting the transaction that spends the CSV path.
+     * @param wallet the wallet owning the virtual output(s)
+     * @param vtxoTxids the txids of the virtual output(s) to complete unroll
      * @param outputAddress the address to send the unrolled funds to
-     * @throws if the VTXO(s) are not fully unrolled, if the txids are not found, if the tx is not confirmed, if no exit path is found or not available
+     * @throws if the virtual output(s) are not fully unrolled, if the txids are not found, if the tx is not confirmed, if no exit path is found or not available
      * @returns the txid of the transaction spending the unrolled funds
      */
     export async function completeUnroll(

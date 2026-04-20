@@ -3,7 +3,7 @@ import * as path from "path";
 import type { StorageAdapter } from "./index";
 
 /**
- * @deprecated Use repositories instead
+ * @deprecated Use repository implementations via `StorageConfig` instead.
  */
 export class FileSystemStorageAdapter implements StorageAdapter {
     private readonly basePath: string;

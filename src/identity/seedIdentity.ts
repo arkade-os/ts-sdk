@@ -16,24 +16,26 @@ import {
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
-/** Use default BIP86 derivation with network selection. */
+/** Used for default BIP86 derivation with network selection. */
 export interface NetworkOptions {
     /**
      * Mainnet (coin type 0) or testnet (coin type 1).
-     * @default true
+     *
+     * @defaultValue `true`
      */
     isMainnet?: boolean;
 }
 
-/** Use a custom output descriptor for derivation. */
+/** Used for custom output descriptor derivation. */
 export interface DescriptorOptions {
     /** Custom output descriptor that determines the derivation path. */
     descriptor: string;
 }
 
-/** Either default BIP86 derivation (with optional network) or a custom descriptor. */
+/** Either default BIP86 derivation (with optional network selection) or a custom descriptor. */
 export type SeedIdentityOptions = NetworkOptions | DescriptorOptions;
 
+/** Used for deriving an identity from a BIP39 mnemonic. */
 export type MnemonicOptions = SeedIdentityOptions & {
     /** Optional BIP39 passphrase for additional seed entropy. */
     passphrase?: string;
@@ -79,7 +81,7 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * format is HD-ready, allowing future support for multiple addresses
  * and change derivation.
  *
- * Prefer this (or {@link MnemonicIdentity}) over `SingleKey` for new
+ * Prefer this (or @see MnemonicIdentity) over `SingleKey` for new
  * integrations — `SingleKey` exists for backward compatibility with
  * raw nsec-style keys.
  *
@@ -224,7 +226,7 @@ export class SeedIdentity implements Identity {
  *
  * This is the most user-friendly identity type — recommended for wallet
  * applications where users manage their own backup phrase. Extends
- * {@link SeedIdentity} with mnemonic validation and optional passphrase
+ * @see SeedIdentity with mnemonic validation and optional passphrase
  * support.
  *
  * @example

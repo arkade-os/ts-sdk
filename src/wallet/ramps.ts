@@ -7,25 +7,45 @@ import { networks, NetworkName } from "../networks";
 import { ArkAddress } from "../script/address";
 
 /**
- * Ramps is a class wrapping IWallet.settle method to provide a more convenient interface for onboarding and offboarding operations.
+ * Ramps is a class wrapping `settle` method to provide a more convenient interface for onboarding and offboarding operations.
+ *
+ * @see IWallet.settle
+ * @see onboard
+ * @see offboard
  *
  * @example
  * ```typescript
  * const ramps = new Ramps(wallet);
- * await ramps.onboard(); // onboard all boarding utxos
- * await ramps.offboard(myOnchainAddress); // collaborative exit all vtxos to onchain address
+ * const feeInfo = { intentFee: {}, txFeeRate: '1' };
+ * await ramps.onboard(feeInfo); // onboard all boarding inputs
+ * await ramps.offboard('bc1q...', feeInfo); // collaboratively exit all virtual outputs to an onchain address
  * ```
  */
 export class Ramps {
+    /**
+     * Create convenience wrappers for onboarding and offboarding flows.
+     *
+     * @param wallet - Wallet used to query funds and execute settlement transactions
+     */
     constructor(readonly wallet: IWallet) {}
 
     /**
-     * Onboard boarding utxos.
+     * Onboard boarding inputs.
      *
      * @param feeInfo - The fee info to deduct from the onboard amount.
-     * @param boardingUtxos - The boarding utxos to onboard. If not provided, all boarding utxos will be used.
-     * @param amount - The amount to onboard. If not provided, the total amount of boarding utxos will be onboarded.
-     * @param eventCallback - The callback to receive settlement events. optional.
+     * @param boardingUtxos - Specific boarding inputs to onboard. If not provided, all boarding inputs will be used.
+     * @param amount - Amount to onboard. If not provided, the total amount of boarding inputs will be onboarded.
+     * @param eventCallback - Optional callback that receives settlement events
+     * @returns The Arkade transaction id created by settlement
+     * @throws Error if no boarding inputs remain after fee deduction or if `amount` exceeds available value
+     * @see IWallet.getBoardingUtxos
+     * @see IWallet.settle
+     * @example
+     * ```typescript
+     * const feeInfo = { intentFee: {}, txFeeRate: '1' };
+     * const ramps = new Ramps(wallet);
+     * await ramps.onboard(feeInfo);
+     * ```
      */
     async onboard(
         feeInfo: FeeInfo,
@@ -35,7 +55,7 @@ export class Ramps {
     ): ReturnType<IWallet["settle"]> {
         boardingUtxos = boardingUtxos ?? (await this.wallet.getBoardingUtxos());
 
-        // Calculate input fees and filter out utxos where fee >= value
+        // Calculate input fees and filter out boarding inputs where fee >= value.
         const estimator = new Estimator(feeInfo?.intentFee ?? {});
         const filteredBoardingUtxos: ExtendedCoin[] = [];
         let totalAmount = 0n;
@@ -45,7 +65,7 @@ export class Ramps {
                 amount: BigInt(utxo.value),
             });
             if (inputFee.satoshis >= utxo.value) {
-                // skip if fees are greater than or equal to the utxo value
+                // Skip boarding inputs where spending fees are greater than or equal to the input value.
                 continue;
             }
 
@@ -111,12 +131,22 @@ export class Ramps {
     }
 
     /**
-     * Offboard vtxos, or "collaborative exit" vtxos to onchain address.
+     * Offboard virtual outputs, or collaboratively exit them to an onchain address.
      *
      * @param destinationAddress - The destination address to offboard to.
      * @param feeInfo - The fee info to deduct from the offboard amount.
-     * @param amount - The amount to offboard. If not provided, the total amount of vtxos will be offboarded.
-     * @param eventCallback - The callback to receive settlement events. optional.
+     * @param amount - The amount to offboard. If not provided, the total amount of virtual outputs will be offboarded.
+     * @param eventCallback - Optional callback that receives settlement events
+     * @returns The Arkade transaction id created by settlement
+     * @throws Error if no virtual outputs remain after fee deduction or the destination address cannot be decoded
+     * @see IWallet.getVtxos
+     * @see IWallet.settle
+     * @example
+     * ```typescript
+     * const feeInfo = { intentFee: {}, txFeeRate: '1' };
+     * const ramps = new Ramps(wallet);
+     * await ramps.offboard('bc1q...', feeInfo);
+     * ```
      */
     async offboard(
         destinationAddress: string,
@@ -129,7 +159,7 @@ export class Ramps {
             withUnrolled: false,
         });
 
-        // Calculate input fees and filter out vtxos where fee >= value
+        // Calculate input fees and filter out virtual outputs where fee >= value.
         const estimator = new Estimator(feeInfo?.intentFee ?? {});
         const filteredVtxos: typeof vtxos = [];
         let totalAmount = 0n;
@@ -148,7 +178,7 @@ export class Ramps {
                     : undefined,
             });
             if (inputFee.satoshis >= vtxo.value) {
-                // skip if fees are greater than or equal to the vtxo value
+                // Skip virtual outputs where spending fees are greater than or equal to the output value.
                 continue;
             }
 

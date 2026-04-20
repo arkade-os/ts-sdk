@@ -52,13 +52,13 @@ function subtractAssets(
 }
 
 /**
- * Builds the transaction history by analyzing virtual coins (VTXOs), boarding transactions, and ignored commitments.
+ * Builds the transaction history by analyzing virtual outputs, boarding transactions, and ignored commitments.
  * History is sorted from newest to oldest and is composed only of SENT and RECEIVED transactions.
  *
- * @param {VirtualCoin[]} vtxos - An array of virtual coins representing the user's transactions and balances.
+ * @param {VirtualCoin[]} vtxos - An array of virtual outputs representing the user's transactions and balances.
  * @param {ArkTransaction[]} allBoardingTxs - An array of boarding transactions to include in the history.
  * @param {Set<string>} commitmentsToIgnore - A set of commitment IDs that should be excluded from processing.
- * @return {ExtendedArkTransaction[]} A sorted array of extended Ark transactions, representing the transaction history.
+ * @return {ExtendedArkTransaction[]} A sorted array of extended Arkade transactions, representing the transaction history.
  */
 export async function buildTransactionHistory(
     vtxos: VirtualCoin[],
@@ -75,7 +75,7 @@ export async function buildTransactionHistory(
 
     for (const vtxo of fromOldestVtxo) {
         if (vtxo.status.isLeaf) {
-            // If this vtxo is a leaf and it's not the settlement of a boarding or there's no vtxo refreshed by it,
+            // If this virtual output is a leaf and it's not the settlement of a boarding or there's no virtual output refreshed by it,
             // it's translated into a received batch transaction
             if (
                 !commitmentsToIgnore.has(
@@ -103,7 +103,7 @@ export async function buildTransactionHistory(
         } else if (
             fromOldestVtxo.filter((v) => v.arkTxId === vtxo.txid).length === 0
         ) {
-            // If this vtxo is preconfirmed and does not spend any other vtxos,
+            // If this virtual output is preconfirmed and does not spend any other virtual outputs,
             // it's translated into a received offchain transaction
             const assets = collectAssets([vtxo]);
             received.push({
@@ -117,11 +117,11 @@ export async function buildTransactionHistory(
             });
         }
 
-        // If the vtxo is spent, it's translated into a sent transaction unless:
+        // If the virtual output is spent, it's translated into a sent transaction unless:
         // - it's been refreshed (we don't want to add any record in this case)
-        // - a sent transaction has been already added to avoid duplicates (can happen if many vtxos have been spent in the same tx or forfeited in the same batch)
+        // - a sent transaction has been already added to avoid duplicates (can happen if many virtual outputs have been spent in the same tx or forfeited in the same batch)
         if (vtxo.isSpent) {
-            // If the vtxo is spent offchain, it's translated into offchain sent tx
+            // If the virtual output is spent offchain, it's translated into an offchain sent tx
             if (
                 vtxo.arkTxId &&
                 !sent.some((s) => s.key.arkTxid === vtxo.arkTxId)
@@ -130,7 +130,7 @@ export async function buildTransactionHistory(
                     (_) => _.txid === vtxo.arkTxId
                 );
 
-                // We want to find all the other VTXOs spent by the same transaction to
+                // We want to find all the other virtual outputs spent by the same transaction to
                 // calculate the full amount of the change.
                 const allSpent = fromOldestVtxo.filter(
                     (v) => v.arkTxId === vtxo.arkTxId
@@ -151,7 +151,7 @@ export async function buildTransactionHistory(
                     txTime = changes[0].createdAt.getTime();
                 } else {
                     txAmount = spentAmount;
-                    // TODO: fetch the vtxo with /v1/indexer/vtxos?outpoints=<vtxo.arkTxid:0> to know when the tx was made
+                    // TODO: fetch the virtual output with /v1/indexer/vtxos?outpoints=<vtxo.arkTxid:0> to know when the tx was made
                     txTime = getTxCreatedAt
                         ? ((await getTxCreatedAt(vtxo.arkTxId!)) ??
                           vtxo.createdAt.getTime() + 1)
@@ -170,7 +170,7 @@ export async function buildTransactionHistory(
                 });
             }
 
-            // If the vtxo is forfeited in a batch and the total sum of forfeited vtxos is bigger than the sum of new vtxos,
+            // If the virtual output is forfeited in a batch and the total sum of forfeited virtual outputs is bigger than the sum of new virtual outputs,
             // it's translated into an exit sent tx
             if (
                 vtxo.settledBy &&

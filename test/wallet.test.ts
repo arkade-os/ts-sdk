@@ -868,6 +868,61 @@ describe("Wallet", () => {
             expect(cached[0].isSpent).toBe(true);
         });
     });
+
+    describe("mainnet unilateral exit delay pinning", () => {
+        // If this constant changes in the SDK, update both sides intentionally —
+        // changing the pinned value alters derived addresses for every mainnet
+        // wallet.
+        const MAINNET_PINNED_DELAY = 605184n;
+
+        const mockMainnetInfo = (unilateralExitDelay: bigint) => ({
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay,
+            roundInterval: BigInt(144),
+            network: "bitcoin",
+            forfeitAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        });
+
+        it("pins the exit timelock to 605184s on mainnet even when the server advertises a shorter delay", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+            });
+
+            const wallet = await Wallet.create({
+                identity: mockIdentity,
+                arkServerUrl: "http://localhost:7070",
+            });
+
+            expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
+                value: MAINNET_PINNED_DELAY,
+                type: "seconds",
+            });
+        });
+
+        it("lets an explicit config.exitTimelock override the mainnet pin", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+            });
+
+            // bip68 seconds must be multiples of 512.
+            const override = { value: 1024n, type: "seconds" as const };
+            const wallet = await Wallet.create({
+                identity: mockIdentity,
+                arkServerUrl: "http://localhost:7070",
+                exitTimelock: override,
+            });
+
+            expect(wallet.offchainTapscript.options.csvTimelock).toEqual(
+                override
+            );
+        });
+    });
 });
 
 describe("ReadonlyWallet", () => {

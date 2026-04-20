@@ -7,7 +7,7 @@ import {
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
 
 /**
- * Expo-compatible Ark provider implementation using expo/fetch for SSE support.
+ * Expo-compatible Arkade provider implementation using expo/fetch for SSE support.
  * This provider works specifically in React Native/Expo environments where
  * standard EventSource is not available but expo/fetch provides SSE capabilities.
  *
@@ -15,7 +15,7 @@ import { getExpoFetch, sseStreamIterator } from "./expoUtils";
  * ```typescript
  * import { ExpoArkProvider } from '@arkade-os/sdk/providers/expo';
  *
- * const provider = new ExpoArkProvider('https://ark.example.com');
+ * const provider = new ExpoArkProvider('https://arkade.computer');
  * const info = await provider.getInfo();
  * ```
  */

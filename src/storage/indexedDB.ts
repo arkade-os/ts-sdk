@@ -2,7 +2,7 @@ import type { StorageAdapter } from "./index";
 import { DB_VERSION } from "../repositories/indexedDB/db";
 
 /**
- * @deprecated Use repositories instead
+ * @deprecated Use repository implementations via `StorageConfig` instead.
  */
 export class IndexedDBStorageAdapter implements StorageAdapter {
     private dbName: string;

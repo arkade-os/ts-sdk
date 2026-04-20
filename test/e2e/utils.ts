@@ -8,6 +8,11 @@ import {
     IntentFeeConfig,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    ArkInfo,
+    ArkProvider,
+    RestArkProvider,
+    WalletRepository,
+    ContractRepository,
 } from "../../src";
 import { execSync } from "child_process";
 import { RestDelegatorProvider } from "../../src/providers/delegator";
@@ -221,4 +226,78 @@ export async function waitFor(
         await new Promise((r) => setTimeout(r, interval));
     }
     throw new Error("timeout in waitFor");
+}
+
+/**
+ * Wrap a real ArkProvider, overriding selected fields of `getInfo()` while
+ * forwarding every other method to the underlying provider. Used to simulate
+ * server-config changes (e.g. `unilateralExitDelay`) between wallet loads
+ * without actually restarting arkd.
+ */
+export function createOverrideInfoArkProvider(
+    real: ArkProvider,
+    overrides: Partial<ArkInfo>
+): ArkProvider {
+    return new Proxy(real, {
+        get(target, prop, receiver) {
+            if (prop === "getInfo") {
+                return async () => {
+                    const info = await target.getInfo();
+                    return { ...info, ...overrides };
+                };
+            }
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+        },
+    });
+}
+
+export interface SharedRepos {
+    walletRepository: WalletRepository;
+    contractRepository: ContractRepository;
+}
+
+export function createSharedRepos(): SharedRepos {
+    return {
+        walletRepository: new InMemoryWalletRepository(),
+        contractRepository: new InMemoryContractRepository(),
+    };
+}
+
+/**
+ * Create a delegator-enabled wallet using a provided identity and repositories,
+ * with an `ArkProvider` whose `getInfo()` overrides `unilateralExitDelay` to
+ * simulate a server-side config change without restarting arkd.
+ */
+export async function createTestArkWalletWithDelegateAndOverride(opts: {
+    identity: Identity;
+    repos: SharedRepos;
+    unilateralExitDelay: bigint;
+}): Promise<TestArkWallet> {
+    const arkServerUrl = "http://localhost:7070";
+    const realProvider = new RestArkProvider(arkServerUrl);
+    const arkProvider = createOverrideInfoArkProvider(realProvider, {
+        unilateralExitDelay: opts.unilateralExitDelay,
+    });
+
+    const wallet = await Wallet.create({
+        identity: opts.identity,
+        arkServerUrl,
+        arkProvider,
+        onchainProvider: new EsploraProvider("http://localhost:3000", {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+        storage: {
+            walletRepository: opts.repos.walletRepository,
+            contractRepository: opts.repos.contractRepository,
+        },
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+        settlementConfig: false,
+    });
+
+    return {
+        wallet,
+        identity: opts.identity,
+    };
 }

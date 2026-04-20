@@ -32,6 +32,7 @@ export namespace DelegateVtxo {
         readonly defaultVtxo: DefaultVtxo.Script;
         readonly delegateScript: string;
 
+        /** Create a delegated virtual output script with forfeit, exit, and delegate paths. */
         constructor(readonly options: Options) {
             const defaultVtxo = new DefaultVtxo.Script(options);
             const { delegatePubKey, pubKey, serverPubKey } = options;
@@ -45,14 +46,17 @@ export namespace DelegateVtxo {
             this.delegateScript = hex.encode(delegateScript);
         }
 
+        /** Return the forfeit tapleaf script. */
         forfeit(): TapLeafScript {
             return this.findLeaf(this.defaultVtxo.forfeitScript);
         }
 
+        /** Return the unilateral exit tapleaf script. */
         exit(): TapLeafScript {
             return this.findLeaf(this.defaultVtxo.exitScript);
         }
 
+        /** Return the delegate tapleaf script. */
         delegate(): TapLeafScript {
             return this.findLeaf(this.delegateScript);
         }

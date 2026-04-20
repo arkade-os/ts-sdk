@@ -45,7 +45,9 @@ export interface ChainTx {
     txid: string;
     expiresAt: string;
     type: ChainTxType;
-    spends: string[]; // txids of the transactions in the chain used as input of the current tx
+
+    /** IDs of the transactions in the chain used as input of the current transaction. */
+    spends: string[];
 }
 
 export interface CommitmentTx {
@@ -118,59 +120,179 @@ export interface SubscriptionEvent extends SubscriptionResponse {
     type: "event";
 }
 
+/**
+ * Filters accepted by `IndexerProvider.getVtxos`.
+ *
+ * @remarks
+ * Exactly one of `scripts` or `outpoints` must be supplied.
+ *
+ * @see IndexerProvider.getVtxos
+ */
 export type GetVtxosOptions = PaginationOptions & {
+    /** Only return spendable virtual outputs. */
     spendableOnly?: boolean;
+    /** Only return spent virtual outputs. */
     spentOnly?: boolean;
+    /** Only return recoverable virtual outputs. */
     recoverableOnly?: boolean;
+    /** Only return pending/preconfirmed virtual outputs. */
     pendingOnly?: boolean;
+    /** Only return virtual outputs created after this timestamp. */
     after?: number;
+    /** Only return virtual outputs created before this timestamp. */
     before?: number;
 } & (
-        | { scripts: string[]; outpoints?: never }
-        | { outpoints: Outpoint[]; scripts?: never }
+        | {
+              /** Scripts to search for matching virtual outputs. */
+              scripts: string[];
+              outpoints?: never;
+          }
+        | {
+              /** Explicit outpoints to fetch. */
+              outpoints: Outpoint[];
+              scripts?: never;
+          }
     );
 
 export interface IndexerProvider {
+    /**
+     * Fetch the virtual output tree for a batch outpoint.
+     *
+     * @param batchOutpoint - Batch outpoint whose tree should be fetched
+     * @param opts - Optional pagination settings
+     * @returns virtual output tree nodes and optional pagination state
+     */
     getVtxoTree(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<{ vtxoTree: Tx[]; page?: PageResponse }>;
+
+    /**
+     * Fetch the leaf outpoints for a batch virtual output tree.
+     *
+     * @param batchOutpoint - Batch outpoint whose leaf outpoints should be fetched
+     * @param opts - Optional pagination settings
+     * @returns Leaf outpoints and optional pagination state
+     */
     getVtxoTreeLeaves(
         batchOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<{ leaves: Outpoint[]; page?: PageResponse }>;
+
+    /**
+     * Fetch sweep transactions that spent a batch.
+     *
+     * @param batchOutpoint - Batch outpoint to inspect
+     * @returns Sweep transaction ids
+     */
     getBatchSweepTransactions(
         batchOutpoint: Outpoint
     ): Promise<{ sweptBy: string[] }>;
+
+    /**
+     * Fetch a commitment transaction by txid.
+     *
+     * @param txid - Commitment transaction id
+     * @returns Commitment transaction details
+     */
     getCommitmentTx(txid: string): Promise<CommitmentTx>;
+
+    /**
+     * Fetch connector transactions for a commitment transaction.
+     *
+     * @param txid - Commitment transaction id
+     * @param opts - Optional pagination settings
+     * @returns Connector transactions and optional pagination state
+     */
     getCommitmentTxConnectors(
         txid: string,
         opts?: PaginationOptions
     ): Promise<{ connectors: Tx[]; page?: PageResponse }>;
+
+    /**
+     * Fetch forfeit transaction ids for a commitment transaction.
+     *
+     * @param txid - Commitment transaction id
+     * @param opts - Optional pagination settings
+     * @returns Forfeit transaction ids and optional pagination state
+     */
     getCommitmentTxForfeitTxs(
         txid: string,
         opts?: PaginationOptions
     ): Promise<{ txids: string[]; page?: PageResponse }>;
+
+    /**
+     * Open a streamed subscription for a previously created subscription id.
+     *
+     * @param subscriptionId - Subscription identifier returned by `subscribeForScripts`
+     * @param abortSignal - Signal used to terminate the stream
+     * @returns Async iterator of subscription responses
+     */
     getSubscription(
         subscriptionId: string,
         abortSignal: AbortSignal
     ): AsyncIterableIterator<SubscriptionResponse>;
+
+    /**
+     * Fetch raw virtual transactions by txid.
+     *
+     * @param txids - Virtual transaction ids to fetch
+     * @param opts - Optional pagination settings
+     * @returns Raw virtual transactions and optional pagination state
+     */
     getVirtualTxs(
         txids: string[],
         opts?: PaginationOptions
     ): Promise<{ txs: string[]; page?: PageResponse }>;
+
+    /**
+     * Fetch the ancestry chain for a virtual output.
+     *
+     * @param vtxoOutpoint - Virtual output outpoint to inspect
+     * @param opts - Optional pagination settings
+     * @returns Chain data and optional pagination state
+     */
     getVtxoChain(
         vtxoOutpoint: Outpoint,
         opts?: PaginationOptions
     ): Promise<VtxoChain>;
+
+    /**
+     * Fetch virtual outputs by script set or outpoints.
+     *
+     * @param opts - Virtual output filters and pagination settings
+     * @returns Virtual outputs and optional pagination state
+     */
     getVtxos(
         opts?: GetVtxosOptions
     ): Promise<{ vtxos: VirtualCoin[]; page?: PageResponse }>;
+
+    /**
+     * Fetch metadata for a specific asset id.
+     *
+     * @param assetId - Asset identifier
+     * @returns Asset details
+     */
     getAssetDetails(assetId: string): Promise<AssetDetails>;
+
+    /**
+     * Create or extend a subscription for a set of scripts.
+     *
+     * @param scripts - Scripts to monitor
+     * @param subscriptionId - Existing subscription id to extend
+     * @returns Subscription id
+     */
     subscribeForScripts(
         scripts: string[],
         subscriptionId?: string
     ): Promise<string>;
+
+    /**
+     * Remove some or all scripts from an existing subscription.
+     *
+     * @param subscriptionId - Subscription identifier to update
+     * @param scripts - Scripts to remove, or omit to remove all
+     */
     unsubscribeForScripts(
         subscriptionId: string,
         scripts?: string[]
@@ -178,11 +300,11 @@ export interface IndexerProvider {
 }
 
 /**
- * REST-based Indexer provider implementation.
+ * REST-based indexer provider implementation.
  * @see https://buf.build/arkade-os/arkd/docs/main:ark.v1#ark.v1.IndexerService
  * @example
  * ```typescript
- * const provider = new RestIndexerProvider('https://ark.indexer.example.com');
+ * const provider = new RestIndexerProvider('https://arkade.computer');
  * const commitmentTx = await provider.getCommitmentTx("6686af8f3be3517880821f62e6c3d749b9d6713736a1d8e229a55daa659446b2");
  * ```
  */

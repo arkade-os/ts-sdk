@@ -318,7 +318,7 @@ export {
     CLTVMultisigTapscript,
     TapTreeCoder,
 
-    // Ark PSBT fields
+    // Arkade PSBT fields
     ArkPsbtFieldKey,
     ArkPsbtFieldKeyType,
     setArkPsbtField,
@@ -509,7 +509,7 @@ export type {
     Nonces,
     PartialSig,
 
-    // Ark PSBT fields
+    // Arkade PSBT field coder
     ArkPsbtFieldCoder,
 
     // TxTree

@@ -17,7 +17,7 @@ import { DUST_AMOUNT } from "./utils";
  * Onchain Bitcoin wallet implementation for traditional Bitcoin transactions.
  *
  * This wallet handles regular Bitcoin transactions on the blockchain without
- * using the Ark protocol. It supports P2TR (Pay-to-Taproot) addresses and
+ * using the Arkade protocol. It supports P2TR (Pay-to-Taproot) addresses and
  * provides basic Bitcoin wallet functionality.
  *
  * @example
@@ -48,6 +48,16 @@ export class OnchainWallet implements AnchorBumper {
         this.provider = provider;
     }
 
+    /**
+     * Create an onchain wallet for the given identity and Bitcoin network.
+     *
+     * @param identity - Identity used to derive the Taproot key and sign transactions
+     * @param networkName - Bitcoin network name, @see NetworkName
+     * @param provider - Optional onchain provider override, @see OnchainProvider
+     * @returns Configured onchain wallet
+     * @defaultValue `provider = new EsploraProvider('https://mempool.space/api')`
+     * @throws Error if the configured identity cannot produce a valid x-only public key
+     */
     static async create(
         identity: Identity,
         networkName: NetworkName,
@@ -75,10 +85,22 @@ export class OnchainWallet implements AnchorBumper {
         return this.onchainP2TR.address || "";
     }
 
+    /**
+     * Fetch spendable onchain outputs for the wallet address.
+     *
+     * @returns Spendable onchain outputs for the wallet address
+     * @see getBalance
+     */
     async getCoins(): Promise<Coin[]> {
         return this.provider.getCoins(this.address);
     }
 
+    /**
+     * Return the wallet's total onchain balance in satoshis.
+     *
+     * @returns Confirmed plus unconfirmed onchain balance
+     * @see getCoins
+     */
     async getBalance(): Promise<number> {
         const coins = await this.getCoins();
         const onchainConfirmed = coins
@@ -94,9 +116,9 @@ export class OnchainWallet implements AnchorBumper {
     /**
      * Iteratively selects coins and estimates transaction fees until convergence.
      *
-     * This method handles the circular dependency between coin selection and fee
+     * This method handles the circular dependency between output selection and fee
      * estimation: the fee depends on transaction size, which depends on the number
-     * of inputs (selected coins) and whether a change output is needed.
+     * of inputs (selected outputs) and whether a change output is needed.
      *
      * The algorithm iterates up to 10 times, refining the fee estimate based on
      * the actual transaction structure. It resolves dust oscillation loops that
@@ -105,7 +127,7 @@ export class OnchainWallet implements AnchorBumper {
      * When a lower fee is computed (indicating the change output was dropped),
      * the function accepts this state to guarantee termination.
      *
-     * @param coins - Available coins to select from
+     * @param coins - Available onchain outputs to select from
      * @param amount - Target send amount in satoshis
      * @param feeRate - Fee rate in sat/vbyte
      * @param recipientAddress - Destination address for size estimation
@@ -154,6 +176,14 @@ export class OnchainWallet implements AnchorBumper {
         throw new Error("Fee estimation failed: could not converge");
     }
 
+    /**
+     * Send bitcoin to a single onchain address.
+     *
+     * @param params - destination `address`, `amount` (in satoshis), and optional `feeRate` override (other fields ignored)
+     * @returns Broadcast transaction id
+     * @throws Error if the amount is non-positive, below dust, or cannot be funded
+     * @see SendBitcoinParams
+     */
     async send(params: SendBitcoinParams): Promise<string> {
         if (params.amount <= 0) {
             throw new Error("Amount must be positive");
@@ -219,6 +249,14 @@ export class OnchainWallet implements AnchorBumper {
         return txid;
     }
 
+    /**
+     * CPFP-bump a parent transaction that contains a pay-to-anchor output.
+     *
+     * @param parent - Parent transaction containing a pay-to-anchor output
+     * @returns Tuple of parent transaction id and child transaction id
+     * @throws Error if the parent transaction has no pay-to-anchor output or bumping cannot be funded
+     * @see send
+     */
     async bumpP2A(parent: Transaction): Promise<[string, string]> {
         const parentVsize = parent.vsize;
 
@@ -247,7 +285,7 @@ export class OnchainWallet implements AnchorBumper {
             );
         }
 
-        // Select coins
+        // Select onchain outputs
         const coins = await this.getCoins();
         const selected = selectCoins(coins, fee, true);
 
