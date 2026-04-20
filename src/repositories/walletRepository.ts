@@ -1,9 +1,6 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
 
 export interface WalletState {
-    /** Timestamp of the last successful wallet sync, in milliseconds. */
-    // lastSyncTime?: number;
-
     /** Arbitrary stored wallet settings. */
     settings?: Record<string, any>;
 

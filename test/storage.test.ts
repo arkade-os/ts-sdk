@@ -57,7 +57,6 @@ describe("IndexedDB migrations", () => {
             30000
         );
         const walletState = {
-            lastSyncTime: Date.now(),
             settings: { theme: "dark" },
         };
 
@@ -111,7 +110,6 @@ describe("IndexedDB migrations", () => {
         const walletState2 = await walletRepoV2.getWalletState();
         expect(walletState2).not.toBeNull();
         expect(walletState2?.settings?.theme).toBe("dark");
-        expect(walletState2?.lastSyncTime).toBe(walletState.lastSyncTime);
     });
 
     it("should not migrate if migration already completed", async () => {
@@ -193,7 +191,7 @@ describe("getMigrationStatus", () => {
         const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
         // Initialize the DB by writing something so the object store exists
         const walletRepo = new WalletRepositoryImpl(oldStorage);
-        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await walletRepo.saveWalletState({ vtxosIndexerUpdatedAt: Date.now() });
 
         const status = await getMigrationStatus("wallet", oldStorage);
         expect(status).toBe("pending");
@@ -205,7 +203,7 @@ describe("getMigrationStatus", () => {
 
         const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
         const walletRepo = new WalletRepositoryImpl(oldStorage);
-        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await walletRepo.saveWalletState({ vtxosIndexerUpdatedAt: Date.now() });
 
         const fresh = new IndexedDBWalletRepository(newDbName);
         await migrateWalletRepository(oldStorage, fresh, {
@@ -222,7 +220,7 @@ describe("getMigrationStatus", () => {
         const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
         // Initialize the DB
         const walletRepo = new WalletRepositoryImpl(oldStorage);
-        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await walletRepo.saveWalletState({ vtxosIndexerUpdatedAt: Date.now() });
 
         // Simulate interrupted migration by setting flag manually
         await oldStorage.setItem(MIGRATION_KEY("wallet"), "in-progress");
@@ -237,7 +235,7 @@ describe("requiresMigration", () => {
         const oldDbName = getUniqueDbName("requires-pending");
         const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
         const walletRepo = new WalletRepositoryImpl(oldStorage);
-        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await walletRepo.saveWalletState({ vtxosIndexerUpdatedAt: Date.now() });
 
         const result = await requiresMigration("wallet", oldStorage);
         expect(result).toBe(true);
@@ -247,7 +245,7 @@ describe("requiresMigration", () => {
         const oldDbName = getUniqueDbName("requires-in-progress");
         const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
         const walletRepo = new WalletRepositoryImpl(oldStorage);
-        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await walletRepo.saveWalletState({ vtxosIndexerUpdatedAt: Date.now() });
         await oldStorage.setItem(MIGRATION_KEY("wallet"), "in-progress");
 
         const result = await requiresMigration("wallet", oldStorage);
@@ -258,7 +256,7 @@ describe("requiresMigration", () => {
         const oldDbName = getUniqueDbName("requires-done");
         const oldStorage = new IndexedDBStorageAdapter(oldDbName, 1);
         const walletRepo = new WalletRepositoryImpl(oldStorage);
-        await walletRepo.saveWalletState({ lastSyncTime: Date.now() });
+        await walletRepo.saveWalletState({ vtxosIndexerUpdatedAt: Date.now() });
         await oldStorage.setItem(MIGRATION_KEY("wallet"), "done");
 
         const result = await requiresMigration("wallet", oldStorage);

@@ -749,13 +749,13 @@ describe("RealmWalletRepository", () => {
         it("should save and retrieve wallet state", async () => {
             const state: WalletState = {
                 settings: { theme: "dark" },
+                vtxosIndexerUpdatedAt: 1000,
             };
 
             await repository.saveWalletState(state);
             const retrieved = await repository.getWalletState();
 
             expect(retrieved).toEqual(state);
-            expect(retrieved?.settings).toEqual({ theme: "dark" });
         });
 
         it("should update existing wallet state", async () => {

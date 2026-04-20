@@ -229,6 +229,7 @@ export class RealmWalletRepository implements WalletRepository {
         if (obj.settingsJson) {
             state.settings = JSON.parse(obj.settingsJson);
         }
+        state.vtxosIndexerUpdatedAt = obj.vtxosIndexerUpdatedAt ?? undefined;
         return state;
     }
 
@@ -239,6 +240,7 @@ export class RealmWalletRepository implements WalletRepository {
                 "ArkWalletState",
                 {
                     key: "state",
+                    vtxosIndexerUpdatedAt: state.vtxosIndexerUpdatedAt,
                     settingsJson: state.settings
                         ? JSON.stringify(state.settings)
                         : null,
@@ -251,7 +253,7 @@ export class RealmWalletRepository implements WalletRepository {
 
 interface WalletStateObject {
     key: string;
-    lastSyncTime: number | null;
+    vtxosIndexerUpdatedAt: number | null;
     settingsJson: string | null;
 }
 

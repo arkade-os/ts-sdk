@@ -121,7 +121,8 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS ${this.tables.walletState} (
                 key TEXT PRIMARY KEY,
-                settings_json TEXT
+                settings_json TEXT,
+                vtxos_indexer_updated_at INTEGER
             )
         `);
 
@@ -325,6 +326,7 @@ export class SQLiteWalletRepository implements WalletRepository {
         if (row.settings_json) {
             state.settings = JSON.parse(row.settings_json);
         }
+        state.vtxosIndexerUpdatedAt = row.vtxos_indexer_updated_at ?? undefined;
         return state;
     }
 
@@ -332,9 +334,13 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.ensureInit();
         await this.db.run(
             `INSERT OR REPLACE INTO ${this.tables.walletState}
-                (key, settings_json)
-             VALUES (?, ?)`,
-            ["state", state.settings ? JSON.stringify(state.settings) : null]
+                (key, settings_json, vtxos_indexer_updated_at)
+             VALUES (?, ?, ?)`,
+            [
+                "state",
+                state.settings ? JSON.stringify(state.settings) : null,
+                state.vtxosIndexerUpdatedAt ?? null,
+            ]
         );
     }
 }
@@ -392,6 +398,7 @@ interface TransactionRow {
 interface WalletStateRow {
     key: string;
     settings_json: string | null;
+    vtxos_indexer_updated_at: number | null;
 }
 
 const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
