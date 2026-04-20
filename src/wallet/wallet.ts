@@ -1619,8 +1619,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             return commitmentTxid;
         } catch (error) {
-            // delete the intent to not be stuck in the queue
-            await this.arkProvider.deleteIntent(deleteIntent).catch(() => {});
+            // delete the intent to not be stuck in the queue. If deletion fails
+            // the intent stays on the server and the next settle will hit
+            // "duplicated input" in safeRegisterIntent — surface the failure
+            // rather than silently swallowing it.
+            await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
+                console.warn(
+                    "Failed to delete intent after settle failure; intent may linger on server and cause 'duplicated input' on next settle",
+                    e
+                );
+            });
             throw error;
         } finally {
             // close the stream

@@ -733,9 +733,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 },
                 eventCallback
             );
-            this.lastRenewalTimestamp = Date.now();
             return txid;
         } finally {
+            // Update cooldown on EVERY attempt (success or failure) so transient
+            // settle failures (stream close, connector mismatch, duplicated input)
+            // don't allow the next vtxo_received event to re-enter renewal
+            // immediately. Without this, a failed settle leaves lastRenewalTimestamp
+            // at its previous value and the cooldown check becomes a no-op.
+            this.lastRenewalTimestamp = Date.now();
             this.renewalInProgress = false;
         }
     }
