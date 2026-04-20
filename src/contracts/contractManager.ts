@@ -395,13 +395,10 @@ export class ContractManager implements IContractManager {
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
         await this.syncContracts({ contracts, pageSize });
-        const vtxos = await this.getVtxosForContracts(contracts, pageSize);
+        const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
             contract,
-            vtxos:
-                vtxos.filter(
-                    (vtxo) => vtxo.contractScript === contract.script
-                ) ?? [],
+            vtxos: vtxos.get(contract.script) ?? [],
         }));
     }
 
@@ -583,7 +580,8 @@ export class ContractManager implements IContractManager {
      *
      * Without options, re-fetches every contract.
      * With options, narrows the refresh to specific scripts and/or a time window.
-     * The cursor is updated only if
+     *
+     * Note that he cursor is updated ONLY if no contracts are provided.
      */
     async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
         const contracts = opts?.scripts
@@ -647,10 +645,10 @@ export class ContractManager implements IContractManager {
     }
 
     private async getVtxosForContracts(
-        contracts: Contract[],
-        pageSize?: number
-    ): Promise<ContractVtxo[]> {
-        const res = await Promise.all(
+        contracts: Contract[]
+    ): Promise<Map<string, ContractVtxo[]>> {
+        const result = new Map<string, ContractVtxo[]>();
+        const allVtxos = await Promise.all(
             contracts.map(({ script, address }) =>
                 this.config.walletRepository.getVtxos(address).then((vtxos) =>
                     vtxos.map(
@@ -663,7 +661,15 @@ export class ContractManager implements IContractManager {
                 )
             )
         );
-        return res.flat();
+        allVtxos
+            .flat()
+            .forEach((vtxo) =>
+                result.set(vtxo.contractScript, [
+                    ...(result.get(vtxo.contractScript) ?? []),
+                    vtxo,
+                ])
+            );
+        return result;
     }
 
     /**
@@ -681,6 +687,7 @@ export class ContractManager implements IContractManager {
         const window = options.window ?? computeSyncWindow(cursor);
 
         // IMPORTANT! Only update cursor if we're syncing ALL the contracts and the window overlaps the current cursor
+        //            We'd rather error on over-fetching.
         const mustUpdateCursor =
             options.contracts === undefined && (window.after ?? 0) < cursor;
 
