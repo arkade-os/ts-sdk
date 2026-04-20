@@ -114,7 +114,6 @@ describe("Wallet", () => {
             //    the wallet's default contract (includeSpent=true)
             // 4. ContractWatcher.subscribeForScripts for the wallet's script
             // 5. getContractsWithVtxos -> syncContracts delta fetch
-            // 6. getContractsWithVtxos -> getVtxosForContracts (spendableOnly)
 
             mockFetch
                 .mockResolvedValueOnce({
@@ -144,10 +143,6 @@ describe("Wallet", () => {
                 .mockResolvedValueOnce({
                     ok: true,
                     json: () => Promise.resolve({ subscriptionId: "sub-1" }),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
                 })
                 .mockImplementationOnce((url: string) => {
                     // Extract the script from the request URL so the

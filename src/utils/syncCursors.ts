@@ -7,7 +7,7 @@ import {
 export const SAFETY_LAG_MS = 30_000;
 
 /** Overlap window so boundary virtual outputs are never missed. */
-export const OVERLAP_MS = 60 * 60 * 1000;
+export const OVERLAP_MS = 24 * 60 * 60 * 1000;
 
 type SyncCursors = Record<string, number>;
 

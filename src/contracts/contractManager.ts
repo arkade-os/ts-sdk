@@ -398,7 +398,10 @@ export class ContractManager implements IContractManager {
         const vtxos = await this.getVtxosForContracts(contracts, pageSize);
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.get(contract.script) ?? [],
+            vtxos:
+                vtxos.filter(
+                    (vtxo) => vtxo.contractScript === contract.script
+                ) ?? [],
         }));
     }
 
@@ -646,17 +649,21 @@ export class ContractManager implements IContractManager {
     private async getVtxosForContracts(
         contracts: Contract[],
         pageSize?: number
-    ): Promise<Map<string, ContractVtxo[]>> {
-        // TODO: very similar to synccontracts
-        if (contracts.length === 0) {
-            return new Map();
-        }
-
-        return await this.fetchContractVxosFromIndexer(
-            contracts,
-            false,
-            pageSize
+    ): Promise<ContractVtxo[]> {
+        const res = await Promise.all(
+            contracts.map(({ script, address }) =>
+                this.config.walletRepository.getVtxos(address).then((vtxos) =>
+                    vtxos.map(
+                        (vtxo) =>
+                            ({
+                                ...vtxo,
+                                contractScript: script,
+                            }) as ContractVtxo
+                    )
+                )
+            )
         );
+        return res.flat();
     }
 
     /**
@@ -773,18 +780,6 @@ export class ContractManager implements IContractManager {
             return new Map();
         }
 
-        // For a single contract, use the paginated path directly.
-        if (contracts.length === 1) {
-            const contract = contracts[0];
-            const vtxos = await this.fetchContractVtxosPaginated(
-                contract,
-                includeSpent,
-                pageSize,
-                syncWindow
-            );
-            return new Map([[contract.script, vtxos]]);
-        }
-
         // For multiple contracts, batch all scripts into a single indexer call
         // per page to minimise round-trips.  Results are keyed by script so we
         // can distribute them back to the correct contract afterwards.
@@ -837,52 +832,6 @@ export class ContractManager implements IContractManager {
         }
 
         return result;
-    }
-
-    private async fetchContractVtxosPaginated(
-        contract: Contract,
-        includeSpent: boolean,
-        pageSize: number = DEFAULT_PAGE_SIZE,
-        syncWindow?: { after?: number; before?: number }
-    ): Promise<ContractVtxo[]> {
-        const allVtxos: ContractVtxo[] = [];
-        let pageIndex = 0;
-        let hasMore = true;
-
-        const opts = includeSpent ? {} : { spendableOnly: true };
-        const windowOpts = syncWindow
-            ? {
-                  ...(syncWindow.after !== undefined && {
-                      after: syncWindow.after,
-                  }),
-                  ...(syncWindow.before !== undefined && {
-                      before: syncWindow.before,
-                  }),
-              }
-            : {};
-
-        while (hasMore) {
-            const { vtxos, page } = await this.config.indexerProvider.getVtxos({
-                scripts: [contract.script],
-                ...opts,
-                ...windowOpts,
-                pageIndex,
-                pageSize,
-            });
-
-            for (const vtxo of vtxos) {
-                allVtxos.push({
-                    ...extendVtxoFromContract(vtxo, contract),
-                    contractScript: contract.script,
-                });
-            }
-
-            hasMore = page ? vtxos.length === pageSize : false;
-            pageIndex++;
-            if (hasMore) await new Promise((r) => setTimeout(r, 500));
-        }
-
-        return allVtxos;
     }
 
     /**
