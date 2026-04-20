@@ -673,8 +673,18 @@ export class ContractWatcher {
     }
 
     /**
-     * Process virtual outputs from subscription and route to correct contracts.
-     * Uses the scripts from the subscription response to determine contract ownership.
+     * Process virtual outputs from subscription and route each VTXO to the
+     * single contract that actually locks it.
+     *
+     * Prefer `vtxo.script` when the indexer populates it (the normal case):
+     * each VTXO is attributed to exactly one contract. Fall back to the
+     * subscription `scripts[]` only as a safety net:
+     *   - When the subscription is for a single script, all VTXOs are for
+     *     that script (pre-script-field indexers still work correctly).
+     *   - When multiple scripts are in play but a VTXO has no script, we
+     *     skip it rather than fan it out to every matching contract —
+     *     fan-out produced phantom state in non-owning contracts that then
+     *     never reconciled.
      */
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
@@ -682,47 +692,43 @@ export class ContractWatcher {
         eventType: ContractEvent["type"],
         timestamp: number
     ): void {
-        // If we have exactly one script, all virtual outputs belong to that contract
-        // Otherwise, we can't reliably determine ownership without script in VirtualCoin
-        if (scripts.length === 1) {
-            const contractScript = scripts[0];
-            if (contractScript) {
-                // Update tracking
-                const state = this.contracts.get(contractScript);
-                if (state) {
-                    for (const vtxo of vtxos) {
-                        const key = `${vtxo.txid}:${vtxo.vout}`;
-                        if (eventType === "vtxo_received") {
-                            state.lastKnownVtxos.set(key, vtxo);
-                        } else if (eventType === "vtxo_spent") {
-                            state.lastKnownVtxos.delete(key);
-                        }
-                    }
-                }
-                this.emitVtxoEvent(contractScript, vtxos, eventType, timestamp);
+        const singleScript = scripts.length === 1 ? scripts[0] : undefined;
+
+        const byContract = new Map<string, VirtualCoin[]>();
+        for (const vtxo of vtxos) {
+            const contractScript = vtxo.script ?? singleScript;
+            if (!contractScript) {
+                continue;
             }
-            return;
+            if (!this.contracts.has(contractScript)) {
+                continue;
+            }
+            let bucket = byContract.get(contractScript);
+            if (!bucket) {
+                bucket = [];
+                byContract.set(contractScript, bucket);
+            }
+            bucket.push(vtxo);
         }
 
-        // Multiple scripts - assign virtual outputs to all matching contracts
-        // This is a limitation: we can't know which virtual output belongs to which script
-        // In practice, subscription events usually come with a single script context
-        for (const script of scripts) {
-            const contractScript = script;
-            if (contractScript) {
-                const state = this.contracts.get(contractScript);
-                if (state) {
-                    for (const vtxo of vtxos) {
-                        const key = `${vtxo.txid}:${vtxo.vout}`;
-                        if (eventType === "vtxo_received") {
-                            state.lastKnownVtxos.set(key, vtxo);
-                        } else {
-                            state.lastKnownVtxos.delete(key);
-                        }
+        for (const [contractScript, bucketVtxos] of byContract) {
+            const state = this.contracts.get(contractScript);
+            if (state) {
+                for (const vtxo of bucketVtxos) {
+                    const key = `${vtxo.txid}:${vtxo.vout}`;
+                    if (eventType === "vtxo_received") {
+                        state.lastKnownVtxos.set(key, vtxo);
+                    } else if (eventType === "vtxo_spent") {
+                        state.lastKnownVtxos.delete(key);
                     }
                 }
-                this.emitVtxoEvent(contractScript, vtxos, eventType, timestamp);
             }
+            this.emitVtxoEvent(
+                contractScript,
+                bucketVtxos,
+                eventType,
+                timestamp
+            );
         }
     }
 
