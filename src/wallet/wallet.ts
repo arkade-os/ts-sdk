@@ -78,7 +78,11 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import { extendCoin, extendVirtualCoin, validateRecipients } from "./utils";
+import {
+    extendCoin,
+    extendVirtualCoinForContract,
+    validateRecipients,
+} from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -97,6 +101,7 @@ import {
     IndexedDBWalletRepository,
 } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import type { Contract } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 import {
@@ -699,11 +704,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             };
 
             // Handle subscription updates asynchronously without blocking.
-            // Note: subscription covers all wallet scripts (default + delegate),
-            // but we can't determine which script each virtual output belongs to from the
-            // subscription event. Virtual outputs are extended with the current offchainTapscript;
-            // this is for notification/display only — not for spending.
-            // For correct extension metadata, use getVtxos() which queries per-script.
+            // Subscription covers all wallet scripts (default + delegate) plus
+            // any additional registered contracts. Virtual outputs carry a
+            // `script` field from the indexer, which we map back to the owning
+            // contract so the extension uses the correct forfeit/intent
+            // tapscripts. Falls back to the wallet's default offchainTapscript
+            // only when a VTXO can't be attributed to a known contract.
             (async () => {
                 try {
                     for await (const update of subscription) {
@@ -711,13 +717,23 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             update.newVtxos?.length > 0 ||
                             update.spentVtxos?.length > 0
                         ) {
+                            const contractsByScript =
+                                await this.getContractsByScript();
                             eventCallback({
                                 type: "vtxo",
                                 newVtxos: update.newVtxos.map((vtxo) =>
-                                    extendVirtualCoin(this, vtxo)
+                                    extendVirtualCoinForContract(
+                                        this,
+                                        vtxo,
+                                        contractsByScript
+                                    )
                                 ),
                                 spentVtxos: update.spentVtxos.map((vtxo) =>
-                                    extendVirtualCoin(this, vtxo)
+                                    extendVirtualCoinForContract(
+                                        this,
+                                        vtxo,
+                                        contractsByScript
+                                    )
                                 ),
                             });
                         }
@@ -780,6 +796,27 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
         return [hex.encode(this.offchainTapscript.pkScript)];
+    }
+
+    /**
+     * Return a script → Contract index covering every contract known to the
+     * wallet. Callers use this to attribute incoming virtual outputs (via
+     * their `script`) back to the correct contract so they can be extended
+     * with the right tap scripts. Returns an empty map when the contract
+     * manager is not initialised to avoid triggering initialisation from
+     * hot paths.
+     */
+    async getContractsByScript(): Promise<ReadonlyMap<string, Contract>> {
+        if (!this._contractManager && !this._contractManagerInitializing) {
+            return new Map();
+        }
+        try {
+            const manager = await this.getContractManager();
+            const contracts = await manager.getContracts();
+            return new Map(contracts.map((c) => [c.script, c]));
+        } catch {
+            return new Map();
+        }
     }
 
     /**
@@ -2511,8 +2548,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 inputs.length,
                 signedCheckpointTxs.length
             );
+            const contractsByScript = await this.getContractsByScript();
             for (const [inputIndex, input] of inputs.entries()) {
-                const vtxo = extendVirtualCoin(this, input);
+                const vtxo = extendVirtualCoinForContract(
+                    this,
+                    input,
+                    contractsByScript
+                );
 
                 if (
                     inputIndex < safeLength &&
@@ -2626,10 +2668,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 input: ExtendedCoin
             ): input is ExtendedVirtualCoin => "virtualStatus" in input;
 
+            const contractsByScript = await this.getContractsByScript();
             for (const input of inputs) {
                 if (isVtxo(input)) {
                     // virtual output = mark it settled
-                    const vtxo = extendVirtualCoin(this, input);
+                    const vtxo = extendVirtualCoinForContract(
+                        this,
+                        input,
+                        contractsByScript
+                    );
                     if (vtxo.arkTxId) {
                         inputArkTxIds.add(vtxo.arkTxId);
                     }
