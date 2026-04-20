@@ -52,16 +52,23 @@ export async function getSyncCursor(repo: WalletRepository): Promise<number> {
 }
 
 /**
- * Advance cursors for multiple scripts in a single write.
+ * Advance the sync cursor, clamped so it can never move backwards.
+ *
+ * Concurrent bulk syncs can finish out of order: a sync that started
+ * later may observe a newer `requestStartedAt` but commit before an
+ * older-but-slower sync. Without the monotonic clamp the older sync
+ * would rewind the cursor, and the next delta window would re-fetch
+ * everything between the two commit points.
  */
 export async function advanceSyncCursor(
     repo: WalletRepository,
     lastUpdatedAt: number
 ): Promise<void> {
     await updateWalletState(repo, (state) => {
+        const current = state.vtxosIndexerUpdatedAt ?? 0;
         return {
             ...state,
-            vtxosIndexerUpdatedAt: lastUpdatedAt,
+            vtxosIndexerUpdatedAt: Math.max(current, lastUpdatedAt),
         };
     });
 }

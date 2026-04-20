@@ -25,6 +25,7 @@ import {
 } from "../utils/syncCursors";
 
 const DEFAULT_PAGE_SIZE = 500;
+const DEFAULT_BULK_SYNC_INTERVAL_MS = 10 * 60_000;
 
 export type RefreshVtxosOptions = {
     scripts?: string[];
@@ -169,6 +170,23 @@ export interface ContractManagerConfig {
 
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
+
+    /**
+     * Interval (ms) for the periodic bulk sync that refreshes every
+     * contract and advances the shared sync cursor.
+     *
+     * Event-driven syncs are scoped to a single contract and intentionally
+     * do not advance the cursor (the `mustUpdateCursor` guard in
+     * `syncContracts`). Without a periodic bulk sync the cursor stays
+     * frozen at its original value and the delta window grows to the full
+     * history on every launch — which gets noticeably slower the longer a
+     * wallet has been in use.
+     *
+     * Set to `0` to disable.
+     *
+     * @defaultValue `600_000` (10 minutes)
+     */
+    bulkSyncIntervalMs?: number;
 }
 
 /**
@@ -232,6 +250,8 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    private bulkSyncIntervalId?: ReturnType<typeof setInterval>;
+    private pendingBulkSync?: Promise<unknown>;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -303,6 +323,42 @@ export class ContractManager implements IContractManager {
                 console.error("Error handling contract event:", error);
             });
         });
+
+        this.startPeriodicBulkSync();
+    }
+
+    /**
+     * Start the periodic bulk sync timer. Event-driven syncs only scope
+     * to a single contract and leave the cursor where it was, so without
+     * this timer the cursor stays pinned to the value last set by an
+     * explicit `refreshVtxos()` call (or the initial bootstrap) and the
+     * delta window grows with every launch.
+     */
+    private startPeriodicBulkSync(): void {
+        const interval =
+            this.config.bulkSyncIntervalMs ?? DEFAULT_BULK_SYNC_INTERVAL_MS;
+        if (interval <= 0) return;
+
+        this.bulkSyncIntervalId = setInterval(() => {
+            this.runBulkSync().catch((error) => {
+                console.error("Periodic bulk sync failed:", error);
+            });
+        }, interval);
+    }
+
+    /**
+     * Run a bulk sync across every contract and advance the cursor.
+     * Coalesces overlapping calls: if a bulk sync is already in flight,
+     * the caller awaits the same promise instead of racing a second
+     * `syncContracts` against the same wallet state.
+     */
+    private runBulkSync(): Promise<unknown> {
+        if (this.pendingBulkSync) return this.pendingBulkSync;
+        const op = this.syncContracts({}).finally(() => {
+            this.pendingBulkSync = undefined;
+        });
+        this.pendingBulkSync = op;
+        return op;
     }
 
     /**
@@ -361,7 +417,7 @@ export class ContractManager implements IContractManager {
         await this.config.contractRepository.saveContract(contract);
 
         // fetch all virtual outputs (including spent/swept) for this contract
-        await this.fetchContractVxosFromIndexer([contract], true);
+        await this.fetchContractVxosFromIndexer([contract]);
 
         // Add to watcher
         await this.watcher.addContract(contract);
@@ -632,10 +688,7 @@ export class ContractManager implements IContractManager {
                 // contracts left those holes unpatched.
                 const watchedContracts = this.watcher.getAllContracts();
                 if (watchedContracts.length > 0) {
-                    await this.fetchContractVxosFromIndexer(
-                        watchedContracts,
-                        true
-                    );
+                    await this.fetchContractVxosFromIndexer(watchedContracts);
                     // Also patch the pending frontier — a spend that
                     // transitioned to confirmed during the outage may sit
                     // outside any delta window.
@@ -708,7 +761,6 @@ export class ContractManager implements IContractManager {
         const requestStartedAt = Date.now();
         const result = await this.fetchContractVxosFromIndexer(
             contracts,
-            true,
             options.pageSize,
             window
         );
@@ -763,13 +815,11 @@ export class ContractManager implements IContractManager {
 
     private async fetchContractVxosFromIndexer(
         contracts: Contract[],
-        includeSpent: boolean,
         pageSize?: number,
         syncWindow?: { after?: number; before?: number }
     ): Promise<Map<string, ContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
-            includeSpent,
             pageSize,
             syncWindow
         );
@@ -789,7 +839,6 @@ export class ContractManager implements IContractManager {
 
     private async fetchContractVtxosBulk(
         contracts: Contract[],
-        includeSpent: boolean,
         pageSize: number = DEFAULT_PAGE_SIZE,
         syncWindow?: { after?: number; before?: number }
     ): Promise<Map<string, ContractVtxo[]>> {
@@ -800,6 +849,12 @@ export class ContractManager implements IContractManager {
         // For multiple contracts, batch all scripts into a single indexer call
         // per page to minimise round-trips.  Results are keyed by script so we
         // can distribute them back to the correct contract afterwards.
+        //
+        // NOTE: this deliberately does not pass `spendableOnly`. A background
+        // sync that omits spent virtual outputs can never observe an
+        // unspent→spent transition (the vtxo just stops appearing), and
+        // the watcher's `pollContracts` relies on the full set being in
+        // the repository to derive spent events locally.
         const scriptToContract = new Map<string, Contract>(
             contracts.map((c) => [c.script, c])
         );
@@ -808,7 +863,6 @@ export class ContractManager implements IContractManager {
         );
 
         const scripts = contracts.map((c) => c.script);
-        const opts = includeSpent ? {} : { spendableOnly: true };
         const windowOpts = syncWindow
             ? {
                   ...(syncWindow.after !== undefined && {
@@ -825,7 +879,6 @@ export class ContractManager implements IContractManager {
         while (hasMore) {
             const { vtxos, page } = await this.config.indexerProvider.getVtxos({
                 scripts,
-                ...opts,
                 ...windowOpts,
                 pageIndex,
                 pageSize,
@@ -860,15 +913,7 @@ export class ContractManager implements IContractManager {
      * Implements the disposable pattern for cleanup.
      */
     dispose(): void {
-        // Stop watching
-        this.stopWatcherFn?.();
-        this.stopWatcherFn = undefined;
-
-        // Clear callbacks
-        this.eventCallbacks.clear();
-
-        // Mark as uninitialized
-        this.initialized = false;
+        this.cleanup();
     }
 
     /**
@@ -882,9 +927,19 @@ export class ContractManager implements IContractManager {
      * ```
      */
     [Symbol.dispose](): void {
+        this.cleanup();
+    }
+
+    private cleanup(): void {
         // Stop watching
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
+
+        // Stop the periodic bulk sync timer
+        if (this.bulkSyncIntervalId) {
+            clearInterval(this.bulkSyncIntervalId);
+            this.bulkSyncIntervalId = undefined;
+        }
 
         // Clear callbacks
         this.eventCallbacks.clear();
