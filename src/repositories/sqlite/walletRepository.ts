@@ -121,7 +121,6 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS ${this.tables.walletState} (
                 key TEXT PRIMARY KEY,
-                last_sync_time INTEGER,
                 settings_json TEXT
             )
         `);
@@ -333,8 +332,8 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.ensureInit();
         await this.db.run(
             `INSERT OR REPLACE INTO ${this.tables.walletState}
-                (key, last_sync_time, settings_json)
-             VALUES (?, ?, ?)`,
+                (key, settings_json)
+             VALUES (?, ?)`,
             ["state", state.settings ? JSON.stringify(state.settings) : null]
         );
     }
@@ -392,7 +391,6 @@ interface TransactionRow {
 
 interface WalletStateRow {
     key: string;
-    last_sync_time: number | null;
     settings_json: string | null;
 }
 
