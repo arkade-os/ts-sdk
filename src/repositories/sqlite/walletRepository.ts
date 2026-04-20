@@ -82,9 +82,21 @@ export class SQLiteWalletRepository implements WalletRepository {
                 ark_tx_id TEXT,
                 extra_witness_json TEXT,
                 assets_json TEXT,
+                script TEXT,
                 PRIMARY KEY (txid, vout)
             )
         `);
+        // Lazy migration for databases created before the script column existed.
+        // SQLite does not support IF NOT EXISTS on ADD COLUMN, so tolerate the
+        // "duplicate column" error when the column is already present.
+        try {
+            await this.db.run(
+                `ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`
+            );
+        } catch (e) {
+            const msg = (e as Error)?.message ?? "";
+            if (!/duplicate column/i.test(msg)) throw e;
+        }
 
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS ${this.tables.utxos} (
@@ -128,6 +140,9 @@ export class SQLiteWalletRepository implements WalletRepository {
 
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address ON ${this.tables.vtxos} (address)`
+        );
+        await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`
@@ -175,12 +190,12 @@ export class SQLiteWalletRepository implements WalletRepository {
                      tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
                      status_json, virtual_status_json, created_at,
                      is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                     extra_witness_json, assets_json)
+                     extra_witness_json, assets_json, script)
                  VALUES (?, ?, ?, ?,
                          ?, ?, ?, ?, ?,
                          ?, ?, ?,
                          ?, ?, ?, ?, ?,
-                         ?, ?)`,
+                         ?, ?, ?)`,
                 [
                     s.txid,
                     s.vout,
@@ -205,6 +220,7 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.arkTxId ?? null,
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                     s.assets ? JSON.stringify(s.assets) : null,
+                    s.script ?? null,
                 ]
             );
         }
@@ -369,6 +385,7 @@ interface VtxoRow {
     ark_tx_id: string | null;
     extra_witness_json: string | null;
     assets_json: string | null;
+    script: string | null;
 }
 
 interface UtxoRow {
@@ -442,6 +459,7 @@ function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
             ? JSON.parse(row.extra_witness_json)
             : undefined,
         assets: row.assets_json ? JSON.parse(row.assets_json) : undefined,
+        script: row.script ?? undefined,
     };
 
     return deserializeVtxo(serialized);

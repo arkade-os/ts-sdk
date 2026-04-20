@@ -138,6 +138,25 @@ function createMockSQLExecutor(): SQLExecutor {
                 return;
             }
 
+            // ALTER TABLE ADD COLUMN is used for lazy migrations. Simulate
+            // the real SQLite behaviour: if the column already exists, raise
+            // a "duplicate column" error so the impl's catch branch matches.
+            const alterMatch = trimmed.match(
+                /^ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i
+            );
+            if (alterMatch) {
+                const [, tableName, colName] = alterMatch;
+                const t = tables.get(tableName);
+                if (!t) throw new Error(`Table ${tableName} does not exist`);
+                const sample = t.rows.values().next();
+                if (!sample.done && colName in (sample.value as object)) {
+                    throw new Error(`duplicate column name: ${colName}`);
+                }
+                // Column did not exist — nothing structural to track in the
+                // mock since rows are plain objects; new writes populate it.
+                return;
+            }
+
             throw new Error(`Unsupported SQL in run(): ${trimmed}`);
         },
 
@@ -272,6 +291,7 @@ function createMockVtxoWithExtras(
         tapTree: new Uint8Array(32).fill(5),
         extraWitness: [new Uint8Array([0xab, 0xcd]), new Uint8Array([0xef])],
         assets: [{ assetId: "asset-1", amount: 500 }],
+        script: "5120deadbeef",
     };
 }
 
@@ -410,6 +430,8 @@ describe("SQLiteWalletRepository", () => {
             expect(retrieved.extraWitness!.length).toBe(2);
             expect(hex.encode(retrieved.extraWitness![0])).toBe("abcd");
             expect(hex.encode(retrieved.extraWitness![1])).toBe("ef");
+            // script (hex scriptPubKey) round-trip
+            expect(retrieved.script).toBe("5120deadbeef");
         });
 
         it("should round-trip tap tree and leaf scripts", async () => {
