@@ -154,12 +154,48 @@ export class ContractWatcher {
 
         this.contracts.set(contract.script, state);
 
+        // Seed the baseline from the repository BEFORE any poll or event
+        // emits. Without this, the first poll after (re)start treats every
+        // persisted vtxo as "new" and emits `vtxo_received` for each —
+        // which downstream triggers a redundant per-vtxo sync on every
+        // app launch and can confuse consumers that react to the event.
+        await this.seedLastKnownVtxos(state);
+
         // If we're already watching, poll to discover virtual outputs and update subscription
         if (this.isWatching) {
             // Poll first to discover virtual outputs (may affect whether we watch this contract).
             await this.pollContracts([contract.script]);
             // Update subscription based on active state and virtual outputs.
             await this.tryUpdateSubscription();
+        }
+    }
+
+    /**
+     * Pre-populate `lastKnownVtxos` from the wallet repository.
+     *
+     * Runs on add (and can be re-run after reconnect) so polling always
+     * compares the indexer's view against what is already persisted,
+     * emitting only genuine deltas.
+     */
+    private async seedLastKnownVtxos(state: ContractState): Promise<void> {
+        try {
+            const cached = await this.config.walletRepository.getVtxos(
+                state.contract.address
+            );
+            for (const vtxo of cached) {
+                if (vtxo.isSpent) continue;
+                const key = `${vtxo.txid}:${vtxo.vout}`;
+                state.lastKnownVtxos.set(key, vtxo);
+            }
+        } catch (error) {
+            // Don't throw — the watcher can still recover via poll and
+            // subscription events. A failed seed just means the first poll
+            // may emit some redundant `vtxo_received` events for already
+            // known vtxos.
+            console.error(
+                `ContractWatcher: failed to seed lastKnownVtxos for ${state.contract.script}`,
+                error
+            );
         }
     }
 
