@@ -712,12 +712,16 @@ export class ContractWatcher {
         const singleScript = scripts.length === 1 ? scripts[0] : undefined;
 
         const byContract = new Map<string, VirtualCoin[]>();
+        let unattributed = 0;
+        let unknownScript = 0;
         for (const vtxo of vtxos) {
             const contractScript = vtxo.script ?? singleScript;
             if (!contractScript) {
+                unattributed++;
                 continue;
             }
             if (!this.contracts.has(contractScript)) {
+                unknownScript++;
                 continue;
             }
             let bucket = byContract.get(contractScript);
@@ -726,6 +730,15 @@ export class ContractWatcher {
                 byContract.set(contractScript, bucket);
             }
             bucket.push(vtxo);
+        }
+
+        if (unattributed > 0 || unknownScript > 0) {
+            // The failsafe poll is the backstop for these; log at debug so we
+            // can correlate "VTXO state drift" reports with subscription
+            // drops rather than chase phantom bugs.
+            console.debug(
+                `ContractWatcher.processSubscriptionVtxos[${eventType}]: dropped ${unattributed} unattributable and ${unknownScript} unknown-script VTXOs (${vtxos.length} total)`
+            );
         }
 
         for (const [contractScript, bucketVtxos] of byContract) {
