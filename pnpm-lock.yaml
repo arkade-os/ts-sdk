@@ -16,9 +16,9 @@ importers:
       '@bitcoinerlab/descriptors-scure':
         specifier: 3.1.7
         version: 3.1.7
-      '@marcbachmann/cel-js':
-        specifier: 7.3.1
-        version: 7.3.1
+      '@marvec/cel-vm':
+        specifier: 1.0.6
+        version: 1.0.6
       '@noble/curves':
         specifier: 2.0.1
         version: 2.0.1
@@ -990,9 +990,9 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@marcbachmann/cel-js@7.3.1':
-    resolution: {integrity: sha512-P6o26TvjStT8V8+8EF+yq9Pp7ZFV00bpiUMbssr76XbIZGxaB+NNWeBp6WNxOrR9gp0JPzvJueCKHpOs5LE9PQ==}
-    engines: {node: '>=20.19.0'}
+  '@marvec/cel-vm@1.0.6':
+    resolution: {integrity: sha512-MoDDevpCI5zaQasKSLsDT9V6rU6mdYXT/gzoHff8lLJEk4Y8rgB1S7elL0duCzqvjNPKXwAkhaLUOeMxe6bqdA==}
+    engines: {node: '>=18'}
     hasBin: true
 
   '@noble/curves@2.0.1':
@@ -1377,6 +1377,7 @@ packages:
   '@xmldom/xmldom@0.8.11':
     resolution: {integrity: sha512-cQzWCtO6C8TQiYl1ruKNn2U6Ao4o4WBBcbL61yJl84x+j5sOWWFU9X7DpND8XZG3daDppSsigMdfAIl2upQBRw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
@@ -4864,7 +4865,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@marcbachmann/cel-js@7.3.1': {}
+  '@marvec/cel-vm@1.0.6': {}
 
   '@noble/curves@2.0.1':
     dependencies:

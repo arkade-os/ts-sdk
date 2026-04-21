@@ -1,4 +1,4 @@
-import { Environment } from "@marcbachmann/cel-js";
+import { Environment } from "@marvec/cel-vm";
 
 /**
  * Variable names used in CEL expressions
@@ -11,7 +11,8 @@ export const InputTypeVariableName = "inputType";
 export const OutputScriptVariableName = "script";
 
 const nowFunction = {
-    signature: "now(): double",
+    name: "now",
+    arity: 0,
     implementation: () => Math.floor(Date.now() / 1000),
 };
 
@@ -22,7 +23,11 @@ const nowFunction = {
 export const IntentOutputEnv = new Environment()
     .registerVariable(AmountVariableName, "double")
     .registerVariable(OutputScriptVariableName, "string")
-    .registerFunction(nowFunction.signature, nowFunction.implementation);
+    .registerFunction(
+        nowFunction.name,
+        nowFunction.arity,
+        nowFunction.implementation
+    );
 
 /**
  * IntentOffchainInputEnv is the CEL environment for offchain input fee calculation
@@ -34,7 +39,11 @@ export const IntentOffchainInputEnv = new Environment()
     .registerVariable(BirthVariableName, "double")
     .registerVariable(WeightVariableName, "double")
     .registerVariable(InputTypeVariableName, "string")
-    .registerFunction(nowFunction.signature, nowFunction.implementation);
+    .registerFunction(
+        nowFunction.name,
+        nowFunction.arity,
+        nowFunction.implementation
+    );
 
 /**
  * IntentOnchainInputEnv is the CEL environment for onchain input fee calculation
@@ -42,4 +51,8 @@ export const IntentOffchainInputEnv = new Environment()
  */
 export const IntentOnchainInputEnv = new Environment()
     .registerVariable(AmountVariableName, "double")
-    .registerFunction(nowFunction.signature, nowFunction.implementation);
+    .registerFunction(
+        nowFunction.name,
+        nowFunction.arity,
+        nowFunction.implementation
+    );

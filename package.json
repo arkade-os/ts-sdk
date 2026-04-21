@@ -116,7 +116,7 @@
     },
     "dependencies": {
         "@bitcoinerlab/descriptors-scure": "3.1.7",
-        "@marcbachmann/cel-js": "7.3.1",
+        "@marvec/cel-vm": "1.0.6",
         "@noble/curves": "2.0.1",
         "@noble/secp256k1": "3.0.0",
         "@scure/base": "2.0.0",
