@@ -702,7 +702,7 @@ export class ContractManager implements IContractManager {
 
         return await this.fetchContractVxosFromIndexer(
             contracts,
-            false,
+            true,
             pageSize
         );
     }
