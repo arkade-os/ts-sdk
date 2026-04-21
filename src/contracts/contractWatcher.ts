@@ -237,39 +237,23 @@ export class ContractWatcher {
     }
 
     /**
-     * Get all active in-memory contracts.
-     */
-    getActiveContracts(): Contract[] {
-        return this.getAllContracts().filter((c) => c.state === "active");
-    }
-
-    /**
-     * Get scripts that should be watched.
+     * Contracts the watcher is actually tracking:
+     * - all active contracts, plus
+     * - inactive/expired contracts that still hold known virtual outputs
+     *   (the subscription keeps watching them so `vtxo_spent` events for
+     *   those unspent outputs are still observed).
      *
-     * Returns scripts for:
-     * - All active contracts
-     * - All contracts with known virtual outputs (regardless of state)
-     *
-     * This ensures we continue monitoring contracts even after they're
-     * deactivated, as long as they have unspent virtual outputs.
+     * This is the single source of truth for "contracts whose VTXO state
+     * we still care about" — callers and the subscription itself fan out
+     * over the same set so nothing is reconciled that isn't also watched.
      */
-    private getScriptsToWatch(): string[] {
-        const scripts = new Set<string>();
-
-        for (const [, state] of this.contracts) {
-            // Always watch active contracts
-            if (state.contract.state === "active") {
-                scripts.add(state.contract.script);
-                continue;
-            }
-
-            // Also watch inactive/expired contracts that have virtual outputs.
-            if (state.lastKnownVtxos.size > 0) {
-                scripts.add(state.contract.script);
-            }
-        }
-
-        return Array.from(scripts);
+    getWatchedContracts(): Contract[] {
+        return Array.from(this.contracts.values())
+            .filter(
+                (s) =>
+                    s.contract.state === "active" || s.lastKnownVtxos.size > 0
+            )
+            .map((s) => s.contract);
     }
 
     /**
@@ -515,13 +499,10 @@ export class ContractWatcher {
         }, this.config.failsafePollIntervalMs);
     }
 
-    /**
-     * Poll all active contracts for current state.
-     */
     private async pollAllContracts(): Promise<void> {
-        const activeScripts = this.getActiveContracts().map((c) => c.script);
-        if (activeScripts.length === 0) return;
-        await this.pollContracts(activeScripts);
+        const scripts = this.getWatchedContracts().map((c) => c.script);
+        if (scripts.length === 0) return;
+        await this.pollContracts(scripts);
     }
 
     /**
@@ -608,7 +589,7 @@ export class ContractWatcher {
      * Watches both active contracts and contracts with virtual outputs.
      */
     private async updateSubscription(): Promise<void> {
-        const scriptsToWatch = this.getScriptsToWatch();
+        const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);
 
         if (scriptsToWatch.length === 0) {
             if (this.subscriptionId) {

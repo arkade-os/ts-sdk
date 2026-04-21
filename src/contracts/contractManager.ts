@@ -625,13 +625,15 @@ export class ContractManager implements IContractManager {
                 break;
             case "connection_reset": {
                 // After a reconnect we don't know what we missed — refetch
-                // every active watched contract and also patch the pending
-                // frontier, since a spend that transitioned to confirmed
-                // during the outage may sit outside any delta window.
-                const activeWatched = this.watcher.getActiveContracts();
-                if (activeWatched.length > 0) {
-                    await this.fetchContractVxosFromIndexer(activeWatched);
-                    await this.reconcilePendingFrontier(activeWatched);
+                // every watched contract (active, plus inactive contracts
+                // still holding unspent vtxos since the subscription keeps
+                // watching those too) and patch the pending frontier,
+                // since a spend that transitioned to confirmed during the
+                // outage may sit outside any delta window.
+                const watched = this.watcher.getWatchedContracts();
+                if (watched.length > 0) {
+                    await this.fetchContractVxosFromIndexer(watched);
+                    await this.reconcilePendingFrontier(watched);
                 }
                 break;
             }
