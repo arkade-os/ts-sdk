@@ -7,14 +7,11 @@ import {
 export const SAFETY_LAG_MS = 30_000;
 
 /** Overlap window so boundary virtual outputs are never missed. */
-export const OVERLAP_MS = 60_000;
-
-type SyncCursors = Record<string, number>;
+export const OVERLAP_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Per-repository mutex that serializes wallet-state mutations so that
- * concurrent read-modify-write cycles (e.g. advanceSyncCursors racing
- * with clearSyncCursors or setPendingTxFlag) never silently overwrite
+ * concurrent read-modify-write cycles never silently overwrite
  * each other's changes.
  */
 const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
@@ -42,116 +39,49 @@ export async function updateWalletState(
 }
 
 /**
- * Read the high-water mark for a single script.
- * Returns `undefined` when the script has never been synced (bootstrap case).
+ * Read the global high-water mark for VTXO indexer syncs.
+ * Returns `0` when the wallet has never been synced (bootstrap case).
  */
-export async function getSyncCursor(
-    repo: WalletRepository,
-    script: string
-): Promise<number | undefined> {
+export async function getSyncCursor(repo: WalletRepository): Promise<number> {
     const state = await repo.getWalletState();
-    return (state?.settings?.vtxoSyncCursors as SyncCursors | undefined)?.[
-        script
-    ];
+    return state?.vtxosIndexerUpdatedAt ?? 0;
 }
 
 /**
- * Read cursors for every previously-synced script.
- */
-export async function getAllSyncCursors(
-    repo: WalletRepository
-): Promise<SyncCursors> {
-    const state = await repo.getWalletState();
-    return (state?.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
-}
-
-/**
- * Advance the cursor for one script after a successful delta sync.
- * `cursor` should be the `before` cutoff used in the request.
+ * Advance the global cursor after a successful full-scope delta sync.
  */
 export async function advanceSyncCursor(
     repo: WalletRepository,
-    script: string,
-    cursor: number
+    lastUpdatedAt: number
 ): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const existing =
-            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
         return {
             ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: { ...existing, [script]: cursor },
-            },
+            vtxosIndexerUpdatedAt: lastUpdatedAt,
         };
     });
 }
 
 /**
- * Advance cursors for multiple scripts in a single write.
+ * Remove the sync cursor, forcing a full re-bootstrap on next sync.
  */
-export async function advanceSyncCursors(
-    repo: WalletRepository,
-    updates: Record<string, number>
-): Promise<void> {
+export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const existing =
-            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
         return {
             ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: { ...existing, ...updates },
-            },
-        };
-    });
-}
-
-/**
- * Remove sync cursors, forcing a full re-bootstrap on next sync.
- * When `scripts` is provided, only those cursors are cleared.
- */
-export async function clearSyncCursors(
-    repo: WalletRepository,
-    scripts?: string[]
-): Promise<void> {
-    await updateWalletState(repo, (state) => {
-        if (!scripts) {
-            const { vtxoSyncCursors: _, ...restSettings } =
-                state.settings ?? {};
-            return {
-                ...state,
-                settings: restSettings,
-            };
-        }
-        const existing =
-            (state.settings?.vtxoSyncCursors as
-                | Record<string, number>
-                | undefined) ?? {};
-        const filtered = { ...existing };
-        for (const s of scripts) delete filtered[s];
-        return {
-            ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: filtered,
-            },
+            vtxosIndexerUpdatedAt: undefined,
         };
     });
 }
 
 /**
  * Compute the `after` lower-bound for a delta sync query.
- * Returns `undefined` when the script has no cursor (bootstrap needed).
  *
  * No upper bound (`before`) is applied to the query so that freshly
  * created virtual outputs are never excluded. The safety lag is applied only
  * when advancing the cursor (see @see cursorCutoff).
  */
-export function computeSyncWindow(
-    cursor: number | undefined
-): { after: number } | undefined {
-    if (cursor === undefined) return undefined;
+export function computeSyncWindow(cursor: number): { after: number } {
     const after = Math.max(0, cursor - OVERLAP_MS);
     return { after };
 }

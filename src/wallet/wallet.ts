@@ -99,7 +99,7 @@ import {
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
-import { clearSyncCursors, updateWalletState } from "../utils/syncCursors";
+import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 
 // Hardcoded unilateral exit delay for mainnet (~7 days in seconds).
 // Pinned here so that address derivation stays stable for existing mainnet
@@ -516,11 +516,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Clear all virtual output sync cursors, forcing a full re-bootstrap on next sync.
+     * Clear the global VTXO sync cursor, forcing a full re-bootstrap on next sync.
      * Useful for recovery after indexer reprocessing or debugging.
      */
-    async clearSyncCursors(): Promise<void> {
-        await clearSyncCursors(this.walletRepository);
+    async clearSyncCursor(): Promise<void> {
+        await clearSyncCursor(this.walletRepository);
     }
     /**
      * Build a transaction history view for the wallet's boarding address.
