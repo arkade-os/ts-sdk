@@ -280,24 +280,15 @@ export class ContractManager implements IContractManager {
             return;
         }
 
-        // Delta-sync: fetch virtual outputs that changed since the last cursor.
-        // Deliberately omit `contracts` so `syncContracts` recognises this as a
-        // full-scope refresh and advances the global cursor on success.
-        await this.syncContracts({});
-
-        // Load persisted contracts for the rest of initialize.
+        // Load persisted contracts, mark expired ones inactive, and register
+        // them with the watcher BEFORE the first sync. `addContract` seeds
+        // `lastKnownVtxos` from the repo without starting to poll, so this is
+        // cheap — but it also populates `getWatchedContracts()` so the sync
+        // below can scope itself to the real watched set instead of every
+        // contract ever persisted (including dormant inactive ones).
         const contracts = await this.config.contractRepository.getContracts();
-
-        // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
-        // to catch any that the delta window may have missed.
-        if (contracts.length > 0) {
-            await this.reconcilePendingFrontier(contracts);
-        }
-
-        // add all contracts to the watcher
         const now = Date.now();
         for (const contract of contracts) {
-            // Check for expired contracts and mark as inactive
             if (
                 contract.state === "active" &&
                 contract.expiresAt &&
@@ -306,9 +297,19 @@ export class ContractManager implements IContractManager {
                 contract.state = "inactive";
                 await this.config.contractRepository.saveContract(contract);
             }
-
-            // Add to watcher
             await this.watcher.addContract(contract);
+        }
+
+        // Delta-sync: fetch virtual outputs that changed since the last
+        // cursor. Deliberately omit `contracts` so `syncContracts` uses
+        // the full watched set and advances the global cursor on success.
+        await this.syncContracts({});
+
+        // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
+        // to catch any that the delta window may have missed.
+        const watched = this.watcher.getWatchedContracts();
+        if (watched.length > 0) {
+            await this.reconcilePendingFrontier(watched);
         }
 
         this.initialized = true;
@@ -715,9 +716,12 @@ export class ContractManager implements IContractManager {
     /**
      * Sync virtual outputs for the given contracts against the indexer.
      *
-     * The single global cursor is advanced ONLY when the sync covers every
-     * contract (no `options.contracts` passed) — subset polls intentionally
-     * don't move the cursor so they can't hide data other contracts need.
+     * When `options.contracts` is omitted the sync covers the full
+     * watched set (active contracts plus any inactive contracts still
+     * holding cached VTXOs) and the global cursor is advanced on
+     * success. Passing an explicit subset leaves the cursor alone so a
+     * narrow poll can't hide data that other contracts still need to
+     * pick up.
      */
     private async syncContracts(options: {
         contracts?: Contract[];
@@ -728,14 +732,13 @@ export class ContractManager implements IContractManager {
         const cursor = await getSyncCursor(this.config.walletRepository);
         const window = options.window ?? computeSyncWindow(cursor);
 
-        // Only advance cursor if syncing ALL contracts AND the window starts
-        // before the current cursor (otherwise we'd be skipping ahead).
+        // Only advance cursor if syncing the full watched set AND the window
+        // starts before the current cursor (otherwise we'd be skipping ahead).
         const mustUpdateCursor =
             options.contracts === undefined && (window.after ?? 0) < cursor;
 
         const contracts =
-            options.contracts ??
-            (await this.config.contractRepository.getContracts());
+            options.contracts ?? this.watcher.getWatchedContracts();
 
         const requestStartedAt = Date.now();
         const result = await this.fetchContractVxosFromIndexer(
