@@ -233,6 +233,7 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    private syncVtxosCallInflight?: Promise<Map<string, ContractVtxo[]>>;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -272,7 +273,7 @@ export class ContractManager implements IContractManager {
 
         // Delta-sync: fetch only virtual outputs that changed since the last cursor,
         // falling back to a full bootstrap for scripts seen for the first time.
-        await this.deltaSyncContracts(contracts);
+        await this.deltaSyncContracts(contracts, undefined, true);
 
         // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
         // to catch any that the delta window may have missed.
@@ -700,11 +701,23 @@ export class ContractManager implements IContractManager {
             return new Map();
         }
 
-        return await this.fetchContractVxosFromIndexer(
+        // Deduplicate concurrent callers against an in-flight fetch so we don't
+        // issue redundant round-trips. Once the fetch settles we clear the
+        // reference so the next call triggers a fresh fetch.
+        // TODO: can be removed once we fix the persistence layer (address vs scripts)
+        if (this.syncVtxosCallInflight) {
+            return this.syncVtxosCallInflight;
+        }
+
+        this.syncVtxosCallInflight = this.fetchContractVxosFromIndexer(
             contracts,
-            false,
+            true,
             pageSize
-        );
+        ).finally(() => {
+            this.syncVtxosCallInflight = undefined;
+        });
+
+        return this.syncVtxosCallInflight;
     }
 
     /**
@@ -714,9 +727,19 @@ export class ContractManager implements IContractManager {
      */
     private async deltaSyncContracts(
         contracts: Contract[],
-        pageSize?: number
+        pageSize?: number,
+        force?: boolean
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) return new Map();
+
+        // If forced, we are treating all contracts as boostrapped and we clean the VTXO list
+        if (force === true) {
+            await Promise.all(
+                contracts.map((contract) =>
+                    this.config.walletRepository.deleteVtxos(contract.address)
+                )
+            );
+        }
 
         const cursors = await getAllSyncCursors(this.config.walletRepository);
 
@@ -724,6 +747,10 @@ export class ContractManager implements IContractManager {
         const bootstrap: Contract[] = [];
         const delta: Contract[] = [];
         for (const c of contracts) {
+            if (force) {
+                bootstrap.push(c);
+                continue;
+            }
             if (cursors[c.script] !== undefined) {
                 delta.push(c);
             } else {

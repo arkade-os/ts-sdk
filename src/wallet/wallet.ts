@@ -483,27 +483,26 @@ export class ReadonlyWallet implements IReadonlyWallet {
      * @param filter - Optional flags controlling whether recoverable or unrolled VTXOs are included
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
-        const { isDelta, fetchedExtended, address } = await this.syncVtxos();
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
 
-        // For delta syncs, read the full merged set from cache so old
-        // Virtual outputs that weren't in the delta are still returned.
-        const vtxos = isDelta
-            ? await this.walletRepository.getVtxos(address)
-            : fetchedExtended;
+        const contractManager = await this.getContractManager();
+        const contractsWithVtxos =
+            await contractManager.getContractsWithVtxos();
 
-        return vtxos.filter((vtxo) => {
-            if (isSpendable(vtxo)) {
-                if (
-                    !f.withRecoverable &&
-                    (isRecoverable(vtxo) || isExpired(vtxo))
-                ) {
-                    return false;
+        return contractsWithVtxos.flatMap(({ vtxos }) =>
+            vtxos.filter((vtxo) => {
+                if (isSpendable(vtxo)) {
+                    if (
+                        !f.withRecoverable &&
+                        (isRecoverable(vtxo) || isExpired(vtxo))
+                    ) {
+                        return false;
+                    }
+                    return true;
                 }
-                return true;
-            }
-            return !!(f.withUnrolled && vtxo.isUnrolled);
-        });
+                return !!(f.withUnrolled && vtxo.isUnrolled);
+            })
+        );
     }
 
     /**
