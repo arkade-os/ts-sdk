@@ -15,7 +15,7 @@ import {
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { VirtualCoin } from "../wallet";
-import { extendVtxoFromContract } from "../wallet/utils";
+import { extendVirtualCoinForContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 import {
     advanceSyncCursors,
@@ -836,7 +836,7 @@ export class ContractManager implements IContractManager {
                 byContract.set(contract.address, arr);
             }
             arr.push({
-                ...extendVtxoFromContract(vtxo, contract),
+                ...extendVirtualCoinForContract(undefined, vtxo, contract),
                 contractScript: contract.script,
             });
         }
@@ -935,7 +935,7 @@ export class ContractManager implements IContractManager {
                 const contract = scriptToContract.get(vtxo.script);
                 if (!contract) continue;
                 result.get(contract.script)!.push({
-                    ...extendVtxoFromContract(vtxo, contract),
+                    ...extendVirtualCoinForContract(undefined, vtxo, contract),
                     contractScript: contract.script,
                 });
             }
@@ -981,7 +981,7 @@ export class ContractManager implements IContractManager {
 
             for (const vtxo of vtxos) {
                 allVtxos.push({
-                    ...extendVtxoFromContract(vtxo, contract),
+                    ...extendVirtualCoinForContract(vtxo, contract),
                     contractScript: contract.script,
                 });
             }
