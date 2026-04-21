@@ -25,7 +25,6 @@ import {
 } from "../utils/syncCursors";
 
 const DEFAULT_PAGE_SIZE = 500;
-const DEFAULT_BULK_SYNC_INTERVAL_MS = 10 * 60_000;
 
 export type RefreshVtxosOptions = {
     scripts?: string[];
@@ -170,23 +169,6 @@ export interface ContractManagerConfig {
 
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
-
-    /**
-     * Interval (ms) for the periodic bulk sync that refreshes every
-     * contract and advances the shared sync cursor.
-     *
-     * Event-driven syncs are scoped to a single contract and intentionally
-     * do not advance the cursor (the `mustUpdateCursor` guard in
-     * `syncContracts`). Without a periodic bulk sync the cursor stays
-     * frozen at its original value and the delta window grows to the full
-     * history on every launch — which gets noticeably slower the longer a
-     * wallet has been in use.
-     *
-     * Set to `0` to disable.
-     *
-     * @defaultValue `600_000` (10 minutes)
-     */
-    bulkSyncIntervalMs?: number;
 }
 
 /**
@@ -250,8 +232,6 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
-    private bulkSyncIntervalId?: ReturnType<typeof setInterval>;
-    private pendingBulkSync?: Promise<unknown>;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -323,42 +303,6 @@ export class ContractManager implements IContractManager {
                 console.error("Error handling contract event:", error);
             });
         });
-
-        this.startPeriodicBulkSync();
-    }
-
-    /**
-     * Start the periodic bulk sync timer. Event-driven syncs only scope
-     * to a single contract and leave the cursor where it was, so without
-     * this timer the cursor stays pinned to the value last set by an
-     * explicit `refreshVtxos()` call (or the initial bootstrap) and the
-     * delta window grows with every launch.
-     */
-    private startPeriodicBulkSync(): void {
-        const interval =
-            this.config.bulkSyncIntervalMs ?? DEFAULT_BULK_SYNC_INTERVAL_MS;
-        if (interval <= 0) return;
-
-        this.bulkSyncIntervalId = setInterval(() => {
-            this.runBulkSync().catch((error) => {
-                console.error("Periodic bulk sync failed:", error);
-            });
-        }, interval);
-    }
-
-    /**
-     * Run a bulk sync across every contract and advance the cursor.
-     * Coalesces overlapping calls: if a bulk sync is already in flight,
-     * the caller awaits the same promise instead of racing a second
-     * `syncContracts` against the same wallet state.
-     */
-    private runBulkSync(): Promise<unknown> {
-        if (this.pendingBulkSync) return this.pendingBulkSync;
-        const op = this.syncContracts({}).finally(() => {
-            this.pendingBulkSync = undefined;
-        });
-        this.pendingBulkSync = op;
-        return op;
     }
 
     /**
@@ -934,12 +878,6 @@ export class ContractManager implements IContractManager {
         // Stop watching
         this.stopWatcherFn?.();
         this.stopWatcherFn = undefined;
-
-        // Stop the periodic bulk sync timer
-        if (this.bulkSyncIntervalId) {
-            clearInterval(this.bulkSyncIntervalId);
-            this.bulkSyncIntervalId = undefined;
-        }
 
         // Clear callbacks
         this.eventCallbacks.clear();
