@@ -300,17 +300,7 @@ export class ContractManager implements IContractManager {
             await this.watcher.addContract(contract);
         }
 
-        // Delta-sync: fetch virtual outputs that changed since the last
-        // cursor. Deliberately omit `contracts` so `syncContracts` uses
-        // the full watched set and advances the global cursor on success.
-        await this.syncContracts({});
-
-        // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
-        // to catch any that the delta window may have missed.
-        const watched = this.watcher.getWatchedContracts();
-        if (watched.length > 0) {
-            await this.reconcilePendingFrontier(watched);
-        }
+        await this.reconcileWatched();
 
         this.initialized = true;
 
@@ -320,6 +310,24 @@ export class ContractManager implements IContractManager {
                 console.error("Error handling contract event:", error);
             });
         });
+    }
+
+    /**
+     * Delta-sync the full watched set and reconcile the pending frontier.
+     *
+     * Shared recovery path used on initial boot and after a subscription
+     * reconnect. `syncContracts({})` scopes to the current watched set
+     * (see {@link ContractWatcher.getWatchedContracts}), uses the
+     * cursor-derived delta window, and advances the cursor on success.
+     * `reconcilePendingFrontier` catches not-yet-finalized virtual
+     * outputs that could sit outside any delta window.
+     */
+    private async reconcileWatched(): Promise<void> {
+        await this.syncContracts({});
+        const watched = this.watcher.getWatchedContracts();
+        if (watched.length > 0) {
+            await this.reconcilePendingFrontier(watched);
+        }
     }
 
     /**
@@ -669,20 +677,12 @@ export class ContractManager implements IContractManager {
             case "vtxo_spent":
                 await this.syncContracts({ contracts: [event.contract] });
                 break;
-            case "connection_reset": {
-                // After a reconnect we don't know what we missed — refetch
-                // every watched contract (active, plus inactive contracts
-                // still holding unspent vtxos since the subscription keeps
-                // watching those too) and patch the pending frontier,
-                // since a spend that transitioned to confirmed during the
-                // outage may sit outside any delta window.
-                const watched = this.watcher.getWatchedContracts();
-                if (watched.length > 0) {
-                    await this.fetchContractVxosFromIndexer(watched);
-                    await this.reconcilePendingFrontier(watched);
-                }
+            case "connection_reset":
+                // Same recovery path as boot: delta-sync the watched set
+                // and reconcile the pending frontier. `advanceSyncCursor`
+                // is monotonic so this never rewinds the cursor.
+                await this.reconcileWatched();
                 break;
-            }
             case "contract_expired":
                 // just update DB
                 await this.config.contractRepository.saveContract(
