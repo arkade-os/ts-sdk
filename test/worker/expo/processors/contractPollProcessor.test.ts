@@ -14,19 +14,17 @@ describe("contractPollProcessor", () => {
         vi.useRealTimers();
     });
 
-    it("updates contracts and saves paginated spendable VTXOs", async () => {
+    it("saves paginated VTXOs for each contract", async () => {
         const now = Date.now();
         const contractA = {
             id: "contract-a",
             state: "active",
-            expiresAt: now - 1,
             address: "addr-a",
             script: "script-a",
         };
         const contractB = {
             id: "contract-b",
             state: "active",
-            expiresAt: now + 10_000,
             address: "addr-b",
             script: "script-b",
         };
@@ -39,7 +37,6 @@ describe("contractPollProcessor", () => {
 
         const contractRepository = {
             getContracts: vi.fn().mockResolvedValue([contractA, contractB]),
-            saveContract: vi.fn().mockResolvedValue(undefined),
         };
         const walletRepository = {
             saveVtxos: vi.fn().mockResolvedValue(undefined),
@@ -80,14 +77,6 @@ describe("contractPollProcessor", () => {
                 arkProvider: {} as any,
             } as any
         );
-
-        expect(contractRepository.saveContract).toHaveBeenCalledTimes(1);
-        expect(
-            (contractRepository.saveContract as any).mock.calls[0][0]
-        ).toMatchObject({
-            id: "contract-a",
-            state: "inactive",
-        });
 
         expect(indexerProvider.getVtxos).toHaveBeenCalledTimes(3);
         expect(indexerProvider.getVtxos).toHaveBeenNthCalledWith(1, {

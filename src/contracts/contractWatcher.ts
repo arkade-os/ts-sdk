@@ -239,7 +239,7 @@ export class ContractWatcher {
     /**
      * Contracts the watcher is actually tracking:
      * - all active contracts, plus
-     * - inactive/expired contracts that still hold known virtual outputs
+     * - inactive contracts that still hold known virtual outputs
      *   (the subscription keeps watching them so `vtxo_spent` events for
      *   those unspent outputs are still observed).
      *
@@ -375,33 +375,6 @@ export class ContractWatcher {
     async forcePoll(): Promise<void> {
         if (!this.isWatching) return;
         await this.pollAllContracts();
-    }
-
-    /**
-     * Check for expired contracts, update their state, and emit events.
-     */
-    private checkExpiredContracts(): void {
-        const now = Date.now();
-        const expired: Contract[] = [];
-
-        for (const state of this.contracts.values()) {
-            const contract = state.contract;
-            if (
-                contract.state === "active" &&
-                contract.expiresAt &&
-                contract.expiresAt <= now
-            ) {
-                contract.state = "inactive";
-                expired.push(contract);
-
-                this.eventCallback?.({
-                    type: "contract_expired",
-                    contractScript: contract.script,
-                    contract,
-                    timestamp: now,
-                });
-            }
-        }
     }
 
     /**
@@ -773,11 +746,9 @@ export class ContractWatcher {
     ): void {
         if (!this.eventCallback) return;
         const state = this.contracts.get(contractScript);
-        // ensure we check somehow regularly
-        this.checkExpiredContracts();
+        if (!state) return;
         switch (eventType) {
             case "vtxo_received":
-                if (!state) return;
                 this.eventCallback({
                     type: "vtxo_received",
                     vtxos: vtxos.map((v) => ({
@@ -794,7 +765,6 @@ export class ContractWatcher {
                 });
                 return;
             case "vtxo_spent":
-                if (!state) return;
                 this.eventCallback({
                     type: "vtxo_spent",
                     vtxos: vtxos.map((v) => ({
@@ -805,15 +775,6 @@ export class ContractWatcher {
                         intentTapLeafScript: undefined as any,
                         tapTree: undefined as any,
                     })),
-                    contractScript,
-                    contract: state.contract,
-                    timestamp,
-                });
-                return;
-            case "contract_expired":
-                if (!state) return;
-                this.eventCallback({
-                    type: "contract_expired",
                     contractScript,
                     contract: state.contract,
                     timestamp,

@@ -200,7 +200,7 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
  * - Create and persist contracts
  * - Query stored contracts (optionally with their virtual outputs)
  * - Provide spendable path selection for a contract
- * - Emit contract-related events (virtual output received/spent/expired, connection reset)
+ * - Emit contract-related events (virtual output received/spent, connection reset)
  *
  * Notes:
  * - Implementations typically start watching automatically during initialization
@@ -280,23 +280,13 @@ export class ContractManager implements IContractManager {
             return;
         }
 
-        // Load persisted contracts, mark expired ones inactive, and register
-        // them with the watcher BEFORE the first sync. `addContract` seeds
-        // `lastKnownVtxos` from the repo without starting to poll, so this is
-        // cheap — but it also populates `getWatchedContracts()` so the sync
-        // below can scope itself to the real watched set instead of every
-        // contract ever persisted (including dormant inactive ones).
+        // Register persisted contracts with the watcher BEFORE the first
+        // sync. `addContract` seeds `lastKnownVtxos` from the repo without
+        // starting to poll, so it's cheap, and it populates
+        // `getWatchedContracts()` so the sync below can scope itself to the
+        // real watched set instead of every contract ever persisted.
         const contracts = await this.config.contractRepository.getContracts();
-        const now = Date.now();
         for (const contract of contracts) {
-            if (
-                contract.state === "active" &&
-                contract.expiresAt &&
-                contract.expiresAt <= now
-            ) {
-                contract.state = "inactive";
-                await this.config.contractRepository.saveContract(contract);
-            }
             await this.watcher.addContract(contract);
         }
 
@@ -683,11 +673,6 @@ export class ContractManager implements IContractManager {
                 // is monotonic so this never rewinds the cursor.
                 await this.reconcileWatched();
                 break;
-            case "contract_expired":
-                // just update DB
-                await this.config.contractRepository.saveContract(
-                    event.contract
-                );
         }
 
         // Forward to all callbacks

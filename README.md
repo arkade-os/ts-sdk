@@ -1074,9 +1074,6 @@ const unsubscribe = await manager.onContractEvent((event) => {
     case 'vtxo_spent':
       console.log(`Spent virtual outputs from ${event.contractScript}`)
       break
-    case 'contract_expired':
-      console.log(`Contract ${event.contractScript} expired`)
-      break
   }
 })
 

@@ -10,10 +10,9 @@ export const CONTRACT_POLL_TASK_TYPE = "contract-poll";
  *
  * Replicates the polling subset of @see ContractManager.initialize:
  * 1. Load all contracts from the contract repository.
- * 2. Mark expired active contracts as inactive.
- * 3. Paginated fetch of every VTXO (including spent) from the indexer.
- * 4. Extend each VTXO with tapscript data.
- * 5. Save to the wallet repository.
+ * 2. Paginated fetch of every VTXO (including spent) from the indexer.
+ * 3. Extend each VTXO with tapscript data.
+ * 4. Save to the wallet repository.
  *
  * NOTE: the indexer query deliberately omits `spendableOnly`. Every
  * repository implements `saveVtxos` as an upsert with no batch delete,
@@ -36,21 +35,10 @@ export const contractPollProcessor: TaskProcessor = {
         } = deps;
 
         const contracts = await contractRepository.getContracts();
-        const now = Date.now();
         let contractsProcessed = 0;
         let vtxosSaved = 0;
 
         for (const contract of contracts) {
-            // Mark expired active contracts as inactive
-            if (
-                contract.state === "active" &&
-                contract.expiresAt &&
-                contract.expiresAt <= now
-            ) {
-                contract.state = "inactive";
-                await contractRepository.saveContract(contract);
-            }
-
             // Paginated fetch of spendable virtual outputs
             const pageSize = 100;
             let pageIndex = 0;

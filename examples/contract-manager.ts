@@ -126,10 +126,7 @@ async function main() {
 
     console.log("\nSubscribing to contract events...");
     const stopWatching = manager.onContractEvent((event) => {
-        if (
-            event.type === "connection_reset" ||
-            event.type === "contract_expired"
-        ) {
+        if (event.type === "connection_reset") {
             console.log(
                 `\n[Event] ${event.type} received from ContractManager.`
             );
