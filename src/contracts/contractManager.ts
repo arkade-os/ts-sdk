@@ -14,7 +14,7 @@ import {
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
-import { VirtualCoin } from "../wallet";
+import { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 import {
@@ -64,6 +64,20 @@ export interface IContractManager extends Disposable {
     getContractsWithVtxos(
         filter?: GetContractsFilter
     ): Promise<ContractWithVtxos[]>;
+
+    /**
+     * Stamp raw virtual outputs with the correct per-contract tapscripts
+     * (forfeit, intent, tap tree).
+     *
+     * Resolves each vtxo's `script` to its owning contract via the contract
+     * repository and attaches the matching tapscripts. Throws when any vtxo
+     * references a script with no registered contract — callers are expected
+     * to register the contract before asking for annotation. This is the
+     * single shared path that replaces scattered `extendVirtualCoin*` calls
+     * in wallet/handler code, and keeps the wallet from silently stamping the
+     * default tapscript onto a non-default vtxo.
+     */
+    annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]>;
 
     /**
      * Update mutable contract fields.
@@ -411,6 +425,34 @@ export class ContractManager implements IContractManager {
             contract,
             vtxos: vtxos.get(contract.script) ?? [],
         }));
+    }
+
+    async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
+        if (vtxos.length === 0) return [];
+
+        const scripts = Array.from(
+            new Set(
+                vtxos
+                    .map((v) => v.script)
+                    .filter((s): s is string => s !== undefined)
+            )
+        );
+
+        const byScript = new Map<string, Contract>();
+        if (scripts.length > 0) {
+            const contracts = await this.config.contractRepository.getContracts(
+                {
+                    script: scripts,
+                }
+            );
+            for (const contract of contracts) {
+                byScript.set(contract.script, contract);
+            }
+        }
+
+        return vtxos.map((vtxo) =>
+            extendVirtualCoinForContract(undefined, vtxo, byScript)
+        );
     }
 
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {

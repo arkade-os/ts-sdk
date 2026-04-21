@@ -120,7 +120,8 @@ import type { IDelegatorManager } from "../delegator";
 import type { IVtxoManager, SettlementConfig } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegator";
-import { getRandomId } from "../utils";
+import { extendVirtualCoinForContract, getRandomId } from "../utils";
+import type { VirtualCoin } from "..";
 import {
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
@@ -1066,6 +1067,34 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
                 }
+            },
+
+            async annotateVtxos(
+                vtxos: VirtualCoin[]
+            ): Promise<ExtendedVirtualCoin[]> {
+                if (vtxos.length === 0) return [];
+
+                const scripts = Array.from(
+                    new Set(
+                        vtxos
+                            .map((v) => v.script)
+                            .filter((s): s is string => s !== undefined)
+                    )
+                );
+
+                const byScript = new Map<string, Contract>();
+                if (scripts.length > 0) {
+                    const contracts = await this.getContracts({
+                        script: scripts,
+                    });
+                    for (const contract of contracts) {
+                        byScript.set(contract.script, contract);
+                    }
+                }
+
+                return vtxos.map((vtxo) =>
+                    extendVirtualCoinForContract(undefined, vtxo, byScript)
+                );
             },
 
             async updateContract(
