@@ -6,11 +6,7 @@ import type { ArkProvider } from "../../providers/ark";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../../wallet";
 import type { Contract } from "../../contracts/types";
 import type { ReadonlyWallet } from "../../wallet/wallet";
-import {
-    getRandomId,
-    extendVirtualCoin,
-    extendVtxoFromContract,
-} from "../../wallet/utils";
+import { getRandomId, extendVirtualCoinForContract } from "../../wallet/utils";
 
 /**
  * Shared dependencies injected into every processor at runtime.
@@ -139,11 +135,7 @@ export function createTaskDependencies(
         contractRepository,
         indexerProvider,
         arkProvider,
-        extendVtxo: (vtxo: VirtualCoin, contract?: Contract) => {
-            if (contract) {
-                return extendVtxoFromContract(vtxo, contract);
-            }
-            return extendVirtualCoin({ offchainTapscript }, vtxo);
-        },
+        extendVtxo: (vtxo: VirtualCoin, contract?: Contract) =>
+            extendVirtualCoinForContract({ offchainTapscript }, vtxo, contract),
     };
 }
