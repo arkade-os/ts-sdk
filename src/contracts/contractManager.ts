@@ -272,7 +272,7 @@ export class ContractManager implements IContractManager {
 
         // Delta-sync: fetch only virtual outputs that changed since the last cursor,
         // falling back to a full bootstrap for scripts seen for the first time.
-        await this.deltaSyncContracts(contracts);
+        await this.deltaSyncContracts(contracts, undefined, true);
 
         // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
         // to catch any that the delta window may have missed.
@@ -714,7 +714,8 @@ export class ContractManager implements IContractManager {
      */
     private async deltaSyncContracts(
         contracts: Contract[],
-        pageSize?: number
+        pageSize?: number,
+        force?: boolean
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) return new Map();
 
@@ -724,6 +725,9 @@ export class ContractManager implements IContractManager {
         const bootstrap: Contract[] = [];
         const delta: Contract[] = [];
         for (const c of contracts) {
+            if (force) {
+                bootstrap.push(c);
+            }
             if (cursors[c.script] !== undefined) {
                 delta.push(c);
             } else {
