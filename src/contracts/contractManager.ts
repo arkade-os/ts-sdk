@@ -233,6 +233,7 @@ export class ContractManager implements IContractManager {
     private initialized = false;
     private eventCallbacks: Set<ContractEventCallback> = new Set();
     private stopWatcherFn?: () => void;
+    private syncVtxosCallInflight?: Promise<Map<string, ContractVtxo[]>>;
 
     private constructor(config: ContractManagerConfig) {
         this.config = config;
@@ -700,11 +701,23 @@ export class ContractManager implements IContractManager {
             return new Map();
         }
 
-        return await this.fetchContractVxosFromIndexer(
+        // Deduplicate concurrent callers against an in-flight fetch so we don't
+        // issue redundant round-trips. Once the fetch settles we clear the
+        // reference so the next call triggers a fresh fetch.
+        // TODO: can be removed once we fix the persistence layer (address vs scripts)
+        if (this.syncVtxosCallInflight) {
+            return this.syncVtxosCallInflight;
+        }
+
+        this.syncVtxosCallInflight = this.fetchContractVxosFromIndexer(
             contracts,
             true,
             pageSize
-        );
+        ).finally(() => {
+            this.syncVtxosCallInflight = undefined;
+        });
+
+        return this.syncVtxosCallInflight;
     }
 
     /**
@@ -718,6 +731,15 @@ export class ContractManager implements IContractManager {
         force?: boolean
     ): Promise<Map<string, ContractVtxo[]>> {
         if (contracts.length === 0) return new Map();
+
+        // If forced, we are treating all contracts as boostrapped and we clean the VTXO list
+        if (force === true) {
+            await Promise.all(
+                contracts.map((contract) =>
+                    this.config.walletRepository.deleteVtxos(contract.address)
+                )
+            );
+        }
 
         const cursors = await getAllSyncCursors(this.config.walletRepository);
 
