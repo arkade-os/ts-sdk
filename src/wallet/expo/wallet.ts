@@ -29,7 +29,7 @@ import {
     contractPollProcessor,
     CONTRACT_POLL_TASK_TYPE,
 } from "../../worker/expo/processors";
-import { extendVirtualCoinForContract, getRandomId } from "../utils";
+import { extendVtxoFromContract, getRandomId } from "../utils";
 import { DefaultVtxo } from "../../script/default";
 import type { PersistedBackgroundConfig } from "./background";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
@@ -134,7 +134,7 @@ export class ExpoWallet implements IWallet {
             indexerProvider: wallet.indexerProvider,
             arkProvider: wallet.arkProvider,
             extendVtxo: (vtxo, contract) =>
-                extendVirtualCoinForContract(wallet, vtxo, contract),
+                extendVtxoFromContract(vtxo, contract),
         };
 
         const { taskQueue } = config.background;

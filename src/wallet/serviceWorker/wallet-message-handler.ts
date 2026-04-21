@@ -35,11 +35,7 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegator";
 import { ReadonlyWallet, Wallet } from "../wallet";
-import {
-    collectVtxoScripts,
-    extendCoin,
-    extendVirtualCoinForContract,
-} from "../utils";
+import { extendCoin } from "../utils";
 import {
     MessageHandler,
     RequestEnvelope,
@@ -1136,32 +1132,13 @@ export class WalletMessageHandler
         this.incomingFundsSubscription =
             await this.readonlyWallet.notifyIncomingFunds(async (funds) => {
                 if (funds.type === "vtxo") {
-                    const contractsByScript =
-                        await this.readonlyWallet!.getContractsByScript(
-                            collectVtxoScripts(funds.newVtxos, funds.spentVtxos)
-                        );
-                    const newVtxos =
-                        funds.newVtxos.length > 0
-                            ? funds.newVtxos.map((vtxo) =>
-                                  extendVirtualCoinForContract(
-                                      this.readonlyWallet!,
-                                      vtxo,
-                                      contractsByScript
-                                  )
-                              )
-                            : [];
-                    const spentVtxos =
-                        funds.spentVtxos.length > 0
-                            ? funds.spentVtxos.map((vtxo) =>
-                                  extendVirtualCoinForContract(
-                                      this.readonlyWallet!,
-                                      vtxo,
-                                      contractsByScript
-                                  )
-                              )
-                            : [];
+                    const cm = await this.readonlyWallet!.getContractManager();
+                    const [newVtxos, spentVtxos] = await Promise.all([
+                        cm.annotateVtxos(funds.newVtxos),
+                        cm.annotateVtxos(funds.spentVtxos),
+                    ]);
 
-                    if ([...newVtxos, ...spentVtxos].length === 0) return;
+                    if (newVtxos.length + spentVtxos.length === 0) return;
 
                     // save virtual outputs using unified repository
                     await this.walletRepository?.saveVtxos(address, [

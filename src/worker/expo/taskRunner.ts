@@ -5,18 +5,22 @@ import type { IndexerProvider } from "../../providers/indexer";
 import type { ArkProvider } from "../../providers/ark";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../../wallet";
 import type { Contract } from "../../contracts/types";
-import type { ReadonlyWallet } from "../../wallet/wallet";
-import { getRandomId, extendVirtualCoinForContract } from "../../wallet/utils";
+import { getRandomId, extendVtxoFromContract } from "../../wallet/utils";
 
 /**
  * Shared dependencies injected into every processor at runtime.
+ *
+ * `extendVtxo` requires the owning contract — processors must resolve each
+ * vtxo's `script` to a known contract (via the contract repository) before
+ * calling this. The strict signature prevents the footgun where a missing
+ * contract silently falls back to the wallet's default tapscript.
  */
 export interface TaskDependencies {
     walletRepository: WalletRepository;
     contractRepository: ContractRepository;
     indexerProvider: IndexerProvider;
     arkProvider: ArkProvider;
-    extendVtxo: (vtxo: VirtualCoin, contract?: Contract) => ExtendedVirtualCoin;
+    extendVtxo: (vtxo: VirtualCoin, contract: Contract) => ExtendedVirtualCoin;
 }
 
 /**
@@ -107,7 +111,6 @@ export interface CreateTaskDependenciesOptions {
     contractRepository: ContractRepository;
     indexerProvider: IndexerProvider;
     arkProvider: ArkProvider;
-    offchainTapscript: ReadonlyWallet["offchainTapscript"];
 }
 
 /**
@@ -122,20 +125,9 @@ export interface CreateTaskDependenciesOptions {
 export function createTaskDependencies(
     options: CreateTaskDependenciesOptions
 ): TaskDependencies {
-    const {
-        walletRepository,
-        contractRepository,
-        indexerProvider,
-        arkProvider,
-        offchainTapscript,
-    } = options;
-
     return {
-        walletRepository,
-        contractRepository,
-        indexerProvider,
-        arkProvider,
-        extendVtxo: (vtxo: VirtualCoin, contract?: Contract) =>
-            extendVirtualCoinForContract({ offchainTapscript }, vtxo, contract),
+        ...options,
+        extendVtxo: (vtxo: VirtualCoin, contract: Contract) =>
+            extendVtxoFromContract(vtxo, contract),
     };
 }

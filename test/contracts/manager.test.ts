@@ -318,4 +318,32 @@ describe("ContractManager", () => {
 
         vi.advanceTimersByTime(3000);
     });
+
+    describe("annotateVtxos", () => {
+        it("returns empty array for empty input", async () => {
+            const extended = await manager.annotateVtxos([]);
+            expect(extended).toEqual([]);
+        });
+
+        it("stamps the owning contract's tapscripts via vtxo.script", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+
+            const vtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT });
+            const [extended] = await manager.annotateVtxos([vtxo]);
+
+            expect(extended.forfeitTapLeafScript).toBeDefined();
+            expect(extended.intentTapLeafScript).toBeDefined();
+            expect(extended.tapTree).toBeDefined();
+        });
+
+        it("throws when a vtxo's script has no registered contract", async () => {
+            const orphan = createMockVtxo({ script: "ab".repeat(34) });
+            await expect(manager.annotateVtxos([orphan])).rejects.toThrow();
+        });
+    });
 });
