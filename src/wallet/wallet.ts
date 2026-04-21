@@ -80,6 +80,7 @@ import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
 import {
+    collectVtxoScripts,
     extendCoin,
     extendVirtualCoinForContract,
     validateRecipients,
@@ -925,7 +926,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             update.spentVtxos?.length > 0
                         ) {
                             const contractsByScript =
-                                await this.getContractsByScript();
+                                await this.getContractsByScript(
+                                    collectVtxoScripts(
+                                        update.newVtxos,
+                                        update.spentVtxos
+                                    )
+                                );
                             eventCallback({
                                 type: "vtxo",
                                 newVtxos: update.newVtxos.map((vtxo) =>
@@ -1006,20 +1012,24 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Return a script → Contract index covering every contract known to the
-     * wallet. Callers use this to attribute incoming virtual outputs (via
-     * their `script`) back to the correct contract so they can be extended
-     * with the right tap scripts. Returns an empty map when the contract
-     * manager is not initialised to avoid triggering initialisation from
-     * hot paths.
+     * Return a script → Contract index restricted to the requested scripts.
+     * Callers use this to attribute virtual outputs (via their `script`) to
+     * the owning contract so they can be extended with the right tap
+     * scripts. Returns an empty map when there are no scripts to resolve or
+     * when the contract manager is not yet initialised (so hot paths don't
+     * trigger initialisation).
      */
-    async getContractsByScript(): Promise<ReadonlyMap<string, Contract>> {
+    async getContractsByScript(
+        scripts: Iterable<string>
+    ): Promise<ReadonlyMap<string, Contract>> {
         if (!this._contractManager && !this._contractManagerInitializing) {
             return new Map();
         }
+        const unique = Array.from(new Set(scripts));
+        if (unique.length === 0) return new Map();
         try {
             const manager = await this.getContractManager();
-            const contracts = await manager.getContracts();
+            const contracts = await manager.getContracts({ script: unique });
             return new Map(contracts.map((c) => [c.script, c]));
         } catch {
             return new Map();
@@ -2749,7 +2759,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 inputs.length,
                 signedCheckpointTxs.length
             );
-            const contractsByScript = await this.getContractsByScript();
+            const contractsByScript = await this.getContractsByScript(
+                collectVtxoScripts(inputs)
+            );
             for (const [inputIndex, input] of inputs.entries()) {
                 const vtxo = extendVirtualCoinForContract(
                     this,
@@ -2869,7 +2881,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 input: ExtendedCoin
             ): input is ExtendedVirtualCoin => "virtualStatus" in input;
 
-            const contractsByScript = await this.getContractsByScript();
+            const contractsByScript = await this.getContractsByScript(
+                collectVtxoScripts(inputs.filter(isVtxo))
+            );
             for (const input of inputs) {
                 if (isVtxo(input)) {
                     // virtual output = mark it settled

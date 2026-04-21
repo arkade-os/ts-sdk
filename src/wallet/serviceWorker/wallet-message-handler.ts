@@ -35,7 +35,11 @@ import {
 } from "../index";
 import { DelegateInfo } from "../../providers/delegator";
 import { ReadonlyWallet, Wallet } from "../wallet";
-import { extendCoin, extendVirtualCoinForContract } from "../utils";
+import {
+    collectVtxoScripts,
+    extendCoin,
+    extendVirtualCoinForContract,
+} from "../utils";
 import {
     MessageHandler,
     RequestEnvelope,
@@ -1133,7 +1137,9 @@ export class WalletMessageHandler
             await this.readonlyWallet.notifyIncomingFunds(async (funds) => {
                 if (funds.type === "vtxo") {
                     const contractsByScript =
-                        await this.readonlyWallet!.getContractsByScript();
+                        await this.readonlyWallet!.getContractsByScript(
+                            collectVtxoScripts(funds.newVtxos, funds.spentVtxos)
+                        );
                     const newVtxos =
                         funds.newVtxos.length > 0
                             ? funds.newVtxos.map((vtxo) =>
