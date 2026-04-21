@@ -280,11 +280,13 @@ export class ContractManager implements IContractManager {
             return;
         }
 
-        // Load persisted contracts
-        const contracts = await this.config.contractRepository.getContracts();
+        // Delta-sync: fetch virtual outputs that changed since the last cursor.
+        // Deliberately omit `contracts` so `syncContracts` recognises this as a
+        // full-scope refresh and advances the global cursor on success.
+        await this.syncContracts({});
 
-        // Delta-sync: fetch only virtual outputs that changed since the last cursor.
-        await this.syncContracts({ contracts });
+        // Load persisted contracts for the rest of initialize.
+        const contracts = await this.config.contractRepository.getContracts();
 
         // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
         // to catch any that the delta window may have missed.
