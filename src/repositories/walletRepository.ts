@@ -4,8 +4,16 @@ export interface WalletState {
     /** Arbitrary stored wallet settings. */
     settings?: Record<string, any>;
 
-    /** Lat updated time of VTXOs from the indexer, in milliseconds. */
-    vtxosIndexerUpdatedAt?: number;
+    /**
+     * High-water mark for VTXO indexer syncs, in milliseconds.
+     *
+     * Reused the legacy `lastSyncTime` column name to avoid an
+     * `ALTER TABLE` migration; the value is interpreted as the new
+     * "max indexer `updatedAt`" cursor only after `settings.vtxoCursorMigrated`
+     * is set, so pre-existing values written by the buggy pre-PR sync
+     * are ignored and force a one-shot re-bootstrap on upgrade.
+     */
+    lastSyncTime?: number;
 }
 
 /** Stored commitment transaction metadata. */

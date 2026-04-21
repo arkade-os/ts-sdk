@@ -237,7 +237,7 @@ describe.each(walletRepositoryImplementations)(
 
             it("should save and retrieve wallet state", async () => {
                 const state: WalletState = {
-                    vtxosIndexerUpdatedAt: Date.now(),
+                    lastSyncTime: Date.now(),
                     settings: { theme: "dark" },
                 };
 
@@ -245,21 +245,19 @@ describe.each(walletRepositoryImplementations)(
                 const retrieved = await repository.getWalletState();
 
                 expect(retrieved).toEqual(state);
-                expect(retrieved?.vtxosIndexerUpdatedAt).toBe(
-                    state.vtxosIndexerUpdatedAt
-                );
+                expect(retrieved?.lastSyncTime).toBe(state.lastSyncTime);
                 expect(retrieved?.settings).toEqual(state.settings);
             });
 
             it("should update existing wallet state", async () => {
                 const state1: WalletState = {
-                    vtxosIndexerUpdatedAt: Date.now(),
+                    lastSyncTime: Date.now(),
                     settings: { theme: "dark" },
                 };
                 await repository.saveWalletState(state1);
 
                 const state2: WalletState = {
-                    vtxosIndexerUpdatedAt: Date.now() + 1000,
+                    lastSyncTime: Date.now() + 1000,
                     settings: { theme: "light" },
                 };
                 await repository.saveWalletState(state2);

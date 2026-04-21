@@ -80,7 +80,7 @@ export const ArkWalletStateSchema = {
     primaryKey: "key",
     properties: {
         key: "string",
-        vtxosIndexerUpdatedAt: "int?",
+        lastSyncTime: "int?",
         settingsJson: "string?",
     },
 } as const;

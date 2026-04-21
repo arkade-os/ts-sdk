@@ -39,12 +39,33 @@ export async function updateWalletState(
 }
 
 /**
+ * Settings key that gates interpretation of the `lastSyncTime` field.
+ *
+ * The `lastSyncTime` column existed pre-PR with a different semantic
+ * (wall-clock at sync completion, written by the buggy sync loop this
+ * PR fixes). On upgrade we cannot trust any pre-existing value, so the
+ * cursor is only honoured after the first successful post-upgrade
+ * advance writes this marker into the `settings` JSON blob. Reusing
+ * `settings` avoids any schema migration.
+ */
+const CURSOR_MIGRATED_KEY = "vtxoCursorMigrated";
+
+function hasMigrationMarker(state: WalletState | null | undefined): boolean {
+    return state?.settings?.[CURSOR_MIGRATED_KEY] === true;
+}
+
+/**
  * Read the global high-water mark for VTXO indexer syncs.
- * Returns `0` when the wallet has never been synced (bootstrap case).
+ *
+ * Returns `0` when:
+ *  - the wallet has never been synced (bootstrap case), or
+ *  - the stored `lastSyncTime` was written by pre-PR code and is not
+ *    safe to reuse under the new semantics (see {@link CURSOR_MIGRATED_KEY}).
  */
 export async function getSyncCursor(repo: WalletRepository): Promise<number> {
     const state = await repo.getWalletState();
-    return state?.vtxosIndexerUpdatedAt ?? 0;
+    if (!hasMigrationMarker(state)) return 0;
+    return state?.lastSyncTime ?? 0;
 }
 
 /**
@@ -54,29 +75,43 @@ export async function getSyncCursor(repo: WalletRepository): Promise<number> {
  * that finish out of order can't rewind the cursor: `lastUpdatedAt` is
  * captured before each sync enters the `updateWalletState` mutex, and
  * the later-started sync would otherwise overwrite the earlier-captured
- * one with a smaller value.
+ * one with a smaller value. The legacy value is discarded on the first
+ * advance if the migration marker is absent so pre-PR data doesn't
+ * survive the upgrade.
  */
 export async function advanceSyncCursor(
     repo: WalletRepository,
     lastUpdatedAt: number
 ): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const current = state.vtxosIndexerUpdatedAt ?? 0;
+        const current = hasMigrationMarker(state)
+            ? (state.lastSyncTime ?? 0)
+            : 0;
         return {
             ...state,
-            vtxosIndexerUpdatedAt: Math.max(current, lastUpdatedAt),
+            lastSyncTime: Math.max(current, lastUpdatedAt),
+            settings: {
+                ...(state.settings ?? {}),
+                [CURSOR_MIGRATED_KEY]: true,
+            },
         };
     });
 }
 
 /**
  * Remove the sync cursor, forcing a full re-bootstrap on next sync.
+ *
+ * Also clears the migration marker so any stored `lastSyncTime` is
+ * treated as untrusted on the next read.
  */
 export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
     await updateWalletState(repo, (state) => {
+        const { [CURSOR_MIGRATED_KEY]: _, ...restSettings } =
+            state.settings ?? {};
         return {
             ...state,
-            vtxosIndexerUpdatedAt: undefined,
+            lastSyncTime: undefined,
+            settings: restSettings,
         };
     });
 }

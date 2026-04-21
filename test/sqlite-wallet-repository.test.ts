@@ -805,7 +805,7 @@ describe("SQLiteWalletRepository", () => {
         it("should save and retrieve wallet state", async () => {
             const state: WalletState = {
                 settings: { theme: "dark" },
-                vtxosIndexerUpdatedAt: 1000,
+                lastSyncTime: 1000,
             };
 
             await repository.saveWalletState(state);
