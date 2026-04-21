@@ -86,6 +86,24 @@ export function extendVirtualCoinForContract(
     return extendVirtualCoin(wallet, vtxo);
 }
 
+/**
+ * Collect the unique, defined `script` values from one or more batches of
+ * virtual outputs. Callers pass the result to `getContractsByScript` so the
+ * contract lookup is scoped to the scripts actually being processed rather
+ * than every contract the wallet has ever created.
+ */
+export function collectVtxoScripts(
+    ...batches: readonly (readonly { script?: string }[])[]
+): string[] {
+    const scripts = new Set<string>();
+    for (const batch of batches) {
+        for (const vtxo of batch) {
+            if (vtxo.script) scripts.add(vtxo.script);
+        }
+    }
+    return [...scripts];
+}
+
 export function getRandomId(): string {
     const randomValue = crypto.getRandomValues(new Uint8Array(16));
     return hex.encode(randomValue);
