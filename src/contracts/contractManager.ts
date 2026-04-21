@@ -727,6 +727,7 @@ export class ContractManager implements IContractManager {
         for (const c of contracts) {
             if (force) {
                 bootstrap.push(c);
+                continue;
             }
             if (cursors[c.script] !== undefined) {
                 delta.push(c);
