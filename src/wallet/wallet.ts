@@ -824,7 +824,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
             const manager = await this.getContractManager();
             const contracts = await manager.getContracts({ script: unique });
             return new Map(contracts.map((c) => [c.script, c]));
-        } catch {
+        } catch (error) {
+            console.warn(
+                "getContractsByScript failed; falling back to default tapscript for these VTXOs",
+                error
+            );
             return new Map();
         }
     }
