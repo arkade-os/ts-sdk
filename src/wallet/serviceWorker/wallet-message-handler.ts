@@ -1132,11 +1132,12 @@ export class WalletMessageHandler
         this.incomingFundsSubscription =
             await this.readonlyWallet.notifyIncomingFunds(async (funds) => {
                 if (funds.type === "vtxo") {
-                    const cm = await this.readonlyWallet!.getContractManager();
-                    const [newVtxos, spentVtxos] = await Promise.all([
-                        cm.annotateVtxos(funds.newVtxos),
-                        cm.annotateVtxos(funds.spentVtxos),
-                    ]);
+                    // `funds.newVtxos` / `funds.spentVtxos` are already
+                    // ExtendedVirtualCoin — annotation happened inside the
+                    // underlying Wallet's subscription handler before this
+                    // callback fired. Re-annotating here would only duplicate
+                    // work and re-expose us to `annotateVtxos` throws.
+                    const { newVtxos, spentVtxos } = funds;
 
                     if (newVtxos.length + spentVtxos.length === 0) return;
 

@@ -49,15 +49,22 @@ export async function getSyncCursor(repo: WalletRepository): Promise<number> {
 
 /**
  * Advance the global cursor after a successful full-scope delta sync.
+ *
+ * Clamped with `Math.max` against the current value so concurrent syncs
+ * that finish out of order can't rewind the cursor: `lastUpdatedAt` is
+ * captured before each sync enters the `updateWalletState` mutex, and
+ * the later-started sync would otherwise overwrite the earlier-captured
+ * one with a smaller value.
  */
 export async function advanceSyncCursor(
     repo: WalletRepository,
     lastUpdatedAt: number
 ): Promise<void> {
     await updateWalletState(repo, (state) => {
+        const current = state.vtxosIndexerUpdatedAt ?? 0;
         return {
             ...state,
-            vtxosIndexerUpdatedAt: lastUpdatedAt,
+            vtxosIndexerUpdatedAt: Math.max(current, lastUpdatedAt),
         };
     });
 }

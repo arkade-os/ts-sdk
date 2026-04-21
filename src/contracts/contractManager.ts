@@ -412,10 +412,9 @@ export class ContractManager implements IContractManager {
         const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
             contract,
-            vtxos:
-                vtxos.filter(
-                    (vtxo) => vtxo.contractScript === contract.script
-                ) ?? [],
+            vtxos: vtxos.filter(
+                (vtxo) => vtxo.contractScript === contract.script
+            ),
         }));
     }
 
@@ -908,14 +907,6 @@ export class ContractManager implements IContractManager {
      * ```
      */
     [Symbol.dispose](): void {
-        // Stop watching
-        this.stopWatcherFn?.();
-        this.stopWatcherFn = undefined;
-
-        // Clear callbacks
-        this.eventCallbacks.clear();
-
-        // Mark as uninitialized
-        this.initialized = false;
+        this.dispose();
     }
 }

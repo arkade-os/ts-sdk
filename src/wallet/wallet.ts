@@ -702,9 +702,17 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     const cm = await this.getContractManager();
                     for await (const update of subscription) {
                         if (
-                            update.newVtxos?.length > 0 ||
-                            update.spentVtxos?.length > 0
+                            update.newVtxos?.length === 0 &&
+                            update.spentVtxos?.length === 0
                         ) {
+                            continue;
+                        }
+                        // Isolate per-update annotation failures (e.g. a VTXO
+                        // arriving for a contract we haven't registered yet).
+                        // Without this a single bad update would kill the
+                        // for-await loop and silently drop every subsequent
+                        // subscription event for the session.
+                        try {
                             const [newVtxos, spentVtxos] = await Promise.all([
                                 cm.annotateVtxos(update.newVtxos),
                                 cm.annotateVtxos(update.spentVtxos),
@@ -714,6 +722,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
                                 newVtxos,
                                 spentVtxos,
                             });
+                        } catch (error) {
+                            console.warn(
+                                "Dropping subscription update after annotation failed; next sync will reconcile:",
+                                error
+                            );
                         }
                     }
                 } catch (error) {
