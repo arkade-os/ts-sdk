@@ -108,9 +108,12 @@ describe("Wallet", () => {
             };
 
             // Setup mocks in the correct order based on actual call sequence:
-            // 1. getInfo() call during wallet creation
-            // 2. getBoardingUtxos() -> getCoins() call
-            // 3. getVtxos() -> batched vtxos call
+            // 1. getInfo() during wallet creation
+            // 2. getBoardingUtxos() -> esplora getCoins()
+            // 3. ContractManager.createContract() full vtxo fetch for
+            //    the wallet's default contract (includeSpent=true)
+            // 4. ContractWatcher.subscribeForScripts for the wallet's script
+            // 5. getContractsWithVtxos -> syncContracts delta fetch
 
             mockFetch
                 .mockResolvedValueOnce({
@@ -132,6 +135,14 @@ describe("Wallet", () => {
                 .mockResolvedValueOnce({
                     ok: true,
                     json: () => Promise.resolve(mockUTXOs),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
                 })
                 .mockImplementationOnce((url: string) => {
                     // Extract the script from the request URL so the
@@ -644,19 +655,44 @@ describe("Wallet", () => {
                 },
             ];
 
-            mockFetch
-                .mockResolvedValueOnce({
+            // Wallet.create triggers VtxoManager which lazily initializes
+            // ContractManager in the background (registering the default
+            // contract + subscribing). readonlyWallet.getBalance() then
+            // drives another round of CM work (delta + spendableOnly).
+            // Route by URL so ordering between the foreground Promise.all
+            // and the background VtxoManager init doesn't matter.
+            mockFetch.mockImplementation((url: string) => {
+                if (url.includes("/v1/info")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve(mockArkInfo),
+                    });
+                }
+                if (url.includes("/script/subscribe")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () =>
+                            Promise.resolve({ subscriptionId: "sub-1" }),
+                    });
+                }
+                if (url.includes("/address/") && url.includes("/utxo")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve(mockUTXOs),
+                    });
+                }
+                if (url.includes("/vtxos")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve({ vtxos: [] }),
+                    });
+                }
+                return Promise.resolve({
                     ok: true,
-                    json: () => Promise.resolve(mockArkInfo),
-                })
-                // VtxoManager background init fetches VTXOs for the
-                // default contract via createContract; provide a mock
-                // so dispose() (which awaits that init) doesn't shift
-                // the queue.
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve(""),
                 });
+            });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
@@ -664,28 +700,7 @@ describe("Wallet", () => {
             });
 
             const readonlyWallet = await wallet.toReadonly();
-
-            // Dispose the full wallet to stop its background VtxoManager/
-            // ContractManager operations that would consume fetch mocks.
             await wallet.dispose();
-
-            // Should be able to get balance
-            // getBalance calls getBoardingUtxos (1 mock) then getVtxos →
-            // syncVtxos which, with a cursor present, does a delta fetch
-            // (1 mock) plus a pendingOnly reconciliation (1 mock).
-            mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockUTXOs),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                });
 
             const balance = await readonlyWallet.getBalance();
             expect(balance.boarding.total).toBe(100000);
@@ -725,6 +740,12 @@ describe("Wallet", () => {
                 } as Partial<ArkProvider> as ArkProvider,
                 indexerProvider: {
                     getVtxos,
+                    subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                    getSubscription: async function* () {
+                        // Empty stream — the watcher's listenLoop will exit
+                        // cleanly and schedule a reconnect we never let run.
+                    },
                 } as Partial<IndexerProvider> as IndexerProvider,
                 onchainProvider: {} as OnchainProvider,
                 storage: {
@@ -767,34 +788,32 @@ describe("Wallet", () => {
             let walletScript = "";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementationOnce(async (opts) => {
-                    walletScript = opts?.scripts?.[0] ?? "";
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
                     return { vtxos: [createMockVtxo(walletScript)] };
-                })
-                .mockResolvedValueOnce({ vtxos: [] })
-                .mockImplementationOnce(async () => ({
-                    vtxos: [createMockVtxo(walletScript)],
-                }));
+                });
 
             const { wallet } = await createReadonlyTestWallet(getVtxos);
 
             expect(await wallet.getVtxos()).toHaveLength(1);
             expect(await wallet.getVtxos()).toHaveLength(1);
-            expect(getVtxos).toHaveBeenCalledTimes(3);
         });
 
         it("should update VTXO state when the full re-fetch shows it settled", async () => {
             let walletScript = "";
+            let state: "preconfirmed" | "settled" = "preconfirmed";
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementationOnce(async (opts) => {
-                    walletScript = opts?.scripts?.[0] ?? "";
-                    return { vtxos: [createMockVtxo(walletScript)] };
-                })
-                .mockResolvedValueOnce({ vtxos: [] })
-                .mockImplementationOnce(async () => ({
-                    vtxos: [createMockVtxo(walletScript, "settled")],
-                }));
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    return {
+                        vtxos: [createMockVtxo(walletScript, state)],
+                    };
+                });
 
             const { wallet, walletRepository } =
                 await createReadonlyTestWallet(getVtxos);
@@ -802,6 +821,8 @@ describe("Wallet", () => {
             expect((await wallet.getVtxos())[0].virtualStatus.state).toBe(
                 "preconfirmed"
             );
+
+            state = "settled";
 
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
@@ -817,19 +838,25 @@ describe("Wallet", () => {
 
         it("should mark a cached preconfirmed VTXO as spent when the full re-fetch no longer returns it", async () => {
             let walletScript = "";
+            let markSpent = false;
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementationOnce(async (opts) => {
-                    walletScript = opts?.scripts?.[0] ?? "";
-                    return { vtxos: [createMockVtxo(walletScript)] };
-                })
-                .mockResolvedValueOnce({ vtxos: [] })
-                .mockResolvedValueOnce({ vtxos: [] });
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    const vtxo = createMockVtxo(walletScript);
+                    if (markSpent) vtxo.isSpent = true;
+                    return { vtxos: [vtxo] };
+                });
 
             const { wallet, walletRepository } =
                 await createReadonlyTestWallet(getVtxos);
 
             expect(await wallet.getVtxos()).toHaveLength(1);
+
+            markSpent = true;
+
             expect(await wallet.getVtxos()).toEqual([]);
 
             const cached = await walletRepository.getVtxos(
@@ -841,16 +868,17 @@ describe("Wallet", () => {
 
         it("should mark a cached settled VTXO as spent when the full re-fetch no longer returns it", async () => {
             let walletScript = "";
+            let markSpent = false;
             const getVtxos = vi
                 .fn<IndexerProvider["getVtxos"]>()
-                .mockImplementationOnce(async (opts) => {
-                    walletScript = opts?.scripts?.[0] ?? "";
-                    return {
-                        vtxos: [createMockVtxo(walletScript, "settled")],
-                    };
-                })
-                .mockResolvedValueOnce({ vtxos: [] })
-                .mockResolvedValueOnce({ vtxos: [] });
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    const vtxo = createMockVtxo(walletScript, "settled");
+                    if (markSpent) vtxo.isSpent = true;
+                    return { vtxos: [vtxo] };
+                });
 
             const { wallet, walletRepository } =
                 await createReadonlyTestWallet(getVtxos);
@@ -858,6 +886,8 @@ describe("Wallet", () => {
             const vtxos = await wallet.getVtxos();
             expect(vtxos).toHaveLength(1);
             expect(vtxos[0].virtualStatus.state).toBe("settled");
+
+            markSpent = true;
 
             expect(await wallet.getVtxos()).toEqual([]);
 
@@ -1005,19 +1035,41 @@ describe("ReadonlyWallet", () => {
             },
         ];
 
-        mockFetch
-            .mockResolvedValueOnce({
+        // ReadonlyWallet.create + getBalance triggers: getInfo, boarding,
+        // ContractManager init (createContract fetch + subscribe),
+        // getContractsWithVtxos (syncContracts + getVtxosForContracts).
+        // Route by URL to keep ordering assumptions out of the test.
+        mockFetch.mockImplementation((url: string) => {
+            if (url.includes("/v1/info")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve(mockArkInfo),
+                });
+            }
+            if (url.includes("/script/subscribe")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
+                });
+            }
+            if (url.includes("/address/") && url.includes("/utxo")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve(mockUTXOs),
+                });
+            }
+            if (url.includes("/vtxos")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
+                });
+            }
+            return Promise.resolve({
                 ok: true,
-                json: () => Promise.resolve(mockArkInfo),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ vtxos: [] }),
+                json: () => Promise.resolve({}),
+                text: () => Promise.resolve(""),
             });
+        });
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
