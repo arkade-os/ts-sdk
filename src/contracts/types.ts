@@ -127,7 +127,9 @@ export interface PathContext {
 
     /**
      * Explicit role override for multi-party contracts such as VHTLC.
-     * If not provided, the handler may derive the role from `walletPubKey`.
+     * If not provided, the handler may derive the role by matching
+     * {@link walletDescriptor} (preferred) — or {@link walletPubKey} as a
+     * fallback — against the contract's sender/receiver params.
      */
     role?: string;
 

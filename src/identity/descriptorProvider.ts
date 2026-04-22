@@ -14,8 +14,9 @@ export interface DescriptorSigningRequest {
  * Provider interface for descriptor-based signing.
  *
  * Implementations include:
- * - StaticDescriptorProvider: wraps a legacy Identity with a single key
- * - SeedIdentity: HD wallet with multi-index derivation (implements this directly)
+ * - {@link StaticDescriptorProvider}: wraps a legacy {@link Identity} with a single key.
+ * - HD-wallet provider: signs with keys derived from an xpub-based descriptor
+ *   (planned — tracked separately from this interface).
  */
 export interface DescriptorProvider {
     /** Returns the current signing descriptor. */

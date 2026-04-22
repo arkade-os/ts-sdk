@@ -5,12 +5,18 @@ import { isDescriptor, extractPubKey } from "../../identity/descriptor";
 
 /**
  * Extract raw hex pubkey from a value that may be a descriptor or raw hex.
+ * Returns undefined for HD descriptors or unparseable values so role
+ * resolution stays best-effort and never throws.
  */
-function extractRawPubKey(value: string): string {
-    if (isDescriptor(value)) {
-        return extractPubKey(value);
+function extractRawPubKey(value: string): string | undefined {
+    if (!isDescriptor(value)) {
+        return value.toLowerCase();
     }
-    return value;
+    try {
+        return extractPubKey(value).toLowerCase();
+    } catch {
+        return undefined;
+    }
 }
 
 /**
@@ -50,10 +56,15 @@ export function resolveRole(
         return context.role;
     }
 
-    // Try to match wallet descriptor/pubkey against contract params
+    // Try to match wallet descriptor/pubkey against contract params.
+    // All comparisons go through extractRawPubKey which lowercases hex so
+    // mixed-case descriptors still match (and returns undefined for HD
+    // descriptors we can't resolve without derivation).
     const walletKey = context.walletDescriptor ?? context.walletPubKey;
     if (walletKey) {
         const rawWalletKey = extractRawPubKey(walletKey);
+        if (!rawWalletKey) return undefined;
+
         const senderKey = contract.params.sender
             ? extractRawPubKey(contract.params.sender)
             : undefined;

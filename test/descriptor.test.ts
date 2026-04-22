@@ -60,6 +60,15 @@ describe("isDescriptor", () => {
     it("should return false for empty string", () => {
         expect(isDescriptor("")).toBe(false);
     });
+    it("should return false for unclosed descriptor", () => {
+        expect(isDescriptor("tr(deadbeef")).toBe(false);
+    });
+    it("should return false for empty body", () => {
+        expect(isDescriptor("tr()")).toBe(false);
+    });
+    it("should return false for non-tr descriptors", () => {
+        expect(isDescriptor("wpkh(xyz)")).toBe(false);
+    });
 });
 
 describe("normalizeToDescriptor", () => {
@@ -75,6 +84,11 @@ describe("normalizeToDescriptor", () => {
     it("should not double-wrap descriptors", () => {
         const desc = makeDescriptor({ index: 0 });
         expect(normalizeToDescriptor(desc)).toBe(desc);
+    });
+    it("should throw on empty string", () => {
+        expect(() => normalizeToDescriptor("")).toThrow(
+            "expected a non-empty string"
+        );
     });
 });
 

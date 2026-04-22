@@ -10,17 +10,32 @@ function inferNetwork(descriptor: string): Network {
 }
 
 /**
- * Check if a string is a descriptor (starts with "tr(").
+ * Check if a string is a descriptor of the shape `tr(...)`.
+ *
+ * This is a shape check only — it does not validate the inner key material.
+ * Use {@link expand} (via {@link extractPubKey} / {@link parseHDDescriptor})
+ * for full parsing. The guard rejects empty bodies and missing/trailing
+ * parentheses so callers can safely branch on descriptor vs. raw pubkey.
  */
 export function isDescriptor(value: string): boolean {
-    return value.startsWith("tr(");
+    if (typeof value !== "string") return false;
+    if (!value.startsWith("tr(") || !value.endsWith(")")) return false;
+    // body length > 0 after stripping "tr(" and ")"
+    return value.length > "tr()".length;
 }
 
 /**
  * Normalize a value to descriptor format.
  * If already a descriptor, return as-is. If hex pubkey, wrap as tr(pubkey).
+ * Throws when the value is empty or not a string so we never produce
+ * malformed descriptors like `tr()` that downstream parsers would reject.
  */
 export function normalizeToDescriptor(value: string): string {
+    if (typeof value !== "string" || value.length === 0) {
+        throw new Error(
+            "normalizeToDescriptor: expected a non-empty string value"
+        );
+    }
     if (isDescriptor(value)) {
         return value;
     }
