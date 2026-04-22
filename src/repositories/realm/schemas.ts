@@ -145,20 +145,18 @@ export const ARK_REALM_SCHEMA_VERSION = 2;
  * Run every Arkade schema migration applicable to the open Realm.
  *
  * Designed to be composed with the consumer's own migrations inside a single
- * `onMigration` callback. The function is a no-op when the old schema is
- * already at the current version.
+ * `onMigration` callback. Each migration step does a per-row check so it
+ * remains idempotent and independent of the app's global `schemaVersion` —
+ * a consumer whose app is already at version 10 can still trigger the
+ * Arkade v1→v2 script backfill when the row has never been populated.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
-    if (oldRealm.schemaVersion < 2) {
-        const oldVtxos = oldRealm.objects("ArkVtxo");
-        const newVtxos = newRealm.objects("ArkVtxo");
-        for (let i = 0; i < oldVtxos.length; i++) {
-            const oldVtxo = oldVtxos[i];
-            const newVtxo = newVtxos[i];
-            if (!oldVtxo.script) {
-                newVtxo.script = scriptFromArkAddress(oldVtxo.address);
-            }
+    const newVtxos = newRealm.objects("ArkVtxo");
+    for (let i = 0; i < newVtxos.length; i++) {
+        const newVtxo = newVtxos[i];
+        if (!newVtxo.script) {
+            newVtxo.script = scriptFromArkAddress(newVtxo.address);
         }
     }
 }

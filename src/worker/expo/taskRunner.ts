@@ -5,7 +5,7 @@ import type { IndexerProvider } from "../../providers/indexer";
 import type { ArkProvider } from "../../providers/ark";
 import type { ExtendedVirtualCoin, VirtualCoin } from "../../wallet";
 import type { Contract } from "../../contracts/types";
-import { getRandomId, extendVtxoFromContract } from "../../wallet/utils";
+import { getRandomId, extendVirtualCoinForContract } from "../../wallet/utils";
 
 /**
  * Shared dependencies injected into every processor at runtime.
@@ -128,6 +128,6 @@ export function createTaskDependencies(
     return {
         ...options,
         extendVtxo: (vtxo: VirtualCoin, contract: Contract) =>
-            extendVtxoFromContract(vtxo, contract),
+            extendVirtualCoinForContract(vtxo, contract),
     };
 }

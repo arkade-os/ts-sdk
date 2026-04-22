@@ -707,10 +707,17 @@ export class ContractManager implements IContractManager {
         const cursor = await getSyncCursor(this.config.walletRepository);
         const window = options.window ?? computeSyncWindow(cursor);
 
-        // Only advance cursor if syncing the full watched set AND the window
-        // starts before the current cursor (otherwise we'd be skipping ahead).
+        // Advance the global cursor only on full-scope, cursor-derived delta
+        // syncs. A caller-supplied window is targeted (e.g. `refreshVtxos`)
+        // and must not move the cursor — it may skip data outside its bounds.
+        // `<=` lets the bootstrap case (cursor=0, window.after=0) write the
+        // migration marker on first boot; otherwise the marker would never
+        // be written and every subsequent boot would treat the cursor as
+        // legacy and re-bootstrap.
         const mustUpdateCursor =
-            options.contracts === undefined && (window.after ?? 0) < cursor;
+            options.contracts === undefined &&
+            options.window === undefined &&
+            (window.after ?? 0) <= cursor;
 
         const contracts =
             options.contracts ?? this.watcher.getWatchedContracts();
@@ -748,18 +755,21 @@ export class ContractManager implements IContractManager {
             pendingOnly: true,
         });
 
-        // Group by contract and upsert.
+        // Share the annotation path with external callers so the two entry
+        // points can't drift.
+        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const annotated = await this.annotateVtxos(owned);
+
         const byContract = new Map<string, ContractVtxo[]>();
-        for (const vtxo of vtxos) {
-            const contract = scriptToContract.get(vtxo.script);
-            if (!contract) continue;
+        for (const vtxo of annotated) {
+            const contract = scriptToContract.get(vtxo.script)!;
             let arr = byContract.get(contract.address);
             if (!arr) {
                 arr = [];
                 byContract.set(contract.address, arr);
             }
             arr.push({
-                ...extendVirtualCoinForContract(vtxo, contract),
+                ...vtxo,
                 contractScript: contract.script,
             });
         }
@@ -835,14 +845,16 @@ export class ContractManager implements IContractManager {
                 pageSize,
             });
 
-            for (const vtxo of vtxos) {
-                // Match the virtual output back to its contract via the script field
-                // populated by the indexer.
-                const contract = scriptToContract.get(vtxo.script);
-                if (!contract) continue;
-                result.get(contract.script)!.push({
-                    ...extendVirtualCoinForContract(vtxo, contract),
-                    contractScript: contract.script,
+            // Match virtual outputs back to their contract via the script field
+            // populated by the indexer, then share the annotation path with
+            // external callers via annotateVtxos so the two entry points can't
+            // drift.
+            const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+            const annotated = await this.annotateVtxos(owned);
+            for (const vtxo of annotated) {
+                result.get(vtxo.script)!.push({
+                    ...vtxo,
+                    contractScript: vtxo.script,
                 });
             }
 

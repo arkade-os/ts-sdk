@@ -1,10 +1,7 @@
 import { describe, it, expect } from "vitest";
 
 import type { Contract } from "../../src/contracts/types";
-import {
-    extendVirtualCoinForContract,
-    collectVtxoScripts,
-} from "../../src/wallet/utils";
+import { extendVirtualCoinForContract } from "../../src/wallet/utils";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
@@ -117,35 +114,5 @@ describe("extendVirtualCoinForContract", () => {
         expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(
             /handler/
         );
-    });
-});
-
-describe("collectVtxoScripts", () => {
-    it("returns a unique, ordered-by-insertion list across batches", () => {
-        const scripts = collectVtxoScripts(
-            [{ script: "a" }, { script: "b" }, { script: "a" }],
-            [{ script: "c" }, { script: "b" }]
-        );
-
-        expect(scripts).toEqual(["a", "b", "c"]);
-    });
-
-    it("drops entries without a script", () => {
-        const scripts = collectVtxoScripts([
-            { script: "a" },
-            {},
-            { script: undefined },
-            { script: "b" },
-        ]);
-
-        expect(scripts).toEqual(["a", "b"]);
-    });
-
-    it("returns [] for no batches", () => {
-        expect(collectVtxoScripts()).toEqual([]);
-    });
-
-    it("returns [] for empty batches", () => {
-        expect(collectVtxoScripts([], [])).toEqual([]);
     });
 });

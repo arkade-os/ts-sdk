@@ -927,6 +927,7 @@ describe("SQLiteWalletRepository", () => {
             await repository.saveWalletState(state2);
 
             const retrieved = await repository.getWalletState();
+            expect(retrieved).toEqual(state2);
         });
 
         it("should handle wallet state with only settings", async () => {

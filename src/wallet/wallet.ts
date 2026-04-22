@@ -714,9 +714,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         // for-await loop and silently drop every subsequent
                         // subscription event for the session.
                         try {
+                            // Default to `[]` so a one-sided update (e.g.
+                            // only `newVtxos`) doesn't pass `undefined` into
+                            // annotateVtxos and throw on `.length`.
                             const [newVtxos, spentVtxos] = await Promise.all([
-                                cm.annotateVtxos(update.newVtxos),
-                                cm.annotateVtxos(update.spentVtxos),
+                                cm.annotateVtxos(update.newVtxos ?? []),
+                                cm.annotateVtxos(update.spentVtxos ?? []),
                             ]);
                             eventCallback({
                                 type: "vtxo",
@@ -1634,9 +1637,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // the intent stays on the server and the next settle will hit
             // "duplicated input" in safeRegisterIntent — surface the failure
             // rather than silently swallowing it.
+            const inputIds = params.inputs
+                .map((i) => `${i.txid}:${i.vout}`)
+                .join(",");
             await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
                 console.warn(
-                    "Failed to delete intent after settle failure; intent may linger on server and cause 'duplicated input' on next settle",
+                    `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
                     e
                 );
             });

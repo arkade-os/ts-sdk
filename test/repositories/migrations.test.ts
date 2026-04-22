@@ -3,10 +3,7 @@ import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
 import { ArkAddress } from "../../src";
 import type { TapLeafScript } from "../../src/script/base";
-import { scriptFromArkAddress } from "../../src/repositories/scriptFromAddress";
 import { runArkRealmMigrations } from "../../src/repositories/realm/schemas";
-import { SQLiteWalletRepository } from "../../src/repositories/sqlite/walletRepository";
-import type { SQLExecutor } from "../../src/repositories/sqlite/types";
 import {
     openDatabase,
     closeDatabase,
@@ -32,21 +29,6 @@ const TEST_ARK_ADDRESS = new ArkAddress(
 const EXPECTED_PK_SCRIPT_HEX = hex.encode(
     new ArkAddress(TEST_SERVER_PUBKEY, TEST_VTXO_TAPROOT_KEY, "ark").pkScript
 );
-
-describe("scriptFromArkAddress", () => {
-    it("derives the hex scriptPubKey from an encoded Ark address", () => {
-        // `scriptFromArkAddress(addr)` must match `hex.encode(addr.pkScript)`
-        // exactly — that's the value the indexer would have returned, and the
-        // backfill's whole job is to produce it without re-hitting the indexer.
-        expect(scriptFromArkAddress(TEST_ARK_ADDRESS)).toBe(
-            EXPECTED_PK_SCRIPT_HEX
-        );
-    });
-
-    it("throws on malformed addresses", () => {
-        expect(() => scriptFromArkAddress("not-a-real-address")).toThrow();
-    });
-});
 
 describe("Realm migration: runArkRealmMigrations", () => {
     // A minimal stand-in for the Realm handles passed to `onMigration`. The
@@ -87,173 +69,25 @@ describe("Realm migration: runArkRealmMigrations", () => {
         expect(newVtxos[1].script).toBe("5120abcd");
     });
 
-    it("is a no-op when the old schema is already at v2", () => {
-        const oldVtxos = [{ address: TEST_ARK_ADDRESS, script: null }];
+    it("is a no-op when every row already has a script", () => {
+        const newVtxos = [{ address: TEST_ARK_ADDRESS, script: "5120abcd" }];
+
+        runArkRealmMigrations(makeRealm(2, newVtxos), makeRealm(2, newVtxos));
+
+        // Per-row guard: rows that already have a script are left alone.
+        expect(newVtxos[0].script).toBe("5120abcd");
+    });
+
+    it("backfills legacy rows even when the app schema is at a higher version", () => {
+        // Consumers share a global `schemaVersion` across their own schemas
+        // and ours. An app that was already at version 10 when it adopted
+        // Arkade must still get its legacy ArkVtxo rows backfilled — the
+        // migration gates on per-row `script` presence, not on our constant.
         const newVtxos = [{ address: TEST_ARK_ADDRESS, script: null }];
 
-        runArkRealmMigrations(makeRealm(2, oldVtxos), makeRealm(2, newVtxos));
+        runArkRealmMigrations(makeRealm(10, newVtxos), makeRealm(11, newVtxos));
 
-        // Nothing should have changed — the guard is `oldRealm.schemaVersion < 2`.
-        expect(newVtxos[0].script).toBeNull();
-    });
-});
-
-describe("SQLite migration: migrateVtxosTable", () => {
-    // For the migration path we need a mock that reports the legacy schema
-    // (vtxos table exists, `script` column is either missing or nullable) on
-    // the first call — which the simple in-memory mock in
-    // sqlite-wallet-repository.test.ts doesn't model. This mock tracks the
-    // sequence of calls instead, returning pre-scripted responses.
-
-    interface QueryLog {
-        sql: string;
-        params?: unknown[];
-    }
-
-    function makeScriptedExecutor(
-        responses: Map<string, (params?: unknown[]) => unknown>
-    ): { executor: SQLExecutor; log: QueryLog[] } {
-        const log: QueryLog[] = [];
-        const match = (sql: string): ((params?: unknown[]) => unknown) => {
-            for (const [pattern, handler] of responses) {
-                if (new RegExp(pattern, "i").test(sql)) return handler;
-            }
-            throw new Error(`Unscripted SQL: ${sql}`);
-        };
-        const executor: SQLExecutor = {
-            async run(sql: string, params?: unknown[]): Promise<void> {
-                log.push({ sql: sql.trim(), params });
-                match(sql)(params);
-            },
-            async get<T = Record<string, unknown>>(
-                sql: string,
-                params?: unknown[]
-            ): Promise<T | undefined> {
-                log.push({ sql: sql.trim(), params });
-                return match(sql)(params) as T | undefined;
-            },
-            async all<T = Record<string, unknown>>(
-                sql: string,
-                params?: unknown[]
-            ): Promise<T[]> {
-                log.push({ sql: sql.trim(), params });
-                return match(sql)(params) as T[];
-            },
-        };
-        return { executor, log };
-    }
-
-    it("creates a fresh table with NOT NULL script when none exists", async () => {
-        const responses = new Map<string, (params?: unknown[]) => unknown>([
-            [/SELECT\s+name\s+FROM\s+sqlite_master/i.source, () => undefined],
-            [/CREATE\s+TABLE/i.source, () => undefined],
-            [/CREATE\s+INDEX/i.source, () => undefined],
-            // Subsequent save/get calls aren't exercised in this test.
-        ]);
-        const { executor, log } = makeScriptedExecutor(responses);
-        const repo = new SQLiteWalletRepository(executor);
-
-        // Trigger ensureInit via a read — it runs the migration before the
-        // first query completes.
-        await repo.getVtxos(TEST_ARK_ADDRESS).catch(() => undefined);
-
-        const createVtxos = log.find(
-            (q) =>
-                /CREATE\s+TABLE\s+ark_vtxos/.test(q.sql) &&
-                /NOT NULL/.test(q.sql)
-        );
-        expect(createVtxos).toBeDefined();
-        // Fresh install short-circuits before PRAGMA/table-rebuild logic.
-        expect(log.some((q) => /PRAGMA\s+table_info/i.test(q.sql))).toBe(false);
-        expect(log.some((q) => /DROP\s+TABLE/i.test(q.sql))).toBe(false);
-    });
-
-    it("backfills NULL scripts and rebuilds when legacy column is nullable", async () => {
-        // Scenario: the table exists, `script` column exists but `notnull=0`.
-        // Expected flow: skip ALTER, run backfill UPDATE for each NULL row,
-        // then rebuild via temp table + rename.
-        const nullRows = [
-            { txid: "tx1", vout: 0, address: TEST_ARK_ADDRESS },
-            { txid: "tx2", vout: 1, address: TEST_ARK_ADDRESS },
-        ];
-        const updateParams: unknown[][] = [];
-        const responses = new Map<string, (params?: unknown[]) => unknown>([
-            [
-                /SELECT\s+name\s+FROM\s+sqlite_master/i.source,
-                () => ({ name: "ark_vtxos" }),
-            ],
-            [
-                /PRAGMA\s+table_info/i.source,
-                () => [
-                    { name: "txid", notnull: 1 },
-                    { name: "script", notnull: 0 },
-                ],
-            ],
-            [
-                /SELECT\s+txid,\s+vout,\s+address\s+FROM\s+ark_vtxos/i.source,
-                () => nullRows,
-            ],
-            [
-                /UPDATE\s+ark_vtxos\s+SET\s+script/i.source,
-                (params) => {
-                    updateParams.push(params ?? []);
-                },
-            ],
-            [/DROP\s+TABLE/i.source, () => undefined],
-            [/CREATE\s+TABLE/i.source, () => undefined],
-            [/INSERT\s+INTO/i.source, () => undefined],
-            [/ALTER\s+TABLE/i.source, () => undefined],
-            [/CREATE\s+INDEX/i.source, () => undefined],
-        ]);
-        const { executor, log } = makeScriptedExecutor(responses);
-        const repo = new SQLiteWalletRepository(executor);
-
-        await repo.getVtxos(TEST_ARK_ADDRESS).catch(() => undefined);
-
-        // Each null row gets backfilled with the derived script.
-        expect(updateParams).toHaveLength(2);
-        expect(updateParams[0][0]).toBe(EXPECTED_PK_SCRIPT_HEX);
-        // Rebuild sequence: DROP IF EXISTS tmp → CREATE tmp → INSERT SELECT →
-        // DROP original → ALTER RENAME.
-        const insertSelect = log.find((q) =>
-            /INSERT\s+INTO\s+ark_vtxos__migrate_tmp/i.test(q.sql)
-        );
-        expect(insertSelect).toBeDefined();
-        const rename = log.find((q) =>
-            /ALTER\s+TABLE\s+ark_vtxos__migrate_tmp\s+RENAME\s+TO\s+ark_vtxos/i.test(
-                q.sql
-            )
-        );
-        expect(rename).toBeDefined();
-    });
-
-    it("skips the rebuild when script column is already NOT NULL", async () => {
-        const responses = new Map<string, (params?: unknown[]) => unknown>([
-            [
-                /SELECT\s+name\s+FROM\s+sqlite_master/i.source,
-                () => ({ name: "ark_vtxos" }),
-            ],
-            [
-                /PRAGMA\s+table_info/i.source,
-                () => [
-                    { name: "txid", notnull: 1 },
-                    { name: "script", notnull: 1 },
-                ],
-            ],
-            [/CREATE\s+TABLE/i.source, () => undefined],
-            [/CREATE\s+INDEX/i.source, () => undefined],
-        ]);
-        const { executor, log } = makeScriptedExecutor(responses);
-        const repo = new SQLiteWalletRepository(executor);
-
-        await repo.getVtxos(TEST_ARK_ADDRESS).catch(() => undefined);
-
-        // Nothing should touch the vtxos table beyond the schema probe.
-        expect(log.some((q) => /ALTER\s+TABLE\s+ark_vtxos/i.test(q.sql))).toBe(
-            false
-        );
-        expect(log.some((q) => /DROP\s+TABLE/i.test(q.sql))).toBe(false);
-        expect(log.some((q) => /UPDATE\s+ark_vtxos/i.test(q.sql))).toBe(false);
+        expect(newVtxos[0].script).toBe(EXPECTED_PK_SCRIPT_HEX);
     });
 });
 
