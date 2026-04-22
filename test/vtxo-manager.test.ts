@@ -1735,3 +1735,339 @@ describe("VtxoManager - Renewal loop prevention", () => {
         }
     });
 });
+
+describe("VtxoManager - Boarding settle cooldown", () => {
+    // Reuse the shape of createMockWalletWithBoarding without depending on the
+    // closure variables inside the Boarding UTXO Sweep describe block.
+    const mockPubkey = new Uint8Array(32).fill(0x01);
+    const csvScript = CSVMultisigTapscript.encode({
+        timelock: { type: "seconds", value: 604672n },
+        pubkeys: [mockPubkey],
+    });
+    const exitScriptHex = hex.encode(csvScript.script);
+
+    const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
+        const mockPkScript = new Uint8Array([
+            0x51,
+            0x20,
+            ...new Array(32).fill(0),
+        ]);
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+        };
+        return {
+            getVtxos: vi.fn().mockResolvedValue([]),
+            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue(contractManager),
+            settle: vi.fn().mockResolvedValue("mock-txid"),
+            dustAmount: 330n,
+            getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+            getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+            boardingTapscript: {
+                exitScript: exitScriptHex,
+                pkScript: mockPkScript,
+            },
+            onchainProvider: {
+                getFeeRate: vi.fn().mockResolvedValue(1),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: 1000,
+                    time: Math.floor(Date.now() / 1000),
+                    hash: "0".repeat(64),
+                }),
+            },
+            network: {
+                bech32: "bcrt",
+                pubKeyHash: 0x6f,
+                scriptHash: 0xc4,
+                wif: 0xef,
+            },
+            identity: {
+                sign: vi.fn().mockImplementation((tx: any) => tx),
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
+            },
+        } as any;
+    };
+
+    // Unexpired boarding UTXO — block_time very recent so the CSV timelock is
+    // NOT satisfied, which means it qualifies for settle (not sweep).
+    const makeUnexpiredUtxo = (value: number, vout = 0): ExtendedCoin =>
+        ({
+            txid: `boarding-txid-${value}-${vout}`,
+            vout,
+            value,
+            status: {
+                confirmed: true,
+                block_time: Math.floor(Date.now() / 1000) - 60,
+            },
+        }) as ExtendedCoin;
+
+    it("arms cooldown after a failed settle and skips subsequent attempts within the window", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const utxo = makeUnexpiredUtxo(10_000);
+            const wallet = buildBoardingWallet([utxo]);
+            (wallet.settle as any).mockRejectedValue(new Error("round failed"));
+
+            // Disable polling to avoid the startup poll from racing with our
+            // direct invocations — we drive the private method explicitly.
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            // First attempt: settle is invoked and throws. Cooldown is armed
+            // in finally, failure counter goes to 1.
+            await expect(
+                (manager as any).settleBoardingUtxos([utxo])
+            ).rejects.toThrow("round failed");
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+            // Within the cooldown window (default 30s * 2^1 = 60s), a second
+            // call must NOT hit settle again — even with the same unsettled
+            // UTXO — otherwise we're back to the hot-loop the report
+            // describes.
+            nowSpy.mockReturnValue(baseNow + 30_000);
+            await (manager as any).settleBoardingUtxos([utxo]);
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("allows a retry after the cooldown expires and resets counter on success", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const utxo = makeUnexpiredUtxo(10_000);
+            const wallet = buildBoardingWallet([utxo]);
+            (wallet.settle as any)
+                .mockRejectedValueOnce(new Error("round failed"))
+                .mockResolvedValueOnce("mock-txid");
+
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await expect(
+                (manager as any).settleBoardingUtxos([utxo])
+            ).rejects.toThrow("round failed");
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+            // First failure → cooldown = 30s * 2^1 = 60s. Advance past that.
+            nowSpy.mockReturnValue(baseNow + 61_000);
+            await (manager as any).settleBoardingUtxos([utxo]);
+
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+            // Success resets counter; next cooldown should drop back to base.
+            expect((manager as any).consecutiveBoardingSettleFailures).toBe(0);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("grows cooldown exponentially with consecutive failures (capped)", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const utxo = makeUnexpiredUtxo(10_000);
+            const wallet = buildBoardingWallet([utxo]);
+            (wallet.settle as any).mockRejectedValue(new Error("round failed"));
+
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            // Attempt 1 → counter becomes 1, next cooldown = 30s * 2^1 = 60s.
+            await expect(
+                (manager as any).settleBoardingUtxos([utxo])
+            ).rejects.toThrow();
+            expect((manager as any).consecutiveBoardingSettleFailures).toBe(1);
+
+            // 30s later (inside 60s cooldown) → skipped, counter unchanged.
+            nowSpy.mockReturnValue(baseNow + 30_000);
+            await (manager as any).settleBoardingUtxos([utxo]);
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            expect((manager as any).consecutiveBoardingSettleFailures).toBe(1);
+
+            // 61s later → cooldown elapsed, attempt 2 runs and fails.
+            nowSpy.mockReturnValue(baseNow + 61_000);
+            await expect(
+                (manager as any).settleBoardingUtxos([utxo])
+            ).rejects.toThrow();
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+            expect((manager as any).consecutiveBoardingSettleFailures).toBe(2);
+
+            // Next cooldown = 30s * 2^2 = 120s. 61s after 61s → 122s, still
+            // inside the 120s window from last attempt? No: 122 - 61 = 61s
+            // since last attempt < 120s cooldown → skipped.
+            nowSpy.mockReturnValue(baseNow + 61_000 + 61_000);
+            await (manager as any).settleBoardingUtxos([utxo]);
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("does not arm cooldown when there are no unsettled UTXOs", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const wallet = buildBoardingWallet([]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await (manager as any).settleBoardingUtxos([]);
+            expect(wallet.settle).not.toHaveBeenCalled();
+            expect((manager as any).lastBoardingSettleTimestamp).toBe(0);
+            expect((manager as any).consecutiveBoardingSettleFailures).toBe(0);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+});
+
+describe("VtxoManager - Cross-instance poll guard", () => {
+    const mockPubkey = new Uint8Array(32).fill(0x01);
+    const csvScript = CSVMultisigTapscript.encode({
+        timelock: { type: "seconds", value: 604672n },
+        pubkeys: [mockPubkey],
+    });
+    const exitScriptHex = hex.encode(csvScript.script);
+
+    const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
+        const mockPkScript = new Uint8Array([
+            0x51,
+            0x20,
+            ...new Array(32).fill(0),
+        ]);
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+        };
+        return {
+            getVtxos: vi.fn().mockResolvedValue([]),
+            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue(contractManager),
+            settle: vi.fn().mockResolvedValue("mock-txid"),
+            dustAmount: 330n,
+            getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+            getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+            boardingTapscript: {
+                exitScript: exitScriptHex,
+                pkScript: mockPkScript,
+            },
+            onchainProvider: {
+                getFeeRate: vi.fn().mockResolvedValue(1),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: 1000,
+                    time: Math.floor(Date.now() / 1000),
+                    hash: "0".repeat(64),
+                }),
+            },
+            network: {
+                bech32: "bcrt",
+                pubKeyHash: 0x6f,
+                scriptHash: 0xc4,
+                wif: 0xef,
+            },
+            identity: {
+                sign: vi.fn().mockImplementation((tx: any) => tx),
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
+            },
+        } as any;
+    };
+
+    it("skips the poll body when navigator.locks returns a null lock (held by another tab)", async () => {
+        // Simulate "another tab already holds the lock": the Web Locks API
+        // invokes the callback with `null` when ifAvailable:true is set and
+        // the lock is contended. Our wrapper should bail before calling
+        // getBoardingUtxos.
+        const requestSpy = vi
+            .fn()
+            .mockImplementation(
+                async (_name: string, _opts: unknown, cb: (l: any) => any) => {
+                    return cb(null);
+                }
+            );
+        vi.stubGlobal("navigator", { locks: { request: requestSpy } });
+        vi.useFakeTimers();
+
+        try {
+            const utxo = {
+                txid: "boarding-txid-x",
+                vout: 0,
+                value: 10_000,
+                status: {
+                    confirmed: true,
+                    block_time: Math.floor(Date.now() / 1000) - 60,
+                },
+            } as ExtendedCoin;
+            const wallet = buildBoardingWallet([utxo]);
+
+            new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+
+            // initializeSubscription delays the first poll by 1000ms; advance
+            // past it so the Web Locks gate is exercised.
+            await vi.advanceTimersByTimeAsync(1_100);
+
+            expect(requestSpy).toHaveBeenCalled();
+            // Lock was unavailable → poll body skipped → no network fetch,
+            // no settle attempt.
+            expect(wallet.getBoardingUtxos).not.toHaveBeenCalled();
+            expect(wallet.settle).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it("runs the poll body when navigator.locks grants the lock", async () => {
+        const requestSpy = vi
+            .fn()
+            .mockImplementation(
+                async (_name: string, _opts: unknown, cb: (l: any) => any) => {
+                    return cb({
+                        name: "arkade-boarding-poll",
+                        mode: "exclusive",
+                    });
+                }
+            );
+        vi.stubGlobal("navigator", { locks: { request: requestSpy } });
+        vi.useFakeTimers();
+
+        try {
+            const wallet = buildBoardingWallet([]);
+
+            new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+
+            await vi.advanceTimersByTimeAsync(1_100);
+
+            expect(requestSpy).toHaveBeenCalled();
+            // Lock granted → poll body executed → boarding fetch attempted.
+            expect(wallet.getBoardingUtxos).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+            vi.unstubAllGlobals();
+        }
+    });
+});

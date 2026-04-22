@@ -8,10 +8,12 @@ import {
     ReadonlyWallet,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    ArkError,
     type IndexerProvider,
     type ArkProvider,
     type OnchainProvider,
 } from "../src";
+import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import {
     IndexedDBWalletRepository,
@@ -1103,5 +1105,93 @@ describe("ReadonlyWallet", () => {
         // Should not have transaction methods
         expect((readonlyWallet as any).sendBitcoin).toBeUndefined();
         expect((readonlyWallet as any).settle).toBeUndefined();
+    });
+});
+
+describe("Wallet.safeRegisterIntent", () => {
+    it("signs the delete proof over the caller's inputs on 'duplicated input' retry", async () => {
+        // This regression covers the incident where the auto-settle path
+        // kept hitting "duplicated input" because the prior implementation
+        // signed the delete proof over `getVtxos()` — which misses the
+        // boarding UTXO that the stuck intent actually locked. The fix
+        // scopes the proof to the *caller's* inputs (which include the
+        // boarding UTXO for a boarding-settle), so the stuck intent is
+        // cleared on the very first retry.
+        const boardingInput = {
+            txid: "b".repeat(64),
+            vout: 0,
+            value: 10_000,
+            status: { confirmed: true, block_time: 1_700_000_000 },
+        } as ExtendedCoin;
+        const callerInputs: ExtendedCoin[] = [boardingInput];
+
+        const registerIntent = vi
+            .fn()
+            .mockRejectedValueOnce(
+                new ArkError(0, "duplicated input", "FailedPrecondition")
+            )
+            .mockResolvedValueOnce("intent-id-after-retry");
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+
+        const makeDeleteIntentSignature = vi.fn().mockResolvedValue({
+            proof: "delete-proof",
+            message: { type: "delete", expire_at: 0 },
+        });
+        const getVtxos = vi.fn().mockResolvedValue([]);
+
+        const thisArg: any = {
+            arkProvider: { registerIntent, deleteIntent },
+            makeDeleteIntentSignature,
+            getVtxos,
+        };
+
+        const intent = {
+            proof: "register-proof",
+            message: { type: "register" } as any,
+        };
+
+        const result = await (Wallet.prototype as any).safeRegisterIntent.call(
+            thisArg,
+            intent,
+            callerInputs
+        );
+
+        expect(result).toBe("intent-id-after-retry");
+        // The delete proof MUST be built from the caller's inputs, not
+        // from getVtxos() — otherwise boarding-input stuck intents
+        // remain on the server and the next registerIntent collides
+        // again, producing the DeleteIntent treadmill seen in the panic.
+        expect(makeDeleteIntentSignature).toHaveBeenCalledWith(callerInputs);
+        expect(getVtxos).not.toHaveBeenCalled();
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
+        expect(registerIntent).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not attempt delete/retry for unrelated ArkError codes", async () => {
+        const registerIntent = vi
+            .fn()
+            .mockRejectedValueOnce(
+                new ArkError(3, "some other failure", "InvalidArgument")
+            );
+        const deleteIntent = vi.fn();
+        const makeDeleteIntentSignature = vi.fn();
+
+        const thisArg: any = {
+            arkProvider: { registerIntent, deleteIntent },
+            makeDeleteIntentSignature,
+            getVtxos: vi.fn(),
+        };
+
+        await expect(
+            (Wallet.prototype as any).safeRegisterIntent.call(
+                thisArg,
+                { proof: "p", message: { type: "register" } },
+                [] as ExtendedCoin[]
+            )
+        ).rejects.toThrow("some other failure");
+
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(makeDeleteIntentSignature).not.toHaveBeenCalled();
+        expect(registerIntent).toHaveBeenCalledTimes(1);
     });
 });

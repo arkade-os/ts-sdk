@@ -61,6 +61,47 @@ function assertSweepCapable(
     }
 }
 
+/**
+ * Web Locks name used to serialize boarding-poll work across same-origin
+ * browser contexts (tabs, service worker). Static because the goal is to
+ * deduplicate polls for the *same* wallet — two distinct wallets on the
+ * same origin will take turns, which is acceptable.
+ */
+const BOARDING_POLL_LOCK_NAME = "arkade-boarding-poll";
+
+/**
+ * Run `fn` under an exclusive Web Lock when the runtime provides one
+ * (browser main thread, service worker). In environments without
+ * `navigator.locks` (Node, React Native) the callback runs immediately
+ * with no coordination.
+ *
+ * Uses `ifAvailable: true`: if another context already holds the lock,
+ * skip this cycle entirely rather than queueing — the other context will
+ * do the work and the next poll will re-check.
+ */
+async function runWithCrossInstanceLock(
+    name: string,
+    fn: () => Promise<void>
+): Promise<void> {
+    const locks =
+        typeof globalThis !== "undefined" &&
+        typeof globalThis.navigator !== "undefined"
+            ? globalThis.navigator.locks
+            : undefined;
+    if (!locks) {
+        await fn();
+        return;
+    }
+    await locks.request(
+        name,
+        { ifAvailable: true, mode: "exclusive" },
+        async (lock) => {
+            if (lock === null) return;
+            await fn();
+        }
+    );
+}
+
 /** Default renewal threshold in seconds (3 days). */
 export const DEFAULT_THRESHOLD_SECONDS = 3 * 24 * 60 * 60;
 
@@ -449,6 +490,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private renewalInProgress = false;
     private lastRenewalTimestamp = 0;
     private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
+
+    // Guards against a retry treadmill on the boarding-settle path: a failing
+    // settle would otherwise re-submit identical intents on every 60s poll,
+    // producing per-minute DeleteIntent RPCs forever. Mirrors the renewal
+    // cooldown but with exponential backoff on consecutive failures, so a
+    // persistently broken boarding input eventually drops to the backoff cap
+    // instead of hammering the server.
+    private lastBoardingSettleTimestamp = 0;
+    private consecutiveBoardingSettleFailures = 0;
+    private static readonly BOARDING_SETTLE_COOLDOWN_MS = 30_000;
+    private static readonly BOARDING_SETTLE_MAX_BACKOFF_MS = 5 * 60 * 1000;
 
     constructor(
         readonly wallet: IWallet,
@@ -1092,36 +1144,50 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         let hadError = false;
 
         try {
-            // Fetch boarding inputs once for the entire poll cycle so that
-            // settle and sweep don't each hit the network independently.
-            const boardingUtxos = await this.wallet.getBoardingUtxos();
+            // Cross-instance guard: in browser / service worker environments,
+            // serialize the poll body across tabs and SW contexts so only one
+            // of them registers intents per interval. Without this, every tab
+            // submits a parallel RegisterIntent for the same boarding input
+            // and N-1 of them collide on the server's duplicated-input check,
+            // each producing a DeleteIntent RPC. No-op outside the browser.
+            await runWithCrossInstanceLock(
+                BOARDING_POLL_LOCK_NAME,
+                async () => {
+                    // Fetch boarding inputs once for the entire poll cycle so that
+                    // settle and sweep don't each hit the network independently.
+                    const boardingUtxos = await this.wallet.getBoardingUtxos();
 
-            // Settle new (unexpired) boarding inputs first, then sweep expired ones.
-            // Sequential to avoid racing for the same inputs.
-            try {
-                await this.settleBoardingUtxos(boardingUtxos);
-            } catch (e) {
-                hadError = true;
-                console.error("Error auto-settling boarding UTXOs:", e);
-            }
-
-            const sweepEnabled =
-                this.settlementConfig !== false &&
-                (this.settlementConfig?.boardingUtxoSweep ??
-                    DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
-            if (sweepEnabled) {
-                try {
-                    await this.sweepExpiredBoardingUtxos(boardingUtxos);
-                } catch (e) {
-                    if (
-                        !(e instanceof Error) ||
-                        !e.message.includes("No expired boarding UTXOs")
-                    ) {
+                    // Settle new (unexpired) boarding inputs first, then sweep expired ones.
+                    // Sequential to avoid racing for the same inputs.
+                    try {
+                        await this.settleBoardingUtxos(boardingUtxos);
+                    } catch (e) {
                         hadError = true;
-                        console.error("Error auto-sweeping boarding UTXOs:", e);
+                        console.error("Error auto-settling boarding UTXOs:", e);
+                    }
+
+                    const sweepEnabled =
+                        this.settlementConfig !== false &&
+                        (this.settlementConfig?.boardingUtxoSweep ??
+                            DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+                    if (sweepEnabled) {
+                        try {
+                            await this.sweepExpiredBoardingUtxos(boardingUtxos);
+                        } catch (e) {
+                            if (
+                                !(e instanceof Error) ||
+                                !e.message.includes("No expired boarding UTXOs")
+                            ) {
+                                hadError = true;
+                                console.error(
+                                    "Error auto-sweeping boarding UTXOs:",
+                                    e
+                                );
+                            }
+                        }
                     }
                 }
-            }
+            );
         } catch (e) {
             hadError = true;
             console.error("Error fetching boarding UTXOs:", e);
@@ -1142,8 +1208,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * Auto-settle new (unexpired) boarding inputs into Arkade.
      * Skips UTXOs that are already expired (those are handled by sweep).
      * Only settles UTXOs not already in-flight (tracked in knownBoardingUtxos).
-     * UTXOs are marked as known only after a successful settle, so failed
-     * attempts will be retried on the next poll.
+     *
+     * Failure bookkeeping: after every settle *attempt*, lastBoardingSettleTimestamp
+     * is armed and consecutive failures are counted so the next attempt is
+     * blocked by an exponentially growing cooldown (capped). This stops a
+     * persistently failing boarding input from producing identical
+     * RegisterIntent + DeleteIntent retries on every 60s poll.
      */
     private async settleBoardingUtxos(
         boardingUtxos: ExtendedCoin[]
@@ -1175,6 +1245,18 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         if (unsettledUtxos.length === 0) return;
 
+        // Respect the cooldown armed by the previous attempt. Cooldown grows
+        // exponentially with consecutive failures and is capped by
+        // BOARDING_SETTLE_MAX_BACKOFF_MS.
+        const cooldownMs = Math.min(
+            VtxoManager.BOARDING_SETTLE_COOLDOWN_MS *
+                Math.pow(2, this.consecutiveBoardingSettleFailures),
+            VtxoManager.BOARDING_SETTLE_MAX_BACKOFF_MS
+        );
+        if (Date.now() - this.lastBoardingSettleTimestamp < cooldownMs) {
+            return;
+        }
+
         const dustAmount = getDustAmount(this.wallet);
         const totalAmount = unsettledUtxos.reduce(
             (sum, u) => sum + BigInt(u.value),
@@ -1183,14 +1265,25 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (totalAmount < dustAmount) return;
 
         const arkAddress = await this.wallet.getAddress();
-        await this.wallet.settle({
-            inputs: unsettledUtxos,
-            outputs: [{ address: arkAddress, amount: totalAmount }],
-        });
+        let success = false;
+        try {
+            await this.wallet.settle({
+                inputs: unsettledUtxos,
+                outputs: [{ address: arkAddress, amount: totalAmount }],
+            });
 
-        // Mark as known only after successful settle
-        for (const u of unsettledUtxos) {
-            this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+            // Mark as known only after successful settle
+            for (const u of unsettledUtxos) {
+                this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+            }
+            success = true;
+        } finally {
+            this.lastBoardingSettleTimestamp = Date.now();
+            if (success) {
+                this.consecutiveBoardingSettleFailures = 0;
+            } else {
+                this.consecutiveBoardingSettleFailures++;
+            }
         }
     }
 

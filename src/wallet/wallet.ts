@@ -1605,7 +1605,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 topics
             );
 
-            const intentId = await this.safeRegisterIntent(intent);
+            const intentId = await this.safeRegisterIntent(
+                intent,
+                params.inputs
+            );
 
             const handler = this.createBatchHandler(
                 intentId,
@@ -1933,7 +1936,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     async safeRegisterIntent(
-        intent: SignedIntent<Intent.RegisterMessage>
+        intent: SignedIntent<Intent.RegisterMessage>,
+        inputs: ExtendedCoin[]
     ): Promise<string> {
         try {
             return await this.arkProvider.registerIntent(intent);
@@ -1944,12 +1948,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 error.code === 0 &&
                 error.message.includes("duplicated input")
             ) {
-                // delete all intents spending one of the wallet coins
-                const allSpendableCoins = await this.getVtxos({
-                    withRecoverable: true,
-                });
+                // Clear any queued intent spending these exact inputs. The
+                // previous implementation signed a proof over getVtxos() only,
+                // which misses boarding UTXOs — the most common trigger for
+                // "duplicated input" on the auto-settle path. Signing the
+                // caller's own inputs keeps the proof surgical and correct
+                // regardless of whether the stuck input is a VTXO or boarding.
                 const deleteIntent =
-                    await this.makeDeleteIntentSignature(allSpendableCoins);
+                    await this.makeDeleteIntentSignature(inputs);
                 await this.arkProvider.deleteIntent(deleteIntent);
 
                 // try again
