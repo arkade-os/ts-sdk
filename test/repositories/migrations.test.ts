@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { hex } from "@scure/base";
 import { TaprootControlBlock } from "@scure/btc-signer";
+import Database from "better-sqlite3";
 import { ArkAddress } from "../../src";
 import type { TapLeafScript } from "../../src/script/base";
 import { runArkRealmMigrations } from "../../src/repositories/realm/schemas";
@@ -14,6 +15,8 @@ import {
     backfillVtxoScripts,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
+import { SQLiteWalletRepository } from "../../src/repositories/sqlite/walletRepository";
+import type { SQLExecutor } from "../../src/repositories/sqlite/types";
 
 // Deterministic Ark address to exercise the real bech32m decode path in
 // the backfill helper — using "test-address-123" everywhere else is fine
@@ -304,5 +307,265 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
         } finally {
             await closeDatabase(dbName);
         }
+    });
+});
+
+describe("SQLite migration: migrateVtxosTable", () => {
+    // Exercises the legacy→v1 paths against a real SQLite database
+    // (better-sqlite3 in-memory). The in-memory mock used elsewhere cannot
+    // cover these paths: its `PRAGMA table_info` response hardcodes
+    // `notnull: 1` (so any `script` column looks already-migrated) and its
+    // WHERE parser doesn't handle `IS NULL` (so the backfill probe would
+    // return every row regardless).
+
+    // Shape of `vtxos` before 62601da4 — no `script` column at all.
+    const LEGACY_V0_SCHEMA = `
+        CREATE TABLE ark_vtxos (
+            txid TEXT NOT NULL,
+            vout INTEGER NOT NULL,
+            value INTEGER NOT NULL,
+            address TEXT NOT NULL,
+            tap_tree TEXT NOT NULL,
+            forfeit_cb TEXT NOT NULL,
+            forfeit_s TEXT NOT NULL,
+            intent_cb TEXT NOT NULL,
+            intent_s TEXT NOT NULL,
+            status_json TEXT NOT NULL,
+            virtual_status_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_unrolled INTEGER NOT NULL DEFAULT 0,
+            is_spent INTEGER,
+            spent_by TEXT,
+            settled_by TEXT,
+            ark_tx_id TEXT,
+            extra_witness_json TEXT,
+            assets_json TEXT,
+            PRIMARY KEY (txid, vout)
+        )
+    `;
+
+    // Shape after 62601da4 but before the NOT NULL tightening — a user who
+    // upgraded across that window has `script TEXT` nullable.
+    const LEGACY_V0B_SCHEMA = LEGACY_V0_SCHEMA.replace(
+        "PRIMARY KEY (txid, vout)",
+        "script TEXT, PRIMARY KEY (txid, vout)"
+    );
+
+    function createExecutor(db: Database.Database): SQLExecutor {
+        return {
+            async run(sql: string, params?: unknown[]) {
+                db.prepare(sql).run(...((params ?? []) as unknown[] as []));
+            },
+            async get<T>(sql: string, params?: unknown[]) {
+                return db
+                    .prepare(sql)
+                    .get(...((params ?? []) as unknown[] as [])) as
+                    | T
+                    | undefined;
+            },
+            async all<T>(sql: string, params?: unknown[]) {
+                return db
+                    .prepare(sql)
+                    .all(...((params ?? []) as unknown[] as [])) as T[];
+            },
+        };
+    }
+
+    // Insert into a table matching `LEGACY_V0_SCHEMA` — no script column.
+    function insertV0Row(db: Database.Database, txid: string, address: string) {
+        db.prepare(
+            `INSERT INTO ark_vtxos (
+                txid, vout, value, address, tap_tree,
+                forfeit_cb, forfeit_s, intent_cb, intent_s,
+                status_json, virtual_status_json, created_at
+            ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', '{}', '2024-01-01')`
+        ).run(txid, address);
+    }
+
+    // Insert into a table matching `LEGACY_V0B_SCHEMA` — nullable script.
+    function insertV0bRow(
+        db: Database.Database,
+        txid: string,
+        address: string,
+        script: string | null
+    ) {
+        db.prepare(
+            `INSERT INTO ark_vtxos (
+                txid, vout, value, address, tap_tree,
+                forfeit_cb, forfeit_s, intent_cb, intent_s,
+                status_json, virtual_status_json, created_at, script
+            ) VALUES (?, 0, 1000, ?, '', '', '', '', '', '{}', '{}', '2024-01-01', ?)`
+        ).run(txid, address, script);
+    }
+
+    function vtxosCols(
+        db: Database.Database
+    ): Array<{ name: string; notnull: number }> {
+        return db.prepare(`PRAGMA table_info(ark_vtxos)`).all() as Array<{
+            name: string;
+            notnull: number;
+        }>;
+    }
+
+    function tempTableExists(db: Database.Database): boolean {
+        return !!db
+            .prepare(
+                `SELECT name FROM sqlite_master
+                 WHERE type='table' AND name='ark_vtxos__migrate_tmp'`
+            )
+            .get();
+    }
+
+    let db: Database.Database;
+    let executor: SQLExecutor;
+    let repo: SQLiteWalletRepository;
+
+    beforeEach(() => {
+        db = new Database(":memory:");
+        executor = createExecutor(db);
+        repo = new SQLiteWalletRepository(executor);
+    });
+
+    afterEach(() => {
+        db.close();
+    });
+
+    it("creates the v1 schema on a fresh install", async () => {
+        // No legacy table; migration short-circuits into `vtxosCreateSql`.
+        // Trigger ensureInit via a repo method that doesn't deserialize
+        // rows — the seed data has placeholder binary for tap_tree/leaf
+        // scripts that would fail the TapLeaf decoder, but the migration
+        // just copies those bytes verbatim.
+        await repo.getWalletState();
+
+        const scriptCol = vtxosCols(db).find((c) => c.name === "script");
+        expect(scriptCol).toBeDefined();
+        expect(scriptCol!.notnull).toBe(1);
+        expect(tempTableExists(db)).toBe(false);
+    });
+
+    it("adds the script column, backfills from address, and rebuilds NOT NULL (v0 → v1)", async () => {
+        db.exec(LEGACY_V0_SCHEMA);
+        insertV0Row(db, "legacy-1", TEST_ARK_ADDRESS);
+        insertV0Row(db, "legacy-2", TEST_ARK_ADDRESS);
+
+        // Trigger ensureInit via a repo method that doesn't deserialize
+        // rows — the seed data has placeholder binary for tap_tree/leaf
+        // scripts that would fail the TapLeaf decoder, but the migration
+        // just copies those bytes verbatim.
+        await repo.getWalletState();
+
+        const scriptCol = vtxosCols(db).find((c) => c.name === "script");
+        expect(scriptCol?.notnull).toBe(1);
+
+        const rows = db
+            .prepare(`SELECT txid, script FROM ark_vtxos ORDER BY txid`)
+            .all() as Array<{ txid: string; script: string }>;
+        expect(rows).toHaveLength(2);
+        expect(rows.map((r) => r.script)).toEqual([
+            EXPECTED_PK_SCRIPT_HEX,
+            EXPECTED_PK_SCRIPT_HEX,
+        ]);
+        expect(tempTableExists(db)).toBe(false);
+    });
+
+    it("backfills NULL scripts but preserves existing ones (v0b → v1)", async () => {
+        db.exec(LEGACY_V0B_SCHEMA);
+        insertV0bRow(db, "legacy-null", TEST_ARK_ADDRESS, null);
+        insertV0bRow(db, "legacy-preset", TEST_ARK_ADDRESS, "5120cafe");
+
+        await repo.getWalletState();
+
+        expect(vtxosCols(db).find((c) => c.name === "script")?.notnull).toBe(1);
+
+        const rows = Object.fromEntries(
+            (
+                db
+                    .prepare(`SELECT txid, script FROM ark_vtxos`)
+                    .all() as Array<{ txid: string; script: string }>
+            ).map((r) => [r.txid, r.script])
+        );
+        // Backfill fills NULLs from the owning address…
+        expect(rows["legacy-null"]).toBe(EXPECTED_PK_SCRIPT_HEX);
+        // …but must not rewrite values the indexer already populated.
+        expect(rows["legacy-preset"]).toBe("5120cafe");
+    });
+
+    it("is a no-op when the script column is already NOT NULL", async () => {
+        // First migration: v0 → v1.
+        db.exec(LEGACY_V0_SCHEMA);
+        insertV0Row(db, "already-migrated", TEST_ARK_ADDRESS);
+        await repo.getWalletState();
+
+        // Second pass via a fresh repo instance: the early-return path
+        // means the table's rowid sequence is not disturbed by a rebuild.
+        const beforeRowid = (
+            db
+                .prepare(`SELECT rowid FROM ark_vtxos WHERE txid = ?`)
+                .get("already-migrated") as { rowid: number }
+        ).rowid;
+
+        const repo2 = new SQLiteWalletRepository(executor);
+        await repo2.getWalletState();
+
+        const afterRowid = (
+            db
+                .prepare(`SELECT rowid FROM ark_vtxos WHERE txid = ?`)
+                .get("already-migrated") as { rowid: number }
+        ).rowid;
+        expect(afterRowid).toBe(beforeRowid);
+        expect(tempTableExists(db)).toBe(false);
+    });
+
+    it("rolls back cleanly when a bad address aborts the backfill", async () => {
+        // A corrupt address mid-backfill used to leave the DB in an
+        // inconsistent state; the BEGIN/ROLLBACK wrap preserves the
+        // original table intact.
+        db.exec(LEGACY_V0_SCHEMA);
+        insertV0Row(db, "valid", TEST_ARK_ADDRESS);
+        insertV0Row(db, "bad", "not-a-real-address");
+
+        await expect(repo.getVtxos(TEST_ARK_ADDRESS)).rejects.toThrow();
+
+        // Original rows intact, schema unchanged, no orphan tmp table.
+        const rows = db
+            .prepare(`SELECT txid FROM ark_vtxos ORDER BY txid`)
+            .all() as Array<{ txid: string }>;
+        expect(rows.map((r) => r.txid)).toEqual(["bad", "valid"]);
+        expect(vtxosCols(db).some((c) => c.name === "script")).toBe(false);
+        expect(tempTableExists(db)).toBe(false);
+    });
+
+    it("preserves data when a crash hits the DROP → RENAME window", async () => {
+        // Regression for the pre-fix scenario: the rebuild dropped the
+        // original vtxos table, then died before RENAME. Without the
+        // transaction wrap this silently orphaned every row; with it, the
+        // ROLLBACK restores the original table.
+        db.exec(LEGACY_V0_SCHEMA);
+        insertV0Row(db, "keep-me", TEST_ARK_ADDRESS);
+
+        const crashingExecutor: SQLExecutor = {
+            async run(sql, params) {
+                if (/ALTER\s+TABLE\s+\S+\s+RENAME\s+TO/i.test(sql)) {
+                    throw new Error("simulated crash at RENAME");
+                }
+                return executor.run(sql, params);
+            },
+            get: executor.get.bind(executor),
+            all: executor.all.bind(executor),
+        };
+        const crashingRepo = new SQLiteWalletRepository(crashingExecutor);
+
+        await expect(crashingRepo.getVtxos(TEST_ARK_ADDRESS)).rejects.toThrow(
+            /simulated crash/
+        );
+
+        // Data and schema restored exactly as they were pre-migration.
+        const rows = db
+            .prepare(`SELECT txid, address FROM ark_vtxos`)
+            .all() as Array<{ txid: string; address: string }>;
+        expect(rows).toEqual([{ txid: "keep-me", address: TEST_ARK_ADDRESS }]);
+        expect(vtxosCols(db).some((c) => c.name === "script")).toBe(false);
+        expect(tempTableExists(db)).toBe(false);
     });
 });
