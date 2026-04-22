@@ -16,25 +16,6 @@ import { Bytes } from "@scure/btc-signer/utils";
 
 export const DUST_AMOUNT = 546; // sats
 
-/**
- * @deprecated Prefer {@link extendVirtualCoinForContract}, which resolves the
- * owning contract's tapscripts when the wallet holds VTXOs from multiple
- * contracts. This helper unconditionally stamps the wallet's default
- * tapscript onto every VTXO and is only safe for wallets whose VTXOs all
- * belong to the default contract.
- */
-export function extendVirtualCoin(
-    wallet: { offchainTapscript: ReadonlyWallet["offchainTapscript"] },
-    vtxo: VirtualCoin
-): ExtendedVirtualCoin {
-    return {
-        ...vtxo,
-        forfeitTapLeafScript: wallet.offchainTapscript.forfeit(),
-        intentTapLeafScript: wallet.offchainTapscript.forfeit(),
-        tapTree: wallet.offchainTapscript.encode(),
-    };
-}
-
 export function extendCoin(
     wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
     utxo: Coin
@@ -48,11 +29,11 @@ export function extendCoin(
 }
 
 /**
- * @deprecated Internal primitive — call {@link extendVirtualCoinForContract}
- * and pass the `Contract` (or a `ReadonlyMap<script, Contract>`) as the third
- * argument instead. The unified helper routes through this primitive when a
- * contract resolves and falls back to the wallet's default tapscript
- * otherwise.
+ * Internal primitive — prefer {@link extendVirtualCoinForContract}, which
+ * resolves the owning contract via a script→Contract map (or accepts a single
+ * `Contract` directly) and throws when resolution fails. Leaving this
+ * exported for the handful of callsites that already hold a `Contract` and
+ * only need the raw annotation.
  */
 export function extendVtxoFromContract(
     vtxo: VirtualCoin,
@@ -74,47 +55,35 @@ export function extendVtxoFromContract(
 }
 
 /**
- * Extend a VirtualCoin with the tap scripts of whichever contract locks it,
- * falling back to the wallet's default offchain tapscript when no contract
- * can be resolved.
+ * Extend a VirtualCoin with the tap scripts of whichever contract locks it.
  *
- * The third argument accepts either form, so each callsite passes what it
+ * The second argument accepts either form, so each callsite passes what it
  * already has:
  * - a single `Contract` (when the caller already knows the owning contract,
  *   e.g. the contract manager iterating its own `scriptToContract` map), or
  * - a `ReadonlyMap<script, Contract>` (when the caller resolves by
  *   `vtxo.script`, populated by the indexer).
  *
- * `wallet` may be `undefined` when the caller guarantees a contract always
- * resolves (no need for the default-tapscript fallback). When both no
- * contract resolves and no wallet is provided, this throws rather than
- * returning a silently-defaulted extension.
- *
- * When the wallet owns multiple contracts (default + delegate, several active
- * vHTLCs, etc.), a raw {@link extendVirtualCoin} call uses only the default
- * tapscript, which silently overwrites the correct forfeit/intent data for
- * any VTXO locked to a non-default contract. Resolving by `vtxo.script` keeps
- * the extension aligned with the owning contract, which is a correctness
- * requirement before the vtxo is used for spending or saved back to the
- * repository.
+ * Throws when no contract can be resolved — there is intentionally no
+ * default-tapscript fallback. When the wallet owns multiple contracts
+ * (default + delegate, several active vHTLCs, etc.) a default-tapscript path
+ * silently stamps every VTXO with the same forfeit/intent data, overwriting
+ * the correct data for any VTXO locked to a non-default contract. Callers
+ * must feed a Contract or a populated script→Contract map; otherwise the
+ * caller (typically `ContractManager.annotateVtxos`) should fetch the owning
+ * contract first.
  */
 export function extendVirtualCoinForContract(
-    wallet:
-        | { offchainTapscript: ReadonlyWallet["offchainTapscript"] }
-        | undefined,
     vtxo: VirtualCoin,
     contractOrMap?: Contract | ReadonlyMap<string, Contract>
 ): ExtendedVirtualCoin {
     const contract = resolveContract(vtxo, contractOrMap);
-    if (contract) {
-        return extendVtxoFromContract(vtxo, contract);
-    }
-    if (!wallet) {
+    if (!contract) {
         throw new Error(
-            "extendVirtualCoinForContract: no contract matched vtxo.script and no wallet fallback was provided"
+            "extendVirtualCoinForContract: no contract matched vtxo.script — callers must resolve the owning contract before annotating"
         );
     }
-    return extendVirtualCoin(wallet, vtxo);
+    return extendVtxoFromContract(vtxo, contract);
 }
 
 function isContractMap(
