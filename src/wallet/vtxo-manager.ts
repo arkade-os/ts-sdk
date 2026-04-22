@@ -491,16 +491,17 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private lastRenewalTimestamp = 0;
     private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
 
-    // Guards against a retry treadmill on the boarding-settle path: a failing
+    // Guards against a retry treadmill on the periodic-settle path: a failing
     // settle would otherwise re-submit identical intents on every 60s poll,
     // producing per-minute DeleteIntent RPCs forever. Mirrors the renewal
     // cooldown but with exponential backoff on consecutive failures, so a
-    // persistently broken boarding input eventually drops to the backoff cap
-    // instead of hammering the server.
-    private lastBoardingSettleTimestamp = 0;
-    private consecutiveBoardingSettleFailures = 0;
-    private static readonly BOARDING_SETTLE_COOLDOWN_MS = 30_000;
-    private static readonly BOARDING_SETTLE_MAX_BACKOFF_MS = 5 * 60 * 1000;
+    // persistently broken input eventually drops to the backoff cap instead
+    // of hammering the server. Shared across boarding + expiring-VTXO work
+    // because they now ride on the same settle intent.
+    private lastPeriodicSettleTimestamp = 0;
+    private consecutivePeriodicSettleFailures = 0;
+    private static readonly PERIODIC_SETTLE_COOLDOWN_MS = 30_000;
+    private static readonly PERIODIC_SETTLE_MAX_BACKOFF_MS = 5 * 60 * 1000;
 
     constructor(
         readonly wallet: IWallet,
@@ -1157,13 +1158,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                     // settle and sweep don't each hit the network independently.
                     const boardingUtxos = await this.wallet.getBoardingUtxos();
 
-                    // Settle new (unexpired) boarding inputs first, then sweep expired ones.
-                    // Sequential to avoid racing for the same inputs.
+                    // Settle new (unexpired) boarding inputs + any near-expiry
+                    // VTXOs in a single intent, then sweep expired boarding
+                    // inputs. Sequential to avoid racing for the same inputs.
                     try {
-                        await this.settleBoardingUtxos(boardingUtxos);
+                        await this.runPeriodicSettle(boardingUtxos);
                     } catch (e) {
                         hadError = true;
-                        console.error("Error auto-settling boarding UTXOs:", e);
+                        console.error("Error during periodic settle:", e);
                     }
 
                     const sweepEnabled =
@@ -1205,17 +1207,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Auto-settle new (unexpired) boarding inputs into Arkade.
-     * Skips UTXOs that are already expired (those are handled by sweep).
-     * Only settles UTXOs not already in-flight (tracked in knownBoardingUtxos).
+     * Auto-settle new (unexpired) boarding inputs AND near-expiry VTXOs into
+     * Arkade in a single intent. Skips boarding UTXOs that are already expired
+     * (those are handled by sweep) and those already in-flight (tracked in
+     * knownBoardingUtxos). If the event-driven renewal path is currently
+     * running, VTXOs are omitted from this cycle to avoid double-spending.
      *
-     * Failure bookkeeping: after every settle *attempt*, lastBoardingSettleTimestamp
+     * Failure bookkeeping: after every settle *attempt*, lastPeriodicSettleTimestamp
      * is armed and consecutive failures are counted so the next attempt is
      * blocked by an exponentially growing cooldown (capped). This stops a
-     * persistently failing boarding input from producing identical
-     * RegisterIntent + DeleteIntent retries on every 60s poll.
+     * persistently failing input from producing identical RegisterIntent +
+     * DeleteIntent retries on every 60s poll.
      */
-    private async settleBoardingUtxos(
+    private async runPeriodicSettle(
         boardingUtxos: ExtendedCoin[]
     ): Promise<void> {
         // Exclude expired boarding inputs — those should be swept, not settled.
@@ -1237,52 +1241,88 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw e instanceof Error ? e : new Error(String(e));
         }
 
-        const unsettledUtxos = boardingUtxos.filter(
+        const unsettledBoarding = boardingUtxos.filter(
             (u) =>
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
                 !expiredSet.has(`${u.txid}:${u.vout}`)
         );
 
-        if (unsettledUtxos.length === 0) return;
+        // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
+        // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
+        let expiringVtxos: ExtendedVirtualCoin[] = [];
+        if (!this.renewalInProgress) {
+            try {
+                expiringVtxos = await this.getExpiringVtxos();
+            } catch (e) {
+                // Non-fatal: fall back to boarding-only settle.
+                console.error("Error fetching expiring VTXOs:", e);
+            }
+        }
+
+        if (unsettledBoarding.length === 0 && expiringVtxos.length === 0) {
+            return;
+        }
 
         // Respect the cooldown armed by the previous attempt. Cooldown grows
         // exponentially with consecutive failures and is capped by
-        // BOARDING_SETTLE_MAX_BACKOFF_MS.
+        // PERIODIC_SETTLE_MAX_BACKOFF_MS.
         const cooldownMs = Math.min(
-            VtxoManager.BOARDING_SETTLE_COOLDOWN_MS *
-                Math.pow(2, this.consecutiveBoardingSettleFailures),
-            VtxoManager.BOARDING_SETTLE_MAX_BACKOFF_MS
+            VtxoManager.PERIODIC_SETTLE_COOLDOWN_MS *
+                Math.pow(2, this.consecutivePeriodicSettleFailures),
+            VtxoManager.PERIODIC_SETTLE_MAX_BACKOFF_MS
         );
-        if (Date.now() - this.lastBoardingSettleTimestamp < cooldownMs) {
+        if (Date.now() - this.lastPeriodicSettleTimestamp < cooldownMs) {
             return;
         }
 
         const dustAmount = getDustAmount(this.wallet);
-        const totalAmount = unsettledUtxos.reduce(
+        const boardingTotal = unsettledBoarding.reduce(
             (sum, u) => sum + BigInt(u.value),
             0n
         );
+        const vtxoTotal = expiringVtxos.reduce(
+            (sum, v) => sum + BigInt(v.value),
+            0n
+        );
+        const totalAmount = boardingTotal + vtxoTotal;
         if (totalAmount < dustAmount) return;
 
         const arkAddress = await this.wallet.getAddress();
+        const includesVtxos = expiringVtxos.length > 0;
+
+        // Block the event-driven renewal path while this settle is in flight
+        // when VTXOs are part of the intent. Mirrors renewVtxos()'s guard so
+        // the two paths can't race on the same VTXO inputs.
+        if (includesVtxos) {
+            this.renewalInProgress = true;
+        }
+
         let success = false;
         try {
             await this.wallet.settle({
-                inputs: unsettledUtxos,
+                inputs: [...unsettledBoarding, ...expiringVtxos],
                 outputs: [{ address: arkAddress, amount: totalAmount }],
             });
 
-            // Mark as known only after successful settle
-            for (const u of unsettledUtxos) {
+            // Mark boarding inputs as known only after successful settle.
+            for (const u of unsettledBoarding) {
                 this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
             }
             success = true;
         } finally {
-            this.lastBoardingSettleTimestamp = Date.now();
+            this.lastPeriodicSettleTimestamp = Date.now();
+            if (includesVtxos) {
+                // Match event-path semantics: bump the renewal cooldown
+                // whether we succeeded or failed so a failed periodic settle
+                // doesn't let the next vtxo_received event re-enter renewal
+                // immediately.
+                this.lastRenewalTimestamp = Date.now();
+                this.renewalInProgress = false;
+            }
             if (success) {
-                this.consecutiveBoardingSettleFailures = 0;
+                this.consecutivePeriodicSettleFailures = 0;
             } else {
-                this.consecutiveBoardingSettleFailures++;
+                this.consecutivePeriodicSettleFailures++;
             }
         }
     }
