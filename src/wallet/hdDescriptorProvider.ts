@@ -1,3 +1,4 @@
+import { expand, networks } from "@bitcoinerlab/descriptors-scure";
 import {
     DescriptorProvider,
     DescriptorSigningRequest,
@@ -117,6 +118,17 @@ export class HDDescriptorProvider implements DescriptorProvider {
     /** Returns the currently-active receive index. */
     getCurrentReceiveIndex(): number {
         return this.requireCurrent().index;
+    }
+
+    /**
+     * Returns the x-only (32-byte) pubkey for the current receive descriptor.
+     *
+     * Derived publicly from the descriptor's materialized path — no seed access
+     * required. Used by the wallet to rebuild `offchainTapscript` after a
+     * rotation without having to re-sign or re-derive privkeys.
+     */
+    getCurrentReceivePubkey(): Uint8Array {
+        return deriveLeafPubkey(this.requireCurrent().descriptor);
     }
 
     /**
@@ -342,4 +354,31 @@ export class HDDescriptorProvider implements DescriptorProvider {
             },
         }));
     }
+}
+
+/**
+ * Extracts the x-only (32-byte) pubkey from a materialized HD descriptor.
+ *
+ * `expand()` populates `@0.pubkey` for non-ranged descriptors (including HD
+ * ones where a concrete child index is already substituted for the wildcard).
+ * This sidesteps {@link extractPubKey}, which intentionally rejects any
+ * descriptor carrying a `bip32` key because it was designed for static
+ * `tr(pubkey)` inputs.
+ *
+ * @throws if the descriptor is ranged (ends in `/*`) or the library cannot
+ *     resolve a concrete pubkey (malformed descriptor).
+ */
+function deriveLeafPubkey(descriptor: string): Uint8Array {
+    const network = descriptor.includes("tpub")
+        ? networks.testnet
+        : networks.bitcoin;
+    const expansion = expand({ descriptor, network });
+    const key = expansion.expansionMap?.["@0"];
+    if (!key?.pubkey) {
+        throw new Error(
+            `Cannot derive leaf pubkey from descriptor "${descriptor}": ` +
+                `ensure the descriptor is materialized (no wildcard) and parsable.`
+        );
+    }
+    return key.pubkey;
 }

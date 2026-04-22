@@ -380,4 +380,35 @@ describe("HDDescriptorProvider", () => {
             expect(state?.settings?.hd.nextIndex).toBe(3);
         });
     });
+
+    describe("getCurrentReceivePubkey", () => {
+        it("returns the x-only pubkey matching the identity's derived key at index 0", async () => {
+            const { provider, identity } = await makeProvider();
+            // At init, current receive = index 0, which is what the identity
+            // itself was constructed at. xOnlyPublicKey() returns the identity's
+            // derived key — they should match.
+            const identityPubkey = await identity.xOnlyPublicKey();
+            const providerPubkey = provider.getCurrentReceivePubkey();
+            expect(providerPubkey).toHaveLength(32);
+            expect(Array.from(providerPubkey)).toEqual(
+                Array.from(identityPubkey)
+            );
+        });
+
+        it("reflects the new index after a rotation", async () => {
+            const { provider, identity } = await makeProvider();
+            const before = provider.getCurrentReceivePubkey();
+            await provider.rotateReceive();
+            const after = provider.getCurrentReceivePubkey();
+
+            expect(Array.from(after)).not.toEqual(Array.from(before));
+            // The post-rotation pubkey should match what identity derives at
+            // the new index directly.
+            const newIndex = provider.getCurrentReceiveIndex();
+            const newDesc = identity.deriveSigningDescriptor(newIndex);
+            // Sanity — rotation advanced to a non-zero index
+            expect(newIndex).toBeGreaterThan(0);
+            expect(newDesc).toBe(provider.getSigningDescriptor());
+        });
+    });
 });
