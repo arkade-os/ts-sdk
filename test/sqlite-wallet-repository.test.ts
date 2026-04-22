@@ -99,6 +99,15 @@ function createMockSQLExecutor(): SQLExecutor {
         async run(sql: string, params?: unknown[]): Promise<void> {
             const trimmed = sql.trim();
 
+            // The repo wraps the vtxos migration in BEGIN IMMEDIATE / COMMIT
+            // (or ROLLBACK on error) so the DROP → RENAME swap is atomic.
+            // The in-memory mock has no transactional semantics, so treat
+            // these as no-ops — they still exercise the code path without
+            // needing to model MVCC.
+            if (/^(BEGIN|COMMIT|ROLLBACK)\b/i.test(trimmed)) {
+                return;
+            }
+
             if (/^CREATE\s+TABLE/i.test(trimmed)) {
                 const ifNotExists = /IF\s+NOT\s+EXISTS/i.test(trimmed);
                 const { name, pk } = parseCreateTable(trimmed);

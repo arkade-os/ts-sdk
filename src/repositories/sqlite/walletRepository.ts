@@ -132,6 +132,11 @@ export class SQLiteWalletRepository implements WalletRepository {
      * The backfill derives `script` from the Ark address, matching what the
      * indexer would have returned — new rows from the indexer always carry a
      * populated `script`, so the migration is idempotent.
+     *
+     * The rebuild path is wrapped in a transaction: without it, a crash
+     * between the `DROP TABLE vtxos` and the `RENAME tmp → vtxos` commits
+     * would leave the next startup seeing no `vtxos` table and create a
+     * fresh empty one, silently orphaning every row in the temp table.
      */
     private async migrateVtxosTable(): Promise<void> {
         const tableExists = await this.db.get<{ name: string }>(
@@ -153,53 +158,67 @@ export class SQLiteWalletRepository implements WalletRepository {
             return;
         }
 
-        if (!scriptCol) {
-            await this.db.run(
-                `ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`
-            );
-        }
+        await this.db.run("BEGIN IMMEDIATE");
+        try {
+            if (!scriptCol) {
+                await this.db.run(
+                    `ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`
+                );
+            }
 
-        // Backfill any NULL scripts from the owning address. Derivation is
-        // deterministic, so this is safe to re-run if a prior migration
-        // attempt aborted before the rebuild step.
-        const nullRows = await this.db.all<{
-            txid: string;
-            vout: number;
-            address: string;
-        }>(
-            `SELECT txid, vout, address FROM ${this.tables.vtxos} WHERE script IS NULL`
-        );
-        for (const row of nullRows) {
-            await this.db.run(
-                `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
-                [scriptFromArkAddress(row.address), row.txid, row.vout]
+            // Backfill any NULL scripts from the owning address. Derivation
+            // is deterministic, so re-running after a rolled-back attempt
+            // produces the same values.
+            const nullRows = await this.db.all<{
+                txid: string;
+                vout: number;
+                address: string;
+            }>(
+                `SELECT txid, vout, address FROM ${this.tables.vtxos} WHERE script IS NULL`
             );
-        }
+            for (const row of nullRows) {
+                await this.db.run(
+                    `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
+                    [scriptFromArkAddress(row.address), row.txid, row.vout]
+                );
+            }
 
-        // SQLite can't turn a nullable column into NOT NULL in place — do the
-        // canonical 12-step table rebuild. Drop any stale temp table from a
-        // prior aborted attempt first.
-        const tempName = `${this.tables.vtxos}__migrate_tmp`;
-        await this.db.run(`DROP TABLE IF EXISTS ${tempName}`);
-        await this.db.run(this.vtxosCreateSql(tempName));
-        await this.db.run(`
-            INSERT INTO ${tempName}
-                (txid, vout, value, address, tap_tree,
-                 forfeit_cb, forfeit_s, intent_cb, intent_s,
-                 status_json, virtual_status_json, created_at,
-                 is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                 extra_witness_json, assets_json, script)
-            SELECT txid, vout, value, address, tap_tree,
-                   forfeit_cb, forfeit_s, intent_cb, intent_s,
-                   status_json, virtual_status_json, created_at,
-                   is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                   extra_witness_json, assets_json, script
-            FROM ${this.tables.vtxos}
-        `);
-        await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
-        await this.db.run(
-            `ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`
-        );
+            // SQLite can't turn a nullable column into NOT NULL in place —
+            // do the canonical 12-step table rebuild. Drop any stale temp
+            // table from a prior aborted attempt first.
+            const tempName = `${this.tables.vtxos}__migrate_tmp`;
+            await this.db.run(`DROP TABLE IF EXISTS ${tempName}`);
+            await this.db.run(this.vtxosCreateSql(tempName));
+            await this.db.run(`
+                INSERT INTO ${tempName}
+                    (txid, vout, value, address, tap_tree,
+                     forfeit_cb, forfeit_s, intent_cb, intent_s,
+                     status_json, virtual_status_json, created_at,
+                     is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
+                     extra_witness_json, assets_json, script)
+                SELECT txid, vout, value, address, tap_tree,
+                       forfeit_cb, forfeit_s, intent_cb, intent_s,
+                       status_json, virtual_status_json, created_at,
+                       is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
+                       extra_witness_json, assets_json, script
+                FROM ${this.tables.vtxos}
+            `);
+            await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
+            await this.db.run(
+                `ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`
+            );
+            await this.db.run("COMMIT");
+        } catch (e) {
+            // A failed COMMIT auto-rolls-back in SQLite, which makes a
+            // follow-up ROLLBACK throw "no transaction is active". Swallow
+            // that secondary error so the original cause surfaces.
+            try {
+                await this.db.run("ROLLBACK");
+            } catch {
+                // already rolled back
+            }
+            throw e;
+        }
     }
 
     private vtxosCreateSql(tableName: string): string {
