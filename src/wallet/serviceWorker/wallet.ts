@@ -36,6 +36,7 @@ import {
     RequestGetBalance,
     RequestGetBoardingAddress,
     RequestGetBoardingUtxos,
+    RequestAnnotateVtxos,
     RequestGetContracts,
     RequestGetContractsWithVtxos,
     RequestGetStatus,
@@ -51,6 +52,7 @@ import {
     ResponseSettle,
     ResponseSettleEvent,
     RequestUpdateContract,
+    ResponseAnnotateVtxos,
     ResponseGetAddress,
     ResponseGetBalance,
     ResponseGetBoardingAddress,
@@ -121,6 +123,7 @@ import type { IVtxoManager, SettlementConfig } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
+import type { VirtualCoin } from "..";
 import {
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
@@ -155,6 +158,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_TRANSACTION_HISTORY: 20_000,
     GET_CONTRACTS: 20_000,
     GET_CONTRACTS_WITH_VTXOS: 20_000,
+    ANNOTATE_VTXOS: 20_000,
     GET_SPENDABLE_PATHS: 20_000,
     GET_ALL_SPENDING_PATHS: 20_000,
     GET_ASSET_DETAILS: 20_000,
@@ -199,6 +203,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
+    "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
     "GET_ALL_SPENDING_PATHS",
     "GET_ASSET_DETAILS",
@@ -1065,6 +1070,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                         .contracts;
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
+                }
+            },
+
+            async annotateVtxos(
+                vtxos: VirtualCoin[]
+            ): Promise<ExtendedVirtualCoin[]> {
+                if (vtxos.length === 0) return [];
+                const message: RequestAnnotateVtxos = {
+                    type: "ANNOTATE_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { vtxos },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseAnnotateVtxos).payload.vtxos;
+                } catch (e) {
+                    throw new Error("Failed to annotate vtxos");
                 }
             },
 

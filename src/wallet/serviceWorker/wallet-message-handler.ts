@@ -31,11 +31,12 @@ import {
     ReissuanceParams,
     SendBitcoinParams,
     SettleParams,
+    VirtualCoin,
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegator";
 import { ReadonlyWallet, Wallet } from "../wallet";
-import { extendCoin, extendVirtualCoin } from "../utils";
+import { extendCoin } from "../utils";
 import {
     MessageHandler,
     RequestEnvelope,
@@ -197,6 +198,15 @@ export type RequestGetContractsWithVtxos = RequestEnvelope & {
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
     payload: { contracts: ContractWithVtxos[] };
+};
+
+export type RequestAnnotateVtxos = RequestEnvelope & {
+    type: "ANNOTATE_VTXOS";
+    payload: { vtxos: VirtualCoin[] };
+};
+export type ResponseAnnotateVtxos = ResponseEnvelope & {
+    type: "ANNOTATED_VTXOS";
+    payload: { vtxos: ExtendedVirtualCoin[] };
 };
 
 export type RequestUpdateContract = RequestEnvelope & {
@@ -435,6 +445,7 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestAnnotateVtxos
     | RequestUpdateContract
     | RequestDeleteContract
     | RequestGetSpendablePaths
@@ -476,6 +487,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseAnnotateVtxos
         | ResponseUpdateContract
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
@@ -758,6 +770,18 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
                         payload: { contracts },
+                    });
+                }
+                case "ANNOTATE_VTXOS": {
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
+                    const annotated = await manager.annotateVtxos(
+                        message.payload.vtxos
+                    );
+                    return this.tagged({
+                        id,
+                        type: "ANNOTATED_VTXOS",
+                        payload: { vtxos: annotated },
                     });
                 }
                 case "UPDATE_CONTRACT": {
@@ -1132,20 +1156,14 @@ export class WalletMessageHandler
         this.incomingFundsSubscription =
             await this.readonlyWallet.notifyIncomingFunds(async (funds) => {
                 if (funds.type === "vtxo") {
-                    const newVtxos =
-                        funds.newVtxos.length > 0
-                            ? funds.newVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.readonlyWallet!, vtxo)
-                              )
-                            : [];
-                    const spentVtxos =
-                        funds.spentVtxos.length > 0
-                            ? funds.spentVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.readonlyWallet!, vtxo)
-                              )
-                            : [];
+                    // `funds.newVtxos` / `funds.spentVtxos` are already
+                    // ExtendedVirtualCoin — annotation happened inside the
+                    // underlying Wallet's subscription handler before this
+                    // callback fired. Re-annotating here would only duplicate
+                    // work and re-expose us to `annotateVtxos` throws.
+                    const { newVtxos, spentVtxos } = funds;
 
-                    if ([...newVtxos, ...spentVtxos].length === 0) return;
+                    if (newVtxos.length + spentVtxos.length === 0) return;
 
                     // save virtual outputs using unified repository
                     await this.walletRepository?.saveVtxos(address, [

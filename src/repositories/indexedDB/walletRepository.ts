@@ -18,6 +18,7 @@ import {
 } from "./db";
 import { closeDatabase, openDatabase } from "./manager";
 import { initDatabase } from "./schema";
+import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
 
 /**
@@ -88,14 +89,23 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 const transaction = db.transaction([STORE_VTXOS], "readonly");
                 const store = transaction.objectStore(STORE_VTXOS);
                 const index = store.index("address");
-                const request: IDBRequest<SerializedVtxo[]> =
-                    index.getAll(address);
+                const request: IDBRequest<
+                    (SerializedVtxo & { address: string })[]
+                > = index.getAll(address);
 
                 request.onerror = () => reject(request.error);
                 request.onsuccess = () => {
                     const results = request.result || [];
-                    const vtxos = results.map(deserializeVtxo);
-                    resolve(vtxos);
+                    // Wrap `.map` in try/catch so a bad row (e.g. a legacy
+                    // VTXO whose address can't be decoded during backfill)
+                    // rejects the promise instead of silently throwing
+                    // inside the IDB event handler, which would otherwise
+                    // hang the caller.
+                    try {
+                        resolve(results.map(deserializeVtxoWithBackfill));
+                    } catch (err) {
+                        reject(err);
+                    }
                 };
             });
         } catch (error) {
@@ -414,4 +424,16 @@ export class IndexedDBWalletRepository implements WalletRepository {
         this.db = await openDatabase(this.dbName, DB_VERSION, initDatabase);
         return this.db;
     }
+}
+
+// Post-migration every row has `script`, but the backfill is idempotent: if a
+// legacy row is ever read before the upgrade-path completes, derive `script`
+// from `address` the same way the indexer would have populated it.
+function deserializeVtxoWithBackfill(
+    o: SerializedVtxo & { address: string }
+): ExtendedVirtualCoin {
+    if (!o.script) {
+        o = { ...o, script: scriptFromArkAddress(o.address) };
+    }
+    return deserializeVtxo(o);
 }

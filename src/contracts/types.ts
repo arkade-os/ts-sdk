@@ -67,9 +67,6 @@ export interface Contract {
     /** Unix timestamp in milliseconds when this contract was created. */
     createdAt: number;
 
-    /** Unix timestamp in milliseconds when this contract expires. */
-    expiresAt?: number;
-
     /**
      * Optional metadata for external integrations.
      */
@@ -244,12 +241,6 @@ export type ContractEvent =
           type: "vtxo_spent";
           contractScript: string;
           vtxos: ContractVtxo[];
-          contract: Contract;
-          timestamp: number;
-      }
-    | {
-          type: "contract_expired";
-          contractScript: string;
           contract: Contract;
           timestamp: number;
       }

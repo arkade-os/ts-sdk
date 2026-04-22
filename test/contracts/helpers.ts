@@ -20,7 +20,11 @@ export const createMockIndexerProvider = (): IndexerProvider => ({
     getCommitmentTx: vi.fn(),
     getCommitmentTxConnectors: vi.fn(),
     getCommitmentTxForfeitTxs: vi.fn(),
-    getSubscription: vi.fn(),
+    getSubscription: vi.fn(() => ({
+        [Symbol.asyncIterator]: () => ({
+            next: () => new Promise(() => {}),
+        }),
+    })),
     getVirtualTxs: vi.fn(),
     getVtxoChain: vi.fn(),
     getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
@@ -84,6 +88,7 @@ export const createMockVtxo = (
     createdAt: new Date(),
     isUnrolled: false,
     isSpent: false,
+    script: TEST_DEFAULT_SCRIPT,
     ...overrides,
 });
 

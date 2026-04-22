@@ -106,9 +106,9 @@ export class SQLiteContractRepository implements ContractRepository {
         await this.db.run(
             `INSERT OR REPLACE INTO ${this.table}
                 (script, address, type, state, params_json,
-                 created_at, expires_at, label, metadata_json)
+                 created_at, label, metadata_json)
              VALUES (?, ?, ?, ?, ?,
-                     ?, ?, ?, ?)`,
+                     ?, ?, ?)`,
             [
                 contract.script,
                 contract.address,
@@ -116,7 +116,6 @@ export class SQLiteContractRepository implements ContractRepository {
                 contract.state,
                 JSON.stringify(contract.params),
                 contract.createdAt,
-                contract.expiresAt ?? null,
                 contract.label ?? null,
                 contract.metadata ? JSON.stringify(contract.metadata) : null,
             ]
@@ -161,7 +160,6 @@ interface ContractRow {
     state: string;
     params_json: string;
     created_at: number;
-    expires_at: number | null;
     label: string | null;
     metadata_json: string | null;
 }
@@ -189,9 +187,6 @@ function contractRowToDomain(row: ContractRow): Contract {
         createdAt: row.created_at,
     };
 
-    if (row.expires_at !== null) {
-        contract.expiresAt = row.expires_at;
-    }
     if (row.label !== null) {
         contract.label = row.label;
     }

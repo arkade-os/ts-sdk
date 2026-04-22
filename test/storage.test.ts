@@ -57,7 +57,6 @@ describe("IndexedDB migrations", () => {
             30000
         );
         const walletState = {
-            lastSyncTime: Date.now(),
             settings: { theme: "dark" },
         };
 
@@ -111,7 +110,6 @@ describe("IndexedDB migrations", () => {
         const walletState2 = await walletRepoV2.getWalletState();
         expect(walletState2).not.toBeNull();
         expect(walletState2?.settings?.theme).toBe("dark");
-        expect(walletState2?.lastSyncTime).toBe(walletState.lastSyncTime);
     });
 
     it("should not migrate if migration already completed", async () => {
@@ -405,6 +403,7 @@ export function createMockVtxo(
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
+        script: hex.encode(new Uint8Array(32).fill(4)),
         forfeitTapLeafScript: tapLeaf,
         intentTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),

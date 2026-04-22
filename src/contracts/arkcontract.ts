@@ -120,7 +120,6 @@ export function contractFromArkContract(
     options: {
         label?: string;
         state?: "active" | "inactive";
-        expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
 ): Omit<Contract, "script" | "address"> & {
@@ -147,7 +146,6 @@ export function contractFromArkContract(
         params,
         state: options.state || "active",
         createdAt: Date.now(),
-        expiresAt: options.expiresAt,
         metadata: options.metadata,
     };
 }
@@ -168,7 +166,6 @@ export function contractFromArkContractWithAddress(
     options: {
         label?: string;
         state?: "active" | "inactive";
-        expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
 ): Contract {
@@ -186,7 +183,6 @@ export function contractFromArkContractWithAddress(
         address: vtxoScript.address(addressPrefix, serverPubKey).encode(),
         state: options.state || "active",
         createdAt: Date.now(),
-        expiresAt: options.expiresAt,
         metadata: options.metadata,
     };
 }
