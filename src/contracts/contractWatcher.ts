@@ -641,12 +641,10 @@ export class ContractWatcher {
         if (!this.eventCallback) return;
 
         const timestamp = Date.now();
-        const scripts = update.scripts || [];
 
         if (update.newVtxos?.length) {
             this.processSubscriptionVtxos(
                 update.newVtxos,
-                scripts,
                 "vtxo_received",
                 timestamp
             );
@@ -655,7 +653,6 @@ export class ContractWatcher {
         if (update.spentVtxos?.length) {
             this.processSubscriptionVtxos(
                 update.spentVtxos,
-                scripts,
                 "vtxo_spent",
                 timestamp
             );
@@ -664,53 +661,37 @@ export class ContractWatcher {
 
     /**
      * Process virtual outputs from subscription and route each VTXO to the
-     * single contract that actually locks it.
-     *
-     * Prefer `vtxo.script` when the indexer populates it (the normal case):
-     * each VTXO is attributed to exactly one contract. Fall back to the
-     * subscription `scripts[]` only as a safety net:
-     *   - When the subscription is for a single script, all VTXOs are for
-     *     that script (pre-script-field indexers still work correctly).
-     *   - When multiple scripts are in play but a VTXO has no script, we
-     *     skip it rather than fan it out to every matching contract —
-     *     fan-out produced phantom state in non-owning contracts that then
-     *     never reconciled.
+     * single contract that actually locks it via `vtxo.script`. If the script
+     * doesn't match any watched contract, skip the VTXO rather than fan it
+     * out to every matching contract — fan-out produced phantom state in
+     * non-owning contracts that then never reconciled.
      */
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
-        scripts: string[],
         eventType: ContractEvent["type"],
         timestamp: number
     ): void {
-        const singleScript = scripts.length === 1 ? scripts[0] : undefined;
-
         const byContract = new Map<string, VirtualCoin[]>();
-        let unattributed = 0;
         let unknownScript = 0;
         for (const vtxo of vtxos) {
-            const contractScript = vtxo.script ?? singleScript;
-            if (!contractScript) {
-                unattributed++;
-                continue;
-            }
-            if (!this.contracts.has(contractScript)) {
+            if (!this.contracts.has(vtxo.script)) {
                 unknownScript++;
                 continue;
             }
-            let bucket = byContract.get(contractScript);
+            let bucket = byContract.get(vtxo.script);
             if (!bucket) {
                 bucket = [];
-                byContract.set(contractScript, bucket);
+                byContract.set(vtxo.script, bucket);
             }
             bucket.push(vtxo);
         }
 
-        if (unattributed > 0 || unknownScript > 0) {
+        if (unknownScript > 0) {
             // The failsafe poll is the backstop for these; log at debug so we
             // can correlate "VTXO state drift" reports with subscription
             // drops rather than chase phantom bugs.
             console.debug(
-                `ContractWatcher.processSubscriptionVtxos[${eventType}]: dropped ${unattributed} unattributable and ${unknownScript} unknown-script VTXOs (${vtxos.length} total)`
+                `ContractWatcher.processSubscriptionVtxos[${eventType}]: dropped ${unknownScript} unknown-script VTXOs (${vtxos.length} total)`
             );
         }
 

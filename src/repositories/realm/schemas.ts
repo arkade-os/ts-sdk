@@ -9,6 +9,8 @@
  * ObjectSchema shape.
  */
 
+import { scriptFromArkAddress } from "../scriptFromAddress";
+
 export const ArkVtxoSchema = {
     name: "ArkVtxo",
     primaryKey: "pk",
@@ -35,7 +37,9 @@ export const ArkVtxoSchema = {
         assetsJson: "string?",
         // scriptPubKey (hex) locking this VTXO, indexed so contract-scoped
         // queries can resolve ownership without touching address mapping.
-        script: { type: "string?", indexed: true },
+        // Required as of schema v2; legacy rows are backfilled from `address`
+        // during migration (see `runArkRealmMigrations`).
+        script: { type: "string", indexed: true },
     },
 } as const;
 
@@ -112,3 +116,49 @@ export const ArkRealmSchemas = [
     ArkWalletStateSchema,
     ArkContractSchema,
 ];
+
+/**
+ * Current Realm schema version for the Arkade wallet.
+ *
+ * Consumers opening Realm must pass a `schemaVersion` at least this high so
+ * legacy databases get migrated; merge it with your own app's version:
+ *
+ * ```ts
+ * await Realm.open({
+ *     schema: [...ArkRealmSchemas, ...yourSchemas],
+ *     schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
+ *     onMigration: (oldRealm, newRealm) => {
+ *         runArkRealmMigrations(oldRealm, newRealm);
+ *         // your own migrations
+ *     },
+ * });
+ * ```
+ *
+ * History:
+ *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
+ *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
+ *     the owning Ark address during migration.
+ */
+export const ARK_REALM_SCHEMA_VERSION = 2;
+
+/**
+ * Run every Arkade schema migration applicable to the open Realm.
+ *
+ * Designed to be composed with the consumer's own migrations inside a single
+ * `onMigration` callback. The function is a no-op when the old schema is
+ * already at the current version.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
+    if (oldRealm.schemaVersion < 2) {
+        const oldVtxos = oldRealm.objects("ArkVtxo");
+        const newVtxos = newRealm.objects("ArkVtxo");
+        for (let i = 0; i < oldVtxos.length; i++) {
+            const oldVtxo = oldVtxos[i];
+            const newVtxo = newVtxos[i];
+            if (!oldVtxo.script) {
+                newVtxo.script = scriptFromArkAddress(oldVtxo.address);
+            }
+        }
+    }
+}

@@ -422,24 +422,14 @@ export class ContractManager implements IContractManager {
     async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
         if (vtxos.length === 0) return [];
 
-        const scripts = Array.from(
-            new Set(
-                vtxos
-                    .map((v) => v.script)
-                    .filter((s): s is string => s !== undefined)
-            )
-        );
+        const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
 
         const byScript = new Map<string, Contract>();
-        if (scripts.length > 0) {
-            const contracts = await this.config.contractRepository.getContracts(
-                {
-                    script: scripts,
-                }
-            );
-            for (const contract of contracts) {
-                byScript.set(contract.script, contract);
-            }
+        const contracts = await this.config.contractRepository.getContracts({
+            script: scripts,
+        });
+        for (const contract of contracts) {
+            byScript.set(contract.script, contract);
         }
 
         return vtxos.map((vtxo) =>
@@ -761,7 +751,6 @@ export class ContractManager implements IContractManager {
         // Group by contract and upsert.
         const byContract = new Map<string, ContractVtxo[]>();
         for (const vtxo of vtxos) {
-            if (!vtxo.script) continue;
             const contract = scriptToContract.get(vtxo.script);
             if (!contract) continue;
             let arr = byContract.get(contract.address);
@@ -849,7 +838,6 @@ export class ContractManager implements IContractManager {
             for (const vtxo of vtxos) {
                 // Match the virtual output back to its contract via the script field
                 // populated by the indexer.
-                if (!vtxo.script) continue;
                 const contract = scriptToContract.get(vtxo.script);
                 if (!contract) continue;
                 result.get(contract.script)!.push({

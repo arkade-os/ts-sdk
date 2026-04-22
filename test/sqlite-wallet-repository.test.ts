@@ -26,8 +26,10 @@ function createMockSQLExecutor(): SQLExecutor {
     const tables = new Map<string, TableDef>();
 
     function parseCreateTable(sql: string): { name: string; pk: string[] } {
+        // Matches both `CREATE TABLE IF NOT EXISTS <name>` and the bare
+        // `CREATE TABLE <name>` form used by the vtxos migration rebuild.
         const nameMatch = sql.match(
-            /CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+(\w+)/i
+            /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i
         );
         if (!nameMatch) throw new Error(`Cannot parse CREATE TABLE: ${sql}`);
         const name = nameMatch[1];
@@ -98,9 +100,77 @@ function createMockSQLExecutor(): SQLExecutor {
             const trimmed = sql.trim();
 
             if (/^CREATE\s+TABLE/i.test(trimmed)) {
+                const ifNotExists = /IF\s+NOT\s+EXISTS/i.test(trimmed);
                 const { name, pk } = parseCreateTable(trimmed);
                 if (!tables.has(name)) {
                     tables.set(name, { primaryKey: pk, rows: new Map() });
+                } else if (!ifNotExists) {
+                    throw new Error(`Table ${name} already exists`);
+                }
+                return;
+            }
+
+            // DROP TABLE [IF EXISTS] <name> — used by the vtxos migration
+            // rebuild to remove the old table after copying rows out.
+            const dropMatch = trimmed.match(
+                /^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i
+            );
+            if (dropMatch) {
+                const tableName = dropMatch[1];
+                const ifExists = /IF\s+EXISTS/i.test(trimmed);
+                if (!tables.has(tableName) && !ifExists) {
+                    throw new Error(`Table ${tableName} does not exist`);
+                }
+                tables.delete(tableName);
+                return;
+            }
+
+            // ALTER TABLE <old> RENAME TO <new> — used by the rebuild step to
+            // swap the temp table into place.
+            const renameMatch = trimmed.match(
+                /^ALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)/i
+            );
+            if (renameMatch) {
+                const [, oldName, newName] = renameMatch;
+                const t = tables.get(oldName);
+                if (!t) throw new Error(`Table ${oldName} does not exist`);
+                tables.delete(oldName);
+                tables.set(newName, t);
+                return;
+            }
+
+            // INSERT INTO <tmp> (cols) SELECT cols FROM <src> — rebuild copy.
+            const insertSelectMatch = trimmed.match(
+                /^INSERT\s+INTO\s+(\w+)\s*\([^)]+\)\s*SELECT\s+[\s\S]+\s+FROM\s+(\w+)/i
+            );
+            if (insertSelectMatch) {
+                const [, dest, src] = insertSelectMatch;
+                const s = tables.get(src);
+                const d = tables.get(dest);
+                if (!s) throw new Error(`Table ${src} does not exist`);
+                if (!d) throw new Error(`Table ${dest} does not exist`);
+                for (const row of s.rows.values()) {
+                    const key = rowKey(d.primaryKey, row);
+                    d.rows.set(key, { ...row });
+                }
+                return;
+            }
+
+            // UPDATE <table> SET <col> = ? WHERE <col1> = ? AND <col2> = ? —
+            // used by the migration backfill.
+            const updateMatch = trimmed.match(
+                /^UPDATE\s+(\w+)\s+SET\s+(\w+)\s*=\s*\?\s+WHERE\s+(\w+)\s*=\s*\?\s+AND\s+(\w+)\s*=\s*\?/i
+            );
+            if (updateMatch) {
+                const [, tableName, setCol, whereCol1, whereCol2] = updateMatch;
+                const t = getTable(tableName);
+                for (const row of t.rows.values()) {
+                    if (
+                        row[whereCol1] === params?.[1] &&
+                        row[whereCol2] === params?.[2]
+                    ) {
+                        row[setCol] = params?.[0];
+                    }
                 }
                 return;
             }
@@ -165,6 +235,14 @@ function createMockSQLExecutor(): SQLExecutor {
             params?: unknown[]
         ): Promise<T | undefined> {
             const trimmed = sql.trim();
+
+            // The vtxos migration probes schema existence via this query; the
+            // in-memory mock just reports whether the table lives in `tables`.
+            if (/^SELECT\s+name\s+FROM\s+sqlite_master/i.test(trimmed)) {
+                const name = params?.[0] as string | undefined;
+                return name && tables.has(name) ? ({ name } as T) : undefined;
+            }
+
             const { table, whereCol } = parseSelect(trimmed);
             const t = getTable(table);
 
@@ -187,6 +265,28 @@ function createMockSQLExecutor(): SQLExecutor {
             params?: unknown[]
         ): Promise<T[]> {
             const trimmed = sql.trim();
+
+            // PRAGMA table_info(<name>) — the vtxos migration reads the
+            // existing schema to decide whether to add the `script` column and
+            // rebuild for NOT NULL. The mock reports columns based on a sample
+            // row; tables created by the canonical `vtxosCreateSql` branch
+            // never go through this path, so an empty result (no existing
+            // `script` column) is fine for the fresh-install case.
+            const pragmaMatch = trimmed.match(
+                /^PRAGMA\s+table_info\s*\(\s*(\w+)\s*\)/i
+            );
+            if (pragmaMatch) {
+                const tableName = pragmaMatch[1];
+                const t = tables.get(tableName);
+                if (!t) return [] as T[];
+                const sample = t.rows.values().next();
+                if (sample.done) return [] as T[];
+                return Object.keys(sample.value as object).map((name) => ({
+                    name,
+                    notnull: 1,
+                })) as T[];
+            }
+
             const { table, whereCol, orderByCol, orderDir } =
                 parseSelect(trimmed);
             const t = getTable(table);
@@ -253,6 +353,7 @@ function createMockVtxo(
         createdAt: new Date("2024-01-15T12:00:00Z"),
         isUnrolled: false,
         isSpent: false,
+        script: "5120" + "00".repeat(32),
         forfeitTapLeafScript: tapLeaf,
         intentTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),

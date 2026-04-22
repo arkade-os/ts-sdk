@@ -84,6 +84,7 @@ export const createMockVtxo = (
     createdAt: new Date(),
     isUnrolled: false,
     isSpent: false,
+    script: TEST_DEFAULT_SCRIPT,
     ...overrides,
 });
 

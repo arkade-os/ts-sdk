@@ -11,6 +11,7 @@ import {
     deserializeUtxo,
     SerializedTapLeaf,
 } from "../serialization";
+import { scriptFromArkAddress } from "../scriptFromAddress";
 import { RealmLike } from "./types";
 
 /**
@@ -287,7 +288,10 @@ function vtxoObjectToDomain(obj: any): ExtendedVirtualCoin {
             ? JSON.parse(obj.extraWitnessJson)
             : undefined,
         assets: obj.assetsJson ? JSON.parse(obj.assetsJson) : undefined,
-        script: obj.script ?? undefined,
+        // Post-migration every row has `script`, but the backfill is
+        // idempotent: derive from `address` if the legacy column is still
+        // null (e.g. the migration hasn't run yet on this handle).
+        script: obj.script ?? scriptFromArkAddress(obj.address),
     };
 
     return deserializeVtxo(serialized);

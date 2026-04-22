@@ -101,7 +101,7 @@ function resolveContract(
 ): Contract | undefined {
     if (!contractOrMap) return undefined;
     if (isContractMap(contractOrMap)) {
-        return vtxo.script ? contractOrMap.get(vtxo.script) : undefined;
+        return contractOrMap.get(vtxo.script);
     }
     return contractOrMap;
 }

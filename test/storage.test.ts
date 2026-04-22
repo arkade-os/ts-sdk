@@ -403,6 +403,7 @@ export function createMockVtxo(
         createdAt: new Date(),
         isUnrolled: false,
         isSpent: false,
+        script: hex.encode(new Uint8Array(32).fill(4)),
         forfeitTapLeafScript: tapLeaf,
         intentTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),

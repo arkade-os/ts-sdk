@@ -519,7 +519,7 @@ export interface VirtualCoin extends Coin {
     /** Assets carried by this virtual output, if any. */
     assets?: Asset[];
     /** The scriptPubKey (hex) locking this virtual output, as returned by the indexer. */
-    script?: string;
+    script: string;
 }
 
 /** Wallet transaction direction. */

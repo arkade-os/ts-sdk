@@ -59,17 +59,6 @@ describe("extendVirtualCoinForContract", () => {
         );
     });
 
-    it("throws when vtxo.script is missing", () => {
-        const vtxo = createMockVtxo(); // no script
-        const map = new Map<string, Contract>([
-            [delegateContract.script, delegateContract],
-        ]);
-
-        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(
-            /no contract matched/
-        );
-    });
-
     it("throws when no second argument is provided", () => {
         const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
 

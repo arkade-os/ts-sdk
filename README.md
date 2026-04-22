@@ -878,9 +878,22 @@ const wallet = await Wallet.create({
 For React Native apps using Realm, pass your Realm instance directly:
 
 ```typescript
-import { RealmWalletRepository, RealmContractRepository, ArkRealmSchemas } from '@arkade-os/sdk/repositories/realm'
+import {
+  RealmWalletRepository,
+  RealmContractRepository,
+  ArkRealmSchemas,
+  ARK_REALM_SCHEMA_VERSION,
+  runArkRealmMigrations,
+} from '@arkade-os/sdk/repositories/realm'
 
-const realm = await Realm.open({ schema: [...ArkRealmSchemas, ...yourSchemas] })
+const realm = await Realm.open({
+  schema: [...ArkRealmSchemas, ...yourSchemas],
+  schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
+  onMigration: (oldRealm, newRealm) => {
+    runArkRealmMigrations(oldRealm, newRealm)
+    // your own migrations
+  },
+})
 const wallet = await Wallet.create({
   identity,
   arkServerUrl: 'https://arkade.computer',

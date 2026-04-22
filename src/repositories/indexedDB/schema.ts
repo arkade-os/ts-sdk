@@ -1,3 +1,5 @@
+import { scriptFromArkAddress } from "../scriptFromAddress";
+
 // Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
 export const STORE_UTXOS = "utxos";
@@ -8,9 +10,18 @@ export const STORE_CONTRACTS = "contracts";
 // @deprecated use only for migrations, this is created in V1
 export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 
-export const DB_VERSION = 2;
+// Version history:
+//   v1 — initial wallet repo schema, `contractsCollections` store.
+//   v2 — new `vtxos/utxos/transactions/walletState/contracts` stores.
+//   v3 — backfill missing `vtxo.script` from `vtxo.address` so the field is
+//        always present at read time.
+export const DB_VERSION = 3;
 
-export function initDatabase(db: IDBDatabase): void {
+export function initDatabase(
+    db: IDBDatabase,
+    oldVersion: number,
+    transaction: IDBTransaction | null
+): void {
     // Create wallet stores
     if (!db.objectStoreNames.contains(STORE_VTXOS)) {
         const vtxosStore = db.createObjectStore(STORE_VTXOS, {
@@ -164,4 +175,29 @@ export function initDatabase(db: IDBDatabase): void {
             keyPath: "key",
         });
     }
+
+    // v2 → v3: backfill missing `script` on existing VTXO rows. The upgrade
+    // transaction is null only on a brand-new database (oldVersion === 0),
+    // where no legacy rows exist.
+    if (oldVersion >= 1 && oldVersion < 3 && transaction) {
+        backfillVtxoScripts(transaction);
+    }
+}
+
+// Exported for unit tests — the `onupgradeneeded` transaction can't be
+// forged in-process, so tests exercise the cursor logic with a regular
+// readwrite transaction on a live DB.
+export function backfillVtxoScripts(transaction: IDBTransaction): void {
+    const store = transaction.objectStore(STORE_VTXOS);
+    const cursorRequest = store.openCursor();
+    cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        const value = cursor.value as { script?: string; address: string };
+        if (!value.script) {
+            value.script = scriptFromArkAddress(value.address);
+            cursor.update(value);
+        }
+        cursor.continue();
+    };
 }

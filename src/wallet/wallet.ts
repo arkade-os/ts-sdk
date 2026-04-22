@@ -573,6 +573,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         createdAt: tx.status.confirmed
                             ? new Date(tx.status.block_time * 1000)
                             : new Date(0),
+                        script: hex.encode(this.boardingTapscript.pkScript),
                     });
                 }
             }
@@ -2053,9 +2054,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             );
 
             for (const vtxo of fetchedVtxos) {
-                const vtxoScript = vtxo.script
-                    ? scriptMap.get(vtxo.script)
-                    : undefined;
+                const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
                 if (
@@ -2596,6 +2595,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         confirmed: false,
                     },
                     assets: changeAssets,
+                    script: hex.encode(this.offchainTapscript.pkScript),
                 };
             }
 
