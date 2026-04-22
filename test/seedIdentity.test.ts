@@ -6,6 +6,10 @@ import {
 } from "../src/identity/seedIdentity";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { schnorr, verifyAsync } from "@noble/secp256k1";
+import { pubSchnorr } from "@scure/btc-signer/utils.js";
+import { hex } from "@scure/base";
+import { HDKey, networks } from "@bitcoinerlab/descriptors-scure";
+import { Transaction } from "../src/utils/transaction";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -401,5 +405,298 @@ describe("backwards compatibility", () => {
         const signature = await identity.signMessage(message);
         expect(signature).toBeInstanceOf(Uint8Array);
         expect(signature).toHaveLength(64);
+    });
+});
+
+// ============================================================
+// HD descriptor methods (DescriptorProvider)
+// ============================================================
+
+const OTHER_MNEMONIC =
+    "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+/** Derive the x-only pubkey expected at a concrete BIP86 index. */
+function expectedXOnlyAtIndex(
+    isMainnet: boolean,
+    index: number,
+    mnemonic: string = TEST_MNEMONIC
+): Uint8Array {
+    const network = isMainnet ? networks.bitcoin : networks.testnet;
+    const seed = mnemonicToSeedSync(mnemonic);
+    const master = HDKey.fromMasterSeed(seed, network.bip32);
+    const basePath = isMainnet ? "m/86'/0'/0'" : "m/86'/1'/0'";
+    const derived = master.derive(basePath).deriveChild(0).deriveChild(index);
+    return pubSchnorr(derived.privateKey!);
+}
+
+describe("SeedIdentity.getAccountDescriptor", () => {
+    it("replaces the trailing numeric index with a wildcard", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        const template = identity.getAccountDescriptor();
+        expect(template).toMatch(
+            /^tr\(\[[\da-f]{8}\/86'\/0'\/0'\]xpub.+\/0\/\*\)$/
+        );
+        // Sanity: original descriptor ended with /0/0) — template ends with /0/*)
+        expect(template).toBe(identity.descriptor.replace(/\/0\)$/, "/*)"));
+    });
+
+    it("matches testnet originPath when identity is testnet", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
+        expect(identity.getAccountDescriptor()).toMatch(
+            /^tr\(\[[\da-f]{8}\/86'\/1'\/0'\]tpub.+\/0\/\*\)$/
+        );
+    });
+});
+
+describe("SeedIdentity.deriveSigningDescriptor", () => {
+    it("substitutes the wildcard with the given index", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        const at5 = identity.deriveSigningDescriptor(5);
+        expect(at5).toBe(identity.getAccountDescriptor().replace("/*)", "/5)"));
+    });
+
+    it("produces a descriptor that re-constructs the expected key", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        const derivedDesc = identity.deriveSigningDescriptor(7);
+        const derivedIdentity = SeedIdentity.fromSeed(seed, {
+            descriptor: derivedDesc,
+        });
+
+        const expected = expectedXOnlyAtIndex(true, 7);
+        const actual = await derivedIdentity.xOnlyPublicKey();
+        expect(hex.encode(actual)).toBe(hex.encode(expected));
+    });
+
+    it("round-trips for index 0 to the original identity descriptor", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(identity.deriveSigningDescriptor(0)).toBe(identity.descriptor);
+    });
+
+    it("rejects negative indexes", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(() => identity.deriveSigningDescriptor(-1)).toThrow("[0, 2^31)");
+    });
+
+    it("rejects non-integer indexes", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(() => identity.deriveSigningDescriptor(1.5)).toThrow(
+            "[0, 2^31)"
+        );
+    });
+
+    it("rejects hardened-range indexes (>= 2^31)", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(() => identity.deriveSigningDescriptor(0x80000000)).toThrow(
+            "[0, 2^31)"
+        );
+    });
+});
+
+describe("SeedIdentity.getSigningDescriptor", () => {
+    it("returns the current concrete descriptor", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(identity.getSigningDescriptor()).toBe(identity.descriptor);
+    });
+});
+
+describe("SeedIdentity.isOurs", () => {
+    it("returns true for the identity's own descriptor", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(identity.isOurs(identity.descriptor)).toBe(true);
+    });
+
+    it("returns true for any derived-index descriptor of the same seed", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        for (const i of [0, 1, 42, 100, 0x7fffffff]) {
+            expect(identity.isOurs(identity.deriveSigningDescriptor(i))).toBe(
+                true
+            );
+        }
+    });
+
+    it("returns true for the wildcard template", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(identity.isOurs(identity.getAccountDescriptor())).toBe(true);
+    });
+
+    it("returns false for a different seed's descriptor", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        const otherSeed = mnemonicToSeedSync(OTHER_MNEMONIC);
+        const otherIdentity = SeedIdentity.fromSeed(otherSeed, {
+            isMainnet: true,
+        });
+        expect(identity.isOurs(otherIdentity.descriptor)).toBe(false);
+    });
+
+    it("returns false for non-descriptor strings", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(identity.isOurs("")).toBe(false);
+        expect(identity.isOurs("not-a-descriptor")).toBe(false);
+        expect(identity.isOurs("tr()")).toBe(false);
+    });
+
+    it("returns false for simple tr(otherPubkey) descriptors", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const foreignPubkey = hex.encode(
+            expectedXOnlyAtIndex(true, 0, OTHER_MNEMONIC)
+        );
+        expect(identity.isOurs(`tr(${foreignPubkey})`)).toBe(false);
+    });
+
+    it("treats mainnet and testnet descriptors from the same mnemonic as different", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const mainnet = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const testnet = SeedIdentity.fromSeed(seed, { isMainnet: false });
+        // Different coin-type paths produce different account xpubs.
+        expect(mainnet.isOurs(testnet.descriptor)).toBe(false);
+        expect(testnet.isOurs(mainnet.descriptor)).toBe(false);
+    });
+});
+
+describe("SeedIdentity.signMessageWithDescriptor", () => {
+    it("signs with the key derived from the given descriptor", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const message = new Uint8Array(32).fill(7);
+
+        const descriptor = identity.deriveSigningDescriptor(12);
+        const signature = await identity.signMessageWithDescriptor(
+            descriptor,
+            message
+        );
+
+        const expectedPub = expectedXOnlyAtIndex(true, 12);
+        const ok = await schnorr.verifyAsync(signature, message, expectedPub);
+        expect(ok).toBe(true);
+    });
+
+    it("supports ECDSA signatures", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const message = new Uint8Array(32).fill(9);
+
+        const descriptor = identity.deriveSigningDescriptor(3);
+        const signature = await identity.signMessageWithDescriptor(
+            descriptor,
+            message,
+            "ecdsa"
+        );
+        expect(signature).toBeInstanceOf(Uint8Array);
+
+        // ECDSA verification needs the compressed (33-byte) pubkey
+        const network = networks.bitcoin;
+        const master = HDKey.fromMasterSeed(seed, network.bip32);
+        const node = master.derive("m/86'/0'/0'/0/3");
+        const ok = await verifyAsync(signature, message, node.publicKey!, {
+            prehash: false,
+        });
+        expect(ok).toBe(true);
+    });
+
+    it("rejects a descriptor that does not belong to this identity", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const other = SeedIdentity.fromSeed(
+            mnemonicToSeedSync(OTHER_MNEMONIC),
+            {
+                isMainnet: true,
+            }
+        );
+
+        await expect(
+            identity.signMessageWithDescriptor(
+                other.descriptor,
+                new Uint8Array(32)
+            )
+        ).rejects.toThrow("does not belong to this identity");
+    });
+
+    it("rejects wildcard descriptors (must derive a concrete index first)", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        await expect(
+            identity.signMessageWithDescriptor(
+                identity.getAccountDescriptor(),
+                new Uint8Array(32)
+            )
+        ).rejects.toThrow("wildcard descriptor");
+    });
+});
+
+describe("SeedIdentity.signWithDescriptor", () => {
+    it("returns a Transaction per request when no inputs need signing", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        const tx = new Transaction();
+        const desc = identity.deriveSigningDescriptor(2);
+
+        const result = await identity.signWithDescriptor([
+            { tx, descriptor: desc },
+            { tx, descriptor: identity.descriptor },
+        ]);
+        expect(result).toHaveLength(2);
+        // tx.clone() from @scure/btc-signer returns a BtcSignerTransaction, not
+        // our Transaction wrapper — so just check the sign/PSBT API is present.
+        expect(typeof result[0].toPSBT).toBe("function");
+        // Should be a clone (not the same instance)
+        expect(result[0]).not.toBe(tx);
+    });
+
+    it("rejects a request whose descriptor is not ours", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const other = SeedIdentity.fromSeed(
+            mnemonicToSeedSync(OTHER_MNEMONIC),
+            {
+                isMainnet: true,
+            }
+        );
+
+        const tx = new Transaction();
+        await expect(
+            identity.signWithDescriptor([{ tx, descriptor: other.descriptor }])
+        ).rejects.toThrow("does not belong to this identity");
+    });
+});
+
+describe("MnemonicIdentity DescriptorProvider", () => {
+    it("inherits HD methods and produces matching keys vs SeedIdentity", async () => {
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const seedIdentity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        expect(identity.getAccountDescriptor()).toBe(
+            seedIdentity.getAccountDescriptor()
+        );
+        expect(identity.deriveSigningDescriptor(42)).toBe(
+            seedIdentity.deriveSigningDescriptor(42)
+        );
+        expect(identity.isOurs(identity.deriveSigningDescriptor(99))).toBe(
+            true
+        );
     });
 });

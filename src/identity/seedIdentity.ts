@@ -18,6 +18,11 @@ import type {
     SerializedSigningIdentity,
     SerializedReadonlyIdentity,
 } from "./serialize";
+import {
+    DescriptorProvider,
+    DescriptorSigningRequest,
+} from "./descriptorProvider";
+import { isDescriptor } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
@@ -122,9 +127,11 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * const identity = SeedIdentity.fromSeed(seed, { descriptor });
  * ```
  */
-export class SeedIdentity implements Identity {
+export class SeedIdentity implements Identity, DescriptorProvider {
     private readonly derivedKey: Uint8Array;
     readonly descriptor: string;
+    readonly isMainnet: boolean;
+    private readonly accountXpub: string;
 
     constructor(seed: Uint8Array, descriptor: string) {
         if (seed.length !== 64) {
@@ -139,6 +146,7 @@ export class SeedIdentity implements Identity {
         this.descriptor = descriptor;
 
         const network = detectNetwork(descriptor);
+        this.isMainnet = network === networks.bitcoin;
 
         // Parse and validate the descriptor using the library
         const expansion = expand({ descriptor, network });
@@ -156,6 +164,7 @@ export class SeedIdentity implements Identity {
                 "xpub mismatch: derived key does not match descriptor"
             );
         }
+        this.accountXpub = accountNode.publicExtendedKey;
 
         // Derive the private key using the full path from the descriptor
         if (!keyInfo.path) {
@@ -196,11 +205,183 @@ export class SeedIdentity implements Identity {
     }
 
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
+        return this.signTxWithKey(tx, this.derivedKey, inputIndexes);
+    }
+
+    async signMessage(
+        message: Uint8Array,
+        signatureType: "schnorr" | "ecdsa" = "schnorr"
+    ): Promise<Uint8Array> {
+        return this.signMessageWithKey(this.derivedKey, message, signatureType);
+    }
+
+    signerSession(): SignerSession {
+        return TreeSignerSession.random();
+    }
+
+    /**
+     * Converts to a watch-only identity that cannot sign.
+     */
+    async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
+        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
+    }
+
+    // ── DescriptorProvider ───────────────────────────────────────────
+
+    /**
+     * Returns the account descriptor template with the final path segment
+     * replaced by a wildcard `*`. Use {@link deriveSigningDescriptor} to
+     * materialize a concrete descriptor at a given index.
+     *
+     * @example
+     * ```ts
+     * // If this.descriptor is tr([fp/86'/0'/0']xpub/0/0)
+     * identity.getAccountDescriptor();
+     * // returns tr([fp/86'/0'/0']xpub/0/*)
+     * ```
+     */
+    getAccountDescriptor(): string {
+        const match = this.descriptor.match(/^(.*\/)\d+\)$/);
+        if (!match) {
+            throw new Error(
+                "Cannot build account descriptor: missing trailing numeric index"
+            );
+        }
+        return `${match[1]}*)`;
+    }
+
+    /**
+     * Returns a concrete descriptor at `index` by substituting the wildcard
+     * in {@link getAccountDescriptor}.
+     *
+     * @param index - unhardened child index (0 <= index < 2^31)
+     */
+    deriveSigningDescriptor(index: number): string {
+        if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
+            throw new Error("Derivation index must be an integer in [0, 2^31)");
+        }
+        return this.getAccountDescriptor().replace("/*)", `/${index})`);
+    }
+
+    /**
+     * Returns the current signing descriptor (concrete, at the index this
+     * identity was constructed with). Phase C's `HDDescriptorProvider` will
+     * return the currently-active receive descriptor instead.
+     */
+    getSigningDescriptor(): string {
+        return this.descriptor;
+    }
+
+    /**
+     * Returns true when `descriptor` is derived from this identity's seed.
+     *
+     * HD descriptors match when the master fingerprint and account xpub
+     * agree — index and change path are irrelevant. Simple `tr(pubkey)`
+     * descriptors match when the x-only pubkey matches.
+     */
+    isOurs(descriptor: string): boolean {
+        if (!isDescriptor(descriptor)) return false;
+        try {
+            const network = detectNetwork(descriptor);
+            // expand() may reject wildcard descriptors — substitute index 0
+            // for parsing purposes only.
+            const probe = descriptor.replace(/\/\*\)$/, "/0)");
+            const expansion = expand({ descriptor: probe, network });
+            const keyInfo = expansion.expansionMap?.["@0"];
+            if (!keyInfo) return false;
+
+            // HD case: compare account xpub (and implicitly the fingerprint
+            // because two seeds cannot produce the same xpub).
+            if (keyInfo.bip32) {
+                return keyInfo.bip32.toBase58() === this.accountXpub;
+            }
+
+            // Static case: compare raw pubkey against our derived key.
+            if (keyInfo.pubkey) {
+                return (
+                    hex.encode(keyInfo.pubkey) ===
+                    hex.encode(pubSchnorr(this.derivedKey))
+                );
+            }
+            return false;
+        } catch {
+            return false;
+        }
+    }
+
+    /**
+     * Signs each request with the key derived from its descriptor.
+     * Each descriptor must share this identity's seed ({@link isOurs}).
+     */
+    async signWithDescriptor(
+        requests: DescriptorSigningRequest[]
+    ): Promise<Transaction[]> {
+        return requests.map((request) => {
+            if (!this.isOurs(request.descriptor)) {
+                throw new Error(
+                    `Descriptor ${request.descriptor} does not belong to this identity`
+                );
+            }
+            const key = this.derivePrivateKeyForDescriptor(request.descriptor);
+            return this.signTxWithKey(request.tx, key, request.inputIndexes);
+        });
+    }
+
+    /**
+     * Signs a message with the key derived from `descriptor`.
+     */
+    async signMessageWithDescriptor(
+        descriptor: string,
+        message: Uint8Array,
+        signatureType: "schnorr" | "ecdsa" = "schnorr"
+    ): Promise<Uint8Array> {
+        if (!this.isOurs(descriptor)) {
+            throw new Error(
+                `Descriptor ${descriptor} does not belong to this identity`
+            );
+        }
+        const key = this.derivePrivateKeyForDescriptor(descriptor);
+        return this.signMessageWithKey(key, message, signatureType);
+    }
+
+    // ── internal helpers ─────────────────────────────────────────────
+
+    private derivePrivateKeyForDescriptor(descriptor: string): Uint8Array {
+        if (descriptor.includes("/*)")) {
+            throw new Error(
+                "Cannot sign with a wildcard descriptor; derive a concrete index first"
+            );
+        }
+        const network = detectNetwork(descriptor);
+        const expansion = expand({ descriptor, network });
+        const keyInfo = expansion.expansionMap?.["@0"];
+        if (!keyInfo?.path) {
+            throw new Error(
+                "Descriptor must specify a full derivation path for signing"
+            );
+        }
+        const seed = seedBytes.get(this);
+        if (!seed) {
+            throw new Error("Seed bytes not available for descriptor signing");
+        }
+        const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
+        const node = masterNode.derive(keyInfo.path);
+        if (!node.privateKey) {
+            throw new Error("Failed to derive private key for descriptor");
+        }
+        return node.privateKey;
+    }
+
+    private signTxWithKey(
+        tx: Transaction,
+        key: Uint8Array,
+        inputIndexes?: number[]
+    ): Transaction {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
             try {
-                if (!txCpy.sign(this.derivedKey, ALL_SIGHASH)) {
+                if (!txCpy.sign(key, ALL_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -213,37 +394,25 @@ export class SeedIdentity implements Identity {
                     throw e;
                 }
             }
-            return txCpy;
-        }
-
-        for (const inputIndex of inputIndexes) {
-            if (!txCpy.signIdx(this.derivedKey, inputIndex, ALL_SIGHASH)) {
-                throw new Error(`Failed to sign input #${inputIndex}`);
+        } else {
+            for (const idx of inputIndexes) {
+                if (!txCpy.signIdx(key, idx, ALL_SIGHASH)) {
+                    throw new Error(`Failed to sign input #${idx}`);
+                }
             }
         }
 
         return txCpy;
     }
 
-    async signMessage(
+    private signMessageWithKey(
+        key: Uint8Array,
         message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa" = "schnorr"
+        signatureType: "schnorr" | "ecdsa"
     ): Promise<Uint8Array> {
-        if (signatureType === "ecdsa") {
-            return signAsync(message, this.derivedKey, { prehash: false });
-        }
-        return schnorr.signAsync(message, this.derivedKey);
-    }
-
-    signerSession(): SignerSession {
-        return TreeSignerSession.random();
-    }
-
-    /**
-     * Converts to a watch-only identity that cannot sign.
-     */
-    async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
-        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
+        if (signatureType === "ecdsa")
+            return signAsync(message, key, { prehash: false });
+        return schnorr.signAsync(message, key);
     }
 }
 
