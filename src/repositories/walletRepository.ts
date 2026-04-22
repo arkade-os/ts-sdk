@@ -1,11 +1,19 @@
 import { ArkTransaction, ExtendedCoin, ExtendedVirtualCoin } from "../wallet";
 
 export interface WalletState {
-    /** Timestamp of the last successful wallet sync, in milliseconds. */
-    lastSyncTime?: number;
-
     /** Arbitrary stored wallet settings. */
     settings?: Record<string, any>;
+
+    /**
+     * High-water mark for VTXO indexer syncs, in milliseconds.
+     *
+     * Reused the legacy `lastSyncTime` column name to avoid an
+     * `ALTER TABLE` migration; the value is interpreted as the new
+     * "max indexer `updatedAt`" cursor only after `settings.vtxoCursorMigrated`
+     * is set, so pre-existing values written by the buggy pre-PR sync
+     * are ignored and force a one-shot re-bootstrap on upgrade.
+     */
+    lastSyncTime?: number;
 }
 
 /** Stored commitment transaction metadata. */

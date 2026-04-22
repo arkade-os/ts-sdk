@@ -30,7 +30,7 @@ describe("Delegator Lifecycle", () => {
         vi.useRealTimers();
     });
 
-    it("should add delegator — persisted contracts survive re-creation", async () => {
+    it("should add delegator - persisted contracts survive re-creation", async () => {
         // Phase 1 — No delegator: only default contract
         const manager1 = await ContractManager.create({
             indexerProvider: mockIndexer,

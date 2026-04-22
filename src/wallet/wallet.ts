@@ -1,7 +1,7 @@
 import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
-import { TransactionInput, TransactionOutput } from "@scure/btc-signer/psbt.js";
+import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
@@ -28,15 +28,16 @@ import {
     validateVtxoTxGraph,
 } from "../tree/validation";
 import { validateBatchRecipients } from "./validation";
-import { Identity, ReadonlyIdentity, isBatchSignable } from "../identity";
+import { Identity, isBatchSignable, ReadonlyIdentity } from "../identity";
 import {
     ArkTransaction,
     Asset,
-    Recipient,
     Coin,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
+    IAssetManager,
+    IReadonlyAssetManager,
     IReadonlyWallet,
     isExpired,
     isRecoverable,
@@ -44,21 +45,20 @@ import {
     isSubdust,
     IWallet,
     ReadonlyWalletConfig,
+    Recipient,
     SendBitcoinParams,
     SettleParams,
     TxType,
     VirtualCoin,
     WalletBalance,
     WalletConfig,
-    IAssetManager,
-    IReadonlyAssetManager,
 } from ".";
 import {
     createAssetPacket,
-    selectedCoinsToAssetInputs,
     selectCoinsWithAsset,
+    selectedCoinsToAssetInputs,
 } from "./asset";
-import { getSequence, VtxoScript } from "../script/base";
+import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import {
     buildOffchainTx,
@@ -76,10 +76,9 @@ import { ArkNote } from "../arknote";
 import { Intent } from "../intent";
 import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
-import { ConditionWitness, VtxoTaprootTree } from "../utils/unknownFields";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import { extendCoin, extendVirtualCoin, validateRecipients } from "./utils";
+import { extendCoin, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
 import { Estimator } from "../arkfee";
@@ -89,9 +88,9 @@ import { AssetManager, ReadonlyAssetManager } from "./asset-manager";
 import { Extension } from "../extension";
 import { DelegateVtxo } from "../script/delegate";
 import {
-    IDelegatorManager,
     DelegatorManagerImpl,
     findDestinationOutputIndex,
+    IDelegatorManager,
 } from "./delegator";
 import {
     IndexedDBContractRepository,
@@ -100,14 +99,7 @@ import {
 import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
-import {
-    advanceSyncCursors,
-    clearSyncCursors,
-    computeSyncWindow,
-    cursorCutoff,
-    getAllSyncCursors,
-    updateWalletState,
-} from "../utils/syncCursors";
+import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 
 // Hardcoded unilateral exit delay for mainnet (~7 days in seconds).
 // Pinned here so that address derivation stays stable for existing mainnet
@@ -149,11 +141,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
-    private _syncVtxosInflight?: Promise<{
-        isDelta: boolean;
-        fetchedExtended: ExtendedVirtualCoin[];
-        address: string;
-    }>;
+    private _syncVtxosInflight?: Promise<void>;
 
     get assetManager(): IReadonlyAssetManager {
         return this._assetManager;
@@ -484,13 +472,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
      */
     async getVtxos(filter?: GetVtxosFilter): Promise<ExtendedVirtualCoin[]> {
         const f = filter ?? { withRecoverable: true, withUnrolled: false };
-
         const contractManager = await this.getContractManager();
-        const contractsWithVtxos =
-            await contractManager.getContractsWithVtxos();
+        const vtxos = await contractManager.getContractsWithVtxos();
 
-        return contractsWithVtxos.flatMap(({ vtxos }) =>
-            vtxos.filter((vtxo) => {
+        return vtxos
+            .flatMap((_) => _.vtxos)
+            .filter((vtxo) => {
                 if (isSpendable(vtxo)) {
                     if (
                         !f.withRecoverable &&
@@ -501,20 +488,16 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     return true;
                 }
                 return !!(f.withUnrolled && vtxo.isUnrolled);
-            })
-        );
+            });
     }
 
     /**
      * Return wallet transaction history derived from Arkade state and boarding transactions.
      */
     async getTransactionHistory(): Promise<ArkTransaction[]> {
-        // Delta-sync virtual outputs into cache, then build history from the cache.
-        const { isDelta, fetchedExtended, address } = await this.syncVtxos();
-
-        const allVtxos = isDelta
-            ? await this.walletRepository.getVtxos(address)
-            : fetchedExtended;
+        const contractManager = await this.getContractManager();
+        const response = await contractManager.getContractsWithVtxos();
+        const allVtxos = response.flatMap((_) => _.vtxos);
 
         const { boardingTxs, commitmentsToIgnore } =
             await this.getBoardingTxs();
@@ -533,209 +516,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Delta-sync wallet virtual outputs: fetch only changed virtual outputs since the last
-     * cursor, or do a full bootstrap when no cursor exists. Upserts
-     * the result into the cache and advances the sync cursors.
-     *
-     * Concurrent calls are deduplicated: if a sync is already in flight,
-     * subsequent callers receive the same promise instead of triggering
-     * a second network round-trip.
-     */
-    private syncVtxos(): Promise<{
-        isDelta: boolean;
-        fetchedExtended: ExtendedVirtualCoin[];
-        address: string;
-    }> {
-        if (this._syncVtxosInflight) return this._syncVtxosInflight;
-        const p = this.doSyncVtxos().finally(() => {
-            this._syncVtxosInflight = undefined;
-        });
-        this._syncVtxosInflight = p;
-        return p;
-    }
-
-    private async doSyncVtxos(): Promise<{
-        isDelta: boolean;
-        fetchedExtended: ExtendedVirtualCoin[];
-        address: string;
-    }> {
-        const address = await this.getAddress();
-        // Batch cursor read with script map to avoid extra async hops
-        // before the fetch (background operations may run between hops).
-        const [scriptMap, cursors] = await Promise.all([
-            this.getScriptMap(),
-            getAllSyncCursors(this.walletRepository),
-        ]);
-
-        const allScripts = [...scriptMap.keys()];
-
-        // Partition scripts into bootstrap (no cursor) and delta (has cursor).
-        const bootstrapScripts: string[] = [];
-        const deltaScripts: string[] = [];
-        for (const s of allScripts) {
-            if (cursors[s] === undefined) {
-                bootstrapScripts.push(s);
-            } else {
-                deltaScripts.push(s);
-            }
-        }
-
-        const requestStartedAt = Date.now();
-        const allVtxos: VirtualCoin[] = [];
-
-        const extendWithScript = (
-            vtxo: VirtualCoin
-        ): ExtendedVirtualCoin | undefined => {
-            const vtxoScript = vtxo.script
-                ? scriptMap.get(vtxo.script)
-                : undefined;
-            if (!vtxoScript) return undefined;
-            return {
-                ...vtxo,
-                forfeitTapLeafScript: vtxoScript.forfeit(),
-                intentTapLeafScript: vtxoScript.forfeit(),
-                tapTree: vtxoScript.encode(),
-            };
-        };
-
-        // Full fetch for scripts with no cursor.
-        if (bootstrapScripts.length > 0) {
-            const response = await this.indexerProvider.getVtxos({
-                scripts: bootstrapScripts,
-            });
-            allVtxos.push(...response.vtxos);
-        }
-
-        // Delta fetch for scripts with an existing cursor.
-        let hasDelta = false;
-        if (deltaScripts.length > 0) {
-            const minCursor = Math.min(...deltaScripts.map((s) => cursors[s]));
-            const window = computeSyncWindow(minCursor);
-            if (window) {
-                hasDelta = true;
-                const response = await this.indexerProvider.getVtxos({
-                    scripts: deltaScripts,
-                    after: window.after,
-                });
-                allVtxos.push(...response.vtxos);
-            }
-        }
-
-        // Extend every fetched virtual output and upsert into the cache.
-        const fetchedExtended: ExtendedVirtualCoin[] = [];
-        for (const vtxo of allVtxos) {
-            const extended = extendWithScript(vtxo);
-            if (extended) fetchedExtended.push(extended);
-        }
-        // Save virtual outputs first, then advance cursors only on success.
-        const cutoff = cursorCutoff(requestStartedAt);
-        await this.walletRepository.saveVtxos(address, fetchedExtended);
-        await advanceSyncCursors(
-            this.walletRepository,
-            Object.fromEntries(allScripts.map((s) => [s, cutoff]))
-        );
-
-        // Delta-sync reconciliation: full re-fetch for delta scripts.
-        //
-        // The delta fetch (above) only returns virtual outputs changed after the
-        // cursor, so it can miss preconfirmed virtual outputs that were consumed
-        // by a round between syncs.  Rather than layering targeted
-        // queries (pendingOnly, spendableOnly) with pagination guards
-        // and set algebra, we perform a single unfiltered re-fetch for
-        // delta scripts.  This is slightly more data over the wire but
-        // gives us complete, authoritative state in one call and keeps
-        // the reconciliation logic simple.
-        //
-        // Any cached non-spent virtual output that is absent from the full
-        // result set is marked spent; any virtual output whose state changed
-        // (e.g. preconfirmed → settled) is updated in place.
-        if (hasDelta) {
-            const { vtxos: fullVtxos, page: fullPage } =
-                await this.indexerProvider.getVtxos({
-                    scripts: deltaScripts,
-                });
-
-            // Reconciliation is best-effort: if the response is
-            // paginated we don't have a complete picture, so we skip
-            // rather than act on partial data.  Wallets with enough
-            // virtual outputs to exceed a single page rely solely on the
-            // cursor-based delta mechanism for state updates.
-            const fullSetComplete = !fullPage || fullPage.total <= 1;
-            if (fullSetComplete) {
-                const fullOutpoints = new Map(
-                    fullVtxos.map((v) => [`${v.txid}:${v.vout}`, v])
-                );
-                const deltaScriptSet = new Set(deltaScripts);
-                const cachedVtxos =
-                    await this.walletRepository.getVtxos(address);
-
-                const reconciledExtended: ExtendedVirtualCoin[] = [];
-
-                for (const cached of cachedVtxos) {
-                    if (
-                        !cached.script ||
-                        !deltaScriptSet.has(cached.script) ||
-                        cached.isSpent
-                    ) {
-                        continue;
-                    }
-
-                    const outpoint = `${cached.txid}:${cached.vout}`;
-                    const fresh = fullOutpoints.get(outpoint);
-
-                    if (!fresh) {
-                        // Server no longer knows about this virtual output —
-                        // it was spent between syncs.
-                        reconciledExtended.push({
-                            ...cached,
-                            isSpent: true,
-                        });
-                        continue;
-                    }
-
-                    const extended = extendWithScript(fresh);
-                    if (
-                        extended &&
-                        extended.virtualStatus.state !==
-                            cached.virtualStatus.state
-                    ) {
-                        // State transitioned (e.g. preconfirmed →
-                        // settled) — update the cached entry.
-                        reconciledExtended.push(extended);
-                    }
-                }
-
-                if (reconciledExtended.length > 0) {
-                    console.warn(
-                        `[ark-sdk] delta sync: reconciled ${reconciledExtended.length} stale VTXO(s) via full re-fetch`
-                    );
-                    await this.walletRepository.saveVtxos(
-                        address,
-                        reconciledExtended
-                    );
-                }
-            } else {
-                console.warn(
-                    "[ark-sdk] delta sync: skipping reconciliation — full re-fetch was paginated"
-                );
-            }
-        }
-
-        return {
-            isDelta: hasDelta || bootstrapScripts.length === 0,
-            fetchedExtended,
-            address,
-        };
-    }
-
-    /**
-     * Clear all virtual output sync cursors, forcing a full re-bootstrap on next sync.
+     * Clear the global VTXO sync cursor, forcing a full re-bootstrap on next sync.
      * Useful for recovery after indexer reprocessing or debugging.
      */
-    async clearSyncCursors(): Promise<void> {
-        await clearSyncCursors(this.walletRepository);
+    async clearSyncCursor(): Promise<void> {
+        await clearSyncCursor(this.walletRepository);
     }
-
     /**
      * Build a transaction history view for the wallet's boarding address.
      */
@@ -787,6 +573,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         createdAt: tx.status.confirmed
                             ? new Date(tx.status.block_time * 1000)
                             : new Date(0),
+                        script: hex.encode(this.boardingTapscript.pkScript),
                     });
                 }
             }
@@ -906,27 +693,44 @@ export class ReadonlyWallet implements IReadonlyWallet {
             };
 
             // Handle subscription updates asynchronously without blocking.
-            // Note: subscription covers all wallet scripts (default + delegate),
-            // but we can't determine which script each virtual output belongs to from the
-            // subscription event. Virtual outputs are extended with the current offchainTapscript;
-            // this is for notification/display only — not for spending.
-            // For correct extension metadata, use getVtxos() which queries per-script.
+            // Subscription covers all wallet scripts (default + delegate) plus
+            // any additional registered contracts. Virtual outputs carry a
+            // `script` field from the indexer which the contract manager
+            // resolves to the owning contract so the extension uses the
+            // correct forfeit/intent tapscripts.
             (async () => {
                 try {
+                    const cm = await this.getContractManager();
                     for await (const update of subscription) {
                         if (
-                            update.newVtxos?.length > 0 ||
-                            update.spentVtxos?.length > 0
+                            update.newVtxos?.length === 0 &&
+                            update.spentVtxos?.length === 0
                         ) {
+                            continue;
+                        }
+                        // Isolate per-update annotation failures (e.g. a VTXO
+                        // arriving for a contract we haven't registered yet).
+                        // Without this a single bad update would kill the
+                        // for-await loop and silently drop every subsequent
+                        // subscription event for the session.
+                        try {
+                            // Default to `[]` so a one-sided update (e.g.
+                            // only `newVtxos`) doesn't pass `undefined` into
+                            // annotateVtxos and throw on `.length`.
+                            const [newVtxos, spentVtxos] = await Promise.all([
+                                cm.annotateVtxos(update.newVtxos ?? []),
+                                cm.annotateVtxos(update.spentVtxos ?? []),
+                            ]);
                             eventCallback({
                                 type: "vtxo",
-                                newVtxos: update.newVtxos.map((vtxo) =>
-                                    extendVirtualCoin(this, vtxo)
-                                ),
-                                spentVtxos: update.spentVtxos.map((vtxo) =>
-                                    extendVirtualCoin(this, vtxo)
-                                ),
+                                newVtxos,
+                                spentVtxos,
                             });
+                        } catch (error) {
+                            console.warn(
+                                "Dropping subscription update after annotation failed; next sync will reconcile:",
+                                error
+                            );
                         }
                     }
                 } catch (error) {
@@ -1261,7 +1065,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     protected constructor(
         identity: Identity,
         network: Network,
-        readonly networkName: NetworkName,
         onchainProvider: OnchainProvider,
         readonly arkProvider: ArkProvider,
         indexerProvider: IndexerProvider,
@@ -1415,7 +1218,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const wallet = new Wallet(
             config.identity,
             setup.network,
-            setup.networkName,
             setup.onchainProvider,
             setup.arkProvider,
             setup.indexerProvider,
@@ -1807,7 +1609,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 topics
             );
 
-            const intentId = await this.safeRegisterIntent(intent);
+            const intentId = await this.safeRegisterIntent(
+                intent,
+                params.inputs
+            );
 
             const handler = this.createBatchHandler(
                 intentId,
@@ -1828,8 +1633,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             return commitmentTxid;
         } catch (error) {
-            // delete the intent to not be stuck in the queue
-            await this.arkProvider.deleteIntent(deleteIntent).catch(() => {});
+            // delete the intent to not be stuck in the queue. If deletion fails
+            // the intent stays on the server and the next settle will hit
+            // "duplicated input" in safeRegisterIntent — surface the failure
+            // rather than silently swallowing it.
+            const inputIds = params.inputs
+                .map((i) => `${i.txid}:${i.vout}`)
+                .join(",");
+            await this.arkProvider.deleteIntent(deleteIntent).catch((e) => {
+                console.warn(
+                    `Failed to delete intent after settle failure for inputs [${inputIds}]; intent may linger on server and cause 'duplicated input' on next settle`,
+                    e
+                );
+            });
             throw error;
         } finally {
             // close the stream
@@ -2127,7 +1943,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     async safeRegisterIntent(
-        intent: SignedIntent<Intent.RegisterMessage>
+        intent: SignedIntent<Intent.RegisterMessage>,
+        inputs: ExtendedCoin[]
     ): Promise<string> {
         try {
             return await this.arkProvider.registerIntent(intent);
@@ -2138,12 +1955,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 error.code === 0 &&
                 error.message.includes("duplicated input")
             ) {
-                // delete all intents spending one of the wallet coins
-                const allSpendableCoins = await this.getVtxos({
-                    withRecoverable: true,
-                });
+                // Clear any queued intent spending these exact inputs. The
+                // previous implementation signed a proof over getVtxos() only,
+                // which misses boarding UTXOs — the most common trigger for
+                // "duplicated input" on the auto-settle path. Signing the
+                // caller's own inputs keeps the proof surgical and correct
+                // regardless of whether the stuck input is a VTXO or boarding.
                 const deleteIntent =
-                    await this.makeDeleteIntentSignature(allSpendableCoins);
+                    await this.makeDeleteIntentSignature(inputs);
                 await this.arkProvider.deleteIntent(deleteIntent);
 
                 // try again
@@ -2241,9 +2060,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             );
 
             for (const vtxo of fetchedVtxos) {
-                const vtxoScript = vtxo.script
-                    ? scriptMap.get(vtxo.script)
-                    : undefined;
+                const vtxoScript = scriptMap.get(vtxo.script);
                 if (!vtxoScript) continue;
 
                 if (
@@ -2712,9 +2529,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 inputs.length,
                 signedCheckpointTxs.length
             );
-            for (const [inputIndex, input] of inputs.entries()) {
-                const vtxo = extendVirtualCoin(this, input);
-
+            const cm = await this.getContractManager();
+            const annotatedInputs = await cm.annotateVtxos(inputs);
+            for (const [inputIndex, vtxo] of annotatedInputs.entries()) {
                 if (
                     inputIndex < safeLength &&
                     signedCheckpointTxs[inputIndex]
@@ -2784,6 +2601,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         confirmed: false,
                     },
                     assets: changeAssets,
+                    script: hex.encode(this.offchainTapscript.pkScript),
                 };
             }
 
@@ -2827,10 +2645,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 input: ExtendedCoin
             ): input is ExtendedVirtualCoin => "virtualStatus" in input;
 
+            const vtxoInputs = inputs.filter(isVtxo);
+            const cm = await this.getContractManager();
+            const annotatedVtxos = await cm.annotateVtxos(vtxoInputs);
+            const annotatedByKey = new Map(
+                annotatedVtxos.map((v) => [`${v.txid}:${v.vout}`, v])
+            );
             for (const input of inputs) {
                 if (isVtxo(input)) {
                     // virtual output = mark it settled
-                    const vtxo = extendVirtualCoin(this, input);
+                    const vtxo = annotatedByKey.get(
+                        `${input.txid}:${input.vout}`
+                    )!;
                     if (vtxo.arkTxId) {
                         inputArkTxIds.add(vtxo.arkTxId);
                     }
@@ -2940,7 +2766,7 @@ export async function waitForIncomingFunds(
 ): Promise<IncomingFunds> {
     let stopFunc: (() => void) | undefined;
 
-    const promise = new Promise<IncomingFunds>((resolve) => {
+    return new Promise<IncomingFunds>((resolve) => {
         wallet
             .notifyIncomingFunds((coins: IncomingFunds) => {
                 resolve(coins);
@@ -2950,6 +2776,4 @@ export async function waitForIncomingFunds(
                 stopFunc = stop;
             });
     });
-
-    return promise;
 }

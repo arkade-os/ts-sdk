@@ -86,7 +86,6 @@ async function main() {
     console.log("[Alice]\tArk Address:", aliceWallet.arkAddress.encode());
 
     const state: WalletState = {
-        lastSyncTime: Date.now(),
         settings: { theme: "dark" },
     };
 
