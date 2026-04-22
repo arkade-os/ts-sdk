@@ -547,24 +547,23 @@ export class RestArkProvider implements ArkProvider {
                 ? `?${topics.map((topic) => `topics=${encodeURIComponent(topic)}`).join("&")}`
                 : "";
 
-        // Create first EventSource eagerly so events are buffered
-        // before the caller starts iterating, preventing race conditions
-        // where the server emits events before iteration begins.
-        const eagerEventSource = new EventSource(url + queryParams);
-        const eagerIterator = eventSourceIterator(eagerEventSource);
-
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         const self = this;
         return (async function* () {
-            let firstIteration = true;
+            // EventSource construction lives inside the generator body so the
+            // connection only opens when the consumer actually iterates. Prior
+            // eager construction leaked the socket: if the caller threw before
+            // the first .next() (e.g. safeRegisterIntent rejecting before
+            // Batch.join runs), no abort listener was attached, the outer
+            // finally's abortController.abort() became a no-op, and the
+            // EventSource stayed open — the server's SSE listener count grew
+            // unbounded. Generator entry still runs synchronously on the first
+            // .next(), before any await, so the "buffer events before
+            // iteration" property holds as long as the caller iterates
+            // immediately after receiving the stream (Batch.join's contract).
             while (!signal?.aborted) {
-                const eventSource = firstIteration
-                    ? eagerEventSource
-                    : new EventSource(url + queryParams);
-                const iterator = firstIteration
-                    ? eagerIterator
-                    : eventSourceIterator(eventSource);
-                firstIteration = false;
+                const eventSource = new EventSource(url + queryParams);
+                const iterator = eventSourceIterator(eventSource);
 
                 try {
                     const abortHandler = () => {

@@ -1602,13 +1602,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         ];
 
         const abortController = new AbortController();
+        const stream = this.arkProvider.getEventStream(
+            abortController.signal,
+            topics
+        );
 
         try {
-            const stream = this.arkProvider.getEventStream(
-                abortController.signal,
-                topics
-            );
-
             const intentId = await this.safeRegisterIntent(
                 intent,
                 params.inputs
@@ -1648,8 +1647,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
             throw error;
         } finally {
-            // close the stream
+            // Close the stream. abort() alone is insufficient if the caller
+            // throws before Batch.join starts iterating — the generator body
+            // never runs, so no abort listener is registered. stream.return()
+            // forces the generator's finally block to execute (closing the
+            // EventSource) regardless of whether iteration ever began.
             abortController.abort();
+            await stream.return?.().catch(() => {});
         }
     }
 
