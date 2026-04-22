@@ -13,8 +13,10 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 // Version history:
 //   v1 — initial wallet repo schema, `contractsCollections` store.
 //   v2 — new `vtxos/utxos/transactions/walletState/contracts` stores.
-//   v3 — backfill missing `vtxo.script` from `vtxo.address` so the field is
-//        always present at read time.
+//   v3 — add `script` index on the vtxos store and backfill missing
+//        `vtxo.script` from `vtxo.address` so the field is always present
+//        at read time. Matches the `script` indexing already in place for
+//        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
 export const DB_VERSION = 3;
 
 export function initDatabase(
@@ -76,6 +78,11 @@ export function initDatabase(
         }
         if (!vtxosStore.indexNames.contains("arkTxId")) {
             vtxosStore.createIndex("arkTxId", "arkTxId", {
+                unique: false,
+            });
+        }
+        if (!vtxosStore.indexNames.contains("script")) {
+            vtxosStore.createIndex("script", "script", {
                 unique: false,
             });
         }
@@ -176,10 +183,17 @@ export function initDatabase(
         });
     }
 
-    // v2 → v3: backfill missing `script` on existing VTXO rows. The upgrade
-    // transaction is null only on a brand-new database (oldVersion === 0),
-    // where no legacy rows exist.
+    // v2 → v3: add the `script` index on the existing vtxos store and
+    // backfill missing `script` on legacy VTXO rows. The upgrade transaction
+    // is null only on a brand-new database (oldVersion === 0), where no
+    // legacy rows exist. `createIndex` scans existing records; rows still
+    // missing `script` are skipped and get indexed automatically when the
+    // backfill's `cursor.update()` adds the field.
     if (oldVersion >= 1 && oldVersion < 3 && transaction) {
+        const vtxosStore = transaction.objectStore(STORE_VTXOS);
+        if (!vtxosStore.indexNames.contains("script")) {
+            vtxosStore.createIndex("script", "script", { unique: false });
+        }
         backfillVtxoScripts(transaction);
     }
 }

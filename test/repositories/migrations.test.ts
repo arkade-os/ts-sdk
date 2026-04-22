@@ -252,4 +252,57 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
             await repo[Symbol.asyncDispose]();
         }
     });
+
+    it("creates the `script` index and populates it via backfill", async () => {
+        // Covers two things: (1) opening at DB_VERSION=3 creates a `script`
+        // index on the vtxos store, (2) rows inserted without `script` are
+        // added to the index automatically when the backfill's
+        // `cursor.update()` sets the field.
+        const dbName = getUniqueDbName();
+        const db = await openDatabase(dbName, 3, initDatabase);
+        try {
+            expect(
+                db
+                    .transaction([STORE_VTXOS], "readonly")
+                    .objectStore(STORE_VTXOS)
+                    .indexNames.contains("script")
+            ).toBe(true);
+
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                tx.objectStore(STORE_VTXOS).put({
+                    address: TEST_ARK_ADDRESS,
+                    txid: "indexed-backfill-tx",
+                    vout: 0,
+                    value: 1000,
+                });
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+
+            await new Promise<void>((resolve, reject) => {
+                const tx = db.transaction([STORE_VTXOS], "readwrite");
+                backfillVtxoScripts(tx);
+                tx.oncomplete = () => resolve();
+                tx.onerror = () => reject(tx.error);
+            });
+
+            const hits = await new Promise<{ txid: string }[]>(
+                (resolve, reject) => {
+                    const tx = db.transaction([STORE_VTXOS], "readonly");
+                    const req = tx
+                        .objectStore(STORE_VTXOS)
+                        .index("script")
+                        .getAll(EXPECTED_PK_SCRIPT_HEX);
+                    req.onsuccess = () =>
+                        resolve(req.result as { txid: string }[]);
+                    req.onerror = () => reject(req.error);
+                }
+            );
+
+            expect(hits.map((h) => h.txid)).toContain("indexed-backfill-tx");
+        } finally {
+            await closeDatabase(dbName);
+        }
+    });
 });
