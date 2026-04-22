@@ -31,6 +31,7 @@ import {
     ReissuanceParams,
     SendBitcoinParams,
     SettleParams,
+    VirtualCoin,
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegator";
@@ -197,6 +198,15 @@ export type RequestGetContractsWithVtxos = RequestEnvelope & {
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
     payload: { contracts: ContractWithVtxos[] };
+};
+
+export type RequestAnnotateVtxos = RequestEnvelope & {
+    type: "ANNOTATE_VTXOS";
+    payload: { vtxos: VirtualCoin[] };
+};
+export type ResponseAnnotateVtxos = ResponseEnvelope & {
+    type: "ANNOTATED_VTXOS";
+    payload: { vtxos: ExtendedVirtualCoin[] };
 };
 
 export type RequestUpdateContract = RequestEnvelope & {
@@ -435,6 +445,7 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestAnnotateVtxos
     | RequestUpdateContract
     | RequestDeleteContract
     | RequestGetSpendablePaths
@@ -476,6 +487,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseAnnotateVtxos
         | ResponseUpdateContract
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
@@ -758,6 +770,18 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
                         payload: { contracts },
+                    });
+                }
+                case "ANNOTATE_VTXOS": {
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
+                    const annotated = await manager.annotateVtxos(
+                        message.payload.vtxos
+                    );
+                    return this.tagged({
+                        id,
+                        type: "ANNOTATED_VTXOS",
+                        payload: { vtxos: annotated },
                     });
                 }
                 case "UPDATE_CONTRACT": {

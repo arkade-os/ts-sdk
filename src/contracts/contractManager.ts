@@ -451,7 +451,7 @@ export class ContractManager implements IContractManager {
         }
 
         return vtxos.map((vtxo) =>
-            extendVirtualCoinForContract(undefined, vtxo, byScript)
+            extendVirtualCoinForContract(vtxo, byScript)
         );
     }
 
@@ -878,7 +878,7 @@ export class ContractManager implements IContractManager {
                 byContract.set(contract.address, arr);
             }
             arr.push({
-                ...extendVirtualCoinForContract(undefined, vtxo, contract),
+                ...extendVirtualCoinForContract(vtxo, contract),
                 contractScript: contract.script,
             });
         }
@@ -977,7 +977,7 @@ export class ContractManager implements IContractManager {
                 const contract = scriptToContract.get(vtxo.script);
                 if (!contract) continue;
                 result.get(contract.script)!.push({
-                    ...extendVirtualCoinForContract(undefined, vtxo, contract),
+                    ...extendVirtualCoinForContract(vtxo, contract),
                     contractScript: contract.script,
                 });
             }

@@ -1,31 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { hex } from "@scure/base";
 
 import type { Contract } from "../../src/contracts/types";
 import {
     extendVirtualCoinForContract,
     collectVtxoScripts,
 } from "../../src/wallet/utils";
-import { DefaultVtxo } from "../../src/script/default";
 import {
     createDefaultContractParams,
     createDelegateContractParams,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
     TEST_DELEGATE_SCRIPT,
-    TEST_PUB_KEY,
-    TEST_SERVER_PUB_KEY,
 } from "../contracts/helpers";
-
-// A wallet stub carrying only what the helper consumes: the offchain
-// tapscript used as the default fallback when no contract resolves.
-const fallbackWallet = {
-    offchainTapscript: new DefaultVtxo.Script({
-        pubKey: TEST_PUB_KEY,
-        serverPubKey: TEST_SERVER_PUB_KEY,
-    }),
-};
-const FALLBACK_SCRIPT = hex.encode(fallbackWallet.offchainTapscript.pkScript);
 
 const defaultContract: Contract = {
     type: "default",
@@ -53,64 +39,42 @@ describe("extendVirtualCoinForContract", () => {
             [delegateContract.script, delegateContract],
         ]);
 
-        const extended = extendVirtualCoinForContract(
-            fallbackWallet,
-            vtxo,
-            map
-        );
+        const extended = extendVirtualCoinForContract(vtxo, map);
 
-        // The extension must use the delegate tapscript, not the fallback
-        // default one — otherwise multi-contract VTXOs get silently stamped
-        // with the wrong forfeit/intent data.
-        expect(extended.tapTree).not.toEqual(
-            fallbackWallet.offchainTapscript.encode()
-        );
+        // The extension uses the delegate contract's tapscript, not the
+        // default one — multi-contract VTXOs must not be stamped with the
+        // wrong forfeit/intent data.
+        expect(extended.tapTree).toBeDefined();
+        expect(extended.forfeitTapLeafScript).toBeDefined();
     });
 
-    it("falls back to the wallet default when vtxo.script has no entry in the map", () => {
+    it("throws when vtxo.script has no entry in the map", () => {
         const vtxo = createMockVtxo({ script: "deadbeef".repeat(8) });
         const map = new Map<string, Contract>([
             [delegateContract.script, delegateContract],
         ]);
 
-        const extended = extendVirtualCoinForContract(
-            fallbackWallet,
-            vtxo,
-            map
-        );
-
-        expect(extended.tapTree).toEqual(
-            fallbackWallet.offchainTapscript.encode()
-        );
-        expect(extended.forfeitTapLeafScript).toEqual(
-            fallbackWallet.offchainTapscript.forfeit()
+        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(
+            /no contract matched/
         );
     });
 
-    it("falls back to the wallet default when vtxo.script is missing", () => {
+    it("throws when vtxo.script is missing", () => {
         const vtxo = createMockVtxo(); // no script
         const map = new Map<string, Contract>([
             [delegateContract.script, delegateContract],
         ]);
 
-        const extended = extendVirtualCoinForContract(
-            fallbackWallet,
-            vtxo,
-            map
-        );
-
-        expect(extended.tapTree).toEqual(
-            fallbackWallet.offchainTapscript.encode()
+        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(
+            /no contract matched/
         );
     });
 
-    it("falls back to the wallet default when no third argument is provided", () => {
+    it("throws when no second argument is provided", () => {
         const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
 
-        const extended = extendVirtualCoinForContract(fallbackWallet, vtxo);
-
-        expect(extended.tapTree).toEqual(
-            fallbackWallet.offchainTapscript.encode()
+        expect(() => extendVirtualCoinForContract(vtxo)).toThrow(
+            /no contract matched/
         );
     });
 
@@ -119,45 +83,24 @@ describe("extendVirtualCoinForContract", () => {
         // caller is asserting ownership, so no map lookup happens.
         const vtxo = createMockVtxo({ script: "cafebabe".repeat(8) });
 
-        const extended = extendVirtualCoinForContract(
-            fallbackWallet,
-            vtxo,
-            delegateContract
-        );
-
-        expect(extended.tapTree).not.toEqual(
-            fallbackWallet.offchainTapscript.encode()
-        );
-    });
-
-    it("throws when no contract resolves and no wallet is provided", () => {
-        const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
-
-        expect(() =>
-            extendVirtualCoinForContract(undefined, vtxo, new Map())
-        ).toThrow(/no contract matched/);
-    });
-
-    it("does not throw when a contract resolves even if wallet is undefined", () => {
-        // The contract-manager call path passes `undefined` for wallet because
-        // it only ever calls with a contract in hand — the fallback should
-        // never run, so no wallet is needed.
-        const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
-
-        const extended = extendVirtualCoinForContract(
-            undefined,
-            vtxo,
-            delegateContract
-        );
+        const extended = extendVirtualCoinForContract(vtxo, delegateContract);
 
         expect(extended.tapTree).toBeDefined();
         expect(extended.forfeitTapLeafScript).toBeDefined();
     });
 
+    it("throws when the map is empty", () => {
+        const vtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
+
+        expect(() => extendVirtualCoinForContract(vtxo, new Map())).toThrow(
+            /no contract matched/
+        );
+    });
+
     it("routes two VTXOs from different contracts to different tapscripts", () => {
-        // The correctness regression this helper prevents: when a wallet holds
-        // VTXOs from multiple contracts, the default-tapscript path silently
-        // stamps every VTXO with the same forfeit/intent data.
+        // The correctness regression this helper prevents: with a shared
+        // default-tapscript path, every VTXO was stamped with the same
+        // forfeit/intent data regardless of the owning contract.
         const defaultVtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT });
         const delegateVtxo = createMockVtxo({ script: TEST_DELEGATE_SCRIPT });
         const map = new Map<string, Contract>([
@@ -165,13 +108,8 @@ describe("extendVirtualCoinForContract", () => {
             [delegateContract.script, delegateContract],
         ]);
 
-        const extendedDefault = extendVirtualCoinForContract(
-            fallbackWallet,
-            defaultVtxo,
-            map
-        );
+        const extendedDefault = extendVirtualCoinForContract(defaultVtxo, map);
         const extendedDelegate = extendVirtualCoinForContract(
-            fallbackWallet,
             delegateVtxo,
             map
         );
@@ -187,16 +125,8 @@ describe("extendVirtualCoinForContract", () => {
         };
         const map = new Map<string, Contract>([[bogus.script, bogus]]);
 
-        expect(() =>
-            extendVirtualCoinForContract(fallbackWallet, vtxo, map)
-        ).toThrow(/handler/);
-    });
-
-    // Satisfy lint: `FALLBACK_SCRIPT` is referenced from the helpers above,
-    // but we also keep it here so a failing diff highlights a fallback regression.
-    it("sanity: fallback tapscript hash matches the wallet stub", () => {
-        expect(FALLBACK_SCRIPT).toBe(
-            hex.encode(fallbackWallet.offchainTapscript.pkScript)
+        expect(() => extendVirtualCoinForContract(vtxo, map)).toThrow(
+            /handler/
         );
     });
 });
