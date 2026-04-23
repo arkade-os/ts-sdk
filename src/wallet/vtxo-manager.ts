@@ -8,13 +8,15 @@ import {
     isSpendable,
     isSubdust,
 } from ".";
-import { SettlementEvent } from "../providers/ark";
+import { ArkProvider, SettlementEvent } from "../providers/ark";
 import { hasBoardingTxExpired } from "../utils/arkTransaction";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
 import { getSequence } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
+import { Estimator } from "../arkfee";
+import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
@@ -26,6 +28,7 @@ import type { DefaultVtxo } from "../script/default";
 interface SweepCapableWallet extends IReadonlyWallet {
     boardingTapscript: DefaultVtxo.Script;
     onchainProvider: OnchainProvider;
+    arkProvider: ArkProvider;
     network: Network;
 }
 
@@ -41,6 +44,7 @@ function isSweepCapable(
     return (
         "boardingTapscript" in wallet &&
         "onchainProvider" in wallet &&
+        "arkProvider" in wallet &&
         "network" in wallet
     );
 }
@@ -56,7 +60,7 @@ function assertSweepCapable(
 ): asserts wallet is IWallet & SweepCapableWallet {
     if (!isSweepCapable(wallet)) {
         throw new Error(
-            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, and network"
+            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, arkProvider, and network"
         );
     }
 }
@@ -1016,6 +1020,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.getSweepWallet().onchainProvider;
     }
 
+    /** Returns the Ark provider for intent fee and server info lookups. */
+    private getArkProvider() {
+        return this.getSweepWallet().arkProvider;
+    }
+
     /** Returns the Bitcoin network configuration from the wallet. */
     private getNetwork() {
         return this.getSweepWallet().network;
@@ -1331,19 +1340,63 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         const dustAmount = getDustAmount(this.wallet);
-        const boardingTotal = unsettledBoarding.reduce(
-            (sum, u) => sum + BigInt(u.value),
-            0n
-        );
-        const vtxoTotal = expiringVtxos.reduce(
-            (sum, v) => sum + BigInt(v.value),
-            0n
-        );
-        const totalAmount = boardingTotal + vtxoTotal;
-        if (totalAmount < dustAmount) return;
+
+        // Fetch server intent-fee config so each input/output can be priced.
+        // Without this, settle sends `outputAmount = sum(inputs)` and the
+        // server rejects with INTENT_INSUFFICIENT_FEE whenever the operator
+        // charges non-zero intent fees.
+        const { fees } = await this.getArkProvider().getInfo();
+        const estimator = new Estimator(fees.intentFee);
+
+        let totalAmount = 0n;
+
+        const filteredBoarding: ExtendedCoin[] = [];
+        for (const u of unsettledBoarding) {
+            const inputFee = estimator.evalOnchainInput({
+                amount: BigInt(u.value),
+            });
+            if (inputFee.value >= BigInt(u.value)) {
+                // Fee exceeds input value — including it would drain the output.
+                continue;
+            }
+            filteredBoarding.push(u);
+            totalAmount += BigInt(u.value) - BigInt(inputFee.satoshis);
+        }
+
+        const filteredVtxos: ExtendedVirtualCoin[] = [];
+        for (const v of expiringVtxos) {
+            const inputFee = estimator.evalOffchainInput({
+                amount: BigInt(v.value),
+                type:
+                    v.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
+                weight: 0,
+                birth: v.createdAt,
+                expiry: v.virtualStatus.batchExpiry
+                    ? new Date(v.virtualStatus.batchExpiry * 1000)
+                    : new Date(),
+            });
+            if (inputFee.value >= BigInt(v.value)) {
+                continue;
+            }
+            filteredVtxos.push(v);
+            totalAmount += BigInt(v.value) - BigInt(inputFee.satoshis);
+        }
+
+        if (filteredBoarding.length === 0 && filteredVtxos.length === 0) {
+            return;
+        }
 
         const arkAddress = await this.wallet.getAddress();
-        const includesVtxos = expiringVtxos.length > 0;
+
+        const outputFee = estimator.evalOffchainOutput({
+            amount: totalAmount,
+            script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
+        });
+        totalAmount -= BigInt(outputFee.satoshis);
+
+        if (totalAmount < dustAmount) return;
+
+        const includesVtxos = filteredVtxos.length > 0;
 
         // Block the event-driven renewal path while this settle is in flight
         // when VTXOs are part of the intent. Mirrors renewVtxos()'s guard so
@@ -1357,12 +1410,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         try {
             try {
                 await this.wallet.settle({
-                    inputs: [...unsettledBoarding, ...expiringVtxos],
+                    inputs: [...filteredBoarding, ...filteredVtxos],
                     outputs: [{ address: arkAddress, amount: totalAmount }],
                 });
 
                 // Mark boarding inputs as known only after successful settle.
-                for (const u of unsettledBoarding) {
+                for (const u of filteredBoarding) {
                     this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
                 }
                 success = true;
