@@ -188,6 +188,42 @@ page → old worker is not.
   one-time `[ts-sdk]` deprecation warning is logged when a legacy shape
   is seen; the adapter is slated for removal in the next major.
 
+### Threat model for identity transport
+
+The page↔worker boundary is same-origin only. A service worker's
+`message` listener only fires for messages posted by documents and
+workers under the same origin, so any code that can send an
+`INITIALIZE_MESSAGE_BUS` message is already running inside the page's
+trust boundary and could read the identity from page memory directly.
+
+Working assumptions:
+
+- **Page memory and worker memory are both trusted.** The SDK does not
+  attempt to isolate secrets between the two — a compromise of either
+  is a full compromise. `serializeReadonlyIdentity` does, however,
+  downgrade signing identities to readonly envelopes when called on
+  the readonly factory, so watch-only wallets never ship signing
+  material even if the caller passes a signing identity.
+- **Envelopes carry what they need to reconstruct the identity class.**
+  For `SingleKey` that is the derived 32-byte private key. For
+  `SeedIdentity` / `MnemonicIdentity` it is master-seed material — the
+  raw seed or the BIP39 mnemonic (plus optional passphrase). A reader
+  of a seed / mnemonic envelope can derive **any** key in the HD tree,
+  not just the key currently in use; the blast radius is larger than
+  the historic `SingleKey` flow. This is an intentional trade for
+  class-preserving round-trip and descriptor fidelity; the page
+  already retains the same material so it can re-initialize a killed
+  worker without prompting the user again.
+- **Secrets are not scrubbed after use.** JavaScript strings are
+  immutable and cannot be overwritten; seed `Uint8Array`s have copies
+  inside `@scure/bip39` and the HD-key library that we cannot reach.
+  The SDK does not theater-clear state it cannot actually erase.
+
+If your application's threat model is tighter than same-origin trust
+(e.g., you assume the worker may be compromised independently of the
+page), prefer `SingleKey` for single-address flows so only one derived
+key is ever in transit.
+
 ## Registering with the built-in update handshake
 
 `setupServiceWorkerOnce` now handles stale workers by:

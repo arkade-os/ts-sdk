@@ -371,6 +371,18 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
  * helper is deliberately kept out of the `src/identity` barrel so it is
  * not part of the package's public export surface.
  *
+ * Secret-surface trade-off: the resulting envelope carries master-seed
+ * material — the BIP39 mnemonic (+ optional passphrase) for
+ * `MnemonicIdentity` or the raw 64-byte seed for `SeedIdentity`. A party
+ * that reads this envelope can derive any key under the HD tree, not
+ * just the key currently in use. The pre-change `SingleKey` flow only
+ * shipped one derived private key and therefore had a smaller blast
+ * radius. This is an intentional design trade to preserve class and
+ * descriptor identity across the page / service-worker boundary; the
+ * page already holds the same material so that it can re-initialize a
+ * killed worker. Transport is same-origin `postMessage` only. See the
+ * threat-model note in `src/worker/browser/README.md`.
+ *
  * @internal
  */
 export function serializeSeedOwnedSigningIdentity(
