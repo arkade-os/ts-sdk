@@ -438,7 +438,6 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
-
     // Indexer types
     IndexerProvider,
     PageResponse,

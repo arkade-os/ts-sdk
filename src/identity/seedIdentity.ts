@@ -41,6 +41,8 @@ export type MnemonicOptions = SeedIdentityOptions & {
     passphrase?: string;
 };
 
+// ── Helpers ──────────────────────────────────────────────────────
+
 /**
  * Detects the network from a descriptor string by checking for tpub (testnet)
  * vs xpub (mainnet) key prefix.
@@ -77,13 +79,13 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  *
  * This is the recommended identity type for most applications. It uses
  * standard BIP86 (Taproot) derivation by default and stores an output
- * descriptor for interoperability with other wallets. The descriptor
- * format is HD-ready, allowing future support for multiple addresses
- * and change derivation.
+ * descriptor for interoperability with other wallets.
  *
  * Prefer this (or @see MnemonicIdentity) over `SingleKey` for new
  * integrations — `SingleKey` exists for backward compatibility with
  * raw nsec-style keys.
+ *
+ * For descriptor-based signing, wrap with {@link StaticDescriptorProvider}.
  *
  * @example
  * ```typescript
