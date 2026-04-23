@@ -1,0 +1,111 @@
+import { hex } from "@scure/base";
+import type { Identity, ReadonlyIdentity } from ".";
+import { SingleKey, ReadonlySingleKey } from "./singleKey";
+
+/**
+ * Tagged envelope for a signing identity transported across the
+ * service-worker boundary. All variants are structured-clone safe
+ * (plain strings only — no functions or prototypes).
+ *
+ * Adding a new variant is a source change in every worker build; keep
+ * old variants around until all deployed workers handle them.
+ */
+export type SerializedSigningIdentity =
+    | { type: "single-key"; privateKey: string }
+    | { type: "seed"; seed: string; descriptor: string }
+    | {
+          type: "mnemonic";
+          mnemonic: string;
+          descriptor: string;
+          passphrase?: string;
+      };
+
+/**
+ * Tagged envelope for a readonly identity transported across the
+ * service-worker boundary. All variants are structured-clone safe.
+ */
+export type SerializedReadonlyIdentity =
+    | { type: "readonly-single-key"; publicKey: string }
+    | { type: "readonly-descriptor"; descriptor: string };
+
+export type SerializedIdentity =
+    | SerializedSigningIdentity
+    | SerializedReadonlyIdentity;
+
+/** Type guard — true for signing envelopes, false for readonly envelopes. */
+export function isSigningSerialized(
+    s: SerializedIdentity
+): s is SerializedSigningIdentity {
+    return (
+        s.type === "single-key" || s.type === "seed" || s.type === "mnemonic"
+    );
+}
+
+/** Identity that can expose a raw 32-byte private key via `toHex()`. */
+type HexExportableIdentity = Identity & { toHex(): string };
+
+function hasToHex(identity: Identity): identity is HexExportableIdentity {
+    return typeof (identity as { toHex?: unknown }).toHex === "function";
+}
+
+/**
+ * Serialize a signing identity into a structured-clone safe envelope for
+ * transport across the service-worker boundary.
+ *
+ * Supports SDK-owned signing identities directly. For custom identities, a
+ * duck-typed `toHex()` fallback preserves compatibility with existing
+ * `SingleKey`-like implementations.
+ */
+export function serializeSigningIdentity(
+    identity: Identity
+): SerializedSigningIdentity {
+    if (identity instanceof SingleKey) {
+        return { type: "single-key", privateKey: identity.toHex() };
+    }
+    if (hasToHex(identity)) {
+        return { type: "single-key", privateKey: identity.toHex() };
+    }
+    throw new Error(
+        "Unsupported signing identity: cannot serialize for service-worker transport"
+    );
+}
+
+/**
+ * Serialize a readonly identity into a structured-clone safe envelope.
+ *
+ * Works for any `ReadonlyIdentity` via `compressedPublicKey()`. When called
+ * with a signing identity, produces a readonly envelope (never ships signing
+ * material) — callers that need to preserve signing capability across the
+ * boundary must use {@link serializeSigningIdentity}.
+ */
+export async function serializeReadonlyIdentity(
+    identity: ReadonlyIdentity
+): Promise<SerializedReadonlyIdentity> {
+    return {
+        type: "readonly-single-key",
+        publicKey: hex.encode(await identity.compressedPublicKey()),
+    };
+}
+
+/**
+ * Rehydrate a serialized identity envelope back into an identity instance.
+ * The return type is the union of signing and readonly; use
+ * {@link isSigningSerialized} on the envelope before hydration if the caller
+ * needs to know which side it ends up on.
+ */
+export function hydrateIdentity(
+    s: SerializedIdentity
+): Identity | ReadonlyIdentity {
+    switch (s.type) {
+        case "single-key":
+            return SingleKey.fromHex(s.privateKey);
+        case "readonly-single-key":
+            return ReadonlySingleKey.fromPublicKey(hex.decode(s.publicKey));
+        case "seed":
+        case "mnemonic":
+        case "readonly-descriptor":
+            throw new Error(
+                `Serialized identity type "${s.type}" is not yet supported by hydrateIdentity`
+            );
+    }
+}

@@ -65,17 +65,8 @@ export function isBatchSignable(
 }
 
 export * from "./singleKey";
-export {
-    SeedIdentity,
-    MnemonicIdentity,
-    ReadonlyDescriptorIdentity,
-} from "./seedIdentity";
-export type {
-    SeedIdentityOptions,
-    MnemonicOptions,
-    NetworkOptions,
-    DescriptorOptions,
-} from "./seedIdentity";
+export * from "./seedIdentity";
+export * from "./serialize";
 
 // Descriptor utilities
 export {
