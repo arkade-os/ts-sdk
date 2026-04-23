@@ -2560,24 +2560,45 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
     });
 
     it("triggers refreshVtxos() from the event-driven renewal path on VTXO_ALREADY_SPENT", async () => {
-        // Exercise the renewVtxos() path directly: it rejects with
-        // VTXO_ALREADY_SPENT and the initializeSubscription handler should
-        // catch it, trigger a throttled refresh, and swallow the error.
+        // Drive the actual onContractEvent -> renewVtxos().catch(...) branch:
+        // a vtxo_received event triggers renewal, settle rejects with
+        // VTXO_ALREADY_SPENT, and the event handler must reconcile via
+        // refreshVtxos() without surfacing the error.
         const vtxo = makeExpiringVtxo(5_000);
         const { wallet, contractManager } = buildWallet([], [vtxo]);
         (wallet.settle as any).mockRejectedValue(
             new Error("VTXO_ALREADY_SPENT")
         );
 
+        let eventHandler: ((event: any) => void) | undefined;
+        contractManager.onContractEvent.mockImplementation((handler) => {
+            eventHandler = handler;
+            return () => {};
+        });
+
         const manager = new VtxoManager(wallet, undefined, {
             boardingUtxoSweep: false,
             pollIntervalMs: 60_000,
         });
-        manager.dispose();
 
-        await (manager as any).maybeRefreshAfterVtxoSpent();
+        try {
+            await flushMicrotasks();
+            await flushMicrotasks();
+            await flushMicrotasks();
 
-        expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
-        expect(contractManager.refreshVtxos).toHaveBeenCalledWith();
+            expect(eventHandler).toBeDefined();
+
+            eventHandler!({ type: "vtxo_received", vtxos: [] });
+
+            await flushMicrotasks();
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+            expect(contractManager.refreshVtxos).toHaveBeenCalledWith();
+        } finally {
+            await manager.dispose();
+        }
     });
 });
