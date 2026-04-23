@@ -3,11 +3,18 @@ import {
     DescriptorSigningRequest,
 } from "../identity/descriptorProvider";
 import { SeedIdentity } from "../identity/seedIdentity";
-import {
-    WalletRepository,
-    WalletState,
-} from "../repositories/walletRepository";
+import { WalletRepository } from "../repositories/walletRepository";
 import { Transaction } from "../utils/transaction";
+import { updateWalletState } from "../utils/syncCursors";
+
+/**
+ * Upper bound for non-hardened derivation indices (BIP-32). An HD wallet that
+ * hits this has either been bugged into monotonic advancement without spend
+ * or has been in use for generations; either way we refuse to silently
+ * wrap into the hardened range (which would throw deep inside the signing
+ * primitives with an error message that wouldn't help diagnose the cause).
+ */
+const MAX_NON_HARDENED_INDEX = 0x80000000;
 
 /**
  * Persisted HD wallet state stored under {@link WalletState.settings}`.hd`.
@@ -131,8 +138,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
      */
     async consumeNextIndex(): Promise<CurrentReceive> {
         return this.mutate(async (settings) => {
-            const index = settings.nextIndex;
-            settings.nextIndex = index + 1;
+            const index = this.takeNextIndex(settings);
             await this.saveSettings(settings);
             return {
                 index,
@@ -149,8 +155,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
      */
     async rotateReceive(): Promise<CurrentReceive> {
         return this.mutate(async (settings) => {
-            const index = settings.nextIndex;
-            settings.nextIndex = index + 1;
+            const index = this.takeNextIndex(settings);
             settings.currentReceiveIndex = index;
             await this.saveSettings(settings);
             const next: CurrentReceive = {
@@ -207,8 +212,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
                     ),
                 };
             }
-            const index = settings.nextIndex;
-            settings.nextIndex = index + 1;
+            const index = this.takeNextIndex(settings);
             settings.currentReceiveIndex = index;
             await this.saveSettings(settings);
             return {
@@ -216,6 +220,24 @@ export class HDDescriptorProvider implements DescriptorProvider {
                 descriptor: this.identity.deriveSigningDescriptor(index),
             };
         });
+    }
+
+    /**
+     * Consume the next index from `settings`, bumping `nextIndex` and
+     * returning the pre-bump value. Throws a descriptive error when the
+     * wallet has exhausted the non-hardened derivation range rather than
+     * silently bouncing off the signing primitive's opaque "index must be
+     * in [0, 2^31)" error.
+     */
+    private takeNextIndex(settings: HDWalletSettings): number {
+        if (settings.nextIndex >= MAX_NON_HARDENED_INDEX) {
+            throw new Error(
+                `HD wallet exhausted: nextIndex ${settings.nextIndex} reached the non-hardened derivation cap (${MAX_NON_HARDENED_INDEX}).`
+            );
+        }
+        const index = settings.nextIndex;
+        settings.nextIndex = index + 1;
+        return index;
     }
 
     private requireCurrent(): CurrentReceive {
@@ -257,19 +279,49 @@ export class HDDescriptorProvider implements DescriptorProvider {
                     `Refusing to reuse HD state from a different identity.`
             );
         }
+        // Validate the shape of persisted fields — the `as HDWalletSettings`
+        // cast above trusts storage, and a corrupted or partially-migrated
+        // repo could otherwise produce `NaN` descriptors or skip the index
+        // guard entirely. Fail loud rather than silently derive garbage.
+        if (
+            typeof stored.nextIndex !== "number" ||
+            !Number.isInteger(stored.nextIndex) ||
+            stored.nextIndex < 0
+        ) {
+            throw new Error(
+                `Corrupt HD settings: nextIndex is not a non-negative integer (got ${String(stored.nextIndex)}).`
+            );
+        }
+        if (
+            stored.currentReceiveIndex !== undefined &&
+            (typeof stored.currentReceiveIndex !== "number" ||
+                !Number.isInteger(stored.currentReceiveIndex) ||
+                stored.currentReceiveIndex < 0)
+        ) {
+            throw new Error(
+                `Corrupt HD settings: currentReceiveIndex is not a non-negative integer (got ${String(stored.currentReceiveIndex)}).`
+            );
+        }
         // Shallow clone so callers may mutate without aliasing the repo's copy.
         return { ...stored };
     }
 
+    /**
+     * Persist HD settings through the shared per-repo wallet-state mutex
+     * so that a concurrent writer (e.g. VTXO sync cursor advance) cannot
+     * silently clobber our update — and vice versa. Without this guard
+     * an interleave like `sync reads state → HD reads state → HD writes
+     * (drops sync's later field) → sync writes (drops HD's index bump)`
+     * would lose the index rotation, causing the next wallet boot to
+     * reuse an address that already has a VTXO credited to it.
+     */
     private async saveSettings(hd: HDWalletSettings): Promise<void> {
-        const existing = (await this.walletRepository.getWalletState()) ?? {};
-        const nextState: WalletState = {
-            ...existing,
+        await updateWalletState(this.walletRepository, (state) => ({
+            ...state,
             settings: {
-                ...(existing.settings ?? {}),
+                ...(state.settings ?? {}),
                 [HD_SETTINGS_KEY]: hd,
             },
-        };
-        await this.walletRepository.saveWalletState(nextState);
+        }));
     }
 }
