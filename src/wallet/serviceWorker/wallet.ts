@@ -27,7 +27,6 @@ import {
     type LegacySerializedIdentity,
     serializeReadonlyIdentity,
     serializeSigningIdentity,
-    toWireSerializedIdentity,
 } from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
@@ -521,8 +520,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             messageTag
         );
 
-        const wireWallet = toWireSerializedIdentity(
-            await serializeReadonlyIdentity(options.identity)
+        const serializedWallet = await serializeReadonlyIdentity(
+            options.identity
         );
 
         // INIT_WALLET retains the legacy `key` payload for wire compatibility
@@ -547,7 +546,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
 
         const busInitConfig: MessageBusInitConfig = {
-            wallet: wireWallet,
+            wallet: serializedWallet,
             arkServer: {
                 url: options.arkServerUrl,
                 publicKey: options.arkServerPublicKey,
@@ -856,7 +855,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 "Cannot re-initialize: wallet was not initialized via the SDK factory"
             );
         }
-        const wallet = toWireSerializedIdentity(await this.serializeIdentity());
+        const wallet = await this.serializeIdentity();
         this.initConfig = {
             wallet,
             arkServer: {
@@ -1365,8 +1364,7 @@ export class ServiceWorkerWallet
             );
         }
         const identity: Identity = options.identity;
-        const serialized = serializeSigningIdentity(identity);
-        const wireWallet = toWireSerializedIdentity(serialized);
+        const serializedWallet = serializeSigningIdentity(identity);
 
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
@@ -1385,7 +1383,9 @@ export class ServiceWorkerWallet
         // SingleKey-style identities can populate it. Kept optional so seed /
         // mnemonic identities simply omit it.
         const legacyPrivateKey =
-            serialized.type === "single-key" ? serialized.privateKey : null;
+            serializedWallet.type === "single-key"
+                ? serializedWallet.privateKey
+                : null;
         const initWalletPayload = {
             key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
             arkServerUrl: options.arkServerUrl,
@@ -1403,7 +1403,7 @@ export class ServiceWorkerWallet
             : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
 
         const busInitConfig: MessageBusInitConfig = {
-            wallet: wireWallet,
+            wallet: serializedWallet,
             arkServer: {
                 url: options.arkServerUrl,
                 publicKey: options.arkServerPublicKey,

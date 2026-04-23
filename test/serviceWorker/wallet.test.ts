@@ -1168,7 +1168,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         vi.unstubAllGlobals();
     });
 
-    it("SingleKey stays on legacy { privateKey } for old-worker compatibility", async () => {
+    it("SingleKey emits a tagged single-key envelope", async () => {
         const { serviceWorker } = setup();
         const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
 
@@ -1180,11 +1180,13 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         });
 
         const wallet = getInitConfigWallet(serviceWorker);
-        expect(wallet).toEqual({ privateKey: TEST_PRIVATE_KEY_HEX });
-        expect(wallet).not.toHaveProperty("type");
+        expect(wallet).toEqual({
+            type: "single-key",
+            privateKey: TEST_PRIVATE_KEY_HEX,
+        });
     });
 
-    it("ReadonlySingleKey stays on legacy { publicKey } for old-worker compatibility", async () => {
+    it("ReadonlySingleKey emits a tagged readonly-single-key envelope", async () => {
         const { serviceWorker } = setup();
         const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const identity = await signing.toReadonly();
@@ -1198,8 +1200,10 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         });
 
         const wallet = getInitConfigWallet(serviceWorker);
-        expect(wallet).toEqual({ publicKey: expectedPubKey });
-        expect(wallet).not.toHaveProperty("type");
+        expect(wallet).toEqual({
+            type: "readonly-single-key",
+            publicKey: expectedPubKey,
+        });
     });
 
     it("MnemonicIdentity emits a tagged mnemonic envelope", async () => {
@@ -1312,7 +1316,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         expect(onWire).not.toContain("extra secret");
     });
 
-    it("ServiceWorkerReadonlyWallet with a signing SingleKey downgrades to legacy { publicKey }", async () => {
+    it("ServiceWorkerReadonlyWallet with a signing SingleKey downgrades to readonly-single-key", async () => {
         const { serviceWorker } = setup();
         const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
         const expectedPubKey = hex.encode(await identity.compressedPublicKey());
@@ -1325,7 +1329,10 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         });
 
         const wallet = getInitConfigWallet(serviceWorker);
-        expect(wallet).toEqual({ publicKey: expectedPubKey });
+        expect(wallet).toEqual({
+            type: "readonly-single-key",
+            publicKey: expectedPubKey,
+        });
         expect(JSON.stringify(wallet)).not.toContain(TEST_PRIVATE_KEY_HEX);
     });
 

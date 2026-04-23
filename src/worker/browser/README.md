@@ -175,26 +175,18 @@ variant for any SDK-owned identity class.
 
 ### Wire-format compatibility
 
-For reverse compatibility with workers that predate `SerializedIdentity`,
-the SDK's `ServiceWorkerWallet` / `ServiceWorkerReadonlyWallet` factories
-still emit the historic untagged `{ privateKey }` / `{ publicKey }` shapes
-on the wire for `SingleKey` / `ReadonlySingleKey` identities (via
-`toWireSerializedIdentity`). The other variants (`seed`, `mnemonic`,
-`readonly-descriptor`) are always emitted in their tagged form; they never
-had a legacy shape, so older workers cannot handle them regardless.
+Compatibility is one-way: **old page → new worker** is supported; new
+page → old worker is not.
 
-| Identity class                | Wire shape (current)                        | Works on old worker? |
-| ----------------------------- | ------------------------------------------- | -------------------- |
-| `SingleKey`                   | `{ privateKey }` (legacy)                   | yes                  |
-| `ReadonlySingleKey`           | `{ publicKey }` (legacy)                    | yes                  |
-| `SeedIdentity`                | `{ type: "seed", ... }`                     | no — new variant     |
-| `MnemonicIdentity`            | `{ type: "mnemonic", ... }`                 | no — new variant     |
-| `ReadonlyDescriptorIdentity`  | `{ type: "readonly-descriptor", ... }`      | no — new variant     |
-
-Workers accept both tagged and legacy shapes through
-`normalizeSerializedIdentity`; a one-time `[ts-sdk]` deprecation warning
-is logged when a legacy shape is seen. Both the legacy wire emission and
-the legacy-shape adapter are slated for removal in the next major.
+- Page-side: the SDK factories always emit tagged `SerializedIdentity`
+  envelopes via `serializeSigningIdentity` / `serializeReadonlyIdentity`.
+  Upgrading a page to a version of the SDK that uses tagged envelopes
+  requires a worker build that understands them.
+- Worker-side: `normalizeSerializedIdentity` still accepts the historic
+  untagged `{ privateKey }` / `{ publicKey }` shapes so an older page
+  build can initialize a newer worker during a rolling upgrade. A
+  one-time `[ts-sdk]` deprecation warning is logged when a legacy shape
+  is seen; the adapter is slated for removal in the next major.
 
 ## Registering with the built-in update handshake
 
