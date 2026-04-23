@@ -1286,6 +1286,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const unsettledBoarding = boardingUtxos.filter(
             (u) =>
+                u.status.confirmed &&
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
                 !expiredSet.has(`${u.txid}:${u.vout}`)
         );

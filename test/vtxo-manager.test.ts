@@ -1938,6 +1938,87 @@ describe("VtxoManager - Periodic settle cooldown", () => {
             nowSpy.mockRestore();
         }
     });
+
+    // Regression: issue #438 — settling an unconfirmed boarding UTXO would hit
+    // the server which rejects with INVALID_PSBT_INPUT, and the resulting
+    // failure would bump the exponential-backoff counter. Filtering them out
+    // pre-flight means no settle call happens and no cooldown is armed.
+    const makeUnconfirmedUtxo = (value: number, vout = 0): ExtendedCoin =>
+        ({
+            txid: `unconfirmed-boarding-${value}-${vout}`,
+            vout,
+            value,
+            status: {
+                confirmed: false,
+            },
+        }) as ExtendedCoin;
+
+    it("skips unconfirmed boarding UTXOs without calling settle or bumping backoff", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const unconfirmed = makeUnconfirmedUtxo(10_000);
+            const wallet = buildBoardingWallet([unconfirmed]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await (manager as any).runPeriodicSettle([unconfirmed]);
+
+            expect(wallet.settle).not.toHaveBeenCalled();
+            expect((manager as any).lastPeriodicSettleTimestamp).toBe(0);
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
+            // The unconfirmed UTXO must NOT be marked as known — once it
+            // confirms, the next poll should pick it up.
+            expect(
+                (manager as any).knownBoardingUtxos.has(
+                    `${unconfirmed.txid}:${unconfirmed.vout}`
+                )
+            ).toBe(false);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("settles only the confirmed subset when a mix is present", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const confirmed = makeUnexpiredUtxo(10_000, 0);
+            const unconfirmed = makeUnconfirmedUtxo(5_000, 1);
+            const wallet = buildBoardingWallet([confirmed, unconfirmed]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await (manager as any).runPeriodicSettle([confirmed, unconfirmed]);
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            const callArgs = (wallet.settle as any).mock.calls[0][0];
+            // Only the confirmed UTXO should be in the inputs.
+            expect(callArgs.inputs).toHaveLength(1);
+            expect(callArgs.inputs[0].txid).toBe(confirmed.txid);
+            // Known set only tracks the one we actually tried to settle.
+            expect(
+                (manager as any).knownBoardingUtxos.has(
+                    `${confirmed.txid}:${confirmed.vout}`
+                )
+            ).toBe(true);
+            expect(
+                (manager as any).knownBoardingUtxos.has(
+                    `${unconfirmed.txid}:${unconfirmed.vout}`
+                )
+            ).toBe(false);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
 });
 
 describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {

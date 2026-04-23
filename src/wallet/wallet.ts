@@ -1422,6 +1422,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const boardingUtxos = (await this.getBoardingUtxos()).filter(
                 (utxo) =>
+                    utxo.status.confirmed &&
                     !hasBoardingTxExpired(
                         utxo,
                         boardingTimelock,
@@ -1602,12 +1603,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         ];
 
         const abortController = new AbortController();
-        const stream = this.arkProvider.getEventStream(
-            abortController.signal,
-            topics
-        );
+        let stream: AsyncIterableIterator<SettlementEvent> | undefined;
 
         try {
+            stream = this.arkProvider.getEventStream(
+                abortController.signal,
+                topics
+            );
+
             const intentId = await this.safeRegisterIntent(
                 intent,
                 params.inputs
@@ -1647,13 +1650,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
             throw error;
         } finally {
-            // Close the stream. abort() alone is insufficient if the caller
-            // throws before Batch.join starts iterating — the generator body
-            // never runs, so no abort listener is registered. stream.return()
-            // forces the generator's finally block to execute (closing the
-            // EventSource) regardless of whether iteration ever began.
+            // close the stream — abort() fires the in-body handler if the
+            // generator has started iterating; return() also releases the
+            // eager resource if the body is still suspended or never ran
+            // (e.g. safeRegisterIntent threw before Batch.join was called).
             abortController.abort();
-            await stream.return?.().catch(() => {});
+            await stream?.return?.().catch(() => {});
         }
     }
 

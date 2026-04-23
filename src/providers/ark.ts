@@ -547,29 +547,23 @@ export class RestArkProvider implements ArkProvider {
                 ? `?${topics.map((topic) => `topics=${encodeURIComponent(topic)}`).join("&")}`
                 : "";
 
+        // The EventSource is allocated inside the generator body so that
+        // abandoning the returned iterator before iteration starts does not
+        // leak the underlying SSE connection. `return()` is overridden below
+        // so that closing the generator also closes the connection even when
+        // the body is currently suspended at an await point.
+        let eventSource: EventSource | null = null;
+
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         const self = this;
-        return (async function* () {
-            // EventSource construction lives inside the generator body so the
-            // connection only opens when the consumer actually iterates. Prior
-            // eager construction leaked the socket: if the caller threw before
-            // the first .next() (e.g. safeRegisterIntent rejecting before
-            // Batch.join runs), no abort listener was attached, the outer
-            // finally's abortController.abort() became a no-op, and the
-            // EventSource stayed open — the server's SSE listener count grew
-            // unbounded. Generator entry still runs synchronously on the first
-            // .next(), before any await, so the "buffer events before
-            // iteration" property holds as long as the caller iterates
-            // immediately after receiving the stream (Batch.join's contract).
-            while (!signal?.aborted) {
-                const eventSource = new EventSource(url + queryParams);
-                const iterator = eventSourceIterator(eventSource);
+        const gen = (async function* () {
+            const abortHandler = () => eventSource?.close();
+            signal?.addEventListener("abort", abortHandler);
 
-                try {
-                    const abortHandler = () => {
-                        eventSource.close();
-                    };
-                    signal?.addEventListener("abort", abortHandler);
+            try {
+                while (!signal?.aborted) {
+                    eventSource = new EventSource(url + queryParams);
+                    const iterator = eventSourceIterator(eventSource);
 
                     try {
                         for await (const event of iterator) {
@@ -587,26 +581,39 @@ export class RestArkProvider implements ArkProvider {
                                 throw err;
                             }
                         }
+                    } catch (error) {
+                        if (
+                            error instanceof Error &&
+                            error.name === "AbortError"
+                        ) {
+                            break;
+                        }
+
+                        // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                        if (isFetchTimeoutError(error)) {
+                            console.debug("Timeout error ignored");
+                            continue;
+                        }
+
+                        console.error("Event stream error:", error);
+                        throw error;
                     } finally {
-                        signal?.removeEventListener("abort", abortHandler);
                         eventSource.close();
                     }
-                } catch (error) {
-                    if (error instanceof Error && error.name === "AbortError") {
-                        break;
-                    }
-
-                    // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                    if (isFetchTimeoutError(error)) {
-                        console.debug("Timeout error ignored");
-                        continue;
-                    }
-
-                    console.error("Event stream error:", error);
-                    throw error;
                 }
+            } finally {
+                signal?.removeEventListener("abort", abortHandler);
+                eventSource?.close();
             }
         })();
+
+        const origReturn = gen.return.bind(gen);
+        gen.return = (value) => {
+            eventSource?.close();
+            return origReturn(value);
+        };
+
+        return gen;
     }
 
     async *getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
