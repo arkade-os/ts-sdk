@@ -32,8 +32,8 @@ export class StaticDescriptorProvider implements DescriptorProvider {
     }
 
     isOurs(descriptor: string): boolean {
-        const normalized = normalizeToDescriptor(descriptor);
         try {
+            const normalized = normalizeToDescriptor(descriptor);
             const pubKey = extractPubKey(normalized);
             return pubKey.toLowerCase() === this.pubKeyHex.toLowerCase();
         } catch {

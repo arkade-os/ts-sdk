@@ -105,23 +105,24 @@ export class SeedIdentity implements Identity {
     protected readonly seed: Uint8Array;
     private readonly derivedKey: Uint8Array;
     readonly descriptor: string;
-    readonly isMainnet: boolean;
 
     constructor(seed: Uint8Array, descriptor: string) {
-        if (seed.length !== 64) throw new Error("Seed must be 64 bytes");
+        if (seed.length !== 64) {
+            throw new Error("Seed must be 64 bytes");
+        }
 
         this.seed = seed;
         this.descriptor = descriptor;
 
         const network = detectNetwork(descriptor);
-        this.isMainnet = network === networks.bitcoin;
 
         // Parse and validate the descriptor using the library
         const expansion = expand({ descriptor, network });
         const keyInfo = expansion.expansionMap?.["@0"];
 
-        if (!keyInfo?.originPath)
+        if (!keyInfo?.originPath) {
             throw new Error("Descriptor must include a key origin path");
+        }
 
         // Verify the xpub in the descriptor matches our seed
         const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
@@ -133,11 +134,13 @@ export class SeedIdentity implements Identity {
         }
 
         // Derive the private key using the full path from the descriptor
-        if (!keyInfo.path)
+        if (!keyInfo.path) {
             throw new Error("Descriptor must specify a full derivation path");
+        }
         const derivedNode = masterNode.derive(keyInfo.path);
-        if (!derivedNode.privateKey)
+        if (!derivedNode.privateKey) {
             throw new Error("Failed to derive private key");
+        }
         this.derivedKey = derivedNode.privateKey;
     }
 
@@ -170,6 +173,7 @@ export class SeedIdentity implements Identity {
 
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
         const txCpy = tx.clone();
+
         if (!inputIndexes) {
             try {
                 if (!txCpy.sign(this.derivedKey, ALL_SIGHASH)) {
@@ -180,18 +184,20 @@ export class SeedIdentity implements Identity {
                     e instanceof Error &&
                     e.message.includes("No inputs signed")
                 ) {
-                    // ignore — tx may have no inputs matching this key
+                    // ignore
                 } else {
                     throw e;
                 }
             }
-        } else {
-            for (const idx of inputIndexes) {
-                if (!txCpy.signIdx(this.derivedKey, idx, ALL_SIGHASH)) {
-                    throw new Error(`Failed to sign input #${idx}`);
-                }
+            return txCpy;
+        }
+
+        for (const inputIndex of inputIndexes) {
+            if (!txCpy.signIdx(this.derivedKey, inputIndex, ALL_SIGHASH)) {
+                throw new Error(`Failed to sign input #${inputIndex}`);
             }
         }
+
         return txCpy;
     }
 
@@ -199,8 +205,9 @@ export class SeedIdentity implements Identity {
         message: Uint8Array,
         signatureType: "schnorr" | "ecdsa" = "schnorr"
     ): Promise<Uint8Array> {
-        if (signatureType === "ecdsa")
+        if (signatureType === "ecdsa") {
             return signAsync(message, this.derivedKey, { prehash: false });
+        }
         return schnorr.signAsync(message, this.derivedKey);
     }
 
@@ -250,9 +257,11 @@ export class MnemonicIdentity extends SeedIdentity {
         phrase: string,
         opts: MnemonicOptions = {}
     ): MnemonicIdentity {
-        if (!validateMnemonic(phrase, wordlist))
+        if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");
-        const seed = mnemonicToSeedSync(phrase, opts.passphrase);
+        }
+        const passphrase = opts.passphrase;
+        const seed = mnemonicToSeedSync(phrase, passphrase);
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
@@ -277,16 +286,15 @@ export class MnemonicIdentity extends SeedIdentity {
 export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
     private readonly xOnlyPubKey: Uint8Array;
     private readonly compressedPubKey: Uint8Array;
-    readonly descriptor: string;
 
-    private constructor(descriptor: string) {
-        this.descriptor = descriptor;
+    private constructor(readonly descriptor: string) {
         const network = detectNetwork(descriptor);
         const expansion = expand({ descriptor, network });
         const keyInfo = expansion.expansionMap?.["@0"];
 
-        if (!keyInfo?.pubkey)
+        if (!keyInfo?.pubkey) {
             throw new Error("Failed to derive public key from descriptor");
+        }
 
         // For taproot, the library returns 32-byte x-only pubkey
         this.xOnlyPubKey = keyInfo.pubkey;

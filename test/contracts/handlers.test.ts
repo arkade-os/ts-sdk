@@ -107,6 +107,20 @@ describe("resolveRole", () => {
             })
         ).toBeUndefined();
     });
+
+    it("should not fall back to walletPubKey when walletDescriptor resolves but does not match", () => {
+        // A resolved descriptor is authoritative: if it doesn't match
+        // sender/receiver, we return undefined rather than trying walletPubKey.
+        const unrelatedXOnly = "a".repeat(64);
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: `tr(${unrelatedXOnly})`,
+                walletPubKey: senderXOnly,
+            })
+        ).toBeUndefined();
+    });
 });
 
 describe("DefaultContractHandler", () => {

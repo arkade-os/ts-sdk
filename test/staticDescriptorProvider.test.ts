@@ -64,6 +64,10 @@ describe("StaticDescriptorProvider", () => {
                 provider.isOurs("tr([12345678/86'/0'/0']xpubSomething/0/5)")
             ).toBe(false);
         });
+
+        it("should return false for empty string (not throw)", () => {
+            expect(provider.isOurs("")).toBe(false);
+        });
     });
 
     describe("signMessageWithDescriptor", () => {

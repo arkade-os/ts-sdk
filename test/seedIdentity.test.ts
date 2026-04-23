@@ -378,22 +378,6 @@ describe("module exports", () => {
     });
 });
 
-describe("SeedIdentity", () => {
-    describe("isMainnet", () => {
-        it("should be true for mainnet identity", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            expect(identity.isMainnet).toBe(true);
-        });
-
-        it("should be false for testnet identity", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
-            expect(identity.isMainnet).toBe(false);
-        });
-    });
-});
-
 describe("MnemonicIdentity", () => {
     it("should produce same key as SeedIdentity.fromSeed", async () => {
         const fromMnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
@@ -408,7 +392,6 @@ describe("MnemonicIdentity", () => {
     });
 });
 
-// ============================================================
 describe("backwards compatibility", () => {
     it("existing signMessage() API still works", async () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
