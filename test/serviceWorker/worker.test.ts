@@ -150,7 +150,7 @@ describe("Worker", () => {
         });
     });
 
-    it("ignores messages with unknown tags", async () => {
+    it("responds with an error for messages with unknown tags (no silent drop)", async () => {
         const handleMessage = vi.fn().mockResolvedValue(null);
         const updater: TestUpdater = {
             messageTag: "known",
@@ -182,7 +182,13 @@ describe("Worker", () => {
         });
 
         expect(handleMessage).not.toHaveBeenCalled();
-        expect(source.postMessage).not.toHaveBeenCalled();
+        // Every message must produce exactly one response (issue #448).
+        expect(source.postMessage).toHaveBeenCalledTimes(1);
+        const sent = source.postMessage.mock.calls[0][0];
+        expect(sent.id).toBe("1");
+        expect(sent.tag).toBe("unknown");
+        expect(sent.error).toBeInstanceOf(Error);
+        expect(sent.error.message).toMatch(/Unknown handler tag/);
     });
 
     it("handles init message", async () => {
