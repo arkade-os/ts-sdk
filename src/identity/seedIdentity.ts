@@ -362,12 +362,16 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
 }
 
 /**
- * SDK-internal: serialize a seed-backed signing identity into a
+ * Serialize a seed-backed signing identity into a
  * {@link SerializedSigningIdentity} envelope without exposing the
  * underlying secret material on the public instance surface.
  *
  * Called by {@link serializeSigningIdentity}; application code should
- * prefer that public dispatcher instead of calling this directly.
+ * prefer that public dispatcher instead of calling this directly. This
+ * helper is deliberately kept out of the `src/identity` barrel so it is
+ * not part of the package's public export surface.
+ *
+ * @internal
  */
 export function serializeSeedOwnedSigningIdentity(
     identity: SeedIdentity
@@ -403,10 +407,15 @@ export function serializeSeedOwnedSigningIdentity(
 }
 
 /**
- * SDK-internal: downgrade a seed-backed or descriptor-backed identity
- * into a readonly descriptor envelope. Always produces a descriptor-only
- * shape — secret material never crosses this path, even if the input is
- * a signing identity.
+ * Downgrade a seed-backed or descriptor-backed identity into a readonly
+ * descriptor envelope. Always produces a descriptor-only shape — secret
+ * material never crosses this path, even if the input is a signing
+ * identity.
+ *
+ * Deliberately kept out of the `src/identity` barrel; consumers should go
+ * through {@link serializeReadonlyIdentity}.
+ *
+ * @internal
  */
 export function serializeSeedOwnedReadonlyIdentity(
     identity: SeedIdentity | ReadonlyDescriptorIdentity

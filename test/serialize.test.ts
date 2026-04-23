@@ -436,3 +436,37 @@ describe("isSigningSerialized", () => {
         ).toBe(false);
     });
 });
+
+describe("identity barrel public surface", () => {
+    it("does not re-export the SDK-internal seed-owned serializer helpers", async () => {
+        const barrel = await import("../src/identity");
+        expect(
+            (barrel as Record<string, unknown>)
+                .serializeSeedOwnedSigningIdentity
+        ).toBeUndefined();
+        expect(
+            (barrel as Record<string, unknown>)
+                .serializeSeedOwnedReadonlyIdentity
+        ).toBeUndefined();
+    });
+
+    it("still re-exports the public identity classes and types", async () => {
+        const barrel = await import("../src/identity");
+        expect(barrel.SeedIdentity).toBe(SeedIdentity);
+        expect(barrel.MnemonicIdentity).toBe(MnemonicIdentity);
+        expect(barrel.ReadonlyDescriptorIdentity).toBe(
+            ReadonlyDescriptorIdentity
+        );
+        expect(barrel.SingleKey).toBe(SingleKey);
+        expect(barrel.ReadonlySingleKey).toBe(ReadonlySingleKey);
+        expect(barrel.serializeSigningIdentity).toBe(serializeSigningIdentity);
+        expect(barrel.serializeReadonlyIdentity).toBe(
+            serializeReadonlyIdentity
+        );
+        expect(barrel.hydrateIdentity).toBe(hydrateIdentity);
+        expect(barrel.normalizeSerializedIdentity).toBe(
+            normalizeSerializedIdentity
+        );
+        expect(barrel.isSigningSerialized).toBe(isSigningSerialized);
+    });
+});
