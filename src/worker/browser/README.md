@@ -173,13 +173,28 @@ material needed for signing; readonly envelopes never do. The helpers
 `serializeSigningIdentity` / `serializeReadonlyIdentity` select the right
 variant for any SDK-owned identity class.
 
-Compatibility caveat: the untagged shapes `{ privateKey }` / `{ publicKey }`
-emitted by pre-`SerializedIdentity` page builds are still accepted by newer
-workers (a one-time `[ts-sdk]` deprecation warning is logged). New workers
-sending tagged `seed` / `mnemonic` / `readonly-descriptor` envelopes cannot
-talk to workers that predate this change — those variants require a matching
-worker build. The legacy compatibility path is slated for removal in the next
-major.
+### Wire-format compatibility
+
+For reverse compatibility with workers that predate `SerializedIdentity`,
+the SDK's `ServiceWorkerWallet` / `ServiceWorkerReadonlyWallet` factories
+still emit the historic untagged `{ privateKey }` / `{ publicKey }` shapes
+on the wire for `SingleKey` / `ReadonlySingleKey` identities (via
+`toWireSerializedIdentity`). The other variants (`seed`, `mnemonic`,
+`readonly-descriptor`) are always emitted in their tagged form; they never
+had a legacy shape, so older workers cannot handle them regardless.
+
+| Identity class                | Wire shape (current)                        | Works on old worker? |
+| ----------------------------- | ------------------------------------------- | -------------------- |
+| `SingleKey`                   | `{ privateKey }` (legacy)                   | yes                  |
+| `ReadonlySingleKey`           | `{ publicKey }` (legacy)                    | yes                  |
+| `SeedIdentity`                | `{ type: "seed", ... }`                     | no — new variant     |
+| `MnemonicIdentity`            | `{ type: "mnemonic", ... }`                 | no — new variant     |
+| `ReadonlyDescriptorIdentity`  | `{ type: "readonly-descriptor", ... }`      | no — new variant     |
+
+Workers accept both tagged and legacy shapes through
+`normalizeSerializedIdentity`; a one-time `[ts-sdk]` deprecation warning
+is logged when a legacy shape is seen. Both the legacy wire emission and
+the legacy-shape adapter are slated for removal in the next major.
 
 ## Registering with the built-in update handshake
 

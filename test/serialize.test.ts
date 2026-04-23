@@ -12,6 +12,7 @@ import {
     serializeReadonlyIdentity,
     hydrateIdentity,
     normalizeSerializedIdentity,
+    toWireSerializedIdentity,
     isSigningSerialized,
     type SerializedSigningIdentity,
     type SerializedReadonlyIdentity,
@@ -327,6 +328,79 @@ describe("normalizeSerializedIdentity", () => {
             }) as SerializedReadonlyIdentity;
         const rehydrated = hydrateIdentity(legacyReadonly);
         expect(rehydrated).toBeInstanceOf(ReadonlySingleKey);
+    });
+});
+
+describe("toWireSerializedIdentity", () => {
+    it("downgrades single-key to legacy { privateKey }", () => {
+        const wire = toWireSerializedIdentity({
+            type: "single-key",
+            privateKey: TEST_PRIVATE_KEY_HEX,
+        });
+        expect(wire).toEqual({ privateKey: TEST_PRIVATE_KEY_HEX });
+        expect(wire).not.toHaveProperty("type");
+    });
+
+    it("downgrades readonly-single-key to legacy { publicKey }", () => {
+        const publicKey = hex.encode(new Uint8Array(33).fill(0x02));
+        const wire = toWireSerializedIdentity({
+            type: "readonly-single-key",
+            publicKey,
+        });
+        expect(wire).toEqual({ publicKey });
+        expect(wire).not.toHaveProperty("type");
+    });
+
+    it("passes seed envelopes through unchanged", () => {
+        const envelope: SerializedSigningIdentity = {
+            type: "seed",
+            seed: hex.encode(mnemonicToSeedSync(TEST_MNEMONIC)),
+            descriptor: "tr([00000000/86'/0'/0']xpub.../0/0)",
+        };
+        expect(toWireSerializedIdentity(envelope)).toBe(envelope);
+    });
+
+    it("passes mnemonic envelopes through unchanged", () => {
+        const envelope: SerializedSigningIdentity = {
+            type: "mnemonic",
+            mnemonic: TEST_MNEMONIC,
+            descriptor: "tr([00000000/86'/0'/0']xpub.../0/0)",
+            passphrase: "secret",
+        };
+        expect(toWireSerializedIdentity(envelope)).toBe(envelope);
+    });
+
+    it("passes readonly-descriptor envelopes through unchanged", () => {
+        const envelope: SerializedReadonlyIdentity = {
+            type: "readonly-descriptor",
+            descriptor: "tr([00000000/86'/0'/0']xpub.../0/0)",
+        };
+        expect(toWireSerializedIdentity(envelope)).toBe(envelope);
+    });
+
+    it("serialize -> toWire -> normalize -> hydrate round-trips a SingleKey", async () => {
+        const original = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const wire = toWireSerializedIdentity(
+            serializeSigningIdentity(original)
+        );
+        const rehydrated = hydrateIdentity(normalizeSerializedIdentity(wire));
+        expect(rehydrated).toBeInstanceOf(SingleKey);
+        expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
+            Array.from(await original.xOnlyPublicKey())
+        );
+    });
+
+    it("serialize -> toWire -> normalize -> hydrate round-trips a ReadonlySingleKey", async () => {
+        const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const original = await signing.toReadonly();
+        const wire = toWireSerializedIdentity(
+            await serializeReadonlyIdentity(original)
+        );
+        const rehydrated = hydrateIdentity(normalizeSerializedIdentity(wire));
+        expect(rehydrated).toBeInstanceOf(ReadonlySingleKey);
+        expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
+            Array.from(await original.xOnlyPublicKey())
+        );
     });
 });
 
