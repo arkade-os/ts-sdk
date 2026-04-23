@@ -613,6 +613,19 @@ export class WalletMessageHandler
         } as WalletUpdaterResponse;
     }
 
+    // Flows that surrender control to the Ark server and the other participants
+    // in a batch round: quiet gaps between protocol events can easily exceed
+    // the bus-level messageTimeoutMs. Liveness is covered out-of-band by the
+    // page-side PING / MESSAGE_BUS_NOT_INITIALIZED path triggered by concurrent
+    // short requests (GET_STATUS, GET_BALANCE, ...).
+    isLongRunning(message: WalletUpdaterRequest): boolean {
+        return (
+            message.type === "SETTLE" ||
+            message.type === "RECOVER_VTXOS" ||
+            message.type === "RENEW_VTXOS"
+        );
+    }
+
     async handleMessage(
         message: WalletUpdaterRequest
     ): Promise<WalletUpdaterResponse> {
