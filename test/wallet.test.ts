@@ -6,6 +6,7 @@ import {
     OnchainWallet,
     RestArkProvider,
     ReadonlyWallet,
+    Batch,
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
@@ -1360,5 +1361,185 @@ describe("Wallet.safeRegisterIntent", () => {
         expect(deleteIntent).not.toHaveBeenCalled();
         expect(makeDeleteIntentSignature).not.toHaveBeenCalled();
         expect(registerIntent).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("Wallet._settleImpl", () => {
+    const walletAddress =
+        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+
+    const input = {
+        txid: "a".repeat(64),
+        vout: 0,
+        value: 10_000,
+        status: { confirmed: true, block_time: 1_700_000_000 },
+    } as ExtendedCoin;
+
+    it("primes the stream before registering the intent and replays the primed event to Batch.join", async () => {
+        const callOrder: string[] = [];
+        const primedEvent = { type: "batch_started", id: "batch-1" };
+        const secondEvent = { type: "batch_finalized", id: "batch-1" };
+        const stream = {
+            next: vi
+                .fn()
+                .mockImplementationOnce(async () => {
+                    callOrder.push("stream.next#1");
+                    return { done: false, value: primedEvent };
+                })
+                .mockImplementationOnce(async () => {
+                    callOrder.push("stream.next#2");
+                    return { done: false, value: secondEvent };
+                }),
+            return: vi.fn(async () => {
+                callOrder.push("stream.return");
+                return { done: true, value: undefined };
+            }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        } as AsyncIterableIterator<any>;
+
+        const safeRegisterIntent = vi.fn(async () => {
+            callOrder.push("safeRegisterIntent");
+            return "intent-id";
+        });
+        const createBatchHandler = vi.fn().mockReturnValue({} as Batch.Handler);
+        const updateDbAfterSettle = vi.fn().mockResolvedValue(undefined);
+        const batchJoinSpy = vi
+            .spyOn(Batch, "join")
+            .mockImplementation(async (eventIterator) => {
+                callOrder.push("Batch.join");
+                expect(eventIterator).not.toBe(stream);
+                expect(await eventIterator.next()).toEqual({
+                    done: false,
+                    value: primedEvent,
+                });
+                expect(await eventIterator.next()).toEqual({
+                    done: false,
+                    value: secondEvent,
+                });
+                return "commitment-txid";
+            });
+
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue(stream),
+                deleteIntent: vi.fn().mockResolvedValue(undefined),
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            safeRegisterIntent,
+            createBatchHandler,
+            updateDbAfterSettle,
+        };
+
+        const result = await (Wallet.prototype as any)._settleImpl.call(
+            thisArg,
+            {
+                inputs: [input],
+                outputs: [],
+            }
+        );
+
+        expect(result).toBe("commitment-txid");
+        expect(callOrder).toEqual([
+            "stream.next#1",
+            "safeRegisterIntent",
+            "Batch.join",
+            "stream.next#2",
+            "stream.return",
+        ]);
+        expect(stream.next).toHaveBeenCalledTimes(2);
+        expect(stream.return).toHaveBeenCalledTimes(1);
+        expect(createBatchHandler).toHaveBeenCalledWith(
+            "intent-id",
+            [input],
+            [],
+            undefined
+        );
+        expect(updateDbAfterSettle).toHaveBeenCalledWith(
+            [input],
+            "commitment-txid"
+        );
+        batchJoinSpy.mockRestore();
+    });
+
+    it("closes the primed stream when safeRegisterIntent fails before Batch.join starts", async () => {
+        const callOrder: string[] = [];
+        let resolveFirstNext:
+            | ((value: IteratorResult<any>) => void)
+            | undefined = undefined;
+        const firstNext = new Promise<IteratorResult<any>>((resolve) => {
+            resolveFirstNext = resolve;
+        });
+        const stream = {
+            next: vi.fn(() => {
+                callOrder.push("stream.next");
+                return firstNext;
+            }),
+            return: vi.fn(async () => {
+                callOrder.push("stream.return");
+                resolveFirstNext?.({ done: true, value: undefined });
+                return { done: true, value: undefined };
+            }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        } as AsyncIterableIterator<any>;
+
+        const registerError = new Error("register failed");
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+        const batchJoinSpy = vi.spyOn(Batch, "join");
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue(stream),
+                deleteIntent,
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            safeRegisterIntent: vi.fn(async () => {
+                callOrder.push("safeRegisterIntent");
+                throw registerError;
+            }),
+            createBatchHandler: vi.fn(),
+            updateDbAfterSettle: vi.fn(),
+        };
+
+        await expect(
+            (Wallet.prototype as any)._settleImpl.call(thisArg, {
+                inputs: [input],
+                outputs: [],
+            })
+        ).rejects.toThrow("register failed");
+
+        expect(callOrder).toEqual([
+            "stream.next",
+            "safeRegisterIntent",
+            "stream.return",
+        ]);
+        expect(stream.return).toHaveBeenCalledTimes(1);
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
+        expect(batchJoinSpy).not.toHaveBeenCalled();
+        batchJoinSpy.mockRestore();
     });
 });
