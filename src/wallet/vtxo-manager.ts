@@ -503,6 +503,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private static readonly PERIODIC_SETTLE_COOLDOWN_MS = 30_000;
     private static readonly PERIODIC_SETTLE_MAX_BACKOFF_MS = 5 * 60 * 1000;
 
+    // Throttle for the VTXO_ALREADY_SPENT -> refreshVtxos() reconciliation.
+    // The server's authoritative view says our local cache is stale, so we
+    // trigger a full refresh to advance the global sync cursor. Rate-limit
+    // to guard against a buggy indexer cycling us into a refresh storm.
+    private lastVtxoSpentRefreshTimestamp = 0;
+    private vtxoSpentRefreshPromise?: Promise<void>;
+    private static readonly VTXO_SPENT_REFRESH_COOLDOWN_MS = 30_000;
+
     constructor(
         readonly wallet: IWallet,
         /** @deprecated Use settlementConfig instead */
@@ -1067,13 +1075,20 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             }
                             if (
                                 e.message.includes("VTXO_ALREADY_REGISTERED") ||
-                                e.message.includes("VTXO_ALREADY_SPENT") ||
                                 e.message.includes("duplicated input")
                             ) {
                                 // Virtual output is already being used in a concurrent
                                 // user-initiated operation. Skip silently — the
                                 // wallet's tx lock serializes these, but the
                                 // renewal will retry on the next cycle.
+                                return;
+                            }
+                            if (e.message.includes("VTXO_ALREADY_SPENT")) {
+                                // Our local VTXO cache is stale vs. the
+                                // server's authoritative view. Trigger a
+                                // throttled refresh to reconcile, then skip
+                                // — the next cycle will see fresh data.
+                                void this.maybeRefreshAfterVtxoSpent();
                                 return;
                             }
                         }
@@ -1092,6 +1107,45 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             console.error("Error renewing VTXOs from VtxoManager", e);
             return undefined;
         }
+    }
+
+    /**
+     * VTXO_ALREADY_SPENT means the server's authoritative view of VTXO state
+     * is ahead of ours — cross-instance race, pre-lock snapshot drift, or an
+     * SSE gap left stale data in the local cache. Silent-swallowing guarantees
+     * the same error on the next cycle because nothing reconciles the cache,
+     * so instead we trigger a full refreshVtxos() to advance the global sync
+     * cursor. Throttled to prevent a buggy indexer from causing a refresh
+     * storm.
+     */
+    private maybeRefreshAfterVtxoSpent(): Promise<void> {
+        if (this.vtxoSpentRefreshPromise) {
+            return this.vtxoSpentRefreshPromise;
+        }
+
+        const now = Date.now();
+        if (
+            now - this.lastVtxoSpentRefreshTimestamp <
+            VtxoManager.VTXO_SPENT_REFRESH_COOLDOWN_MS
+        ) {
+            return Promise.resolve();
+        }
+        this.lastVtxoSpentRefreshTimestamp = now;
+        this.vtxoSpentRefreshPromise = (async () => {
+            try {
+                const contractManager = await this.wallet.getContractManager();
+                await contractManager.refreshVtxos();
+            } catch (e) {
+                console.error(
+                    "Error refreshing VTXOs after VTXO_ALREADY_SPENT:",
+                    e
+                );
+            } finally {
+                this.vtxoSpentRefreshPromise = undefined;
+            }
+        })();
+
+        return this.vtxoSpentRefreshPromise;
     }
 
     /** Computes the next poll delay, applying exponential backoff on failures. */
@@ -1243,6 +1297,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
 
         const unsettledBoarding = boardingUtxos.filter(
             (u) =>
+                u.status.confirmed &&
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
                 !expiredSet.has(`${u.txid}:${u.vout}`)
         );
@@ -1298,17 +1353,35 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         }
 
         let success = false;
+        let staleCacheSkip = false;
         try {
-            await this.wallet.settle({
-                inputs: [...unsettledBoarding, ...expiringVtxos],
-                outputs: [{ address: arkAddress, amount: totalAmount }],
-            });
+            try {
+                await this.wallet.settle({
+                    inputs: [...unsettledBoarding, ...expiringVtxos],
+                    outputs: [{ address: arkAddress, amount: totalAmount }],
+                });
 
-            // Mark boarding inputs as known only after successful settle.
-            for (const u of unsettledBoarding) {
-                this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+                // Mark boarding inputs as known only after successful settle.
+                for (const u of unsettledBoarding) {
+                    this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+                }
+                success = true;
+            } catch (e) {
+                if (
+                    e instanceof Error &&
+                    e.message.includes("VTXO_ALREADY_SPENT")
+                ) {
+                    // Local VTXO cache is stale vs. the server's
+                    // authoritative view — not a transient failure.
+                    // Trigger a throttled refresh and skip this cycle
+                    // without bumping the failure counter, so the next
+                    // poll can retry once the cache reconciles.
+                    staleCacheSkip = true;
+                    void this.maybeRefreshAfterVtxoSpent();
+                } else {
+                    throw e;
+                }
             }
-            success = true;
         } finally {
             this.lastPeriodicSettleTimestamp = Date.now();
             if (includesVtxos) {
@@ -1321,7 +1394,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             }
             if (success) {
                 this.consecutivePeriodicSettleFailures = 0;
-            } else {
+            } else if (!staleCacheSkip) {
+                // Don't bump on stale-cache skip: it's not a transient
+                // failure, and the next cycle should try immediately
+                // after the refresh lands.
                 this.consecutivePeriodicSettleFailures++;
             }
         }

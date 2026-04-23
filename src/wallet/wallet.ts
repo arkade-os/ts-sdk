@@ -142,6 +142,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
     private _syncVtxosInflight?: Promise<void>;
+    // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
+    // from getVtxos() so concurrent callers (UI, VtxoManager auto-renewal,
+    // another send/settle racing the _txLock) can't reselect coins that are
+    // already on their way out. The set is in-memory only: a process crash
+    // clears it, and a stale entry only hides a VTXO (never spends one).
+    protected _pendingSpendOutpoints = new Set<string>();
 
     get assetManager(): IReadonlyAssetManager {
         return this._assetManager;
@@ -478,6 +484,11 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return vtxos
             .flatMap((_) => _.vtxos)
             .filter((vtxo) => {
+                if (
+                    this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)
+                ) {
+                    return false;
+                }
                 if (isSpendable(vtxo)) {
                     if (
                         !f.withRecoverable &&
@@ -1041,6 +1052,24 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private _txLock: Promise<void> = Promise.resolve();
 
+    private _addPendingSpends(inputs: readonly ExtendedCoin[]): void {
+        for (const input of inputs) {
+            if ("virtualStatus" in input) {
+                this._pendingSpendOutpoints.add(`${input.txid}:${input.vout}`);
+            }
+        }
+    }
+
+    private _removePendingSpends(inputs: readonly ExtendedCoin[]): void {
+        for (const input of inputs) {
+            if ("virtualStatus" in input) {
+                this._pendingSpendOutpoints.delete(
+                    `${input.txid}:${input.vout}`
+                );
+            }
+        }
+    }
+
     private _withTxLock<T>(fn: () => Promise<T>): Promise<T> {
         let release!: () => void;
         const lock = new Promise<void>((r) => (release = r));
@@ -1343,22 +1372,27 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     });
                 }
 
-                const { arkTxid, signedCheckpointTxs } =
-                    await this.buildAndSubmitOffchainTx(
+                this._addPendingSpends(selected.inputs);
+                try {
+                    const { arkTxid, signedCheckpointTxs } =
+                        await this.buildAndSubmitOffchainTx(
+                            selected.inputs,
+                            outputs
+                        );
+
+                    await this.updateDbAfterOffchainTx(
                         selected.inputs,
-                        outputs
+                        arkTxid,
+                        signedCheckpointTxs,
+                        params.amount,
+                        selected.changeAmount,
+                        selected.changeAmount > 0n ? outputs.length - 1 : 0
                     );
 
-                await this.updateDbAfterOffchainTx(
-                    selected.inputs,
-                    arkTxid,
-                    signedCheckpointTxs,
-                    params.amount,
-                    selected.changeAmount,
-                    selected.changeAmount > 0n ? outputs.length - 1 : 0
-                );
-
-                return arkTxid;
+                    return arkTxid;
+                } finally {
+                    this._removePendingSpends(selected.inputs);
+                }
             });
         }
 
@@ -1422,6 +1456,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const boardingUtxos = (await this.getBoardingUtxos()).filter(
                 (utxo) =>
+                    utxo.status.confirmed &&
                     !hasBoardingTxExpired(
                         utxo,
                         boardingTimelock,
@@ -1602,9 +1637,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         ];
 
         const abortController = new AbortController();
+        let stream: AsyncIterableIterator<SettlementEvent> | undefined;
+
+        // Optimistically hide these inputs from concurrent getVtxos() callers
+        // while the settlement is in flight. Set before safeRegisterIntent so
+        // there's no window between intent registration and coin-visibility.
+        this._addPendingSpends(params.inputs);
 
         try {
-            const stream = this.arkProvider.getEventStream(
+            stream = this.arkProvider.getEventStream(
                 abortController.signal,
                 topics
             );
@@ -1648,8 +1689,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
             throw error;
         } finally {
-            // close the stream
+            // Clear state first so a synchronous handler firing from abort()
+            // never observes a stale pending-spend set.
+            this._removePendingSpends(params.inputs);
+            // close the stream — abort() fires the in-body handler if the
+            // generator has started iterating; return() also releases the
+            // eager resource if the body is still suspended or never ran
+            // (e.g. safeRegisterIntent threw before Batch.join was called).
             abortController.abort();
+            await stream?.return?.().catch(() => {});
         }
     }
 
@@ -1662,7 +1710,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // the signed forfeits transactions to submit
         const signedForfeits: string[] = [];
 
-        const vtxos = await this.getVtxos();
+        const isVtxo = (input: ExtendedCoin): input is ExtendedVirtualCoin =>
+            "virtualStatus" in input;
+
         let settlementPsbt = Transaction.fromPSBT(
             base64.decode(event.commitmentTx)
         );
@@ -1673,13 +1723,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const connectorsLeaves = connectorsGraph?.leaves() || [];
 
         for (const input of inputs) {
-            // check if the input is an offchain "virtual" coin
-            const vtxo = vtxos.find(
-                (vtxo) => vtxo.txid === input.txid && vtxo.vout === input.vout
-            );
-
             // boarding input, we need to sign the settlement tx
-            if (!vtxo) {
+            if (!isVtxo(input)) {
                 for (let i = 0; i < settlementPsbt.inputsLength; i++) {
                     const settlementInput = settlementPsbt.getInput(i);
 
@@ -1708,7 +1753,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
 
-            if (isRecoverable(vtxo) || isSubdust(vtxo, this.dustAmount)) {
+            if (isRecoverable(input) || isSubdust(input, this.dustAmount)) {
                 // recoverable or subdust coin, we don't need to create a forfeit tx
                 continue;
             }
@@ -1743,7 +1788,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         txid: input.txid,
                         index: input.vout,
                         witnessUtxo: {
-                            amount: BigInt(vtxo.value),
+                            amount: BigInt(input.value),
                             script: VtxoScript.decode(input.tapTree).pkScript,
                         },
                         sighashType: SigHash.DEFAULT,
@@ -2404,20 +2449,27 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         const sentAmount = recipients.reduce((sum, r) => sum + r.amount, 0);
 
-        const { arkTxid, signedCheckpointTxs } =
-            await this.buildAndSubmitOffchainTx(selectedCoins, outputs);
+        // Optimistically hide selected coins from concurrent getVtxos() while
+        // the offchain tx is in flight.
+        this._addPendingSpends(selectedCoins);
+        try {
+            const { arkTxid, signedCheckpointTxs } =
+                await this.buildAndSubmitOffchainTx(selectedCoins, outputs);
 
-        await this.updateDbAfterOffchainTx(
-            selectedCoins,
-            arkTxid,
-            signedCheckpointTxs,
-            sentAmount,
-            BigInt(changeAmount),
-            changeReceiver ? changeIndex : 0,
-            changeReceiver?.assets
-        );
+            await this.updateDbAfterOffchainTx(
+                selectedCoins,
+                arkTxid,
+                signedCheckpointTxs,
+                sentAmount,
+                BigInt(changeAmount),
+                changeReceiver ? changeIndex : 0,
+                changeReceiver?.assets
+            );
 
-        return arkTxid;
+            return arkTxid;
+        } finally {
+            this._removePendingSpends(selectedCoins);
+        }
     }
 
     /**

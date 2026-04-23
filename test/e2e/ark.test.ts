@@ -608,7 +608,7 @@ describe("Common", () => {
                     expect(vtxoAfterSweep.spentBy).toBe("");
 
                     const settleTxid = await alice.wallet.settle({
-                        inputs: [vtxo],
+                        inputs: [vtxoAfterSweep],
                         outputs: [
                             {
                                 address: aliceOffchainAddress!,
