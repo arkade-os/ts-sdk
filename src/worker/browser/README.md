@@ -117,15 +117,29 @@ bus.start();
 On the client side:
 
 ```ts
+import {
+    serializeSigningIdentity,
+    serializeReadonlyIdentity,
+    SingleKey,
+    MnemonicIdentity,
+} from "@arkade-os/sdk";
+
 const sw = await MessageBus.setup("/service-worker.js");
 
-// Initialize the message bus with wallet config
+// Initialize the message bus with a tagged SerializedIdentity envelope.
+// Build one from any SDK-owned identity using the helpers:
+//   - serializeSigningIdentity(identity) for a wallet that signs.
+//   - serializeReadonlyIdentity(identity) for a watch-only wallet (always
+//     downgrades to readonly even if passed a signing identity).
+const identity = MnemonicIdentity.fromMnemonic("abandon abandon ...");
+const wallet = serializeSigningIdentity(identity);
+
 sw.postMessage({
     type: "INITIALIZE_MESSAGE_BUS",
     id: "init-1",
     tag: "INITIALIZE_MESSAGE_BUS",
     config: {
-        wallet: { privateKey: "..." },
+        wallet,
         arkServer: { url: "https://..." },
     },
 });
@@ -140,6 +154,32 @@ Notes:
 - Set `broadcast: true` on a request to fan it out to all handlers.
 - The `MessageBus` must receive `INITIALIZE_MESSAGE_BUS` before handlers process
   messages; earlier messages are dropped with a warning.
+
+### `SerializedIdentity` wire shape
+
+The `config.wallet` field carries a tagged `SerializedIdentity` envelope so
+that the worker can rehydrate the matching identity class:
+
+| Tag                    | Shape                                                             | Hydrates as                   |
+| ---------------------- | ----------------------------------------------------------------- | ----------------------------- |
+| `single-key`           | `{ type: "single-key", privateKey }`                              | `SingleKey`                   |
+| `seed`                 | `{ type: "seed", seed, descriptor }`                              | `SeedIdentity`                |
+| `mnemonic`             | `{ type: "mnemonic", mnemonic, descriptor, passphrase? }`         | `MnemonicIdentity`            |
+| `readonly-single-key`  | `{ type: "readonly-single-key", publicKey }`                      | `ReadonlySingleKey`           |
+| `readonly-descriptor`  | `{ type: "readonly-descriptor", descriptor }`                     | `ReadonlyDescriptorIdentity`  |
+
+All payloads are structured-clone safe. Signing envelopes ship the secret
+material needed for signing; readonly envelopes never do. The helpers
+`serializeSigningIdentity` / `serializeReadonlyIdentity` select the right
+variant for any SDK-owned identity class.
+
+Compatibility caveat: the untagged shapes `{ privateKey }` / `{ publicKey }`
+emitted by pre-`SerializedIdentity` page builds are still accepted by newer
+workers (a one-time `[ts-sdk]` deprecation warning is logged). New workers
+sending tagged `seed` / `mnemonic` / `readonly-descriptor` envelopes cannot
+talk to workers that predate this change — those variants require a matching
+worker build. The legacy compatibility path is slated for removal in the next
+major.
 
 ## Registering with the built-in update handshake
 
