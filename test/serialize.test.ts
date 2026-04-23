@@ -235,9 +235,15 @@ describe("hydrateIdentity round-trip", () => {
             serializeSigningIdentity(original)
         ) as MnemonicIdentity;
         expect(rehydrated).toBeInstanceOf(MnemonicIdentity);
-        expect(rehydrated.mnemonic).toBe(TEST_MNEMONIC);
-        expect(rehydrated.passphrase).toBeUndefined();
         expect(rehydrated.descriptor).toBe(original.descriptor);
+        // Secret state (mnemonic, passphrase) is off the public instance
+        // surface; verify it was retained by re-serializing and comparing
+        // the envelope rather than reading fields directly.
+        expect(serializeSigningIdentity(rehydrated)).toEqual({
+            type: "mnemonic",
+            mnemonic: TEST_MNEMONIC,
+            descriptor: original.descriptor,
+        });
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
             Array.from(await original.xOnlyPublicKey())
         );
@@ -252,10 +258,43 @@ describe("hydrateIdentity round-trip", () => {
         const rehydrated = hydrateIdentity(
             serializeSigningIdentity(original)
         ) as MnemonicIdentity;
-        expect(rehydrated.passphrase).toBe(passphrase);
+        expect(serializeSigningIdentity(rehydrated)).toEqual({
+            type: "mnemonic",
+            mnemonic: TEST_MNEMONIC,
+            descriptor: original.descriptor,
+            passphrase,
+        });
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
             Array.from(await original.xOnlyPublicKey())
         );
+    });
+
+    it("does not expose mnemonic or passphrase as public instance fields", () => {
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+            passphrase: "extra secret",
+        });
+        // Appendix A: secrets live in a module-private WeakMap, not on the
+        // instance. Property access returns undefined and enumeration does
+        // not reveal them.
+        expect(
+            (identity as unknown as Record<string, unknown>).mnemonic
+        ).toBeUndefined();
+        expect(
+            (identity as unknown as Record<string, unknown>).passphrase
+        ).toBeUndefined();
+        const ownKeys = Object.keys(identity);
+        expect(ownKeys).not.toContain("mnemonic");
+        expect(ownKeys).not.toContain("passphrase");
+    });
+
+    it("does not expose seed as a public instance field", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        expect(
+            (identity as unknown as Record<string, unknown>).seed
+        ).toBeUndefined();
+        expect(Object.keys(identity)).not.toContain("seed");
     });
 
     it("MnemonicIdentity with custom descriptor preserves the descriptor", async () => {

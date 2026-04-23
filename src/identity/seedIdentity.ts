@@ -2,6 +2,7 @@ import { validateMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
+import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
@@ -13,8 +14,28 @@ import {
     scriptExpressions,
     type Network,
 } from "@bitcoinerlab/descriptors-scure";
+import type {
+    SerializedSigningIdentity,
+    SerializedReadonlyIdentity,
+} from "./serialize";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
+
+/**
+ * Secret-bearing state for seed-backed identities, held off the public
+ * instance surface. Accessed only by the SDK-internal serializer helpers
+ * below; application code cannot read these via ordinary field access.
+ *
+ * Using a module-private WeakMap (rather than `private` / `protected`)
+ * matters because TypeScript visibility is a compile-time boundary only:
+ * JavaScript consumers could still read public fields. A WeakMap removes
+ * that enumeration path entirely.
+ */
+const seedBytes = new WeakMap<SeedIdentity, Uint8Array>();
+const mnemonicMeta = new WeakMap<
+    MnemonicIdentity,
+    { mnemonic: string; passphrase?: string }
+>();
 
 /** Used for default BIP86 derivation with network selection. */
 export interface NetworkOptions {
@@ -102,7 +123,6 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * ```
  */
 export class SeedIdentity implements Identity {
-    readonly seed: Uint8Array;
     private readonly derivedKey: Uint8Array;
     readonly descriptor: string;
 
@@ -111,7 +131,7 @@ export class SeedIdentity implements Identity {
             throw new Error("Seed must be 64 bytes");
         }
 
-        this.seed = seed;
+        seedBytes.set(this, seed);
         this.descriptor = descriptor;
 
         const network = detectNetwork(descriptor);
@@ -240,9 +260,6 @@ export class SeedIdentity implements Identity {
  * ```
  */
 export class MnemonicIdentity extends SeedIdentity {
-    readonly mnemonic: string;
-    readonly passphrase: string | undefined;
-
     private constructor(
         seed: Uint8Array,
         descriptor: string,
@@ -250,8 +267,7 @@ export class MnemonicIdentity extends SeedIdentity {
         passphrase: string | undefined
     ) {
         super(seed, descriptor);
-        this.mnemonic = mnemonic;
-        this.passphrase = passphrase;
+        mnemonicMeta.set(this, { mnemonic, passphrase });
     }
 
     /**
@@ -339,4 +355,57 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
     async compressedPublicKey(): Promise<Uint8Array> {
         return this.compressedPubKey;
     }
+}
+
+/**
+ * SDK-internal: serialize a seed-backed signing identity into a
+ * {@link SerializedSigningIdentity} envelope without exposing the
+ * underlying secret material on the public instance surface.
+ *
+ * Called by {@link serializeSigningIdentity}; application code should
+ * prefer that public dispatcher instead of calling this directly.
+ */
+export function serializeSeedOwnedSigningIdentity(
+    identity: SeedIdentity
+): SerializedSigningIdentity {
+    if (identity instanceof MnemonicIdentity) {
+        const meta = mnemonicMeta.get(identity);
+        if (!meta) {
+            throw new Error(
+                "MnemonicIdentity is missing internal secret state; was it constructed via MnemonicIdentity.fromMnemonic()?"
+            );
+        }
+        const envelope: SerializedSigningIdentity = {
+            type: "mnemonic",
+            mnemonic: meta.mnemonic,
+            descriptor: identity.descriptor,
+        };
+        if (meta.passphrase !== undefined) {
+            envelope.passphrase = meta.passphrase;
+        }
+        return envelope;
+    }
+    const seed = seedBytes.get(identity);
+    if (!seed) {
+        throw new Error(
+            "SeedIdentity is missing internal secret state; was it constructed via SeedIdentity.fromSeed() or the class constructor?"
+        );
+    }
+    return {
+        type: "seed",
+        seed: hex.encode(seed),
+        descriptor: identity.descriptor,
+    };
+}
+
+/**
+ * SDK-internal: downgrade a seed-backed or descriptor-backed identity
+ * into a readonly descriptor envelope. Always produces a descriptor-only
+ * shape — secret material never crosses this path, even if the input is
+ * a signing identity.
+ */
+export function serializeSeedOwnedReadonlyIdentity(
+    identity: SeedIdentity | ReadonlyDescriptorIdentity
+): SerializedReadonlyIdentity {
+    return { type: "readonly-descriptor", descriptor: identity.descriptor };
 }

@@ -5,6 +5,8 @@ import {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
+    serializeSeedOwnedSigningIdentity,
+    serializeSeedOwnedReadonlyIdentity,
 } from "./seedIdentity";
 
 /**
@@ -64,24 +66,11 @@ function hasToHex(identity: Identity): identity is HexExportableIdentity {
 export function serializeSigningIdentity(
     identity: Identity
 ): SerializedSigningIdentity {
-    // MnemonicIdentity must be checked before SeedIdentity (it extends it).
-    if (identity instanceof MnemonicIdentity) {
-        const envelope: SerializedSigningIdentity = {
-            type: "mnemonic",
-            mnemonic: identity.mnemonic,
-            descriptor: identity.descriptor,
-        };
-        if (identity.passphrase !== undefined) {
-            envelope.passphrase = identity.passphrase;
-        }
-        return envelope;
-    }
+    // Seed-backed identities (including MnemonicIdentity, which extends
+    // SeedIdentity) delegate to the colocated helper so secret material
+    // stays behind the WeakMap-backed internal state in seedIdentity.ts.
     if (identity instanceof SeedIdentity) {
-        return {
-            type: "seed",
-            seed: hex.encode(identity.seed),
-            descriptor: identity.descriptor,
-        };
+        return serializeSeedOwnedSigningIdentity(identity);
     }
     if (identity instanceof SingleKey) {
         return { type: "single-key", privateKey: identity.toHex() };
@@ -105,11 +94,11 @@ export function serializeSigningIdentity(
 export async function serializeReadonlyIdentity(
     identity: ReadonlyIdentity
 ): Promise<SerializedReadonlyIdentity> {
-    if (identity instanceof SeedIdentity) {
-        return { type: "readonly-descriptor", descriptor: identity.descriptor };
-    }
-    if (identity instanceof ReadonlyDescriptorIdentity) {
-        return { type: "readonly-descriptor", descriptor: identity.descriptor };
+    if (
+        identity instanceof SeedIdentity ||
+        identity instanceof ReadonlyDescriptorIdentity
+    ) {
+        return serializeSeedOwnedReadonlyIdentity(identity);
     }
     return {
         type: "readonly-single-key",

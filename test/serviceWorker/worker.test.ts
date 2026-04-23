@@ -15,6 +15,7 @@ import {
     ReadonlyDescriptorIdentity,
 } from "../../src";
 import { Wallet, ReadonlyWallet } from "../../src/wallet/wallet";
+import { serializeSigningIdentity } from "../../src/identity/serialize";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import { hex } from "@scure/base";
 
@@ -511,8 +512,15 @@ describe("Worker buildServices identity hydration", () => {
             const identity = walletCreateSpy.mock.calls[0][0]
                 .identity as MnemonicIdentity;
             expect(identity).toBeInstanceOf(MnemonicIdentity);
-            expect(identity.mnemonic).toBe(TEST_MNEMONIC);
-            expect(identity.passphrase).toBe(passphrase);
+            // Mnemonic + passphrase are kept off the public instance surface
+            // (Appendix A). Verify retention by re-serializing and comparing
+            // the envelope.
+            expect(serializeSigningIdentity(identity)).toEqual({
+                type: "mnemonic",
+                mnemonic: TEST_MNEMONIC,
+                descriptor: reference.descriptor,
+                passphrase,
+            });
         });
 
         it("hydrates readonly-descriptor into a ReadonlyDescriptorIdentity", async () => {
