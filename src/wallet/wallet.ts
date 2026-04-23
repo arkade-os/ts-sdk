@@ -1602,9 +1602,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         ];
 
         const abortController = new AbortController();
+        let stream: AsyncIterableIterator<SettlementEvent> | undefined;
 
         try {
-            const stream = this.arkProvider.getEventStream(
+            stream = this.arkProvider.getEventStream(
                 abortController.signal,
                 topics
             );
@@ -1648,8 +1649,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             });
             throw error;
         } finally {
-            // close the stream
+            // close the stream — abort() fires the in-body handler if the
+            // generator has started iterating; return() also releases the
+            // eager resource if the body is still suspended or never ran
+            // (e.g. safeRegisterIntent threw before Batch.join was called).
             abortController.abort();
+            await stream?.return?.().catch(() => {});
         }
     }
 
