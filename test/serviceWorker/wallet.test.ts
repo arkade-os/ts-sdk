@@ -4,8 +4,15 @@ import {
     ServiceWorkerReadonlyWallet,
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    SingleKey,
+    ReadonlySingleKey,
+    MnemonicIdentity,
+    SeedIdentity,
+    ReadonlyDescriptorIdentity,
 } from "../../src";
 import { ServiceWorkerWallet } from "../../src/wallet/serviceWorker/wallet";
+import { mnemonicToSeedSync } from "@scure/bip39";
+import { hex } from "@scure/base";
 import {
     WalletMessageHandler,
     DEFAULT_MESSAGE_TAG,
@@ -1110,5 +1117,231 @@ describe("preflight ping", () => {
         );
         await vi.advanceTimersByTimeAsync(2_000);
         await assertion;
+    });
+});
+
+describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
+    const messageTag = DEFAULT_MESSAGE_TAG;
+    const TEST_MNEMONIC =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const TEST_PRIVATE_KEY_HEX =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    const initResponder = (message: any) => {
+        if (message.tag === "INITIALIZE_MESSAGE_BUS") {
+            return { id: message.id, tag: "INITIALIZE_MESSAGE_BUS" };
+        }
+        if (message.type === "INIT_WALLET") {
+            return {
+                id: message.id,
+                tag: messageTag,
+                type: "WALLET_INITIALIZED",
+            };
+        }
+        return null;
+    };
+
+    const setup = () => {
+        const harness = createServiceWorkerHarness(initResponder);
+        vi.stubGlobal("navigator", {
+            serviceWorker: harness.navigatorServiceWorker,
+        } as any);
+        return harness;
+    };
+
+    const storage = () => ({
+        walletRepository: new InMemoryWalletRepository(),
+        contractRepository: new InMemoryContractRepository(),
+    });
+
+    const getInitConfigWallet = (serviceWorker: {
+        postMessage: ReturnType<typeof vi.fn>;
+    }): unknown => {
+        const call = serviceWorker.postMessage.mock.calls.find(
+            ([msg]: any) => msg?.tag === "INITIALIZE_MESSAGE_BUS"
+        );
+        expect(call).toBeDefined();
+        return call![0].config.wallet;
+    };
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it("SingleKey stays on legacy { privateKey } for old-worker compatibility", async () => {
+        const { serviceWorker } = setup();
+        const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker);
+        expect(wallet).toEqual({ privateKey: TEST_PRIVATE_KEY_HEX });
+        expect(wallet).not.toHaveProperty("type");
+    });
+
+    it("ReadonlySingleKey stays on legacy { publicKey } for old-worker compatibility", async () => {
+        const { serviceWorker } = setup();
+        const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const identity = await signing.toReadonly();
+        const expectedPubKey = hex.encode(await identity.compressedPublicKey());
+
+        await ServiceWorkerReadonlyWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker);
+        expect(wallet).toEqual({ publicKey: expectedPubKey });
+        expect(wallet).not.toHaveProperty("type");
+    });
+
+    it("MnemonicIdentity emits a tagged mnemonic envelope", async () => {
+        const { serviceWorker } = setup();
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker);
+        expect(wallet).toEqual({
+            type: "mnemonic",
+            mnemonic: TEST_MNEMONIC,
+            descriptor: identity.descriptor,
+        });
+    });
+
+    it("MnemonicIdentity with passphrase includes it in the envelope", async () => {
+        const { serviceWorker } = setup();
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+            passphrase: "extra secret",
+        });
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker) as {
+            type: string;
+            passphrase?: string;
+        };
+        expect(wallet.type).toBe("mnemonic");
+        expect(wallet.passphrase).toBe("extra secret");
+    });
+
+    it("SeedIdentity emits a tagged seed envelope", async () => {
+        const { serviceWorker } = setup();
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker);
+        expect(wallet).toEqual({
+            type: "seed",
+            seed: hex.encode(seed),
+            descriptor: identity.descriptor,
+        });
+    });
+
+    it("ReadonlyDescriptorIdentity emits a tagged readonly-descriptor envelope", async () => {
+        const { serviceWorker } = setup();
+        const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const identity = ReadonlyDescriptorIdentity.fromDescriptor(
+            reference.descriptor
+        );
+
+        await ServiceWorkerReadonlyWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker);
+        expect(wallet).toEqual({
+            type: "readonly-descriptor",
+            descriptor: reference.descriptor,
+        });
+    });
+
+    it("ServiceWorkerReadonlyWallet downgrades a signing mnemonic identity to readonly-descriptor", async () => {
+        const { serviceWorker } = setup();
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+            passphrase: "extra secret",
+        });
+
+        await ServiceWorkerReadonlyWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker);
+        expect(wallet).toEqual({
+            type: "readonly-descriptor",
+            descriptor: identity.descriptor,
+        });
+        const onWire = JSON.stringify(wallet);
+        expect(onWire).not.toContain("abandon");
+        expect(onWire).not.toContain("extra secret");
+    });
+
+    it("ServiceWorkerReadonlyWallet with a signing SingleKey downgrades to legacy { publicKey }", async () => {
+        const { serviceWorker } = setup();
+        const identity = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+        const expectedPubKey = hex.encode(await identity.compressedPublicKey());
+
+        await ServiceWorkerReadonlyWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            storage: storage(),
+        });
+
+        const wallet = getInitConfigWallet(serviceWorker);
+        expect(wallet).toEqual({ publicKey: expectedPubKey });
+        expect(JSON.stringify(wallet)).not.toContain(TEST_PRIVATE_KEY_HEX);
+    });
+
+    it("ServiceWorkerWallet.create rejects a ReadonlyIdentity input", async () => {
+        const { serviceWorker } = setup();
+        const readonly = ReadonlySingleKey.fromPublicKey(
+            await SingleKey.fromHex(TEST_PRIVATE_KEY_HEX).compressedPublicKey()
+        );
+
+        await expect(
+            ServiceWorkerWallet.create({
+                serviceWorker: serviceWorker as any,
+                arkServerUrl: "https://ark.test",
+                identity: readonly as any,
+                storage: storage(),
+            })
+        ).rejects.toThrow(/requires a signing Identity/);
     });
 });
