@@ -131,6 +131,17 @@ export function hydrateIdentity(
             });
         case "readonly-descriptor":
             return ReadonlyDescriptorIdentity.fromDescriptor(s.descriptor);
+        default:
+            // Belt-and-suspenders: `normalizeSerializedIdentity` already
+            // rejects unknown `type` values at the wire boundary. Without
+            // this throw, an unknown type would fall through and return
+            // undefined, which callers would then cast to Identity and
+            // crash downstream with an opaque error.
+            throw new Error(
+                `Unknown serialized identity type: ${String(
+                    (s as { type: unknown }).type
+                )}`
+            );
     }
 }
 
@@ -160,7 +171,10 @@ let warnedLegacyShape = false;
 export function normalizeSerializedIdentity(
     shape: SerializedIdentity | LegacySerializedIdentity
 ): SerializedIdentity {
-    if ("type" in shape) return shape;
+    if ("type" in shape) {
+        assertValidSerializedIdentity(shape);
+        return shape;
+    }
     if (!warnedLegacyShape) {
         warnedLegacyShape = true;
         console.warn(
@@ -170,11 +184,63 @@ export function normalizeSerializedIdentity(
                 "the next major."
         );
     }
-    if ("privateKey" in shape) {
+    if ("privateKey" in shape && typeof shape.privateKey === "string") {
         return { type: "single-key", privateKey: shape.privateKey };
     }
-    if ("publicKey" in shape) {
+    if ("publicKey" in shape && typeof shape.publicKey === "string") {
         return { type: "readonly-single-key", publicKey: shape.publicKey };
     }
     throw new Error("Unrecognized serialized identity shape");
+}
+
+/**
+ * Runtime-validate that a tagged envelope carries the fields its variant
+ * requires. The SDK's own serializer produces well-formed envelopes; this
+ * guard exists so a malformed message (older SDK version mismatch,
+ * hand-built config, etc.) fails loudly at the wire boundary rather than
+ * with an opaque `"Cannot read properties of undefined"` deep inside a
+ * hydrator.
+ */
+function assertValidSerializedIdentity(s: {
+    type: unknown;
+}): asserts s is SerializedIdentity {
+    const kind = s.type;
+    const bad = (field: string, expected: string): never => {
+        throw new Error(
+            `Malformed serialized identity ({ type: ${JSON.stringify(kind)} }): ` +
+                `missing or invalid "${field}" (expected ${expected})`
+        );
+    };
+    const asStr = (key: string): string => {
+        const v = (s as Record<string, unknown>)[key];
+        return typeof v === "string" ? v : bad(key, "string");
+    };
+    switch (kind) {
+        case "single-key":
+            asStr("privateKey");
+            return;
+        case "readonly-single-key":
+            asStr("publicKey");
+            return;
+        case "seed":
+            asStr("seed");
+            asStr("descriptor");
+            return;
+        case "mnemonic": {
+            asStr("mnemonic");
+            asStr("descriptor");
+            const passphrase = (s as Record<string, unknown>).passphrase;
+            if (passphrase !== undefined && typeof passphrase !== "string") {
+                bad("passphrase", "string | undefined");
+            }
+            return;
+        }
+        case "readonly-descriptor":
+            asStr("descriptor");
+            return;
+        default:
+            throw new Error(
+                `Unknown serialized identity type: ${String(kind)}`
+            );
+    }
 }

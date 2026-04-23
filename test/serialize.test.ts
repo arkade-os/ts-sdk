@@ -395,6 +395,89 @@ describe("normalizeSerializedIdentity", () => {
         const rehydrated = hydrateIdentity(legacyReadonly);
         expect(rehydrated).toBeInstanceOf(ReadonlySingleKey);
     });
+
+    it("rejects tagged envelopes with unknown type", () => {
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "evil",
+                privateKey: TEST_PRIVATE_KEY_HEX,
+            } as unknown as SerializedSigningIdentity)
+        ).toThrow(/Unknown serialized identity type: evil/);
+    });
+
+    it("rejects tagged envelopes missing required fields with a clear error", () => {
+        // Each variant throws with a message that names the envelope type
+        // and the missing/invalid field, not an opaque downstream error.
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "single-key",
+            } as unknown as SerializedSigningIdentity)
+        ).toThrow(/Malformed.*"single-key".*"privateKey"/);
+
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "readonly-single-key",
+            } as unknown as SerializedReadonlyIdentity)
+        ).toThrow(/Malformed.*"readonly-single-key".*"publicKey"/);
+
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "seed",
+                descriptor: "tr(...)",
+            } as unknown as SerializedSigningIdentity)
+        ).toThrow(/Malformed.*"seed".*"seed"/);
+
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "seed",
+                seed: "abcd",
+            } as unknown as SerializedSigningIdentity)
+        ).toThrow(/Malformed.*"seed".*"descriptor"/);
+
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "mnemonic",
+                descriptor: "tr(...)",
+            } as unknown as SerializedSigningIdentity)
+        ).toThrow(/Malformed.*"mnemonic".*"mnemonic"/);
+
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "mnemonic",
+                mnemonic: TEST_MNEMONIC,
+                descriptor: "tr(...)",
+                passphrase: 42,
+            } as unknown as SerializedSigningIdentity)
+        ).toThrow(/Malformed.*"mnemonic".*"passphrase"/);
+
+        expect(() =>
+            normalizeSerializedIdentity({
+                type: "readonly-descriptor",
+            } as unknown as SerializedReadonlyIdentity)
+        ).toThrow(/Malformed.*"readonly-descriptor".*"descriptor"/);
+    });
+
+    it("accepts a mnemonic envelope with undefined passphrase", () => {
+        const shape: SerializedSigningIdentity = {
+            type: "mnemonic",
+            mnemonic: TEST_MNEMONIC,
+            descriptor: "tr(...)",
+        };
+        expect(normalizeSerializedIdentity(shape)).toBe(shape);
+    });
+});
+
+describe("hydrateIdentity defensive default", () => {
+    it("throws on an unknown serialized identity type", () => {
+        // Direct call (bypassing normalize). The switch has a `default`
+        // so an unknown type can't silently produce undefined.
+        expect(() =>
+            hydrateIdentity({
+                type: "evil",
+                privateKey: "00",
+            } as unknown as SerializedSigningIdentity)
+        ).toThrow(/Unknown serialized identity type: evil/);
+    });
 });
 
 describe("isSigningSerialized", () => {
