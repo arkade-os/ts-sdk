@@ -486,9 +486,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         // Step 4 (rare): batch-fetch all ambiguous candidate txs at once
         if (ambiguousIndices.length > 0) {
-            const allCandidateTxids = [
-                ...new Set(ambiguousCandidates.flat()),
-            ];
+            const allCandidateTxids = [...new Set(ambiguousCandidates.flat())];
             const fetched =
                 await this.chain.fetchTransactions(allCandidateTxids);
             const txMap = new Map(fetched.map((t) => [t.txID, t.hex]));
@@ -672,6 +670,11 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                 this.chain.unsubscribeScriptStatus(script).catch(() => {});
             }
         };
+    }
+
+    /** Close the underlying WebSocket connection. */
+    async close(): Promise<void> {
+        await this.chain.close();
     }
 }
 
