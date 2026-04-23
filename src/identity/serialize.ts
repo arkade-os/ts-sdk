@@ -168,6 +168,29 @@ let warnedLegacyShape = false;
  * envelopes via {@link serializeSigningIdentity} /
  * {@link serializeReadonlyIdentity}.
  */
+/**
+ * Map a tagged {@link SerializedIdentity} to the shape emitted on the
+ * messageBus wire.
+ *
+ * - `single-key` → legacy `{ privateKey }`
+ * - `readonly-single-key` → legacy `{ publicKey }`
+ * - every other variant → returned unchanged (those variants did not exist
+ *   before tagged envelopes, so there is no legacy shape to downgrade to).
+ *
+ * This downgrade preserves wire compatibility with workers that predate
+ * `SerializedIdentity` for the historic `SingleKey` / `ReadonlySingleKey`
+ * flows. Workers accept both shapes via {@link normalizeSerializedIdentity}.
+ *
+ * Slated for removal alongside the legacy adapter in the next major.
+ */
+export function toWireSerializedIdentity(
+    s: SerializedIdentity
+): SerializedIdentity | LegacySerializedIdentity {
+    if (s.type === "single-key") return { privateKey: s.privateKey };
+    if (s.type === "readonly-single-key") return { publicKey: s.publicKey };
+    return s;
+}
+
 export function normalizeSerializedIdentity(
     shape: SerializedIdentity | LegacySerializedIdentity
 ): SerializedIdentity {

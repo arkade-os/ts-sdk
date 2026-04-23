@@ -27,6 +27,7 @@ import {
     type LegacySerializedIdentity,
     serializeReadonlyIdentity,
     serializeSigningIdentity,
+    toWireSerializedIdentity,
 } from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
@@ -520,7 +521,9 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             messageTag
         );
 
-        const serialized = await serializeReadonlyIdentity(options.identity);
+        const wireWallet = toWireSerializedIdentity(
+            await serializeReadonlyIdentity(options.identity)
+        );
 
         // INIT_WALLET retains the legacy `key` payload for wire compatibility
         // with older workers; the current handler does not read it.
@@ -544,7 +547,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
 
         const busInitConfig: MessageBusInitConfig = {
-            wallet: serialized,
+            wallet: wireWallet,
             arkServer: {
                 url: options.arkServerUrl,
                 publicKey: options.arkServerPublicKey,
@@ -853,7 +856,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 "Cannot re-initialize: wallet was not initialized via the SDK factory"
             );
         }
-        const wallet = await this.serializeIdentity();
+        const wallet = toWireSerializedIdentity(await this.serializeIdentity());
         this.initConfig = {
             wallet,
             arkServer: {
@@ -1363,6 +1366,7 @@ export class ServiceWorkerWallet
         }
         const identity: Identity = options.identity;
         const serialized = serializeSigningIdentity(identity);
+        const wireWallet = toWireSerializedIdentity(serialized);
 
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
@@ -1399,7 +1403,7 @@ export class ServiceWorkerWallet
             : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
 
         const busInitConfig: MessageBusInitConfig = {
-            wallet: serialized,
+            wallet: wireWallet,
             arkServer: {
                 url: options.arkServerUrl,
                 publicKey: options.arkServerPublicKey,
