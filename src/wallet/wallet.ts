@@ -1422,6 +1422,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
             const boardingUtxos = (await this.getBoardingUtxos()).filter(
                 (utxo) =>
+                    utxo.status.confirmed &&
                     !hasBoardingTxExpired(
                         utxo,
                         boardingTimelock,
