@@ -1260,6 +1260,8 @@ describe("Wallet._settleImpl", () => {
                 getEventStream: vi.fn().mockReturnValue(stream),
                 deleteIntent: vi.fn().mockResolvedValue(undefined),
             },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
             makeRegisterIntentSignature: vi.fn().mockResolvedValue({
                 proof: "register-proof",
@@ -1337,6 +1339,8 @@ describe("Wallet._settleImpl", () => {
                 getEventStream: vi.fn().mockReturnValue(stream),
                 deleteIntent,
             },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
             getAddress: vi.fn().mockResolvedValue(walletAddress),
             makeRegisterIntentSignature: vi.fn().mockResolvedValue({
                 proof: "register-proof",
