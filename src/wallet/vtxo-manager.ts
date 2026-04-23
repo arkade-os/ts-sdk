@@ -508,6 +508,7 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     // trigger a full refresh to advance the global sync cursor. Rate-limit
     // to guard against a buggy indexer cycling us into a refresh storm.
     private lastVtxoSpentRefreshTimestamp = 0;
+    private vtxoSpentRefreshPromise?: Promise<void>;
     private static readonly VTXO_SPENT_REFRESH_COOLDOWN_MS = 30_000;
 
     constructor(
@@ -1117,24 +1118,34 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
      * cursor. Throttled to prevent a buggy indexer from causing a refresh
      * storm.
      */
-    private async maybeRefreshAfterVtxoSpent(): Promise<void> {
+    private maybeRefreshAfterVtxoSpent(): Promise<void> {
+        if (this.vtxoSpentRefreshPromise) {
+            return this.vtxoSpentRefreshPromise;
+        }
+
         const now = Date.now();
         if (
             now - this.lastVtxoSpentRefreshTimestamp <
             VtxoManager.VTXO_SPENT_REFRESH_COOLDOWN_MS
         ) {
-            return;
+            return Promise.resolve();
         }
         this.lastVtxoSpentRefreshTimestamp = now;
-        try {
-            const contractManager = await this.wallet.getContractManager();
-            await contractManager.refreshVtxos();
-        } catch (e) {
-            console.error(
-                "Error refreshing VTXOs after VTXO_ALREADY_SPENT:",
-                e
-            );
-        }
+        this.vtxoSpentRefreshPromise = (async () => {
+            try {
+                const contractManager = await this.wallet.getContractManager();
+                await contractManager.refreshVtxos();
+            } catch (e) {
+                console.error(
+                    "Error refreshing VTXOs after VTXO_ALREADY_SPENT:",
+                    e
+                );
+            } finally {
+                this.vtxoSpentRefreshPromise = undefined;
+            }
+        })();
+
+        return this.vtxoSpentRefreshPromise;
     }
 
     /** Computes the next poll delay, applying exponential backoff on failures. */

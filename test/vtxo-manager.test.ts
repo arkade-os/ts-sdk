@@ -2559,6 +2559,38 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         }
     });
 
+    it("deduplicates concurrent refreshVtxos() calls while a refresh is in flight", async () => {
+        const { wallet, contractManager } = buildWallet([], []);
+        let resolveRefresh!: () => void;
+        const refreshPromise = new Promise<void>((resolve) => {
+            resolveRefresh = resolve;
+        });
+        contractManager.refreshVtxos.mockReturnValue(refreshPromise);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        try {
+            const first = (manager as any).maybeRefreshAfterVtxoSpent();
+            const second = (manager as any).maybeRefreshAfterVtxoSpent();
+
+            expect(first).toBe(second);
+
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+
+            resolveRefresh();
+            await Promise.all([first, second]);
+
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+        } finally {
+            await manager.dispose();
+        }
+    });
+
     it("triggers refreshVtxos() from the event-driven renewal path on VTXO_ALREADY_SPENT", async () => {
         // Drive the actual onContractEvent -> renewVtxos().catch(...) branch:
         // a vtxo_received event triggers renewal, settle rejects with
