@@ -131,7 +131,11 @@ export class SeedIdentity implements Identity {
             throw new Error("Seed must be 64 bytes");
         }
 
-        seedBytes.set(this, seed);
+        // Defensive copy: `derivedKey` and `descriptor` are computed eagerly
+        // from the bytes we're about to stash, so a later mutation of the
+        // caller's buffer must not drift the serialized `seed` out of sync
+        // with the live identity state.
+        seedBytes.set(this, new Uint8Array(seed));
         this.descriptor = descriptor;
 
         const network = detectNetwork(descriptor);

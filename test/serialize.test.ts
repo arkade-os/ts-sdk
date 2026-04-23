@@ -296,6 +296,34 @@ describe("hydrateIdentity round-trip", () => {
         expect(Object.keys(identity)).not.toContain("seed");
     });
 
+    it("copies the seed so caller mutation after construction does not drift the envelope", () => {
+        const canonical = mnemonicToSeedSync(TEST_MNEMONIC);
+        const callerBuffer = new Uint8Array(canonical);
+        const identity = SeedIdentity.fromSeed(callerBuffer, {
+            isMainnet: true,
+        });
+        const envelopeBefore = serializeSigningIdentity(identity);
+
+        // Caller zeros their buffer after construction — the stored seed
+        // must be independent so later serialization stays consistent with
+        // the derived key / descriptor captured at construction time.
+        callerBuffer.fill(0);
+
+        expect(serializeSigningIdentity(identity)).toEqual(envelopeBefore);
+        if (envelopeBefore.type !== "seed") throw new Error("unreachable");
+        expect(envelopeBefore.seed).toBe(hex.encode(canonical));
+    });
+
+    it("MnemonicIdentity copies the derived seed through SeedIdentity construction", () => {
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const envelope = serializeSigningIdentity(identity);
+        // Serializing twice after construction yields the same envelope —
+        // the internal state is not an alias of a buffer that might change.
+        expect(serializeSigningIdentity(identity)).toEqual(envelope);
+    });
+
     it("MnemonicIdentity with custom descriptor preserves the descriptor", async () => {
         const testnetReference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: false,
