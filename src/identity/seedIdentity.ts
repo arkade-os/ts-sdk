@@ -102,7 +102,7 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * ```
  */
 export class SeedIdentity implements Identity {
-    protected readonly seed: Uint8Array;
+    readonly seed: Uint8Array;
     private readonly derivedKey: Uint8Array;
     readonly descriptor: string;
 
@@ -240,8 +240,18 @@ export class SeedIdentity implements Identity {
  * ```
  */
 export class MnemonicIdentity extends SeedIdentity {
-    private constructor(seed: Uint8Array, descriptor: string) {
+    readonly mnemonic: string;
+    readonly passphrase: string | undefined;
+
+    private constructor(
+        seed: Uint8Array,
+        descriptor: string,
+        mnemonic: string,
+        passphrase: string | undefined
+    ) {
         super(seed, descriptor);
+        this.mnemonic = mnemonic;
+        this.passphrase = passphrase;
     }
 
     /**
@@ -265,7 +275,7 @@ export class MnemonicIdentity extends SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new MnemonicIdentity(seed, descriptor);
+        return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
     }
 }
 

@@ -1,6 +1,11 @@
 import { hex } from "@scure/base";
 import type { Identity, ReadonlyIdentity } from ".";
 import { SingleKey, ReadonlySingleKey } from "./singleKey";
+import {
+    SeedIdentity,
+    MnemonicIdentity,
+    ReadonlyDescriptorIdentity,
+} from "./seedIdentity";
 
 /**
  * Tagged envelope for a signing identity transported across the
@@ -59,6 +64,25 @@ function hasToHex(identity: Identity): identity is HexExportableIdentity {
 export function serializeSigningIdentity(
     identity: Identity
 ): SerializedSigningIdentity {
+    // MnemonicIdentity must be checked before SeedIdentity (it extends it).
+    if (identity instanceof MnemonicIdentity) {
+        const envelope: SerializedSigningIdentity = {
+            type: "mnemonic",
+            mnemonic: identity.mnemonic,
+            descriptor: identity.descriptor,
+        };
+        if (identity.passphrase !== undefined) {
+            envelope.passphrase = identity.passphrase;
+        }
+        return envelope;
+    }
+    if (identity instanceof SeedIdentity) {
+        return {
+            type: "seed",
+            seed: hex.encode(identity.seed),
+            descriptor: identity.descriptor,
+        };
+    }
     if (identity instanceof SingleKey) {
         return { type: "single-key", privateKey: identity.toHex() };
     }
@@ -81,6 +105,12 @@ export function serializeSigningIdentity(
 export async function serializeReadonlyIdentity(
     identity: ReadonlyIdentity
 ): Promise<SerializedReadonlyIdentity> {
+    if (identity instanceof SeedIdentity) {
+        return { type: "readonly-descriptor", descriptor: identity.descriptor };
+    }
+    if (identity instanceof ReadonlyDescriptorIdentity) {
+        return { type: "readonly-descriptor", descriptor: identity.descriptor };
+    }
     return {
         type: "readonly-single-key",
         publicKey: hex.encode(await identity.compressedPublicKey()),
@@ -102,10 +132,15 @@ export function hydrateIdentity(
         case "readonly-single-key":
             return ReadonlySingleKey.fromPublicKey(hex.decode(s.publicKey));
         case "seed":
+            return SeedIdentity.fromSeed(hex.decode(s.seed), {
+                descriptor: s.descriptor,
+            });
         case "mnemonic":
+            return MnemonicIdentity.fromMnemonic(s.mnemonic, {
+                descriptor: s.descriptor,
+                passphrase: s.passphrase,
+            });
         case "readonly-descriptor":
-            throw new Error(
-                `Serialized identity type "${s.type}" is not yet supported by hydrateIdentity`
-            );
+            return ReadonlyDescriptorIdentity.fromDescriptor(s.descriptor);
     }
 }
