@@ -394,14 +394,7 @@ describe("SeedIdentity", () => {
     });
 });
 
-describe("MnemonicIdentity.mnemonic", () => {
-    it("should store the mnemonic on the identity", () => {
-        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-            isMainnet: true,
-        });
-        expect(identity.mnemonic).toBe(TEST_MNEMONIC);
-    });
-
+describe("MnemonicIdentity", () => {
     it("should produce same key as SeedIdentity.fromSeed", async () => {
         const fromMnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
