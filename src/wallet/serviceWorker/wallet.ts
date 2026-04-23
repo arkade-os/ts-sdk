@@ -20,7 +20,12 @@ import {
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity } from "../../identity";
+import {
+    Identity,
+    ReadonlyIdentity,
+    type SerializedIdentity,
+    type LegacySerializedIdentity,
+} from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -376,13 +381,7 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
 };
 
 type MessageBusInitConfig = {
-    wallet:
-        | {
-              privateKey: string;
-          }
-        | {
-              publicKey: string;
-          };
+    wallet: SerializedIdentity | LegacySerializedIdentity;
     arkServer: {
         url: string;
         publicKey?: string;

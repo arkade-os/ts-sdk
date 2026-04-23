@@ -6,9 +6,16 @@ import {
 } from "./browser/service-worker-manager";
 import { ArkProvider, RestArkProvider } from "../providers/ark";
 import { RestDelegatorProvider } from "../providers/delegator";
-import { ReadonlySingleKey, SingleKey } from "../identity";
+import {
+    type Identity,
+    type ReadonlyIdentity,
+    type SerializedIdentity,
+    type LegacySerializedIdentity,
+    hydrateIdentity,
+    isSigningSerialized,
+    normalizeSerializedIdentity,
+} from "../identity";
 import { ReadonlyWallet, Wallet } from "../wallet/wallet";
-import { hex } from "@scure/base";
 import type { SettlementConfig } from "../wallet/vtxo-manager";
 import type { ContractWatcherConfig } from "../contracts/contractWatcher";
 import { ContractRepository, WalletRepository } from "../repositories";
@@ -130,13 +137,7 @@ type Initialize = {
     type: "INITIALIZE_MESSAGE_BUS";
     id: string;
     config: {
-        wallet:
-            | {
-                  privateKey: string;
-              }
-            | {
-                  publicKey: string;
-              };
+        wallet: SerializedIdentity | LegacySerializedIdentity;
         arkServer: {
             url: string;
             publicKey?: string;
@@ -362,8 +363,11 @@ export class MessageBus {
         const delegatorProvider = config.delegatorUrl
             ? new RestDelegatorProvider(config.delegatorUrl)
             : undefined;
-        if ("privateKey" in config.wallet) {
-            const identity = SingleKey.fromHex(config.wallet.privateKey);
+
+        const serialized = normalizeSerializedIdentity(config.wallet);
+
+        if (isSigningSerialized(serialized)) {
+            const identity = hydrateIdentity(serialized) as Identity;
             const wallet = await Wallet.create({
                 identity,
                 arkServerUrl: config.arkServer.url,
@@ -376,26 +380,20 @@ export class MessageBus {
                 watcherConfig: config.watcherConfig,
             });
             return { wallet, arkProvider, readonlyWallet: wallet };
-        } else if ("publicKey" in config.wallet) {
-            const identity = ReadonlySingleKey.fromPublicKey(
-                hex.decode(config.wallet.publicKey)
-            );
-            const readonlyWallet = await ReadonlyWallet.create({
-                identity,
-                arkServerUrl: config.arkServer.url,
-                arkServerPublicKey: config.arkServer.publicKey,
-                indexerUrl: config.indexerUrl,
-                esploraUrl: config.esploraUrl,
-                storage,
-                delegatorProvider,
-                watcherConfig: config.watcherConfig,
-            });
-            return { readonlyWallet, arkProvider };
-        } else {
-            throw new Error(
-                "Missing privateKey or publicKey in configuration object"
-            );
         }
+
+        const identity = hydrateIdentity(serialized) as ReadonlyIdentity;
+        const readonlyWallet = await ReadonlyWallet.create({
+            identity,
+            arkServerUrl: config.arkServer.url,
+            arkServerPublicKey: config.arkServer.publicKey,
+            indexerUrl: config.indexerUrl,
+            esploraUrl: config.esploraUrl,
+            storage,
+            delegatorProvider,
+            watcherConfig: config.watcherConfig,
+        });
+        return { readonlyWallet, arkProvider };
     }
 
     private onMessage(event: ExtendableMessageEvent) {
