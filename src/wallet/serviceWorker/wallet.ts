@@ -167,7 +167,10 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     GET_RECOVERABLE_BALANCE: 20_000,
     RELOAD_WALLET: 20_000,
 
-    // Transactions — need more headroom
+    // Transactions — need more headroom.
+    // SETTLE / RECOVER_VTXOS / RENEW_VTXOS go through the streaming path and
+    // are treated as long-running on both sides of the bus: the values below
+    // are retained only for type completeness and are never enforced.
     SEND_BITCOIN: 50_000,
     SEND: 50_000,
     SETTLE: 50_000,
@@ -638,38 +641,23 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     // Like sendMessageDirect but supports streaming responses: intermediate
     // messages are forwarded via onEvent while the promise resolves on the
-    // first response for which isComplete returns true. The timeout resets
-    // on every intermediate event so long-running but progressing operations
-    // don't time out prematurely.
+    // first response for which isComplete returns true. No inactivity deadline:
+    // settlement-class flows surrender control to remote peers and can sit
+    // idle for long stretches between protocol events. Service-worker death
+    // is detected out-of-band via concurrent short requests that surface
+    // MESSAGE_BUS_NOT_INITIALIZED.
     private sendMessageStreaming(
         request: WalletUpdaterRequest,
         onEvent: (response: WalletUpdaterResponse) => void,
-        isComplete: (response: WalletUpdaterResponse) => boolean,
-        timeoutMs: number
+        isComplete: (response: WalletUpdaterResponse) => boolean
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
-            const resetTimeout = () => {
-                clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => {
-                    cleanup();
-                    reject(
-                        new ServiceWorkerTimeoutError(
-                            `Service worker message timed out (${request.type})`
-                        )
-                    );
-                }, timeoutMs);
-            };
-
             const cleanup = () => {
-                clearTimeout(timeoutId);
                 navigator.serviceWorker.removeEventListener(
                     "message",
                     messageHandler
                 );
             };
-
-            let timeoutId: ReturnType<typeof setTimeout>;
-            resetTimeout();
 
             const messageHandler = (
                 event: MessageEvent<WalletUpdaterResponse>
@@ -687,7 +675,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     cleanup();
                     resolve(response);
                 } else {
-                    resetTimeout();
                     onEvent(response);
                 }
             };
@@ -805,15 +792,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
                 return await this.sendMessageStreaming(
                     request,
                     onEvent,
-                    isComplete,
-                    timeoutMs
+                    isComplete
                 );
             } catch (error: any) {
                 if (
