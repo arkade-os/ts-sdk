@@ -1372,10 +1372,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 weight: 0,
                 birth: v.createdAt,
                 expiry: v.virtualStatus.batchExpiry
-                    ? new Date(v.virtualStatus.batchExpiry * 1000)
-                    : new Date(),
+                    ? new Date(v.virtualStatus.batchExpiry)
+                    : undefined,
             });
-            if (inputFee.value >= BigInt(v.value)) {
+            if (inputFee.satoshis >= v.value) {
                 continue;
             }
             filteredVtxos.push(v);
