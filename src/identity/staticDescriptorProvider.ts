@@ -54,12 +54,18 @@ export class StaticDescriptorProvider implements DescriptorProvider {
 
         // Use batch signing when the identity supports it (fewer confirmation popups)
         if (isBatchSignable(this.identity)) {
-            return this.identity.signMultiple(
+            const signed = await this.identity.signMultiple(
                 requests.map((r) => ({
                     tx: r.tx,
                     inputIndexes: r.inputIndexes,
                 }))
             );
+            if (signed.length !== requests.length) {
+                throw new Error(
+                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`
+                );
+            }
+            return signed;
         }
 
         const results: Transaction[] = [];

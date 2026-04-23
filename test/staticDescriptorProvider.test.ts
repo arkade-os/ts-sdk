@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { StaticDescriptorProvider } from "../src/identity/staticDescriptorProvider";
 import { SingleKey } from "../src/identity/singleKey";
+import type { BatchSignableIdentity, SignRequest } from "../src/identity";
+import type { Transaction } from "../src/utils/transaction";
 
 // Well-known test private key (32 bytes, all 0x01)
 const TEST_PRIVKEY = new Uint8Array(32).fill(1);
@@ -127,6 +129,34 @@ describe("StaticDescriptorProvider", () => {
                     },
                 ])
             ).rejects.toThrow("does not belong");
+        });
+
+        it("should throw when signMultiple returns fewer results than requests", async () => {
+            // Mirror the wallet-side guard in src/wallet/wallet.ts: a
+            // BatchSignableIdentity that violates the "one result per request"
+            // contract must be surfaced, not silently trusted.
+            const singleKey = SingleKey.fromPrivateKey(TEST_PRIVKEY);
+            const brokenIdentity: BatchSignableIdentity = Object.assign(
+                Object.create(Object.getPrototypeOf(singleKey)),
+                singleKey,
+                {
+                    signMultiple: async (
+                        _requests: SignRequest[]
+                    ): Promise<Transaction[]> => [],
+                }
+            );
+            const brokenProvider =
+                await StaticDescriptorProvider.create(brokenIdentity);
+            await expect(
+                brokenProvider.signWithDescriptor([
+                    {
+                        descriptor: `tr(${pubKeyHex})`,
+                        tx: null as any,
+                    },
+                ])
+            ).rejects.toThrow(
+                "signMultiple returned 0 transactions, expected 1"
+            );
         });
     });
 });
