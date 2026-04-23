@@ -448,6 +448,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected messageBusTimeoutMs?: number;
     protected messageTimeouts: Record<RequestType, number> =
         DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>;
+    // Denormalized from options so buildInitConfig() can rebuild the init
+    // envelope on demand for SDK-factory-created wallets. `create()` sets
+    // these immediately after construction.
+    protected arkServerUrl?: string;
+    protected arkServerPublicKey?: string;
+    protected delegatorUrl?: string;
+    protected indexerUrl?: string;
+    protected esploraUrl?: string;
+    protected watcherConfig?: Partial<
+        Omit<ContractWatcherConfig, "indexerProvider">
+    >;
+    protected settlementConfig?: SettlementConfig | false;
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<
@@ -819,17 +831,71 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Produce a serialized envelope for the wallet's identity. The base
+     * class always emits a readonly envelope; `ServiceWorkerWallet`
+     * overrides to emit a signing envelope.
+     */
+    protected async serializeIdentity(): Promise<SerializedIdentity> {
+        return serializeReadonlyIdentity(this.identity);
+    }
+
+    /**
+     * Return the cached init config, or rebuild one from live instance
+     * state when the cache was never populated. Recovery path for
+     * SDK-factory-created wallets; manual constructor bypasses do not
+     * retain enough state here and will hit the "never initialized" throw.
+     */
+    protected async buildInitConfig(): Promise<MessageBusInitConfig> {
+        if (this.initConfig) return this.initConfig;
+        if (!this.arkServerUrl) {
+            throw new Error(
+                "Cannot re-initialize: wallet was not initialized via the SDK factory"
+            );
+        }
+        const wallet = await this.serializeIdentity();
+        this.initConfig = {
+            wallet,
+            arkServer: {
+                url: this.arkServerUrl,
+                publicKey: this.arkServerPublicKey,
+            },
+            delegatorUrl: this.delegatorUrl,
+            indexerUrl: this.indexerUrl,
+            esploraUrl: this.esploraUrl,
+            watcherConfig: this.watcherConfig,
+            settlementConfig: this.settlementConfig,
+        };
+        return this.initConfig;
+    }
+
+    /** Minimal INIT_WALLET payload used on reinitialize when the cache is gone. */
+    protected buildInitWalletPayload(): RequestInitWallet["payload"] {
+        if (this.initWalletPayload) return this.initWalletPayload;
+        if (!this.arkServerUrl) {
+            throw new Error(
+                "Cannot re-initialize: wallet was not initialized via the SDK factory"
+            );
+        }
+        this.initWalletPayload = {
+            // `key` is deprecated and ignored by the current handler.
+            key: {},
+            arkServerUrl: this.arkServerUrl,
+            arkServerPublicKey: this.arkServerPublicKey,
+        };
+        return this.initWalletPayload;
+    }
+
     private async reinitialize(): Promise<void> {
         if (this.reinitPromise) return this.reinitPromise;
 
         this.reinitPromise = (async () => {
-            if (!this.initConfig || !this.initWalletPayload) {
-                throw new Error("Cannot re-initialize: missing configuration");
-            }
+            const config = await this.buildInitConfig();
+            const payload = this.buildInitWalletPayload();
 
             await initializeMessageBus(
                 this.serviceWorker,
-                this.initConfig,
+                config,
                 this.messageBusTimeoutMs
             );
 
@@ -837,7 +903,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 tag: this.messageTag,
                 type: "INIT_WALLET",
                 id: getRandomId(),
-                payload: this.initWalletPayload,
+                payload,
             };
 
             await this.sendMessageDirect(
@@ -1273,6 +1339,10 @@ export class ServiceWorkerWallet
 
     get assetManager(): IAssetManager {
         return this._assetManager;
+    }
+
+    protected async serializeIdentity(): Promise<SerializedIdentity> {
+        return serializeSigningIdentity(this.identity);
     }
 
     static async create(
