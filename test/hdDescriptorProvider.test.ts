@@ -259,5 +259,122 @@ describe("HDDescriptorProvider", () => {
             const { descriptor } = await provider.consumeNextIndex();
             expect(descriptor).not.toMatch(/\/\*\)$/);
         });
+
+        it("throws a descriptive error when nextIndex hits the non-hardened cap", async () => {
+            const repo = new InMemoryWalletRepository();
+            // Prime storage one step below the cap so the next consume bumps
+            // from 2^31-1 → 2^31, tripping the guard on the call after.
+            const identity = makeIdentity();
+            await repo.saveWalletState({
+                settings: {
+                    hd: {
+                        template: identity.getAccountDescriptor(),
+                        nextIndex: 0x7fffffff,
+                        currentReceiveIndex: 0,
+                    },
+                },
+            });
+            const provider = await HDDescriptorProvider.create(identity, repo);
+            // First call consumes 0x7fffffff (legal), bumping nextIndex to 0x80000000.
+            await provider.consumeNextIndex();
+            // Second call should trip the guard with a human-readable message.
+            await expect(provider.consumeNextIndex()).rejects.toThrow(
+                /HD wallet exhausted/i
+            );
+            await expect(provider.rotateReceive()).rejects.toThrow(
+                /HD wallet exhausted/i
+            );
+        });
+
+        it("throws when stored nextIndex is not a non-negative integer", async () => {
+            const repo = new InMemoryWalletRepository();
+            const identity = makeIdentity();
+            await repo.saveWalletState({
+                settings: {
+                    hd: {
+                        template: identity.getAccountDescriptor(),
+                        // corrupted — simulates partial migration or bad write
+                        nextIndex: "oops" as unknown as number,
+                    },
+                },
+            });
+            await expect(
+                HDDescriptorProvider.create(identity, repo)
+            ).rejects.toThrow(/corrupt hd settings.*nextindex/i);
+        });
+
+        it("throws when stored currentReceiveIndex is not a non-negative integer", async () => {
+            const repo = new InMemoryWalletRepository();
+            const identity = makeIdentity();
+            await repo.saveWalletState({
+                settings: {
+                    hd: {
+                        template: identity.getAccountDescriptor(),
+                        nextIndex: 2,
+                        currentReceiveIndex: -1,
+                    },
+                },
+            });
+            await expect(
+                HDDescriptorProvider.create(identity, repo)
+            ).rejects.toThrow(/corrupt hd settings.*currentreceiveindex/i);
+        });
+    });
+
+    describe("concurrent wallet-state writers", () => {
+        // The provider must serialise against other updateWalletState writers
+        // (e.g. VTXO sync cursor advance) so that interleaved read-modify-write
+        // cycles never silently drop either side's changes. Before the fix,
+        // HDDescriptorProvider bypassed the shared per-repo mutex and could
+        // lose index bumps under this exact race.
+        it("does not lose an HD index bump when a sync cursor advance races it", async () => {
+            const { advanceSyncCursor } = await import(
+                "../src/utils/syncCursors"
+            );
+            const repo = new InMemoryWalletRepository();
+            const { provider } = await makeProvider(repo);
+
+            // Kick both mutations off together so they contend for the mutex.
+            await Promise.all([
+                provider.rotateReceive(),
+                advanceSyncCursor(repo, 1_000_000),
+                provider.rotateReceive(),
+                advanceSyncCursor(repo, 2_000_000),
+                provider.rotateReceive(),
+            ]);
+
+            const state = await repo.getWalletState();
+            // Sync cursor landed at the higher of the two advances.
+            expect(state?.lastSyncTime).toBe(2_000_000);
+            // All three rotations are visible — currentReceiveIndex is 3
+            // (started at 0, rotated three times → 1, 2, 3), nextIndex is 4.
+            expect(state?.settings?.hd.currentReceiveIndex).toBe(3);
+            expect(state?.settings?.hd.nextIndex).toBe(4);
+            // The migration marker written by advanceSyncCursor is preserved.
+            expect(state?.settings?.vtxoCursorMigrated).toBe(true);
+        });
+
+        it("does not clobber HD settings when a concurrent clearSyncCursor runs", async () => {
+            const { advanceSyncCursor, clearSyncCursor } = await import(
+                "../src/utils/syncCursors"
+            );
+            const repo = new InMemoryWalletRepository();
+            const { provider } = await makeProvider(repo);
+            await advanceSyncCursor(repo, 500_000);
+
+            await Promise.all([
+                provider.rotateReceive(),
+                clearSyncCursor(repo),
+                provider.rotateReceive(),
+            ]);
+
+            const state = await repo.getWalletState();
+            // Cursor was cleared.
+            expect(state?.lastSyncTime).toBeUndefined();
+            expect(state?.settings?.vtxoCursorMigrated).toBeUndefined();
+            // HD rotations survived.
+            expect(state?.settings?.hd.currentReceiveIndex).toBe(2);
+            expect(state?.settings?.hd.nextIndex).toBe(3);
+        });
     });
 });
