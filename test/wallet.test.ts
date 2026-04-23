@@ -901,6 +901,173 @@ describe("Wallet", () => {
         });
     });
 
+    describe("pending-spend filtering", () => {
+        const mockArkInfo = {
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            boardingExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+            network: "mutinynet",
+            dust: BigInt(1000),
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        };
+
+        function createMockVtxo(script: string, txid: string): VirtualCoin {
+            return {
+                txid,
+                vout: 0,
+                value: 50_000,
+                status: { confirmed: false },
+                virtualStatus: {
+                    state: "preconfirmed",
+                    commitmentTxIds: ["22".repeat(32)],
+                    batchExpiry: 1767225600000,
+                },
+                spentBy: "",
+                arkTxId: "",
+                createdAt: new Date("2026-01-01T00:00:00.000Z"),
+                isUnrolled: false,
+                isSpent: false,
+                script,
+            };
+        }
+
+        async function createWalletWithVtxos(txids: string[]) {
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    return {
+                        vtxos: txids.map((txid) =>
+                            createMockVtxo(walletScript, txid)
+                        ),
+                    };
+                });
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: {
+                    getVtxos,
+                    subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                    getSubscription: async function* () {},
+                } as Partial<IndexerProvider> as IndexerProvider,
+                onchainProvider: {} as OnchainProvider,
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+            });
+
+            return { wallet };
+        }
+
+        it("getVtxos excludes outpoints present in _pendingSpendOutpoints", async () => {
+            const txidA = "a".repeat(64);
+            const txidB = "b".repeat(64);
+            const { wallet } = await createWalletWithVtxos([txidA, txidB]);
+
+            expect((await wallet.getVtxos()).map((v) => v.txid).sort()).toEqual(
+                [txidA, txidB].sort()
+            );
+
+            (wallet as any)._pendingSpendOutpoints.add(`${txidA}:0`);
+            expect((await wallet.getVtxos()).map((v) => v.txid)).toEqual([
+                txidB,
+            ]);
+
+            (wallet as any)._pendingSpendOutpoints.delete(`${txidA}:0`);
+            expect((await wallet.getVtxos()).map((v) => v.txid).sort()).toEqual(
+                [txidA, txidB].sort()
+            );
+        });
+
+        it("the in-flight set is in-memory only — a fresh instance sees the VTXO again", async () => {
+            const txid = "c".repeat(64);
+            const { wallet } = await createWalletWithVtxos([txid]);
+
+            (wallet as any)._pendingSpendOutpoints.add(`${txid}:0`);
+            expect(await wallet.getVtxos()).toHaveLength(0);
+
+            // Simulating a process restart: a brand-new wallet instance over
+            // the same repositories must surface the VTXO (no persistence).
+            const { wallet: freshWallet } = await createWalletWithVtxos([txid]);
+            expect((await freshWallet.getVtxos()).map((v) => v.txid)).toEqual([
+                txid,
+            ]);
+        });
+
+        it("_addPendingSpends tracks VTXO inputs and ignores boarding UTXOs", () => {
+            const thisArg: any = { _pendingSpendOutpoints: new Set<string>() };
+            const vtxoInput = {
+                txid: "a".repeat(64),
+                vout: 0,
+                virtualStatus: {
+                    state: "preconfirmed",
+                    commitmentTxIds: [],
+                    batchExpiry: 0,
+                },
+            };
+            const boardingInput = {
+                txid: "b".repeat(64),
+                vout: 1,
+                status: { confirmed: true },
+            };
+
+            (Wallet.prototype as any)._addPendingSpends.call(thisArg, [
+                vtxoInput,
+                boardingInput,
+            ]);
+
+            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([
+                `${vtxoInput.txid}:0`,
+            ]);
+        });
+
+        it("_removePendingSpends clears only the passed outpoints", () => {
+            const thisArg: any = {
+                _pendingSpendOutpoints: new Set<string>([
+                    `${"a".repeat(64)}:0`,
+                    `${"b".repeat(64)}:0`,
+                ]),
+            };
+            const vtxoInput = {
+                txid: "a".repeat(64),
+                vout: 0,
+                virtualStatus: {
+                    state: "preconfirmed",
+                    commitmentTxIds: [],
+                    batchExpiry: 0,
+                },
+            };
+
+            (Wallet.prototype as any)._removePendingSpends.call(thisArg, [
+                vtxoInput,
+            ]);
+
+            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([
+                `${"b".repeat(64)}:0`,
+            ]);
+        });
+    });
+
     describe("mainnet unilateral exit delay pinning", () => {
         // If this constant changes in the SDK, update both sides intentionally —
         // changing the pinned value alters derived addresses for every mainnet
