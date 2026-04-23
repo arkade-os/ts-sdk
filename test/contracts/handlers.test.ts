@@ -19,7 +19,10 @@ import {
     TEST_SERVER_PUB_KEY_HEX,
     TEST_DELEGATE_PUB_KEY,
 } from "./helpers";
-import { timelockToSequence } from "../../src/contracts/handlers/helpers";
+import {
+    resolveRole,
+    timelockToSequence,
+} from "../../src/contracts/handlers/helpers";
 
 describe("Contract Registry", () => {
     it("should have default handler registered", () => {
@@ -45,6 +48,64 @@ describe("Contract Registry", () => {
 
     it("should return undefined for unregistered handler", () => {
         expect(contractHandlers.get("custom")).toBeUndefined();
+    });
+});
+
+describe("resolveRole", () => {
+    const receiverXOnly =
+        "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+    const senderXOnly =
+        "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+    const serverXOnly =
+        "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+
+    const contract: Contract = {
+        type: "vhtlc",
+        params: {
+            sender: senderXOnly,
+            receiver: receiverXOnly,
+            server: serverXOnly,
+            hash: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+            refundLocktime: "800000",
+            claimDelay: "10",
+            refundDelay: "12",
+            refundNoReceiverDelay: "14",
+        },
+        script: "script",
+        address: "address",
+        state: "active",
+        createdAt: Date.now(),
+    };
+
+    it("should resolve the role from walletDescriptor", () => {
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: `tr(${receiverXOnly.toUpperCase()})`,
+            })
+        ).toBe("receiver");
+    });
+
+    it("should fall back to walletPubKey when walletDescriptor is unresolvable", () => {
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
+                walletPubKey: senderXOnly,
+            })
+        ).toBe("sender");
+    });
+
+    it("should return undefined when neither walletDescriptor nor walletPubKey resolves", () => {
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
+            })
+        ).toBeUndefined();
     });
 });
 

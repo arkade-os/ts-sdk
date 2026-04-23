@@ -45,7 +45,7 @@ export function sequenceToTimelock(sequence: number): RelativeTimelock {
 }
 
 /**
- * Resolve wallet's role from explicit role or by matching pubkey.
+ * Resolve wallet's role from explicit role or by matching descriptor/pubkey.
  */
 export function resolveRole(
     contract: Contract,
@@ -56,28 +56,44 @@ export function resolveRole(
         return context.role;
     }
 
-    // Try to match wallet descriptor/pubkey against contract params.
-    // All comparisons go through extractRawPubKey which lowercases hex so
-    // mixed-case descriptors still match (and returns undefined for HD
-    // descriptors we can't resolve without derivation).
-    const walletKey = context.walletDescriptor ?? context.walletPubKey;
-    if (walletKey) {
-        const rawWalletKey = extractRawPubKey(walletKey);
+    const senderKey = contract.params.sender
+        ? extractRawPubKey(contract.params.sender)
+        : undefined;
+    const receiverKey = contract.params.receiver
+        ? extractRawPubKey(contract.params.receiver)
+        : undefined;
+
+    const matchRole = (
+        rawWalletKey: string | undefined
+    ): "sender" | "receiver" | undefined => {
         if (!rawWalletKey) return undefined;
-
-        const senderKey = contract.params.sender
-            ? extractRawPubKey(contract.params.sender)
-            : undefined;
-        const receiverKey = contract.params.receiver
-            ? extractRawPubKey(contract.params.receiver)
-            : undefined;
-
         if (senderKey && rawWalletKey === senderKey) {
             return "sender";
         }
         if (receiverKey && rawWalletKey === receiverKey) {
             return "receiver";
         }
+        return undefined;
+    };
+
+    // Try the preferred descriptor first. If it cannot be resolved
+    // (for example an HD descriptor without derivation support), fall back
+    // to walletPubKey for backward compatibility.
+    if (context.walletDescriptor) {
+        const walletDescriptorKey = extractRawPubKey(context.walletDescriptor);
+        const matchedRole = matchRole(walletDescriptorKey);
+        if (matchedRole) {
+            return matchedRole;
+        }
+
+        if (!walletDescriptorKey && context.walletPubKey) {
+            return matchRole(extractRawPubKey(context.walletPubKey));
+        }
+        return undefined;
+    }
+
+    if (context.walletPubKey) {
+        return matchRole(extractRawPubKey(context.walletPubKey));
     }
 
     return undefined;
