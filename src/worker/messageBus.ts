@@ -413,7 +413,11 @@ export class MessageBus {
         const { id, tag, broadcast } = event.data as RequestEnvelope;
 
         if (tag === "PING") {
-            event.source?.postMessage({ id, tag: "PONG" });
+            this.deliverResponse(
+                event.source,
+                { id, tag: "PONG" },
+                { id, tag: "PONG" }
+            );
             return;
         }
 
@@ -425,7 +429,7 @@ export class MessageBus {
             // performs network calls (buildServices) and handler startup
             // that may legitimately exceed the message timeout.
             await this.waitForInit(event.data.config);
-            event.source?.postMessage({ id, tag });
+            this.deliverResponse(event.source, { id, tag }, { id, tag });
             if (this.debug) {
                 console.log("MessageBus initialized");
             }
@@ -442,11 +446,16 @@ export class MessageBus {
             // hanging forever. This happens when the browser kills and restarts
             // the service worker — the new instance has initialized=false and
             // messages arrive before INITIALIZE_MESSAGE_BUS is re-sent.
-            event.source?.postMessage({
-                id,
-                tag: tag ?? "unknown",
-                error: new MessageBusNotInitializedError(),
-            });
+            const fallbackTag = tag ?? "unknown";
+            this.deliverResponse(
+                event.source,
+                {
+                    id,
+                    tag: fallbackTag,
+                    error: new MessageBusNotInitializedError(),
+                },
+                { id, tag: fallbackTag }
+            );
             return;
         }
 
@@ -456,13 +465,18 @@ export class MessageBus {
                     "Invalid message received, missing required fields:",
                     event.data
                 );
-            event.source?.postMessage({
-                id,
-                tag: tag ?? "unknown",
-                error: new TypeError(
-                    "Invalid message received, missing required fields"
-                ),
-            });
+            const fallbackTag = tag ?? "unknown";
+            this.deliverResponse(
+                event.source,
+                {
+                    id,
+                    tag: fallbackTag,
+                    error: new TypeError(
+                        "Invalid message received, missing required fields"
+                    ),
+                },
+                { id, tag: fallbackTag }
+            );
             return;
         }
 
