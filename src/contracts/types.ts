@@ -113,14 +113,23 @@ export interface PathContext {
     blockHeight?: number;
 
     /**
-     * Wallet public key encoded as 32-byte x-only hex.
-     * Used by handlers to determine the wallet's role in multi-party contracts.
+     * Wallet's descriptor for signing.
+     * Format: tr(pubkey) for static keys, tr([fingerprint/path']xpub/0/{index}) for HD.
+     * Used by handlers to determine wallet's role in multi-party contracts.
+     */
+    walletDescriptor?: string;
+
+    /**
+     * Wallet's public key (x-only, 32 bytes hex).
+     * @deprecated Use walletDescriptor instead.
      */
     walletPubKey?: string;
 
     /**
      * Explicit role override for multi-party contracts such as VHTLC.
-     * If not provided, the handler may derive the role from `walletPubKey`.
+     * If not provided, the handler may derive the role by matching
+     * {@link walletDescriptor} (preferred) — or {@link walletPubKey} as a
+     * fallback — against the contract's sender/receiver params.
      */
     role?: string;
 

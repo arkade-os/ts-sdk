@@ -1491,10 +1491,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     weight: 0,
                     birth: vtxo.createdAt,
                     expiry: vtxo.virtualStatus.batchExpiry
-                        ? new Date(vtxo.virtualStatus.batchExpiry * 1000)
-                        : new Date(),
+                        ? new Date(vtxo.virtualStatus.batchExpiry)
+                        : undefined,
                 });
-                if (inputFee.value >= vtxo.value) {
+                if (inputFee.satoshis >= vtxo.value) {
                     // skip if fees are greater than the virtual output value
                     continue;
                 }

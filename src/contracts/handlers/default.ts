@@ -12,6 +12,10 @@ import {
     sequenceToTimelock,
     timelockToSequence,
 } from "./helpers";
+import {
+    normalizeToDescriptor,
+    extractPubKey,
+} from "../../identity/descriptor";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
@@ -23,7 +27,14 @@ export interface DefaultContractParams {
 }
 
 /**
- * Handler for default wallet virtual outputs.
+ * Extract pubkey bytes from a descriptor or hex string.
+ */
+function extractPubKeyBytes(value: string): Uint8Array {
+    return hex.decode(extractPubKey(normalizeToDescriptor(value)));
+}
+
+/**
+ * Handler for default wallet VTXOs.
  *
  * Default contracts use the standard forfeit + exit tapscript:
  * - forfeit: (Alice + Server) multisig for collaborative spending
@@ -53,8 +64,8 @@ export const DefaultContractHandler: ContractHandler<
             ? sequenceToTimelock(Number(params.csvTimelock))
             : DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return {
-            pubKey: hex.decode(params.pubKey),
-            serverPubKey: hex.decode(params.serverPubKey),
+            pubKey: extractPubKeyBytes(params.pubKey),
+            serverPubKey: extractPubKeyBytes(params.serverPubKey),
             csvTimelock,
         };
     },

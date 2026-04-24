@@ -73,6 +73,16 @@ export interface MessageHandler<
      * Handle routed messages from the clients
      **/
     handleMessage(message: REQ): Promise<RES | null>;
+
+    /**
+     * Optional opt-out from the bus-level message timeout.
+     *
+     * Long-running flows (e.g. settlement) surrender control to remote peers
+     * and can legitimately sit idle for longer than `messageTimeoutMs`. When
+     * this returns true, the bus awaits `handleMessage` without a deadline.
+     * Defaults to false.
+     */
+    isLongRunning?(message: REQ): boolean;
 }
 
 type Options = {
@@ -431,11 +441,9 @@ export class MessageBus {
                     updater.messageTag
                 );
                 const handlerPromise = updater.handleMessage(event.data);
-                const raced = this.withTimeout(
-                    handlerPromise,
-                    timeoutMs,
-                    label
-                );
+                const raced = updater.isLongRunning?.(event.data)
+                    ? handlerPromise
+                    : this.withTimeout(handlerPromise, timeoutMs, label);
                 return { updater, handlerPromise, raced };
             });
 
@@ -507,11 +515,9 @@ export class MessageBus {
         const handlerPromise = updater.handleMessage(event.data);
         const context = { id, tag, messageType };
         try {
-            const response = await this.withTimeout(
-                handlerPromise,
-                timeoutMs,
-                label
-            );
+            const response = updater.isLongRunning?.(event.data)
+                ? await handlerPromise
+                : await this.withTimeout(handlerPromise, timeoutMs, label);
             if (this.debug)
                 console.log(`[${tag}] outgoing response:`, response);
             // Always deliver a response so the caller's message id never
