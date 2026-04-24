@@ -634,10 +634,21 @@ export class MessageBus {
         messageType: string | undefined,
         handlerTag: string
     ): number {
-        if (messageType && messageType in this.messageTimeoutOverrides) {
+        if (
+            messageType &&
+            Object.prototype.hasOwnProperty.call(
+                this.messageTimeoutOverrides,
+                messageType
+            )
+        ) {
             return this.messageTimeoutOverrides[messageType];
         }
-        if (handlerTag in this.messageTimeoutOverrides) {
+        if (
+            Object.prototype.hasOwnProperty.call(
+                this.messageTimeoutOverrides,
+                handlerTag
+            )
+        ) {
             return this.messageTimeoutOverrides[handlerTag];
         }
         return this.messageTimeoutMs;
