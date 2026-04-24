@@ -123,7 +123,7 @@ const LATE_DELIVERY_GRACE_MS = 5 * 60_000;
  */
 type LateDelivery = {
     settled: boolean;
-    deadline: ReturnType<typeof setTimeout>;
+    deadline: number;
 };
 
 type Initialize = {
