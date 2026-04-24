@@ -112,6 +112,18 @@ type Options = {
  */
 const LATE_DELIVERY_GRACE_MS = 5 * 60_000;
 
+/**
+ * Tracks one in-flight late-delivery watcher (a handler that has already
+ * timed out but is still running). The `settled` flag guards against
+ * double-delivery when the grace-period deadline and the handler's own
+ * completion race; `stop()` iterates every live record, flips `settled`,
+ * and clears the deadline so no response is posted after shutdown.
+ */
+type LateDelivery = {
+    settled: boolean;
+    deadline: ReturnType<typeof setTimeout>;
+};
+
 type Initialize = {
     type: "INITIALIZE_MESSAGE_BUS";
     id: string;
@@ -140,6 +152,7 @@ export class MessageBus {
     private tickIntervalMs: number;
     private messageTimeoutMs: number;
     private messageTimeoutOverrides: Record<string, number>;
+    private lateDeliveries = new Set<LateDelivery>();
     private running = false;
     private tickTimeout: number | null = null;
     private tickInProgress = false;
@@ -208,6 +221,12 @@ export class MessageBus {
             self.clearTimeout(this.tickTimeout);
             this.tickTimeout = null;
         }
+
+        for (const record of this.lateDeliveries) {
+            record.settled = true;
+            self.clearTimeout(record.deadline);
+        }
+        this.lateDeliveries.clear();
 
         self.removeEventListener("message", this.boundOnMessage);
 
@@ -661,27 +680,40 @@ export class MessageBus {
         messageType: string | undefined
     ): void {
         const context = { id, tag, messageType };
-        const deadline = self.setTimeout(() => {
-            this.deliverResponse(
-                source,
-                {
-                    id,
-                    tag,
-                    error: new Error(
-                        `Operation abandoned: handler did not complete within ${LATE_DELIVERY_GRACE_MS}ms after timeout (${this.labelFor(messageType, tag)})`
-                    ),
-                },
-                context
-            );
-        }, LATE_DELIVERY_GRACE_MS);
+        const record: LateDelivery = {
+            settled: false,
+            deadline: self.setTimeout(() => {
+                if (record.settled) return;
+                record.settled = true;
+                this.lateDeliveries.delete(record);
+                this.deliverResponse(
+                    source,
+                    {
+                        id,
+                        tag,
+                        error: new Error(
+                            `Operation abandoned: handler did not complete within ${LATE_DELIVERY_GRACE_MS}ms after timeout (${this.labelFor(messageType, tag)})`
+                        ),
+                    },
+                    context
+                );
+            }, LATE_DELIVERY_GRACE_MS),
+        };
+        this.lateDeliveries.add(record);
 
         handlerPromise.then(
             (response) => {
-                self.clearTimeout(deadline);
+                if (record.settled) return;
+                record.settled = true;
+                self.clearTimeout(record.deadline);
+                this.lateDeliveries.delete(record);
                 this.deliverResponse(source, response ?? { id, tag }, context);
             },
             (err) => {
-                self.clearTimeout(deadline);
+                if (record.settled) return;
+                record.settled = true;
+                self.clearTimeout(record.deadline);
+                this.lateDeliveries.delete(record);
                 this.deliverResponse(
                     source,
                     { id, tag, error: toError(err) },

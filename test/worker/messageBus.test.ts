@@ -534,6 +534,130 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         await bus.stop();
     });
 
+    it("does not deliver a third response when the handler resolves after the abandoned deadline", async () => {
+        vi.useFakeTimers();
+        let resolveLate: ((r: ResponseEnvelope) => void) | undefined;
+        handler.handleMessage.mockReturnValueOnce(
+            new Promise<ResponseEnvelope>((resolve) => {
+                resolveLate = resolve;
+            })
+        );
+        const bus = await createAndInitBus({
+            handlers: [handler],
+            messageTimeoutMs: 50,
+        });
+        const postMessage = vi.fn();
+
+        const processed = messageHandler({
+            data: {
+                id: "m14",
+                tag: handler.messageTag,
+                type: "SETTLE",
+            } as RequestEnvelope & { type: string },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+
+        await vi.advanceTimersByTimeAsync(100);
+        await processed;
+        // Advance past the grace window — abandoned error fires.
+        await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
+        expect(postMessage).toHaveBeenCalledTimes(2);
+
+        // Handler now completes very late; must NOT produce a third response.
+        resolveLate!({
+            id: "m14",
+            tag: handler.messageTag,
+            payload: { settled: true },
+        } as ResponseEnvelope);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(postMessage).toHaveBeenCalledTimes(2);
+
+        await bus.stop();
+    });
+
+    it("does not deliver a third response when the handler rejects after the abandoned deadline", async () => {
+        vi.useFakeTimers();
+        let rejectLate: ((e: Error) => void) | undefined;
+        handler.handleMessage.mockReturnValueOnce(
+            new Promise<ResponseEnvelope>((_, reject) => {
+                rejectLate = reject;
+            })
+        );
+        const bus = await createAndInitBus({
+            handlers: [handler],
+            messageTimeoutMs: 50,
+        });
+        const postMessage = vi.fn();
+
+        const processed = messageHandler({
+            data: {
+                id: "m15",
+                tag: handler.messageTag,
+                type: "SETTLE",
+            } as RequestEnvelope & { type: string },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+
+        await vi.advanceTimersByTimeAsync(100);
+        await processed;
+        await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
+        expect(postMessage).toHaveBeenCalledTimes(2);
+
+        rejectLate!(new Error("very late failure"));
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(postMessage).toHaveBeenCalledTimes(2);
+
+        await bus.stop();
+    });
+
+    it("does not deliver late responses after bus.stop()", async () => {
+        vi.useFakeTimers();
+        let resolveLate: ((r: ResponseEnvelope) => void) | undefined;
+        handler.handleMessage.mockReturnValueOnce(
+            new Promise<ResponseEnvelope>((resolve) => {
+                resolveLate = resolve;
+            })
+        );
+        const bus = await createAndInitBus({
+            handlers: [handler],
+            messageTimeoutMs: 50,
+        });
+        const postMessage = vi.fn();
+
+        const processed = messageHandler({
+            data: {
+                id: "m16",
+                tag: handler.messageTag,
+                type: "SETTLE",
+            } as RequestEnvelope & { type: string },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+
+        await vi.advanceTimersByTimeAsync(100);
+        await processed;
+        // One response delivered so far: the timeout error.
+        expect(postMessage).toHaveBeenCalledTimes(1);
+
+        await bus.stop();
+        const countAtStop = postMessage.mock.calls.length;
+
+        // Neither the grace deadline nor a late handler settle should post now.
+        await vi.advanceTimersByTimeAsync(5 * 60_000 + 1);
+        resolveLate!({
+            id: "m16",
+            tag: handler.messageTag,
+            payload: { settled: true },
+        } as ResponseEnvelope);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(postMessage).toHaveBeenCalledTimes(countAtStop);
+    });
+
     it("does not throw and logs when the originating client (event.source) is null", async () => {
         const bus = await createAndInitBus({
             handlers: [handler],
