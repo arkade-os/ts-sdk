@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
     eventSourceIterator,
     isEventSourceError,
@@ -36,27 +36,23 @@ class ControlledEventSource {
 }
 
 describe("eventSourceIterator", () => {
-    it("ignores transient EventSource errors while the source is reconnecting", async () => {
+    it("surfaces reconnecting EventSource errors as EventSourceError", async () => {
         const eventSource = new ControlledEventSource();
         const iterator = eventSourceIterator(
             eventSource as unknown as EventSource
         );
         const next = iterator.next();
-        const settled = vi.fn();
-        void next.then(settled, settled);
 
         eventSource.emitError(0);
-        await Promise.resolve();
 
-        expect(settled).not.toHaveBeenCalled();
-
-        eventSource.emitMessage("ok");
-        await expect(next).resolves.toEqual({
-            done: false,
-            value: { data: "ok" },
+        await expect(next).rejects.toMatchObject({
+            name: "EventSourceError",
+            message: "EventSource error",
         });
 
-        await iterator.return?.();
+        await next.catch((error) => {
+            expect(isEventSourceError(error)).toBe(true);
+        });
     });
 
     it("surfaces closed EventSource errors as EventSourceError", async () => {
