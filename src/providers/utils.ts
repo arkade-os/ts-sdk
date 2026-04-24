@@ -7,6 +7,7 @@
 export function eventSourceIterator(
     eventSource: EventSource
 ): AsyncGenerator<MessageEvent, void, unknown> {
+    const eventSourceConnecting = 0;
     const messageQueue: MessageEvent[] = [];
     const errorQueue: Error[] = [];
     let messageResolve: ((value: MessageEvent) => void) | null = null;
@@ -22,6 +23,12 @@ export function eventSourceIterator(
     };
 
     const errorHandler = () => {
+        // EventSource emits "error" for transient disconnects while it is
+        // already retrying. Do not turn those into fatal SDK errors.
+        if (eventSource.readyState === eventSourceConnecting) {
+            return;
+        }
+
         const error = new Error("EventSource error");
         error.name = "EventSourceError";
         if (errorResolve) {
@@ -73,4 +80,8 @@ export function eventSourceIterator(
             eventSource.removeEventListener("error", errorHandler);
         }
     })();
+}
+
+export function isEventSourceError(error: unknown): error is Error {
+    return error instanceof Error && error.name === "EventSourceError";
 }

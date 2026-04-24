@@ -7,6 +7,7 @@ import {
     ContractEventCallback,
     ContractEvent,
 } from "./types";
+import { isEventSourceError } from "../providers/utils";
 
 /**
  * Configuration for the ContractWatcher.
@@ -400,7 +401,13 @@ export class ContractWatcher {
                 // indefinitely and block the caller.
                 // Error management must be implemented to ensure the connection
                 // is restored and events are fired.
-                console.error(e);
+                if (isEventSourceError(e)) {
+                    console.debug(
+                        "ContractWatcher subscription disconnected; reconnecting"
+                    );
+                } else {
+                    console.error(e);
+                }
                 this.connectionState = "disconnected";
                 this.eventCallback?.({
                     type: "connection_reset",
