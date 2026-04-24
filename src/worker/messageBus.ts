@@ -93,7 +93,9 @@ type Options = {
      * Per-operation timeout overrides. Keys are either message types
      * (e.g. "SETTLE") or handler tags (e.g. "WALLET_UPDATER"). Message-type
      * matches take precedence over tag matches. Unspecified operations use
-     * `messageTimeoutMs`.
+     * `messageTimeoutMs`. These are treated as defaults: any map supplied
+     * via `INITIALIZE_MESSAGE_BUS` overrides per-key and is re-applied on
+     * every (re-)init.
      */
     messageTimeoutOverrides?: Record<string, number>;
     debug?: boolean;
@@ -144,6 +146,12 @@ type Initialize = {
         esploraUrl?: string;
         settlementConfig?: SettlementConfig | false;
         watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+        /**
+         * Page-supplied per-operation timeout map. Keys are message types
+         * (e.g. "SETTLE"). Overrides constructor-supplied
+         * `messageTimeoutOverrides` per-key; re-applied on every init.
+         */
+        messageTimeouts?: Record<string, number>;
     };
 };
 
@@ -151,6 +159,7 @@ export class MessageBus {
     private handlers: Map<string, MessageHandler>;
     private tickIntervalMs: number;
     private messageTimeoutMs: number;
+    private readonly constructorTimeoutOverrides: Record<string, number>;
     private messageTimeoutOverrides: Record<string, number>;
     private lateDeliveries = new Set<LateDelivery>();
     private running = false;
@@ -183,7 +192,8 @@ export class MessageBus {
         this.handlers = new Map(messageHandlers.map((u) => [u.messageTag, u]));
         this.tickIntervalMs = tickIntervalMs;
         this.messageTimeoutMs = messageTimeoutMs;
-        this.messageTimeoutOverrides = messageTimeoutOverrides;
+        this.constructorTimeoutOverrides = { ...messageTimeoutOverrides };
+        this.messageTimeoutOverrides = { ...this.constructorTimeoutOverrides };
         this.debug = debug;
         this.buildServicesFn = buildServices ?? this.buildServices.bind(this);
     }
@@ -317,6 +327,13 @@ export class MessageBus {
                 )
             );
         }
+        // Recompute the active timeout map from scratch so a prior init's
+        // keys cannot linger after re-init with a smaller map.
+        this.messageTimeoutOverrides = {
+            ...this.constructorTimeoutOverrides,
+            ...(config.messageTimeouts ?? {}),
+        };
+
         const services = await this.buildServicesFn(config);
         // Start all handlers
         for (const updater of this.handlers.values()) {

@@ -373,6 +373,131 @@ describe("MessageBus delivery guarantees (issue #448)", () => {
         await bus.stop();
     });
 
+    it("prefers INIT-supplied messageTimeouts over constructor overrides", async () => {
+        vi.useFakeTimers();
+        handler.handleMessage.mockReturnValueOnce(new Promise(() => {}));
+        // Constructor sets SETTLE to 5s; INIT will override it to 100ms.
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [handler],
+                messageTimeoutMs: 30_000,
+                messageTimeoutOverrides: { SETTLE: 5_000 },
+                buildServices: async () => ({}) as never,
+            }
+        );
+        await bus.start();
+        const initSource = { postMessage: vi.fn() };
+        await messageHandler({
+            data: {
+                type: "INITIALIZE_MESSAGE_BUS",
+                id: "init-prec",
+                tag: "INITIALIZE_MESSAGE_BUS",
+                config: {
+                    wallet: { publicKey: "00".repeat(33) },
+                    arkServer: { url: "http://localhost" },
+                    messageTimeouts: { SETTLE: 100 },
+                },
+            } as never,
+            source: initSource as never,
+            waitUntil: (p: Promise<unknown>) => p,
+        });
+        const postMessage = vi.fn();
+
+        const processed = messageHandler({
+            data: {
+                id: "prec-1",
+                tag: handler.messageTag,
+                type: "SETTLE",
+            } as RequestEnvelope & { type: string },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+
+        // INIT's 100ms should fire long before the constructor's 5s.
+        await vi.advanceTimersByTimeAsync(150);
+        await processed;
+
+        const sent = postMessage.mock.calls[0][0] as ResponseEnvelope;
+        expect(sent.error?.message).toContain("100ms");
+
+        await bus.stop();
+    });
+
+    it("recomputes the active timeout map on every init (no stale keys)", async () => {
+        vi.useFakeTimers();
+        const bus = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            {
+                messageHandlers: [handler],
+                messageTimeoutMs: 30_000,
+                buildServices: async () => ({}) as never,
+            }
+        );
+        await bus.start();
+
+        // First init introduces a SETTLE override.
+        const initSource = { postMessage: vi.fn() };
+        await messageHandler({
+            data: {
+                type: "INITIALIZE_MESSAGE_BUS",
+                id: "init-a",
+                tag: "INITIALIZE_MESSAGE_BUS",
+                config: {
+                    wallet: { publicKey: "00".repeat(33) },
+                    arkServer: { url: "http://localhost" },
+                    messageTimeouts: { SETTLE: 100 },
+                },
+            } as never,
+            source: initSource as never,
+            waitUntil: (p: Promise<unknown>) => p,
+        });
+
+        // Re-init without SETTLE in the new map — the previous override
+        // must not persist.
+        await messageHandler({
+            data: {
+                type: "INITIALIZE_MESSAGE_BUS",
+                id: "init-b",
+                tag: "INITIALIZE_MESSAGE_BUS",
+                config: {
+                    wallet: { publicKey: "00".repeat(33) },
+                    arkServer: { url: "http://localhost" },
+                    messageTimeouts: { GET_BALANCE: 200 },
+                },
+            } as never,
+            source: initSource as never,
+            waitUntil: (p: Promise<unknown>) => p,
+        });
+
+        handler.handleMessage.mockReturnValueOnce(new Promise(() => {}));
+        const postMessage = vi.fn();
+        const processed = messageHandler({
+            data: {
+                id: "recompute-1",
+                tag: handler.messageTag,
+                type: "SETTLE",
+            } as RequestEnvelope & { type: string },
+            source: { postMessage },
+            waitUntil: (p) => p,
+        });
+
+        // With SETTLE no longer overridden, the bus default (30s) applies.
+        // Advance past the old 100ms override — no response should be posted.
+        await vi.advanceTimersByTimeAsync(500);
+        expect(postMessage).not.toHaveBeenCalled();
+
+        // Advance past the default 30s and confirm the default fires.
+        await vi.advanceTimersByTimeAsync(30_000);
+        await processed;
+        const sent = postMessage.mock.calls[0][0] as ResponseEnvelope;
+        expect(sent.error?.message).toContain("30000ms");
+
+        await bus.stop();
+    });
+
     it("prefers message-type override over handler-tag override when both match", async () => {
         vi.useFakeTimers();
         handler.handleMessage.mockReturnValueOnce(new Promise(() => {}));

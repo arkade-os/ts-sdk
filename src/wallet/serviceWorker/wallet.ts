@@ -393,6 +393,7 @@ type MessageBusInitConfig = {
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    messageTimeouts?: Record<string, number>;
 };
 
 const initializeMessageBus = (
@@ -514,21 +515,32 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             delegatorUrl: options.delegatorUrl,
         };
 
+        // Precompute the merged timeout map so page-side waiting and
+        // worker-side enforcement are derived from the same source.
+        const messageTimeouts = options.messageTimeouts
+            ? ({
+                  ...DEFAULT_MESSAGE_TIMEOUTS,
+                  ...options.messageTimeouts,
+              } as Record<RequestType, number>)
+            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
+
+        const busInitConfig: MessageBusInitConfig = {
+            wallet: initConfig.key,
+            arkServer: {
+                url: initConfig.arkServerUrl,
+                publicKey: initConfig.arkServerPublicKey,
+            },
+            delegatorUrl: initConfig.delegatorUrl,
+            indexerUrl: options.indexerUrl,
+            esploraUrl: options.esploraUrl,
+            watcherConfig: options.watcherConfig,
+            messageTimeouts,
+        };
+
         // Bootstrap the MessageBus in the service worker
         await initializeMessageBus(
             options.serviceWorker,
-            {
-                wallet: initConfig.key,
-                arkServer: {
-                    url: initConfig.arkServerUrl,
-                    publicKey: initConfig.arkServerPublicKey,
-                },
-                delegatorUrl: initConfig.delegatorUrl,
-                indexerUrl: options.indexerUrl,
-                esploraUrl: options.esploraUrl,
-                timeoutMs: options.messageBusTimeoutMs,
-                watcherConfig: options.watcherConfig,
-            },
+            { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
             options.messageBusTimeoutMs
         );
 
@@ -542,25 +554,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
         await wallet.sendMessage(initMessage);
 
-        wallet.initConfig = {
-            wallet: initConfig.key,
-            arkServer: {
-                url: initConfig.arkServerUrl,
-                publicKey: initConfig.arkServerPublicKey,
-            },
-            delegatorUrl: initConfig.delegatorUrl,
-            indexerUrl: options.indexerUrl,
-            esploraUrl: options.esploraUrl,
-            watcherConfig: options.watcherConfig,
-        };
+        // Persist the full init config (including messageTimeouts) so
+        // reinitialize() re-sends the same map to a restarted worker.
+        wallet.initConfig = busInitConfig;
         wallet.initWalletPayload = initConfig;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
-        if (options.messageTimeouts) {
-            wallet.messageTimeouts = {
-                ...DEFAULT_MESSAGE_TIMEOUTS,
-                ...options.messageTimeouts,
-            } as Record<RequestType, number>;
-        }
+        wallet.messageTimeouts = messageTimeouts;
 
         return wallet;
     }
@@ -1312,21 +1311,32 @@ export class ServiceWorkerWallet
             delegatorUrl: options.delegatorUrl,
         };
 
+        // Precompute the merged timeout map so page-side waiting and
+        // worker-side enforcement are derived from the same source.
+        const messageTimeouts = options.messageTimeouts
+            ? ({
+                  ...DEFAULT_MESSAGE_TIMEOUTS,
+                  ...options.messageTimeouts,
+              } as Record<RequestType, number>)
+            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
+
+        const busInitConfig: MessageBusInitConfig = {
+            wallet: initConfig.key,
+            arkServer: {
+                url: initConfig.arkServerUrl,
+                publicKey: initConfig.arkServerPublicKey,
+            },
+            delegatorUrl: initConfig.delegatorUrl,
+            indexerUrl: options.indexerUrl,
+            esploraUrl: options.esploraUrl,
+            settlementConfig: options.settlementConfig,
+            watcherConfig: options.watcherConfig,
+            messageTimeouts,
+        };
+
         await initializeMessageBus(
             options.serviceWorker,
-            {
-                wallet: initConfig.key,
-                arkServer: {
-                    url: initConfig.arkServerUrl,
-                    publicKey: initConfig.arkServerPublicKey,
-                },
-                delegatorUrl: initConfig.delegatorUrl,
-                indexerUrl: options.indexerUrl,
-                esploraUrl: options.esploraUrl,
-                timeoutMs: options.messageBusTimeoutMs,
-                settlementConfig: options.settlementConfig,
-                watcherConfig: options.watcherConfig,
-            },
+            { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
             options.messageBusTimeoutMs
         );
         // Initialize the service worker with the config
@@ -1340,26 +1350,12 @@ export class ServiceWorkerWallet
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
 
-        wallet.initConfig = {
-            wallet: initConfig.key,
-            arkServer: {
-                url: initConfig.arkServerUrl,
-                publicKey: initConfig.arkServerPublicKey,
-            },
-            delegatorUrl: initConfig.delegatorUrl,
-            indexerUrl: options.indexerUrl,
-            esploraUrl: options.esploraUrl,
-            settlementConfig: options.settlementConfig,
-            watcherConfig: options.watcherConfig,
-        };
+        // Persist the full init config (including messageTimeouts) so
+        // reinitialize() re-sends the same map to a restarted worker.
+        wallet.initConfig = busInitConfig;
         wallet.initWalletPayload = initConfig;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
-        if (options.messageTimeouts) {
-            wallet.messageTimeouts = {
-                ...DEFAULT_MESSAGE_TIMEOUTS,
-                ...options.messageTimeouts,
-            } as Record<RequestType, number>;
-        }
+        wallet.messageTimeouts = messageTimeouts;
 
         return wallet;
     }
