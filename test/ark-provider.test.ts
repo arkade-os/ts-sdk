@@ -1,50 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { RestArkProvider } from "../src/providers/ark";
-
-class MockEventSource {
-    static instances: MockEventSource[] = [];
-    static reset() {
-        MockEventSource.instances = [];
-    }
-
-    url: string;
-    closed = false;
-    private listeners = new Map<string, Set<(e: unknown) => void>>();
-
-    constructor(url: string) {
-        this.url = url;
-        MockEventSource.instances.push(this);
-    }
-
-    addEventListener(type: string, handler: (e: unknown) => void) {
-        if (!this.listeners.has(type)) {
-            this.listeners.set(type, new Set());
-        }
-        this.listeners.get(type)!.add(handler);
-    }
-
-    removeEventListener(type: string, handler: (e: unknown) => void) {
-        this.listeners.get(type)?.delete(handler);
-    }
-
-    close() {
-        if (this.closed) return;
-        this.closed = true;
-        // Mirror real EventSource behavior so that consumers suspended on
-        // `await` inside the iterator unblock instead of parking forever.
-        const handlers = this.listeners.get("error");
-        if (handlers) {
-            for (const handler of handlers) handler(new Event("error"));
-        }
-    }
-}
+import { MockEventSource } from "./mocks/eventSource";
 
 describe("RestArkProvider.getEventStream", () => {
     beforeEach(() => {
         MockEventSource.reset();
         vi.stubGlobal("EventSource", MockEventSource);
-        // Silence the informational console.error from the generator's
-        // error branch when the mock's close() emits a synthetic error.
+        // Keep test output focused if a failure path logs while unwinding.
         vi.spyOn(console, "error").mockImplementation(() => {});
     });
 
