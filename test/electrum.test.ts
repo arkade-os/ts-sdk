@@ -1,10 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { Transaction } from "@scure/btc-signer";
+import { Address, OutScript, Transaction } from "@scure/btc-signer";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import type { ElectrumWS } from "ws-electrumx-client";
 import { ElectrumOnchainProvider, WsElectrumChainSource } from "../src";
 import { networks } from "../src/networks";
+
+function regtestAddressFromHash(hash160: Uint8Array): string {
+    return Address(networks.regtest).encode(
+        OutScript.decode(p2wpkhScript(hash160))
+    );
+}
 
 /**
  * Build a P2WPKH scriptPubKey (OP_0 + 20-byte pushdata + hash160).
@@ -228,13 +234,33 @@ describe("ElectrumOnchainProvider", () => {
         it("throws for 3+ transactions", async () => {
             await expect(
                 provider.broadcastTransaction("a", "b", "c")
-            ).rejects.toThrow("Only 1 or 1C1P package can be broadcast");
+            ).rejects.toThrow(/Only 1 or 1P1C package/);
         });
     });
 
+    /**
+     * Configure the headers subscription mock so subscribe() invokes its
+     * callback with the given tip immediately. Mirrors how ws-electrumx-client
+     * delivers initial subscribe responses (and ongoing notifications) via
+     * the registered callback.
+     */
+    function deliverHeadersTip(
+        subscribeMock: ReturnType<typeof vi.fn>,
+        tip: { height: number; hex: string }
+    ): void {
+        subscribeMock.mockImplementationOnce(
+            async (
+                method: string,
+                cb: (header: { height: number; hex: string }) => void
+            ) => {
+                if (method === "blockchain.headers") cb(tip);
+            }
+        );
+    }
+
     describe("getChainTip", () => {
         it("parses block header for hash, timestamp, height", async () => {
-            wsMock.request.mockResolvedValueOnce({
+            deliverHeadersTip(wsMock.subscribe, {
                 height: 0,
                 hex: GENESIS_HEADER_HEX,
             });
@@ -243,6 +269,48 @@ describe("ElectrumOnchainProvider", () => {
             expect(tip.height).toBe(0);
             expect(tip.time).toBe(GENESIS_BLOCK_TIME);
             expect(tip.hash).toBe(GENESIS_BLOCK_HASH);
+        });
+
+        it("reuses the cached tip across calls (one server subscription)", async () => {
+            deliverHeadersTip(wsMock.subscribe, {
+                height: 42,
+                hex: GENESIS_HEADER_HEX,
+            });
+
+            await provider.getChainTip();
+            await provider.getChainTip();
+            await provider.getChainTip();
+
+            // Only one subscription registered for the whole sequence —
+            // previously each call sent a fresh blockchain.headers.subscribe
+            // request that the server treated as a new subscription.
+            expect(wsMock.subscribe).toHaveBeenCalledTimes(1);
+        });
+
+        it("updates the cached tip when the server pushes a new header", async () => {
+            // Stash the callback so we can fire a notification later.
+            let pushHeader:
+                | ((h: { height: number; hex: string }) => void)
+                | undefined;
+            wsMock.subscribe.mockImplementationOnce(
+                async (
+                    _method: string,
+                    cb: (h: { height: number; hex: string }) => void
+                ) => {
+                    pushHeader = cb;
+                    cb({ height: 100, hex: GENESIS_HEADER_HEX });
+                }
+            );
+
+            const tip1 = await provider.getChainTip();
+            expect(tip1.height).toBe(100);
+
+            // Server pushes a new tip via the same subscription.
+            pushHeader!({ height: 101, hex: GENESIS_HEADER_HEX });
+
+            const tip2 = await provider.getChainTip();
+            expect(tip2.height).toBe(101);
+            expect(wsMock.subscribe).toHaveBeenCalledTimes(1);
         });
     });
 
@@ -259,18 +327,17 @@ describe("ElectrumOnchainProvider", () => {
         });
 
         it("computes block height as tipHeight - confirmations + 1", async () => {
-            wsMock.request
-                .mockResolvedValueOnce({
-                    txid: "abc",
-                    confirmations: 10,
-                    blocktime: 1700_000_000,
-                    vout: [],
-                    vin: [],
-                })
-                .mockResolvedValueOnce({
-                    height: 100,
-                    hex: GENESIS_HEADER_HEX,
-                });
+            wsMock.request.mockResolvedValueOnce({
+                txid: "abc",
+                confirmations: 10,
+                blocktime: 1700_000_000,
+                vout: [],
+                vin: [],
+            });
+            deliverHeadersTip(wsMock.subscribe, {
+                height: 100,
+                hex: GENESIS_HEADER_HEX,
+            });
 
             const status = await provider.getTxStatus("abc");
             expect(status).toEqual({
@@ -281,18 +348,17 @@ describe("ElectrumOnchainProvider", () => {
         });
 
         it("falls back to time when blocktime is absent", async () => {
-            wsMock.request
-                .mockResolvedValueOnce({
-                    txid: "abc",
-                    confirmations: 5,
-                    time: 1650_000_000,
-                    vout: [],
-                    vin: [],
-                })
-                .mockResolvedValueOnce({
-                    height: 50,
-                    hex: GENESIS_HEADER_HEX,
-                });
+            wsMock.request.mockResolvedValueOnce({
+                txid: "abc",
+                confirmations: 5,
+                time: 1650_000_000,
+                vout: [],
+                vin: [],
+            });
+            deliverHeadersTip(wsMock.subscribe, {
+                height: 50,
+                hex: GENESIS_HEADER_HEX,
+            });
 
             const status = await provider.getTxStatus("abc");
             expect(status).toMatchObject({
@@ -347,6 +413,116 @@ describe("ElectrumOnchainProvider", () => {
                     status: { confirmed: true, block_time: 1700_000_000 },
                 },
             ]);
+        });
+
+        it("derives exact sat amounts from vtx.hex when present (no float rounding)", async () => {
+            // buildTestTx() yields outputs of 10_000 and 20_000 sats — exact
+            // values that survive the raw-tx parse without any float math.
+            const { txHex } = buildTestTx();
+
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "tx-exact", height: 100 },
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce([
+                {
+                    txid: "tx-exact",
+                    confirmations: 5,
+                    blocktime: 1700_000_000,
+                    hex: txHex,
+                    vout: [
+                        {
+                            n: 0,
+                            // Deliberately wrong float to prove we use the hex.
+                            value: 0.00009999,
+                            scriptPubKey: { address: "addr0", hex: "" },
+                        },
+                        {
+                            n: 1,
+                            value: 0.00019999,
+                            scriptPubKey: { address: "addr1", hex: "" },
+                        },
+                    ],
+                    vin: [],
+                },
+            ]);
+
+            const txs = await provider.getTransactions(REGTEST_ADDRESS);
+            expect(txs[0].vout.map((v) => v.value)).toEqual(["10000", "20000"]);
+        });
+
+        it("rejects malformed addresses with a descriptive error", async () => {
+            await expect(
+                provider.getTransactions("not-a-real-address")
+            ).rejects.toThrow(/Invalid address not-a-real-address/);
+        });
+    });
+
+    describe("watchAddresses", () => {
+        it("registers script subscriptions in parallel and emits new txs via callback", async () => {
+            // Derive a second valid regtest address from a known hash so we
+            // exercise the parallel-subscribe path with two distinct script
+            // hashes (without depending on any external fixture).
+            const addr1 = REGTEST_ADDRESS;
+            const addr2 = regtestAddressFromHash(new Uint8Array(20).fill(0x42));
+
+            // Initial fetchHistory for each address — empty (no known txids).
+            wsMock.request.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+            const subscribeCallbacks = new Map<
+                string,
+                (scripthash: string, status: string | null) => void
+            >();
+            wsMock.subscribe.mockImplementation(
+                async (
+                    method: string,
+                    cb: (s: string, status: string | null) => void,
+                    scripthash: string
+                ) => {
+                    if (method === "blockchain.scripthash") {
+                        subscribeCallbacks.set(scripthash, cb);
+                    }
+                }
+            );
+
+            const events: unknown[] = [];
+            const stop = await provider.watchAddresses([addr1, addr2], (txs) =>
+                events.push(txs)
+            );
+
+            // Both subscribes must have been registered before resolving.
+            expect(subscribeCallbacks.size).toBe(2);
+
+            // Server pushes a status update for addr1 — provider must refetch
+            // history and report the new tx via callback.
+            const [firstScripthash, firstCb] = [
+                ...subscribeCallbacks.entries(),
+            ][0];
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "newtx", height: 100 },
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce([
+                {
+                    txid: "newtx",
+                    confirmations: 1,
+                    blocktime: 1700_000_000,
+                    vout: [
+                        {
+                            n: 0,
+                            value: 0.0005,
+                            scriptPubKey: { address: "addrX", hex: "" },
+                        },
+                    ],
+                    vin: [],
+                },
+            ]);
+            firstCb(firstScripthash, "deadbeef");
+
+            // Wait for the async handleStatusChange chain to settle.
+            await new Promise((r) => setTimeout(r, 0));
+            expect(events).toHaveLength(1);
+
+            stop();
+            expect(wsMock.unsubscribe).toHaveBeenCalledTimes(2);
         });
     });
 

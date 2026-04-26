@@ -53,7 +53,7 @@ importers:
         specifier: ~14.0.9
         version: 14.0.9(expo@54.0.33(@babel/core@7.29.0)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))
       ws-electrumx-client:
-        specifier: ^1.0.5
+        specifier: 1.0.5
         version: 1.0.5
     devDependencies:
       '@types/better-sqlite3':

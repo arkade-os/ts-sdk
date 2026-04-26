@@ -56,6 +56,10 @@ type VerboseTransaction = {
     blockhash?: string;
     blocktime?: number;
     time?: number;
+    /** Raw transaction hex. Bitcoin Core's getrawtransaction <tx> 1 always
+     *  includes this; we use it to derive exact satoshi amounts instead of
+     *  multiplying the floating-point `value` field by 1e8. */
+    hex?: string;
     vout: {
         n: number;
         value: number;
@@ -127,6 +131,12 @@ function parseBlockHeader(headerHex: string): {
  * ```
  */
 export class WsElectrumChainSource {
+    // Cached chain tip kept fresh by the headers subscription. Initialized
+    // lazily on first call to subscribeHeaders().
+    private cachedTip: HeaderSubscribeResult | null = null;
+    private headersSubscribePromise: Promise<HeaderSubscribeResult> | null =
+        null;
+
     constructor(
         private ws: ElectrumWS,
         private network: Network
@@ -238,10 +248,47 @@ export class WsElectrumChainSource {
         return { height, hex: headerHex };
     }
 
+    /**
+     * Returns the current chain tip and keeps it fresh via a single
+     * server-side subscription. Subsequent calls return the cached tip
+     * (updated by background notifications) without round-tripping to the
+     * server. Previously each call issued `blockchain.headers.subscribe` as
+     * a regular request, leaving a stale subscription on the server every
+     * time — under polling that adds up. ws-electrumx-client deduplicates
+     * `subscribe()` by method+params, so registering once is enough.
+     */
     async subscribeHeaders(): Promise<HeaderSubscribeResult> {
-        return this.ws.request<HeaderSubscribeResult>(
-            SubscribeHeadersMethod + ".subscribe"
+        if (this.cachedTip) return this.cachedTip;
+        if (this.headersSubscribePromise) return this.headersSubscribePromise;
+
+        this.headersSubscribePromise = new Promise<HeaderSubscribeResult>(
+            (resolve, reject) => {
+                let resolved = false;
+                this.ws
+                    .subscribe(SubscribeHeadersMethod, (header: unknown) => {
+                        if (!isHeaderSubscribeResult(header)) return;
+                        this.cachedTip = header;
+                        if (!resolved) {
+                            resolved = true;
+                            resolve(header);
+                        }
+                    })
+                    .catch((err) => {
+                        if (!resolved) {
+                            resolved = true;
+                            reject(err);
+                        }
+                    });
+            }
         );
+
+        try {
+            return await this.headersSubscribePromise;
+        } catch (err) {
+            // Allow the next call to retry from scratch.
+            this.headersSubscribePromise = null;
+            throw err;
+        }
     }
 
     async estimateFees(targetNumberBlocks: number): Promise<number> {
@@ -351,7 +398,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     }
 
     async getCoins(address: string): Promise<Coin[]> {
-        const script = OutScript.encode(Address(this.network).decode(address));
+        const script = this.encodeAddress(address);
         const scriptHash = toScriptHash(script);
         const unspents = await this.ws.request<UnspentElectrum[]>(
             ListUnspentMethod,
@@ -390,7 +437,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             await this.chain.broadcastTransaction(txs[0]);
             return this.chain.broadcastTransaction(txs[1]);
         }
-        throw new Error("Only 1 or 1C1P package can be broadcast");
+        throw new Error("Only 1 or 1P1C package can be broadcast");
     }
 
     async getTxOutspends(
@@ -522,7 +569,7 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     }
 
     async getTransactions(address: string): Promise<ExplorerTransaction[]> {
-        const script = OutScript.encode(Address(this.network).decode(address));
+        const script = this.encodeAddress(address);
         const history = await this.chain.fetchHistory(script);
 
         if (history.length === 0) return [];
@@ -530,7 +577,21 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const txids = history.map((h) => h.tx_hash);
         const verboseTxs = await this.chain.fetchVerboseTransactions(txids);
 
-        return verboseTxs.map((vtx) => ({
+        return verboseTxs.map((vtx) => this.verboseToExplorer(vtx));
+    }
+
+    /**
+     * Map an electrum verbose transaction to the ExplorerTransaction shape.
+     *
+     * Output values are derived from the raw transaction hex when available,
+     * never from the floating-point `value` field returned by the daemon.
+     * That field has 8 decimal places and `Math.round(value * 1e8)` is safe
+     * in the common case but a footgun for protocol-level money handling —
+     * the raw bytes are exact.
+     */
+    private verboseToExplorer(vtx: VerboseTransaction): ExplorerTransaction {
+        const exactValuesByVout = parseExactSats(vtx);
+        return {
             txid: vtx.txid,
             vout: vtx.vout.map((v) => ({
                 scriptpubkey_address:
@@ -538,13 +599,29 @@ export class ElectrumOnchainProvider implements OnchainProvider {
                     v.scriptPubKey.addresses?.[0] ||
                     this.chain.addressForScript(v.scriptPubKey.hex) ||
                     "",
-                value: String(Math.round(v.value * 1e8)),
+                value:
+                    exactValuesByVout?.get(v.n) ??
+                    String(Math.round(v.value * 1e8)),
             })),
             status: {
                 confirmed: vtx.confirmations > 0,
                 block_time: vtx.blocktime || vtx.time || 0,
             },
-        }));
+        };
+    }
+
+    /**
+     * Decode `address` into its scriptPubKey, throwing a clear error if the
+     * input is malformed. @scure/btc-signer raises a generic decode error
+     * which is hard to map back to user input — this wraps it.
+     */
+    private encodeAddress(address: string): Uint8Array {
+        try {
+            return OutScript.encode(Address(this.network).decode(address));
+        } catch (err) {
+            const reason = err instanceof Error ? err.message : String(err);
+            throw new Error(`Invalid address ${address}: ${reason}`);
+        }
     }
 
     async getTxStatus(
@@ -590,26 +667,25 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         addresses: string[],
         eventCallback: (txs: ExplorerTransaction[]) => void
     ): Promise<() => void> {
-        const scripts = addresses.map((addr) =>
-            OutScript.encode(Address(this.network).decode(addr))
-        );
+        const scripts = addresses.map((addr) => this.encodeAddress(addr));
         const scriptHashes = scripts.map(toScriptHash);
 
-        // Track known history per script to detect new txs
+        // Track known history per script to detect new txs.
         const knownTxids = new Map<string, Set<string>>();
 
-        // Initialize with current history
-        for (let i = 0; i < scripts.length; i++) {
-            const history = await this.chain.fetchHistory(scripts[i]);
+        // Initialize known-set in parallel — for a wallet watching many
+        // addresses this avoids n sequential round trips on first call.
+        const initialHistories = await Promise.all(
+            scripts.map((s) => this.chain.fetchHistory(s))
+        );
+        initialHistories.forEach((history, i) => {
             knownTxids.set(
                 scriptHashes[i],
                 new Set(history.map((h) => h.tx_hash))
             );
-        }
+        });
 
-        // Subscribe to each script hash
         const handleStatusChange = async (scripthash: string) => {
-            // Find which script this is
             const scriptIndex = scriptHashes.indexOf(scripthash);
             if (scriptIndex === -1) return;
 
@@ -622,49 +698,30 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
             if (newTxids.length === 0) return;
 
-            // Update known set
             for (const txid of newTxids) {
                 known.add(txid);
             }
             knownTxids.set(scripthash, known);
 
-            // Fetch verbose transactions for new txids
             const verboseTxs =
                 await this.chain.fetchVerboseTransactions(newTxids);
-
-            const explorerTxs: ExplorerTransaction[] = verboseTxs.map(
-                (vtx) => ({
-                    txid: vtx.txid,
-                    vout: vtx.vout.map((v) => ({
-                        scriptpubkey_address:
-                            v.scriptPubKey.address ||
-                            v.scriptPubKey.addresses?.[0] ||
-                            this.chain.addressForScript(v.scriptPubKey.hex) ||
-                            "",
-                        value: String(Math.round(v.value * 1e8)),
-                    })),
-                    status: {
-                        confirmed: vtx.confirmations > 0,
-                        block_time: vtx.blocktime || vtx.time || 0,
-                    },
-                })
-            );
-
-            eventCallback(explorerTxs);
+            eventCallback(verboseTxs.map((vtx) => this.verboseToExplorer(vtx)));
         };
 
-        for (let i = 0; i < scripts.length; i++) {
-            await this.chain.subscribeScriptStatus(
-                scripts[i],
-                (scripthash, status) => {
-                    if (status !== null) {
-                        handleStatusChange(scripthash).catch(console.error);
+        // Register all subscriptions in parallel.
+        await Promise.all(
+            scripts.map((script) =>
+                this.chain.subscribeScriptStatus(
+                    script,
+                    (scripthash, status) => {
+                        if (status !== null) {
+                            handleStatusChange(scripthash).catch(console.error);
+                        }
                     }
-                }
-            );
-        }
+                )
+            )
+        );
 
-        // Return cleanup function
         return () => {
             for (const script of scripts) {
                 this.chain.unsubscribeScriptStatus(script).catch(() => {});
@@ -680,4 +737,34 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
 function toScriptHash(script: Uint8Array): string {
     return hex.encode(sha256(script).reverse());
+}
+
+function isHeaderSubscribeResult(v: unknown): v is HeaderSubscribeResult {
+    if (typeof v !== "object" || v === null) return false;
+    const obj = v as Record<string, unknown>;
+    return typeof obj.height === "number" && typeof obj.hex === "string";
+}
+
+/**
+ * Decode `vtx.hex` (when the daemon includes it) and return a map of
+ * vout-index → exact sat amount as a base-10 string. Returns `null` if
+ * the hex is missing or unparseable; callers should fall back to the
+ * float-derived value in that case.
+ */
+function parseExactSats(vtx: VerboseTransaction): Map<number, string> | null {
+    if (!vtx.hex) return null;
+    try {
+        const tx = Transaction.fromRaw(hex.decode(vtx.hex), {
+            allowUnknownOutputs: true,
+        });
+        const result = new Map<number, string>();
+        for (let i = 0; i < tx.outputsLength; i++) {
+            const output = tx.getOutput(i);
+            if (output.amount === undefined) continue;
+            result.set(i, output.amount.toString());
+        }
+        return result;
+    } catch {
+        return null;
+    }
 }

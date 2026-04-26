@@ -107,6 +107,11 @@ import {
     ElectrumOnchainProvider,
     WsElectrumChainSource,
 } from "./providers/electrum";
+import type {
+    TransactionHistory as ElectrumTransactionHistory,
+    BlockHeader as ElectrumBlockHeader,
+    Unspent as ElectrumUnspent,
+} from "./providers/electrum";
 import {
     RestArkProvider,
     ArkProvider,
@@ -466,6 +471,9 @@ export type {
     Output,
     TxNotification,
     ExplorerTransaction,
+    ElectrumTransactionHistory,
+    ElectrumBlockHeader,
+    ElectrumUnspent,
     BatchFinalizationEvent,
     BatchFinalizedEvent,
     BatchFailedEvent,
