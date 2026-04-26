@@ -8,6 +8,7 @@ import type { ExplorerTransaction, OnchainProvider } from "./onchain";
 
 // Electrum protocol method names
 const BroadcastTransaction = "blockchain.transaction.broadcast";
+const BroadcastPackageMethod = "blockchain.transaction.broadcast_package";
 const EstimateFee = "blockchain.estimatefee";
 const GetBlockHeader = "blockchain.block.header";
 const GetHistoryMethod = "blockchain.scripthash.get_history";
@@ -78,6 +79,18 @@ type VerboseTransaction = {
 type HeaderSubscribeResult = {
     height: number;
     hex: string;
+};
+
+/**
+ * Server response for `blockchain.transaction.broadcast_package` (verbose=false).
+ * `errors` is null/undefined on success and populated when at least one
+ * transaction in the package was rejected by the mempool. The exact error
+ * shape mirrors bitcoind's `submitpackage` RPC and varies across Core
+ * versions.
+ */
+type BroadcastPackageResult = {
+    success: boolean;
+    errors?: Array<Record<string, unknown>> | null;
 };
 
 /**
@@ -303,6 +316,48 @@ export class WsElectrumChainSource {
         return this.ws.request<string>(BroadcastTransaction, txHex);
     }
 
+    /**
+     * Submit a package of raw transactions atomically via Fulcrum's
+     * `blockchain.transaction.broadcast_package` method, the on-the-wire
+     * equivalent of bitcoind's `submitpackage` RPC.
+     *
+     * Required for TRUC (BIP 431) 1P1C relay where the parent has zero
+     * (or below-minfee) fee and depends on the child to pay for both via
+     * CPFP — sequential broadcast cannot work in that case because the
+     * parent would be rejected from the mempool on its own.
+     *
+     * @param txHexes - Topologically sorted raw transactions; child must
+     *                  be the last element. Currently must be a 1P1C pair
+     *                  (length 2). Parents may not depend on each other.
+     * @returns The child transaction id (the last entry in the array),
+     *          computed locally — `broadcast_package` itself returns
+     *          `{success, errors}` rather than a txid.
+     * @throws If the server does not implement `broadcast_package` (e.g.
+     *         ElectrumX, or older Fulcrum, or Fulcrum backed by bitcoind
+     *         < v28.0.0). Callers must surface this clearly to users —
+     *         this method does NOT silently fall back to sequential
+     *         broadcasts because doing so would let TRUC packages fail
+     *         in subtle ways.
+     * @throws If the server returns `success=false`, surfacing the
+     *         underlying mempool rejection in the error message.
+     */
+    async broadcastPackage(txHexes: string[]): Promise<string> {
+        const result = await this.ws.request<BroadcastPackageResult>(
+            BroadcastPackageMethod,
+            txHexes,
+            false
+        );
+        if (!result.success) {
+            const detail = result.errors
+                ? JSON.stringify(result.errors)
+                : "unknown error";
+            throw new Error(`Package broadcast rejected: ${detail}`);
+        }
+        // The child txid is not in the response — derive it from the raw
+        // bytes (double-SHA256 of the serialized tx, reversed).
+        return childTxidFromHex(txHexes[txHexes.length - 1]);
+    }
+
     async getRelayFee(): Promise<number> {
         return this.ws.request<number>(GetRelayFeeMethod);
     }
@@ -428,14 +483,31 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         return Math.max(1, Math.ceil(feePerKb * 100_000));
     }
 
+    /**
+     * Broadcast a single transaction or a TRUC (BIP 431) 1P1C package
+     * atomically.
+     *
+     * **Server requirements for 1P1C packages:** the backing Electrum
+     * server must implement `blockchain.transaction.broadcast_package`
+     * (Fulcrum ≥ 1.10) and be backed by bitcoind ≥ v28.0.0. ElectrumX
+     * does not implement this method. There is **no fallback** to
+     * sequential parent-then-child broadcast: TRUC packages typically
+     * have a zero-fee parent and would be rejected from the mempool on
+     * their own, so a fallback would silently fail in subtle ways.
+     * Callers receiving a "method not found" error here should route
+     * through a different provider for that submission.
+     *
+     * @param txs - One transaction (single broadcast) or two
+     *              topologically-sorted transactions (parent first,
+     *              child last) for 1P1C package relay.
+     * @returns The broadcast txid (or the child txid for 1P1C packages).
+     */
     async broadcastTransaction(...txs: string[]): Promise<string> {
         if (txs.length === 1) {
             return this.chain.broadcastTransaction(txs[0]);
         }
         if (txs.length === 2) {
-            // Broadcast parent first, then child (electrum doesn't support package relay)
-            await this.chain.broadcastTransaction(txs[0]);
-            return this.chain.broadcastTransaction(txs[1]);
+            return this.chain.broadcastPackage(txs);
         }
         throw new Error("Only 1 or 1P1C package can be broadcast");
     }
@@ -743,6 +815,17 @@ function isHeaderSubscribeResult(v: unknown): v is HeaderSubscribeResult {
     if (typeof v !== "object" || v === null) return false;
     const obj = v as Record<string, unknown>;
     return typeof obj.height === "number" && typeof obj.hex === "string";
+}
+
+/**
+ * Compute the txid of a serialized transaction. Bitcoin's txid is the
+ * double-SHA256 of the serialized tx bytes, with the result interpreted
+ * little-endian (i.e. reversed when displayed as hex). `broadcast_package`
+ * does not return the child txid, so we derive it from the raw bytes.
+ */
+function childTxidFromHex(txHex: string): string {
+    const bytes = hex.decode(txHex);
+    return hex.encode(sha256(sha256(bytes)).reverse());
 }
 
 /**

@@ -217,18 +217,60 @@ describe("ElectrumOnchainProvider", () => {
             );
         });
 
-        it("broadcasts 1P1C package sequentially (parent then child)", async () => {
-            wsMock.request
-                .mockResolvedValueOnce("parentTxid")
-                .mockResolvedValueOnce("childTxid");
+        it("broadcasts a 1P1C package atomically via broadcast_package and returns the child txid", async () => {
+            // Use a real, parseable child tx so we can assert the expected
+            // child txid is the locally-derived double-SHA256 (broadcast_package
+            // doesn't return one — atomic submit only reports success/errors).
+            const { txHex: childHex } = buildTestTx();
+            const expectedChildTxid = hex.encode(
+                sha256(sha256(hex.decode(childHex))).reverse()
+            );
+
+            wsMock.request.mockResolvedValueOnce({
+                success: true,
+                errors: null,
+            });
+
             const result = await provider.broadcastTransaction(
                 "parentHex",
-                "childHex"
+                childHex
             );
-            expect(result).toBe("childTxid");
-            expect(wsMock.request).toHaveBeenCalledTimes(2);
-            expect(wsMock.request.mock.calls[0][1]).toBe("parentHex");
-            expect(wsMock.request.mock.calls[1][1]).toBe("childHex");
+
+            expect(result).toBe(expectedChildTxid);
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
+            const [method, txArray, verbose] = wsMock.request.mock.calls[0];
+            expect(method).toBe("blockchain.transaction.broadcast_package");
+            // Parent first, child last — topological order required by the protocol.
+            expect(txArray).toEqual(["parentHex", childHex]);
+            expect(verbose).toBe(false);
+        });
+
+        it("surfaces the server error when broadcast_package returns success=false", async () => {
+            wsMock.request.mockResolvedValueOnce({
+                success: false,
+                errors: [{ txid: "abc", error: "min relay fee not met" }],
+            });
+
+            await expect(
+                provider.broadcastTransaction("parentHex", "childHex")
+            ).rejects.toThrow(/min relay fee not met/);
+        });
+
+        it("propagates 'method not found' errors instead of silently falling back", async () => {
+            // A server that doesn't implement broadcast_package (ElectrumX,
+            // older Fulcrum, or Fulcrum on bitcoind < v28) — we MUST NOT
+            // silently downgrade to sequential broadcast because TRUC
+            // packages would fail in subtle ways.
+            const methodNotFound = new Error(
+                "unknown method 'blockchain.transaction.broadcast_package'"
+            );
+            wsMock.request.mockRejectedValueOnce(methodNotFound);
+
+            await expect(
+                provider.broadcastTransaction("parentHex", "childHex")
+            ).rejects.toThrow(/broadcast_package/);
+            // Critical: only one ws.request call — no sequential fallback.
+            expect(wsMock.request).toHaveBeenCalledTimes(1);
         });
 
         it("throws for 3+ transactions", async () => {
@@ -747,6 +789,46 @@ describe("WsElectrumChainSource", () => {
             expect(wsMock.request).toHaveBeenCalledWith(
                 "blockchain.transaction.broadcast",
                 "rawhex"
+            );
+        });
+    });
+
+    describe("broadcastPackage", () => {
+        it("returns the locally-derived child txid on success", async () => {
+            const { txHex: childHex } = buildTestTx();
+            const expectedTxid = hex.encode(
+                sha256(sha256(hex.decode(childHex))).reverse()
+            );
+            wsMock.request.mockResolvedValueOnce({
+                success: true,
+                errors: null,
+            });
+
+            expect(await chain.broadcastPackage(["parentHex", childHex])).toBe(
+                expectedTxid
+            );
+            expect(wsMock.request).toHaveBeenCalledWith(
+                "blockchain.transaction.broadcast_package",
+                ["parentHex", childHex],
+                false
+            );
+        });
+
+        it("throws with the underlying error when success=false", async () => {
+            wsMock.request.mockResolvedValueOnce({
+                success: false,
+                errors: [{ error: "txn-mempool-conflict" }],
+            });
+
+            await expect(chain.broadcastPackage(["a", "b"])).rejects.toThrow(
+                /txn-mempool-conflict/
+            );
+        });
+
+        it("throws 'unknown error' when success=false but errors is missing", async () => {
+            wsMock.request.mockResolvedValueOnce({ success: false });
+            await expect(chain.broadcastPackage(["a", "b"])).rejects.toThrow(
+                /unknown error/
             );
         });
     });
