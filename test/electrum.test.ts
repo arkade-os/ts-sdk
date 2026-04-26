@@ -77,6 +77,46 @@ const GENESIS_BLOCK_TIME = 1231006505;
 
 const REGTEST_ADDRESS = "bcrt1q679zsd45msawvr7782r0twvmukns3drlstjt77";
 
+// Build a tx that carries a (fake) witness, so the segwit serialization
+// differs from the legacy one. Used to verify that childTxidFromHex
+// returns the txid (legacy hash) rather than the wtxid (witness hash) —
+// silently emitting the wtxid would break every downstream caller that
+// tracks the tx by id.
+function buildSegwitTxWithWitness(): {
+    txHex: string;
+    expectedTxid: string;
+    expectedWtxid: string;
+} {
+    const tx = new Transaction({
+        allowUnknownOutputs: true,
+        allowUnknownInputs: true,
+    });
+    // Inputs and outputs must be added BEFORE the witness — @scure/btc-signer
+    // locks the output set once any input is finalized.
+    tx.addInput({
+        txid: hex.decode(
+            "0000000000000000000000000000000000000000000000000000000000000005"
+        ),
+        index: 0,
+        sequence: 0xffffffff,
+    });
+    tx.addOutput({
+        script: p2wpkhScript(new Uint8Array(20).fill(0x77)),
+        amount: 12_345n,
+    });
+    tx.updateInput(0, {
+        finalScriptWitness: [
+            new Uint8Array(64).fill(0x99), // signature-shaped bytes
+            new Uint8Array(33).fill(0x02), // pubkey-shaped bytes
+        ],
+    });
+    return {
+        txHex: tx.hex,
+        expectedTxid: tx.id,
+        expectedWtxid: tx.hash,
+    };
+}
+
 // Build a tx with 2 distinct P2WPKH outputs we can reason about.
 function buildTestTx(): { txHex: string; scripts: Uint8Array[] } {
     const hash1 = new Uint8Array(20).fill(0xaa);
@@ -217,14 +257,20 @@ describe("ElectrumOnchainProvider", () => {
             );
         });
 
-        it("broadcasts a 1P1C package atomically via broadcast_package and returns the child txid", async () => {
-            // Use a real, parseable child tx so we can assert the expected
-            // child txid is the locally-derived double-SHA256 (broadcast_package
-            // doesn't return one — atomic submit only reports success/errors).
-            const { txHex: childHex } = buildTestTx();
-            const expectedChildTxid = hex.encode(
-                sha256(sha256(hex.decode(childHex))).reverse()
-            );
+        it("broadcasts a 1P1C package atomically via broadcast_package and returns the child txid (segwit witness-stripped)", async () => {
+            // Use a tx that actually has witness data so the segwit
+            // serialization differs from the legacy one. broadcast_package
+            // doesn't return a txid; we must derive the *txid* (legacy
+            // hash) — emitting the wtxid would silently break downstream
+            // tracking on every Ark transaction.
+            const {
+                txHex: childHex,
+                expectedTxid,
+                expectedWtxid,
+            } = buildSegwitTxWithWitness();
+            // Sanity check: the test fixture must actually exercise the
+            // bug path (id != hash means witness data is present).
+            expect(expectedTxid).not.toBe(expectedWtxid);
 
             wsMock.request.mockResolvedValueOnce({
                 success: true,
@@ -236,7 +282,8 @@ describe("ElectrumOnchainProvider", () => {
                 childHex
             );
 
-            expect(result).toBe(expectedChildTxid);
+            expect(result).toBe(expectedTxid);
+            expect(result).not.toBe(expectedWtxid);
             expect(wsMock.request).toHaveBeenCalledTimes(1);
             const [method, txArray, verbose] = wsMock.request.mock.calls[0];
             expect(method).toBe("blockchain.transaction.broadcast_package");
@@ -794,11 +841,14 @@ describe("WsElectrumChainSource", () => {
     });
 
     describe("broadcastPackage", () => {
-        it("returns the locally-derived child txid on success", async () => {
-            const { txHex: childHex } = buildTestTx();
-            const expectedTxid = hex.encode(
-                sha256(sha256(hex.decode(childHex))).reverse()
-            );
+        it("returns the locally-derived txid (witness-stripped) on success", async () => {
+            const {
+                txHex: childHex,
+                expectedTxid,
+                expectedWtxid,
+            } = buildSegwitTxWithWitness();
+            expect(expectedTxid).not.toBe(expectedWtxid);
+
             wsMock.request.mockResolvedValueOnce({
                 success: true,
                 errors: null,

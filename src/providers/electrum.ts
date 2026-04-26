@@ -741,6 +741,12 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     ): Promise<() => void> {
         const scripts = addresses.map((addr) => this.encodeAddress(addr));
         const scriptHashes = scripts.map(toScriptHash);
+        // O(1) scripthash → script lookup, kept in sync with the
+        // scripts/scriptHashes arrays. Server notifications hit this on
+        // every push, so the previous indexOf was O(n) per event.
+        const scriptByHash = new Map<string, Uint8Array>(
+            scriptHashes.map((h, i) => [h, scripts[i]])
+        );
 
         // Track known history per script to detect new txs.
         const knownTxids = new Map<string, Set<string>>();
@@ -757,22 +763,27 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             );
         });
 
-        const handleStatusChange = async (scripthash: string) => {
-            const scriptIndex = scriptHashes.indexOf(scripthash);
-            if (scriptIndex === -1) return;
+        // Per-scripthash mutex serializing concurrent notifications so
+        // two pushes for the same address can't fetch history in parallel
+        // and emit duplicate events. Each call chains onto the previous
+        // one's tail; failures are swallowed to keep the chain alive.
+        const inFlight = new Map<string, Promise<void>>();
 
-            const script = scripts[scriptIndex];
+        const processStatusChange = async (
+            scripthash: string
+        ): Promise<void> => {
+            const script = scriptByHash.get(scripthash);
+            if (!script) return;
+
             const history = await this.chain.fetchHistory(script);
-            const known = knownTxids.get(scripthash) || new Set();
+            const known = knownTxids.get(scripthash) ?? new Set<string>();
             const newTxids = history
                 .map((h) => h.tx_hash)
                 .filter((txid) => !known.has(txid));
 
             if (newTxids.length === 0) return;
 
-            for (const txid of newTxids) {
-                known.add(txid);
-            }
+            for (const txid of newTxids) known.add(txid);
             knownTxids.set(scripthash, known);
 
             const verboseTxs =
@@ -780,19 +791,43 @@ export class ElectrumOnchainProvider implements OnchainProvider {
             eventCallback(verboseTxs.map((vtx) => this.verboseToExplorer(vtx)));
         };
 
-        // Register all subscriptions in parallel.
-        await Promise.all(
-            scripts.map((script) =>
-                this.chain.subscribeScriptStatus(
-                    script,
-                    (scripthash, status) => {
-                        if (status !== null) {
-                            handleStatusChange(scripthash).catch(console.error);
+        const handleStatusChange = (scripthash: string): Promise<void> => {
+            const previous = inFlight.get(scripthash) ?? Promise.resolve();
+            const next = previous.then(() => processStatusChange(scripthash));
+            // Keep the chain alive even when one link rejects.
+            inFlight.set(
+                scripthash,
+                next.catch(() => undefined)
+            );
+            return next;
+        };
+
+        // Register all subscriptions in parallel; if any one fails, tear
+        // down the others so we don't leak server-side subscriptions on
+        // a connection the caller never gets a stop() handle for.
+        const subscribed: Uint8Array[] = [];
+        try {
+            await Promise.all(
+                scripts.map(async (script) => {
+                    await this.chain.subscribeScriptStatus(
+                        script,
+                        (scripthash, status) => {
+                            if (status !== null) {
+                                handleStatusChange(scripthash).catch(
+                                    console.error
+                                );
+                            }
                         }
-                    }
-                )
-            )
-        );
+                    );
+                    subscribed.push(script);
+                })
+            );
+        } catch (err) {
+            await Promise.allSettled(
+                subscribed.map((s) => this.chain.unsubscribeScriptStatus(s))
+            );
+            throw err;
+        }
 
         return () => {
             for (const script of scripts) {
@@ -818,14 +853,22 @@ function isHeaderSubscribeResult(v: unknown): v is HeaderSubscribeResult {
 }
 
 /**
- * Compute the txid of a serialized transaction. Bitcoin's txid is the
- * double-SHA256 of the serialized tx bytes, with the result interpreted
- * little-endian (i.e. reversed when displayed as hex). `broadcast_package`
- * does not return the child txid, so we derive it from the raw bytes.
+ * Compute the txid of a serialized transaction. For segwit transactions
+ * (every Ark transaction), the broadcast hex includes witness data, but
+ * the txid is the double-SHA256 of the legacy (witness-stripped)
+ * serialization. Hashing the raw broadcast bytes directly would yield
+ * the wtxid instead — silently breaking any caller that tracks the tx
+ * by id (round settlement, forfeit monitoring, exit paths).
+ *
+ * Delegating to `Transaction.fromRaw(...).id` lets @scure/btc-signer
+ * handle the witness-stripping correctly.
  */
 function childTxidFromHex(txHex: string): string {
-    const bytes = hex.decode(txHex);
-    return hex.encode(sha256(sha256(bytes)).reverse());
+    const tx = Transaction.fromRaw(hex.decode(txHex), {
+        allowUnknownOutputs: true,
+        allowUnknownInputs: true,
+    });
+    return tx.id;
 }
 
 /**
