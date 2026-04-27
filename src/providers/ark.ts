@@ -552,21 +552,24 @@ export class RestArkProvider implements ArkProvider {
         // leak the underlying SSE connection. `return()` is overridden below
         // so that closing the generator also closes the connection even when
         // the body is currently suspended at an await point.
-        let eventSource: EventSource | null = null;
+        let iterator: ReturnType<typeof eventSourceIterator> | null = null;
+        const closeIterator = () => iterator?.close();
 
         // eslint-disable-next-line @typescript-eslint/no-this-alias
         const self = this;
         const gen = (async function* () {
-            const abortHandler = () => eventSource?.close();
+            const abortHandler = closeIterator;
             signal?.addEventListener("abort", abortHandler);
 
             try {
                 while (!signal?.aborted) {
-                    eventSource = new EventSource(url + queryParams);
-                    const iterator = eventSourceIterator(eventSource);
+                    const currentIterator = eventSourceIterator(
+                        new EventSource(url + queryParams)
+                    );
+                    iterator = currentIterator;
 
                     try {
-                        for await (const event of iterator) {
+                        for await (const event of currentIterator) {
                             if (signal?.aborted) break;
 
                             try {
@@ -603,87 +606,104 @@ export class RestArkProvider implements ArkProvider {
                         console.error("Event stream error:", error);
                         throw error;
                     } finally {
-                        eventSource.close();
+                        currentIterator.close();
+                        iterator = null;
                     }
                 }
             } finally {
                 signal?.removeEventListener("abort", abortHandler);
-                eventSource?.close();
+                closeIterator();
             }
         })();
 
         const origReturn = gen.return.bind(gen);
         gen.return = (value) => {
-            eventSource?.close();
+            closeIterator();
             return origReturn(value);
         };
 
         return gen;
     }
 
-    async *getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
+    getTransactionsStream(signal: AbortSignal): AsyncIterableIterator<{
         commitmentTx?: TxNotification;
         arkTx?: TxNotification;
     }> {
         const url = `${this.serverUrl}/v1/txs`;
+        let iterator: ReturnType<typeof eventSourceIterator> | null = null;
+        const closeIterator = () => iterator?.close();
 
-        while (!signal?.aborted) {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        const self = this;
+        const gen = (async function* () {
+            const abortHandler = closeIterator;
+            signal?.addEventListener("abort", abortHandler);
+
             try {
-                const eventSource = new EventSource(url);
+                while (!signal?.aborted) {
+                    try {
+                        const currentIterator = eventSourceIterator(
+                            new EventSource(url)
+                        );
+                        iterator = currentIterator;
 
-                // Set up abort handling
-                const abortHandler = () => {
-                    eventSource.close();
-                };
-                signal?.addEventListener("abort", abortHandler);
+                        for await (const event of currentIterator) {
+                            if (signal?.aborted) break;
 
-                try {
-                    for await (const event of eventSourceIterator(
-                        eventSource
-                    )) {
-                        if (signal?.aborted) break;
-
-                        try {
-                            const data = JSON.parse(event.data);
-                            const txNotification =
-                                this.parseTransactionNotification(data);
-                            if (txNotification) {
-                                yield txNotification;
+                            try {
+                                const data = JSON.parse(event.data);
+                                const txNotification =
+                                    self.parseTransactionNotification(data);
+                                if (txNotification) {
+                                    yield txNotification;
+                                }
+                            } catch (err) {
+                                console.error(
+                                    "Failed to parse transaction notification:",
+                                    err
+                                );
+                                throw err;
                             }
-                        } catch (err) {
-                            console.error(
-                                "Failed to parse transaction notification:",
-                                err
-                            );
-                            throw err;
                         }
+                    } catch (error) {
+                        if (
+                            signal?.aborted ||
+                            (error instanceof Error &&
+                                error.name === "AbortError")
+                        ) {
+                            break;
+                        }
+
+                        // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                        if (isFetchTimeoutError(error)) {
+                            console.debug("Timeout error ignored");
+                            continue;
+                        }
+
+                        if (isEventSourceError(error)) {
+                            throw error;
+                        }
+
+                        console.error("Transaction stream error:", error);
+                        throw error;
+                    } finally {
+                        closeIterator();
+                        iterator = null;
                     }
-                } finally {
-                    signal?.removeEventListener("abort", abortHandler);
-                    eventSource.close();
                 }
-            } catch (error) {
-                if (
-                    signal?.aborted ||
-                    (error instanceof Error && error.name === "AbortError")
-                ) {
-                    break;
-                }
-
-                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                if (isFetchTimeoutError(error)) {
-                    console.debug("Timeout error ignored");
-                    continue;
-                }
-
-                if (isEventSourceError(error)) {
-                    throw error;
-                }
-
-                console.error("Transaction stream error:", error);
-                throw error;
+            } finally {
+                signal?.removeEventListener("abort", abortHandler);
+                closeIterator();
             }
-        }
+        })();
+
+        const origReturn = gen.return.bind(gen);
+        gen.return = (value) => {
+            closeIterator();
+            return origReturn(value);
+        };
+
+        return gen;
     }
 
     async getPendingTxs(

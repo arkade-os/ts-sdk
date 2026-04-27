@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RestIndexerProvider } from "../src";
+import { MockEventSource } from "./mocks/eventSource";
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -7,6 +8,10 @@ global.fetch = mockFetch;
 describe("RestIndexerProvider", () => {
     beforeEach(() => {
         mockFetch.mockReset();
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
     });
 
     describe("getVtxos", () => {
@@ -127,6 +132,55 @@ describe("RestIndexerProvider", () => {
             ).rejects.toThrow("before must be greater than after");
 
             expect(mockFetch).not.toHaveBeenCalled();
+        });
+    });
+
+    describe("getSubscription", () => {
+        beforeEach(() => {
+            MockEventSource.reset();
+            vi.stubGlobal("EventSource", MockEventSource);
+        });
+
+        it("aborts a pending subscription even when EventSource.close emits nothing", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const ac = new AbortController();
+            const subscription = provider.getSubscription("sub-id", ac.signal);
+
+            const pending = subscription.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(MockEventSource.instances).toHaveLength(1);
+            expect(MockEventSource.instances[0].closed).toBe(false);
+
+            ac.abort();
+
+            expect(MockEventSource.instances[0].closed).toBe(true);
+            await expect(pending).resolves.toMatchObject({ done: true });
+            expect(MockEventSource.instances[0].listenerCount("message")).toBe(
+                0
+            );
+            expect(MockEventSource.instances[0].listenerCount("error")).toBe(0);
+        });
+
+        it("return closes a pending subscription even when EventSource.close emits nothing", async () => {
+            const provider = new RestIndexerProvider("http://localhost:7070");
+            const ac = new AbortController();
+            const subscription = provider.getSubscription("sub-id", ac.signal);
+
+            const pending = subscription.next();
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(MockEventSource.instances).toHaveLength(1);
+
+            const returned = subscription.return?.();
+
+            expect(MockEventSource.instances[0].closed).toBe(true);
+            await expect(pending).resolves.toMatchObject({ done: true });
+            await expect(returned).resolves.toMatchObject({ done: true });
+            expect(MockEventSource.instances[0].listenerCount("message")).toBe(
+                0
+            );
+            expect(MockEventSource.instances[0].listenerCount("error")).toBe(0);
         });
     });
 });
