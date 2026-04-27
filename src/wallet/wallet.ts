@@ -689,6 +689,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
             // opening a second SSE stream.
             const cm = await this.getContractManager();
 
+            // Serialize annotation+notification: parallel `annotateVtxos`
+            // awaits could resolve out of order and deliver eventCallback
+            // calls in the wrong sequence (e.g. `vtxo_spent` before its
+            // matching `vtxo_received`).
+            let annotationQueue: Promise<void> = Promise.resolve();
+
             indexerStopFunc = cm.onContractEvent((event) => {
                 if (
                     event.type !== "vtxo_received" &&
@@ -705,7 +711,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
                 // `event.vtxos` carries placeholder tapscript fields from
                 // the watcher; `annotateVtxos` fills them in.
-                (async () => {
+                annotationQueue = annotationQueue.then(async () => {
                     try {
                         const annotated = await cm.annotateVtxos(event.vtxos);
                         eventCallback({
@@ -721,7 +727,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                             error
                         );
                     }
-                })();
+                });
             });
         }
 
