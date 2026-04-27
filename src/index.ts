@@ -104,6 +104,15 @@ import {
     ExplorerTransaction,
 } from "./providers/onchain";
 import {
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
+} from "./providers/electrum";
+import type {
+    TransactionHistory as ElectrumTransactionHistory,
+    BlockHeader as ElectrumBlockHeader,
+    Unspent as ElectrumUnspent,
+} from "./providers/electrum";
+import {
     RestArkProvider,
     ArkProvider,
     SettlementEvent,
@@ -279,6 +288,8 @@ export {
     // Providers
     ESPLORA_URL,
     EsploraProvider,
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
     RestArkProvider,
     RestIndexerProvider,
 
@@ -459,6 +470,9 @@ export type {
     Output,
     TxNotification,
     ExplorerTransaction,
+    ElectrumTransactionHistory,
+    ElectrumBlockHeader,
+    ElectrumUnspent,
     BatchFinalizationEvent,
     BatchFinalizedEvent,
     BatchFailedEvent,
