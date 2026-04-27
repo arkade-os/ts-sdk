@@ -6,15 +6,12 @@ import {
 /** Lag behind real-time to avoid racing with indexer writes. */
 export const SAFETY_LAG_MS = 30_000;
 
-/** Overlap window so boundary VTXOs are never missed. */
-export const OVERLAP_MS = 60_000;
-
-type SyncCursors = Record<string, number>;
+/** Overlap window so boundary virtual outputs are never missed. */
+export const OVERLAP_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Per-repository mutex that serializes wallet-state mutations so that
- * concurrent read-modify-write cycles (e.g. advanceSyncCursors racing
- * with clearSyncCursors or setPendingTxFlag) never silently overwrite
+ * concurrent read-modify-write cycles never silently overwrite
  * each other's changes.
  */
 const walletStateLocks = new WeakMap<WalletRepository, Promise<void>>();
@@ -42,123 +39,98 @@ export async function updateWalletState(
 }
 
 /**
- * Read the high-water mark for a single script.
- * Returns `undefined` when the script has never been synced (bootstrap case).
+ * Settings key that gates interpretation of the `lastSyncTime` field.
+ *
+ * The `lastSyncTime` column existed pre-PR with a different semantic
+ * (wall-clock at sync completion, written by the buggy sync loop this
+ * PR fixes). On upgrade we cannot trust any pre-existing value, so the
+ * cursor is only honoured after the first successful post-upgrade
+ * advance writes this marker into the `settings` JSON blob. Reusing
+ * `settings` avoids any schema migration.
  */
-export async function getSyncCursor(
-    repo: WalletRepository,
-    script: string
-): Promise<number | undefined> {
-    const state = await repo.getWalletState();
-    return (state?.settings?.vtxoSyncCursors as SyncCursors | undefined)?.[
-        script
-    ];
+const CURSOR_MIGRATED_KEY = "vtxoCursorMigrated";
+
+function hasMigrationMarker(state: WalletState | null | undefined): boolean {
+    return state?.settings?.[CURSOR_MIGRATED_KEY] === true;
 }
 
 /**
- * Read cursors for every previously-synced script.
+ * Read the global high-water mark for VTXO indexer syncs.
+ *
+ * Returns `0` when:
+ *  - the wallet has never been synced (bootstrap case), or
+ *  - the stored `lastSyncTime` was written by pre-PR code and is not
+ *    safe to reuse under the new semantics (see {@link CURSOR_MIGRATED_KEY}).
  */
-export async function getAllSyncCursors(
-    repo: WalletRepository
-): Promise<SyncCursors> {
+export async function getSyncCursor(repo: WalletRepository): Promise<number> {
     const state = await repo.getWalletState();
-    return (state?.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
+    if (!hasMigrationMarker(state)) return 0;
+    return state?.lastSyncTime ?? 0;
 }
 
 /**
- * Advance the cursor for one script after a successful delta sync.
- * `cursor` should be the `before` cutoff used in the request.
+ * Advance the global cursor after a successful full-scope delta sync.
+ *
+ * Clamped with `Math.max` against the current value so concurrent syncs
+ * that finish out of order can't rewind the cursor: `lastUpdatedAt` is
+ * captured before each sync enters the `updateWalletState` mutex, and
+ * the later-started sync would otherwise overwrite the earlier-captured
+ * one with a smaller value. The legacy value is discarded on the first
+ * advance if the migration marker is absent so pre-PR data doesn't
+ * survive the upgrade.
  */
 export async function advanceSyncCursor(
     repo: WalletRepository,
-    script: string,
-    cursor: number
+    lastUpdatedAt: number
 ): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const existing =
-            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
+        const current = hasMigrationMarker(state)
+            ? (state.lastSyncTime ?? 0)
+            : 0;
         return {
             ...state,
+            lastSyncTime: Math.max(current, lastUpdatedAt),
             settings: {
-                ...state.settings,
-                vtxoSyncCursors: { ...existing, [script]: cursor },
+                ...(state.settings ?? {}),
+                [CURSOR_MIGRATED_KEY]: true,
             },
         };
     });
 }
 
 /**
- * Advance cursors for multiple scripts in a single write.
+ * Remove the sync cursor, forcing a full re-bootstrap on next sync.
+ *
+ * Also clears the migration marker so any stored `lastSyncTime` is
+ * treated as untrusted on the next read.
  */
-export async function advanceSyncCursors(
-    repo: WalletRepository,
-    updates: Record<string, number>
-): Promise<void> {
+export async function clearSyncCursor(repo: WalletRepository): Promise<void> {
     await updateWalletState(repo, (state) => {
-        const existing =
-            (state.settings?.vtxoSyncCursors as SyncCursors | undefined) ?? {};
+        const { [CURSOR_MIGRATED_KEY]: _, ...restSettings } =
+            state.settings ?? {};
         return {
             ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: { ...existing, ...updates },
-            },
-        };
-    });
-}
-
-/**
- * Remove sync cursors, forcing a full re-bootstrap on next sync.
- * When `scripts` is provided, only those cursors are cleared.
- */
-export async function clearSyncCursors(
-    repo: WalletRepository,
-    scripts?: string[]
-): Promise<void> {
-    await updateWalletState(repo, (state) => {
-        if (!scripts) {
-            const { vtxoSyncCursors: _, ...restSettings } =
-                state.settings ?? {};
-            return {
-                ...state,
-                settings: restSettings,
-            };
-        }
-        const existing =
-            (state.settings?.vtxoSyncCursors as
-                | Record<string, number>
-                | undefined) ?? {};
-        const filtered = { ...existing };
-        for (const s of scripts) delete filtered[s];
-        return {
-            ...state,
-            settings: {
-                ...state.settings,
-                vtxoSyncCursors: filtered,
-            },
+            lastSyncTime: undefined,
+            settings: restSettings,
         };
     });
 }
 
 /**
  * Compute the `after` lower-bound for a delta sync query.
- * Returns `undefined` when the script has no cursor (bootstrap needed).
  *
  * No upper bound (`before`) is applied to the query so that freshly
- * created VTXOs are never excluded. The safety lag is applied only
- * when advancing the cursor (see {@link cursorCutoff}).
+ * created virtual outputs are never excluded. The safety lag is applied only
+ * when advancing the cursor (see @see cursorCutoff).
  */
-export function computeSyncWindow(
-    cursor: number | undefined
-): { after: number } | undefined {
-    if (cursor === undefined) return undefined;
+export function computeSyncWindow(cursor: number): { after: number } {
     const after = Math.max(0, cursor - OVERLAP_MS);
     return { after };
 }
 
 /**
  * The safe high-water mark for cursor advancement.
- * Lags behind real-time by {@link SAFETY_LAG_MS} so that VTXOs still
+ * Lags behind real-time by @see SAFETY_LAG_MS so that virtual outputs still
  * being indexed are re-queried on the next sync.
  *
  * When `requestStartedAt` is provided the cutoff is frozen to the

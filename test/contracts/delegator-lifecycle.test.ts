@@ -30,13 +30,12 @@ describe("Delegator Lifecycle", () => {
         vi.useRealTimers();
     });
 
-    it("should add delegator — persisted contracts survive re-creation", async () => {
+    it("should add delegator - persisted contracts survive re-creation", async () => {
         // Phase 1 — No delegator: only default contract
         const manager1 = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository,
             walletRepository,
-            getDefaultAddress: async () => "default-address",
             watcherConfig: {
                 failsafePollIntervalMs: 1000,
                 reconnectDelayMs: 500,
@@ -78,7 +77,6 @@ describe("Delegator Lifecycle", () => {
             indexerProvider: mockIndexer,
             contractRepository,
             walletRepository,
-            getDefaultAddress: async () => "delegate-address",
             watcherConfig: {
                 failsafePollIntervalMs: 1000,
                 reconnectDelayMs: 500,
@@ -138,7 +136,6 @@ describe("Delegator Lifecycle", () => {
             indexerProvider: mockIndexer,
             contractRepository,
             walletRepository,
-            getDefaultAddress: async () => "default-address",
             watcherConfig: {
                 failsafePollIntervalMs: 1000,
                 reconnectDelayMs: 500,
@@ -166,7 +163,6 @@ describe("Delegator Lifecycle", () => {
             indexerProvider: mockIndexer,
             contractRepository,
             walletRepository,
-            getDefaultAddress: async () => "default-address",
             watcherConfig: {
                 failsafePollIntervalMs: 1000,
                 reconnectDelayMs: 500,

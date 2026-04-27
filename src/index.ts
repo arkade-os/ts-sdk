@@ -11,7 +11,13 @@ import type {
     NetworkOptions,
     DescriptorOptions,
 } from "./identity/seedIdentity";
-import { Identity, ReadonlyIdentity } from "./identity";
+import {
+    Identity,
+    ReadonlyIdentity,
+    BatchSignableIdentity,
+    SignRequest,
+    isBatchSignable,
+} from "./identity";
 import { ArkAddress } from "./script/address";
 import { VHTLC } from "./script/vhtlc";
 import { DefaultVtxo } from "./script/default";
@@ -88,7 +94,9 @@ import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
 import {
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
+    DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
+import type { MessageTimeouts } from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -97,6 +105,15 @@ import {
     OnchainProvider,
     ExplorerTransaction,
 } from "./providers/onchain";
+import {
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
+} from "./providers/electrum";
+import type {
+    TransactionHistory as ElectrumTransactionHistory,
+    BlockHeader as ElectrumBlockHeader,
+    Unspent as ElectrumUnspent,
+} from "./providers/electrum";
 import {
     RestArkProvider,
     ArkProvider,
@@ -274,6 +291,7 @@ export {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
+    isBatchSignable,
     OnchainWallet,
     Ramps,
     VtxoManager,
@@ -283,6 +301,8 @@ export {
     // Providers
     ESPLORA_URL,
     EsploraProvider,
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
     RestArkProvider,
     RestIndexerProvider,
     RestIntrospectorProvider,
@@ -312,6 +332,7 @@ export {
     ServiceWorkerTimeoutError,
     ServiceWorkerWallet,
     ServiceWorkerReadonlyWallet,
+    DEFAULT_MESSAGE_TIMEOUTS,
 
     // Tapscript
     decodeTapscript,
@@ -322,7 +343,7 @@ export {
     CLTVMultisigTapscript,
     TapTreeCoder,
 
-    // Ark PSBT fields
+    // Arkade PSBT fields
     ArkPsbtFieldKey,
     ArkPsbtFieldKeyType,
     setArkPsbtField,
@@ -415,6 +436,8 @@ export type {
     // Types and Interfaces
     Identity,
     ReadonlyIdentity,
+    BatchSignableIdentity,
+    SignRequest,
     IWallet,
     IReadonlyWallet,
     BaseWalletConfig,
@@ -444,7 +467,6 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
-
     // Indexer types
     IndexerProvider,
     PageResponse,
@@ -471,6 +493,9 @@ export type {
     Output,
     TxNotification,
     ExplorerTransaction,
+    ElectrumTransactionHistory,
+    ElectrumBlockHeader,
+    ElectrumUnspent,
     BatchFinalizationEvent,
     BatchFinalizedEvent,
     BatchFailedEvent,
@@ -520,7 +545,7 @@ export type {
     Nonces,
     PartialSig,
 
-    // Ark PSBT fields
+    // Arkade PSBT field coder
     ArkPsbtFieldCoder,
 
     // TxTree
@@ -556,6 +581,7 @@ export type {
     MessageHandler,
     RequestEnvelope,
     ResponseEnvelope,
+    MessageTimeouts,
 
     // Arkade types
     ArkadeExtendedCoin,

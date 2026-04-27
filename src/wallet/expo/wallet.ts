@@ -29,17 +29,13 @@ import {
     contractPollProcessor,
     CONTRACT_POLL_TASK_TYPE,
 } from "../../worker/expo/processors";
-import {
-    extendVirtualCoin,
-    extendVtxoFromContract,
-    getRandomId,
-} from "../utils";
+import { extendVirtualCoinForContract, getRandomId } from "../utils";
 import { DefaultVtxo } from "../../script/default";
 import type { PersistedBackgroundConfig } from "./background";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
 
 /**
- * Background processing configuration for {@link ExpoWallet}.
+ * Background processing configuration for @see ExpoWallet.
  */
 export interface ExpoBackgroundConfig {
     /** Identifier registered with expo-background-task. */
@@ -55,7 +51,7 @@ export interface ExpoBackgroundConfig {
 }
 
 /**
- * Configuration for {@link ExpoWallet.setup}.
+ * Configuration for @see ExpoWallet.setup.
  */
 export interface ExpoWalletConfig extends WalletConfig {
     background: ExpoBackgroundConfig;
@@ -64,7 +60,7 @@ export interface ExpoWalletConfig extends WalletConfig {
 /**
  * Expo/React Native wallet with built-in background task processing.
  *
- * Wraps a standard {@link Wallet} and adds a lightweight task queue
+ * Wraps a standard @see Wallet and adds a lightweight task queue
  * for keeping contract/VTXO state fresh while the app is active and
  * across Expo BackgroundTask wakes.
  *
@@ -74,10 +70,10 @@ export interface ExpoWalletConfig extends WalletConfig {
  * import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
  *
  * const wallet = await ExpoWallet.setup({
- *     identity: SingleKey.fromHex(privateKey),
- *     arkServerUrl,
- *     esploraUrl,
- *     storage: { walletRepository, contractRepository },
+ *     identity: MnemonicIdentity.fromMnemonic('abandon abandon...'),
+ *     arkServerUrl: 'https://arkade.computer',
+ *     esploraUrl: 'https://mempool.space/api',
+ *     storage: { ... },
  *     background: {
  *         taskName: "ark-background-poll",
  *         taskQueue: new AsyncStorageTaskQueue(AsyncStorage),
@@ -118,8 +114,8 @@ export class ExpoWallet implements IWallet {
     /**
      * Create an ExpoWallet with background task support.
      *
-     * 1. Creates the inner {@link Wallet} via `Wallet.create()`.
-     * 2. Wires up processors (defaults to {@link contractPollProcessor}).
+     * 1. Creates the inner @see Wallet via `Wallet.create()`.
+     * 2. Wires up processors (defaults to @see contractPollProcessor).
      * 3. Persists background config for the background handler (if the queue supports it).
      * 4. Seeds the task queue with a `contract-poll` task.
      * 5. Registers the background task with the OS scheduler (if `minimumBackgroundInterval` is set).
@@ -137,12 +133,8 @@ export class ExpoWallet implements IWallet {
             contractRepository: wallet.contractRepository,
             indexerProvider: wallet.indexerProvider,
             arkProvider: wallet.arkProvider,
-            extendVtxo: (vtxo, contract) => {
-                if (contract) {
-                    return extendVtxoFromContract(vtxo, contract);
-                }
-                return extendVirtualCoin(wallet, vtxo);
-            },
+            extendVtxo: (vtxo, contract) =>
+                extendVirtualCoinForContract(vtxo, contract),
         };
 
         const { taskQueue } = config.background;
@@ -311,7 +303,7 @@ export class ExpoWallet implements IWallet {
         return this.wallet.settle(params, eventCallback);
     }
 
-    send(...recipients: Recipient[]): Promise<string> {
+    send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
         return this.wallet.send(...recipients);
     }
 

@@ -12,10 +12,11 @@ import { ExtendedCoin } from "../wallet";
  * Intent proof implementation for Bitcoin message signing.
  *
  * Intent proof defines a standard for signing Bitcoin messages as well as proving
- * ownership of coins. This namespace provides utilities for creating and
- * validating Intent proof.
+ * ownership of outputs.
  *
- * it is greatly inspired by BIP322.
+ * This namespace provides utilities for creating and validating Intent proof.
+ *
+ * It is greatly inspired by BIP322.
  * @see https://github.com/bitcoin/bips/blob/master/bip-0322.mediawiki
  *
  * @example
@@ -40,11 +41,11 @@ export namespace Intent {
      * Creates a new Intent proof unsigned transaction.
      *
      * This function constructs a special transaction that can be signed to prove
-     * ownership of VTXOs and UTXOs. The proof includes the message to be
+     * ownership of onchain and virtual outputs. The proof includes the message to be
      * signed and the inputs/outputs that demonstrate ownership.
      *
      * @param message - The Intent message to be signed, either raw string of Message object
-     * @param inputs - Array of transaction inputs to prove ownership of
+     * @param ins - Array of transaction inputs to prove ownership of
      * @param outputs - Optional array of transaction outputs
      * @returns An unsigned Intent proof transaction
      */
@@ -63,13 +64,19 @@ export namespace Intent {
         if (!validateInputs(inputs)) throw new Error("invalid inputs");
         if (!validateOutputs(outputs)) throw new Error("invalid outputs");
 
-        // create the initial transaction to spend
+        // Create the initial transaction to spend.
         const toSpend = craftToSpendTx(message, inputs[0].witnessUtxo.script);
 
-        // create the transaction to sign
+        // Create the transaction to sign.
         return craftToSignTx(toSpend, inputs, outputs);
     }
 
+    /**
+     * Compute the fee paid by an intent proof transaction.
+     *
+     * @param proof - Intent proof transaction
+     * @returns The fee in satoshis
+     */
     export function fee(proof: Proof): number {
         let sumOfInputs = 0n;
         for (let i = 0; i < proof.inputsLength; i++) {
@@ -115,6 +122,12 @@ export namespace Intent {
     };
     export type Message = RegisterMessage | DeleteMessage | GetPendingTxMessage;
 
+    /**
+     * Serialize an intent message to the canonical JSON string used for signing.
+     *
+     * @param message - Intent message payload
+     * @returns Canonical string form of the message
+     */
     export function encodeMessage(message: Message): string {
         switch (message.type) {
             case "register":
@@ -197,7 +210,7 @@ function validateOutputs(
  *
  * @param message - The message to embed
  * @param pkScript - The scriptPubKey of the signer's address
- * @param tag - Tagged-hash tag (defaults to the Ark intent proof tag)
+ * @param tag - Tagged-hash tag (defaults to the Arkade intent proof tag)
  */
 export function craftToSpendTx(
     message: string,
@@ -237,13 +250,15 @@ function craftToSignTx(
 ): Transaction {
     const firstInput = inputs[0];
 
-    const lockTime = inputs
-        .map((input) => input.sequence || 0)
-        .reduce((a, b) => Math.max(a, b), 0);
-
+    // Proof tx is never broadcast onchain — toSpend references a zero-hash
+    // outpoint (see BIP-322). The tx exists only as a sighash commitment
+    // the server verifies signatures against; nLockTime and nSequence carry
+    // no consensus meaning here, they only need to match between signer and
+    // verifier. Use lockTime = 0 (BIP-322 convention) and leave each input's
+    // nSequence untouched.
     const tx = new Transaction({
         version: 2,
-        lockTime,
+        lockTime: 0,
     });
 
     // add the first "toSpend" input

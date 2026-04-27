@@ -1,6 +1,5 @@
 import { generateMnemonic } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { hex } from "@scure/base";
 import { execSync } from "child_process";
 import {
     Wallet,
@@ -9,16 +8,33 @@ import {
     Identity,
     OnchainWallet,
     EsploraProvider,
-    RestIndexerProvider,
-    ArkAddress,
     IntentFeeConfig,
     RestDelegatorProvider,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    ArkInfo,
+    ArkProvider,
+    RestArkProvider,
+    WalletRepository,
+    ContractRepository,
 } from "../../src";
 
 export const arkdExec = "docker exec -t arkd";
-// process.env.ARK_ENV === "docker" ? "docker exec -t arkd" : "nigiri";
+
+let arkCliInitialized = false;
+
+function ensureArkCliInitialized(): void {
+    if (arkCliInitialized) return;
+    try {
+        execSync(
+            `${arkdExec} ark init --password secret --server-url localhost:7070 --explorer http://chopsticks:3000`,
+            { stdio: "pipe" }
+        );
+    } catch {
+        // already initialized — ignore
+    }
+    arkCliInitialized = true;
+}
 
 export interface TestArkWallet {
     wallet: Wallet;
@@ -31,8 +47,15 @@ export interface TestOnchainWallet {
 }
 
 export function execCommand(command: string): string {
-    command += " | grep -v WARN";
-    const result = execSync(command).toString().trim();
+    const result = execSync(command, { encoding: "utf8" })
+        .replace(/\r/g, "")
+        .split("\n")
+        .filter((line) => !line.includes("WARN"))
+        .join("\n")
+        .trim();
+    if (result.startsWith("error:")) {
+        throw new Error(result);
+    }
     return result;
 }
 
@@ -86,7 +109,7 @@ export async function createTestArkWalletWithDelegate(): Promise<TestArkWallet> 
             walletRepository: new InMemoryWalletRepository(),
             contractRepository: new InMemoryContractRepository(),
         },
-        delegatorProvider: new RestDelegatorProvider("http://localhost:7002"),
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
         settlementConfig: false,
     });
 
@@ -163,30 +186,13 @@ export async function createVtxo(
     return settleTxid;
 }
 
-// before each test check if the ark's cli running in the test env has at least 20_000 offchain balance
-// if not, fund it with 100.000
+// before each test, ensure the faucet wallet has fresh spendable VTXOs.
+// After rounds, existing VTXOs can become stale (balance shows them but
+// ark send can't spend them), so we always redeem a fresh note.
 export async function beforeEachFaucet(): Promise<void> {
-    const receiveOutput = execCommand(`${arkdExec} ark receive`);
-    const receive = JSON.parse(receiveOutput);
-    const receiveAddress = receive.offchain_address;
-
-    const { vtxos } = await new RestIndexerProvider(
-        "http://localhost:7070"
-    ).getVtxos({
-        scripts: [hex.encode(ArkAddress.decode(receiveAddress).pkScript)],
-        spendableOnly: true,
-    });
-    const offchainBalance = vtxos.reduce(
-        (sum: number, vtxo) => sum + vtxo.value,
-        0
-    );
-
-    if (offchainBalance <= 20_000) {
-        const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
-        execCommand(
-            `${arkdExec} ark redeem-notes -n ${noteStr} --password secret`
-        );
-    }
+    ensureArkCliInitialized();
+    const noteStr = execCommand(`${arkdExec} arkd note --amount 200000`);
+    execCommand(`${arkdExec} ark redeem-notes -n ${noteStr} --password secret`);
 }
 
 export function setFees(fees: IntentFeeConfig): void {
@@ -220,4 +226,78 @@ export async function waitFor(
         await new Promise((r) => setTimeout(r, interval));
     }
     throw new Error("timeout in waitFor");
+}
+
+/**
+ * Wrap a real ArkProvider, overriding selected fields of `getInfo()` while
+ * forwarding every other method to the underlying provider. Used to simulate
+ * server-config changes (e.g. `unilateralExitDelay`) between wallet loads
+ * without actually restarting arkd.
+ */
+export function createOverrideInfoArkProvider(
+    real: ArkProvider,
+    overrides: Partial<ArkInfo>
+): ArkProvider {
+    return new Proxy(real, {
+        get(target, prop, receiver) {
+            if (prop === "getInfo") {
+                return async () => {
+                    const info = await target.getInfo();
+                    return { ...info, ...overrides };
+                };
+            }
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+        },
+    });
+}
+
+export interface SharedRepos {
+    walletRepository: WalletRepository;
+    contractRepository: ContractRepository;
+}
+
+export function createSharedRepos(): SharedRepos {
+    return {
+        walletRepository: new InMemoryWalletRepository(),
+        contractRepository: new InMemoryContractRepository(),
+    };
+}
+
+/**
+ * Create a delegator-enabled wallet using a provided identity and repositories,
+ * with an `ArkProvider` whose `getInfo()` overrides `unilateralExitDelay` to
+ * simulate a server-side config change without restarting arkd.
+ */
+export async function createTestArkWalletWithDelegateAndOverride(opts: {
+    identity: Identity;
+    repos: SharedRepos;
+    unilateralExitDelay: bigint;
+}): Promise<TestArkWallet> {
+    const arkServerUrl = "http://localhost:7070";
+    const realProvider = new RestArkProvider(arkServerUrl);
+    const arkProvider = createOverrideInfoArkProvider(realProvider, {
+        unilateralExitDelay: opts.unilateralExitDelay,
+    });
+
+    const wallet = await Wallet.create({
+        identity: opts.identity,
+        arkServerUrl,
+        arkProvider,
+        onchainProvider: new EsploraProvider("http://localhost:3000", {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+        storage: {
+            walletRepository: opts.repos.walletRepository,
+            contractRepository: opts.repos.contractRepository,
+        },
+        delegatorProvider: new RestDelegatorProvider("http://localhost:7012"),
+        settlementConfig: false,
+    });
+
+    return {
+        wallet,
+        identity: opts.identity,
+    };
 }

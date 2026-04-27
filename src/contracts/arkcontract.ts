@@ -13,7 +13,7 @@ const ARKCONTRACT_PREFIX = "arkcontract";
  * Format: arkcontract={type}&{key1}={value1}&{key2}={value2}...
  *
  * This format is compatible with NArk and allows contracts to be
- * shared/imported across different Ark implementations.
+ * shared/imported across different Arkade SDKs.
  *
  * @example
  * ```typescript
@@ -120,7 +120,6 @@ export function contractFromArkContract(
     options: {
         label?: string;
         state?: "active" | "inactive";
-        expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
 ): Omit<Contract, "script" | "address"> & {
@@ -147,7 +146,6 @@ export function contractFromArkContract(
         params,
         state: options.state || "active",
         createdAt: Date.now(),
-        expiresAt: options.expiresAt,
         metadata: options.metadata,
     };
 }
@@ -168,7 +166,6 @@ export function contractFromArkContractWithAddress(
     options: {
         label?: string;
         state?: "active" | "inactive";
-        expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
 ): Contract {
@@ -186,7 +183,6 @@ export function contractFromArkContractWithAddress(
         address: vtxoScript.address(addressPrefix, serverPubKey).encode(),
         state: options.state || "active",
         createdAt: Date.now(),
-        expiresAt: options.expiresAt,
         metadata: options.metadata,
     };
 }

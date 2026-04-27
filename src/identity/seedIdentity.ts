@@ -2,44 +2,67 @@ import { validateMnemonic, mnemonicToSeedSync } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
+import { hex } from "@scure/base";
 import { Identity, ReadonlyIdentity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
 import {
-    defaultFactory,
-    scureBIP32 as BIP32,
+    HDKey,
+    expand,
     networks,
     scriptExpressions,
-} from "@kukks/bitcoin-descriptors";
-import type { Network } from "@kukks/bitcoin-descriptors";
-
-const { expand } = defaultFactory;
+    type Network,
+} from "@bitcoinerlab/descriptors-scure";
+import type {
+    SerializedSigningIdentity,
+    SerializedReadonlyIdentity,
+} from "./serialize";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
-/** Use default BIP86 derivation with network selection. */
+/**
+ * Secret-bearing state for seed-backed identities, held off the public
+ * instance surface. Accessed only by the SDK-internal serializer helpers
+ * below; application code cannot read these via ordinary field access.
+ *
+ * Using a module-private WeakMap (rather than `private` / `protected`)
+ * matters because TypeScript visibility is a compile-time boundary only:
+ * JavaScript consumers could still read public fields. A WeakMap removes
+ * that enumeration path entirely.
+ */
+const seedBytes = new WeakMap<SeedIdentity, Uint8Array>();
+const mnemonicMeta = new WeakMap<
+    MnemonicIdentity,
+    { mnemonic: string; passphrase?: string }
+>();
+
+/** Used for default BIP86 derivation with network selection. */
 export interface NetworkOptions {
     /**
      * Mainnet (coin type 0) or testnet (coin type 1).
-     * @default true
+     *
+     * @defaultValue `true`
      */
     isMainnet?: boolean;
 }
 
-/** Use a custom output descriptor for derivation. */
+/** Used for custom output descriptor derivation. */
 export interface DescriptorOptions {
     /** Custom output descriptor that determines the derivation path. */
     descriptor: string;
 }
 
-/** Either default BIP86 derivation (with optional network) or a custom descriptor. */
+/** Either default BIP86 derivation (with optional network selection) or a custom descriptor. */
 export type SeedIdentityOptions = NetworkOptions | DescriptorOptions;
 
+/** Used for deriving an identity from a BIP39 mnemonic. */
 export type MnemonicOptions = SeedIdentityOptions & {
     /** Optional BIP39 passphrase for additional seed entropy. */
     passphrase?: string;
 };
+
+// ── Helpers ──────────────────────────────────────────────────────
 
 /**
  * Detects the network from a descriptor string by checking for tpub (testnet)
@@ -50,7 +73,9 @@ function detectNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
 }
 
-function hasDescriptor(opts: SeedIdentityOptions): opts is DescriptorOptions {
+function hasDescriptor(
+    opts: SeedIdentityOptions = {}
+): opts is DescriptorOptions {
     return "descriptor" in opts && typeof opts.descriptor === "string";
 }
 
@@ -60,7 +85,7 @@ function hasDescriptor(opts: SeedIdentityOptions): opts is DescriptorOptions {
  */
 function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
     const network = isMainnet ? networks.bitcoin : networks.testnet;
-    const masterNode = BIP32.fromSeed(seed, network);
+    const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
     return scriptExpressions.trBIP32({
         masterNode,
         network,
@@ -75,13 +100,13 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  *
  * This is the recommended identity type for most applications. It uses
  * standard BIP86 (Taproot) derivation by default and stores an output
- * descriptor for interoperability with other wallets. The descriptor
- * format is HD-ready, allowing future support for multiple addresses
- * and change derivation.
+ * descriptor for interoperability with other wallets.
  *
- * Prefer this (or {@link MnemonicIdentity}) over `SingleKey` for new
+ * Prefer this (or @see MnemonicIdentity) over `SingleKey` for new
  * integrations — `SingleKey` exists for backward compatibility with
  * raw nsec-style keys.
+ *
+ * For descriptor-based signing, wrap with {@link StaticDescriptorProvider}.
  *
  * @example
  * ```typescript
@@ -98,7 +123,6 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * ```
  */
 export class SeedIdentity implements Identity {
-    protected readonly seed: Uint8Array;
     private readonly derivedKey: Uint8Array;
     readonly descriptor: string;
 
@@ -107,7 +131,11 @@ export class SeedIdentity implements Identity {
             throw new Error("Seed must be 64 bytes");
         }
 
-        this.seed = seed;
+        // Defensive copy: `derivedKey` and `descriptor` are computed eagerly
+        // from the bytes we're about to stash, so a later mutation of the
+        // caller's buffer must not drift the serialized `seed` out of sync
+        // with the live identity state.
+        seedBytes.set(this, new Uint8Array(seed));
         this.descriptor = descriptor;
 
         const network = detectNetwork(descriptor);
@@ -121,9 +149,9 @@ export class SeedIdentity implements Identity {
         }
 
         // Verify the xpub in the descriptor matches our seed
-        const masterNode = BIP32.fromSeed(seed, network);
-        const accountNode = masterNode.derivePath(`m${keyInfo.originPath}`);
-        if (accountNode.neutered().toBase58() !== keyInfo.bip32?.toBase58()) {
+        const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
+        const accountNode = masterNode.derive(`m${keyInfo.originPath}`);
+        if (accountNode.publicExtendedKey !== keyInfo.bip32?.toBase58()) {
             throw new Error(
                 "xpub mismatch: derived key does not match descriptor"
             );
@@ -133,7 +161,7 @@ export class SeedIdentity implements Identity {
         if (!keyInfo.path) {
             throw new Error("Descriptor must specify a full derivation path");
         }
-        const derivedNode = masterNode.derivePath(keyInfo.path);
+        const derivedNode = masterNode.derive(keyInfo.path);
         if (!derivedNode.privateKey) {
             throw new Error("Failed to derive private key");
         }
@@ -149,7 +177,10 @@ export class SeedIdentity implements Identity {
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
      * @param opts - Network selection or custom descriptor.
      */
-    static fromSeed(seed: Uint8Array, opts: SeedIdentityOptions): SeedIdentity {
+    static fromSeed(
+        seed: Uint8Array,
+        opts: SeedIdentityOptions = {}
+    ): SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
@@ -221,7 +252,7 @@ export class SeedIdentity implements Identity {
  *
  * This is the most user-friendly identity type — recommended for wallet
  * applications where users manage their own backup phrase. Extends
- * {@link SeedIdentity} with mnemonic validation and optional passphrase
+ * @see SeedIdentity with mnemonic validation and optional passphrase
  * support.
  *
  * @example
@@ -233,8 +264,14 @@ export class SeedIdentity implements Identity {
  * ```
  */
 export class MnemonicIdentity extends SeedIdentity {
-    private constructor(seed: Uint8Array, descriptor: string) {
+    private constructor(
+        seed: Uint8Array,
+        descriptor: string,
+        mnemonic: string,
+        passphrase: string | undefined
+    ) {
         super(seed, descriptor);
+        mnemonicMeta.set(this, { mnemonic, passphrase });
     }
 
     /**
@@ -248,7 +285,7 @@ export class MnemonicIdentity extends SeedIdentity {
      */
     static fromMnemonic(
         phrase: string,
-        opts: MnemonicOptions
+        opts: MnemonicOptions = {}
     ): MnemonicIdentity {
         if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");
@@ -258,7 +295,7 @@ export class MnemonicIdentity extends SeedIdentity {
         const descriptor = hasDescriptor(opts)
             ? opts.descriptor
             : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new MnemonicIdentity(seed, descriptor);
+        return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
     }
 }
 
@@ -322,4 +359,78 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
     async compressedPublicKey(): Promise<Uint8Array> {
         return this.compressedPubKey;
     }
+}
+
+/**
+ * Serialize a seed-backed signing identity into a
+ * {@link SerializedSigningIdentity} envelope without exposing the
+ * underlying secret material on the public instance surface.
+ *
+ * Called by {@link serializeSigningIdentity}; application code should
+ * prefer that public dispatcher instead of calling this directly. This
+ * helper is deliberately kept out of the `src/identity` barrel so it is
+ * not part of the package's public export surface.
+ *
+ * Secret-surface trade-off: the resulting envelope carries master-seed
+ * material — the BIP39 mnemonic (+ optional passphrase) for
+ * `MnemonicIdentity` or the raw 64-byte seed for `SeedIdentity`. A party
+ * that reads this envelope can derive any key under the HD tree, not
+ * just the key currently in use. The pre-change `SingleKey` flow only
+ * shipped one derived private key and therefore had a smaller blast
+ * radius. This is an intentional design trade to preserve class and
+ * descriptor identity across the page / service-worker boundary; the
+ * page already holds the same material so that it can re-initialize a
+ * killed worker. Transport is same-origin `postMessage` only. See the
+ * threat-model note in `src/worker/browser/README.md`.
+ *
+ * @internal
+ */
+export function serializeSeedOwnedSigningIdentity(
+    identity: SeedIdentity
+): SerializedSigningIdentity {
+    if (identity instanceof MnemonicIdentity) {
+        const meta = mnemonicMeta.get(identity);
+        if (!meta) {
+            throw new Error(
+                "MnemonicIdentity is missing internal secret state; was it constructed via MnemonicIdentity.fromMnemonic()?"
+            );
+        }
+        const envelope: SerializedSigningIdentity = {
+            type: "mnemonic",
+            mnemonic: meta.mnemonic,
+            descriptor: identity.descriptor,
+        };
+        if (meta.passphrase !== undefined) {
+            envelope.passphrase = meta.passphrase;
+        }
+        return envelope;
+    }
+    const seed = seedBytes.get(identity);
+    if (!seed) {
+        throw new Error(
+            "SeedIdentity is missing internal secret state; was it constructed via SeedIdentity.fromSeed() or the class constructor?"
+        );
+    }
+    return {
+        type: "seed",
+        seed: hex.encode(seed),
+        descriptor: identity.descriptor,
+    };
+}
+
+/**
+ * Downgrade a seed-backed or descriptor-backed identity into a readonly
+ * descriptor envelope. Always produces a descriptor-only shape — secret
+ * material never crosses this path, even if the input is a signing
+ * identity.
+ *
+ * Deliberately kept out of the `src/identity` barrel; consumers should go
+ * through {@link serializeReadonlyIdentity}.
+ *
+ * @internal
+ */
+export function serializeSeedOwnedReadonlyIdentity(
+    identity: SeedIdentity | ReadonlyDescriptorIdentity
+): SerializedReadonlyIdentity {
+    return { type: "readonly-descriptor", descriptor: identity.descriptor };
 }

@@ -20,7 +20,14 @@ import {
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity } from "../../identity";
+import {
+    Identity,
+    ReadonlyIdentity,
+    type SerializedIdentity,
+    type LegacySerializedIdentity,
+    serializeReadonlyIdentity,
+    serializeSigningIdentity,
+} from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -36,6 +43,7 @@ import {
     RequestGetBalance,
     RequestGetBoardingAddress,
     RequestGetBoardingUtxos,
+    RequestAnnotateVtxos,
     RequestGetContracts,
     RequestGetContractsWithVtxos,
     RequestGetStatus,
@@ -51,6 +59,7 @@ import {
     ResponseSettle,
     ResponseSettleEvent,
     RequestUpdateContract,
+    ResponseAnnotateVtxos,
     ResponseGetAddress,
     ResponseGetBalance,
     ResponseGetBoardingAddress,
@@ -121,6 +130,7 @@ import type { IVtxoManager, SettlementConfig } from "../vtxo-manager";
 import type { ContractWatcherConfig } from "../../contracts/contractWatcher";
 import type { DelegateInfo } from "../../providers/delegator";
 import { getRandomId } from "../utils";
+import type { VirtualCoin } from "..";
 import {
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
@@ -136,6 +146,59 @@ function isMessageBusNotInitializedError(error: unknown): boolean {
     );
 }
 
+type RequestType = WalletUpdaterRequest["type"];
+
+export type MessageTimeouts = Partial<Record<RequestType, number>>;
+
+export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
+    // Fast reads — fail quickly
+    GET_ADDRESS: 10_000,
+    GET_BALANCE: 10_000,
+    GET_BOARDING_ADDRESS: 10_000,
+    GET_STATUS: 10_000,
+    GET_DELEGATE_INFO: 10_000,
+    IS_CONTRACT_MANAGER_WATCHING: 10_000,
+
+    // Medium reads — may involve indexer queries
+    GET_VTXOS: 20_000,
+    GET_BOARDING_UTXOS: 20_000,
+    GET_TRANSACTION_HISTORY: 20_000,
+    GET_CONTRACTS: 20_000,
+    GET_CONTRACTS_WITH_VTXOS: 20_000,
+    ANNOTATE_VTXOS: 20_000,
+    GET_SPENDABLE_PATHS: 20_000,
+    GET_ALL_SPENDING_PATHS: 20_000,
+    GET_ASSET_DETAILS: 20_000,
+    GET_EXPIRING_VTXOS: 20_000,
+    GET_EXPIRED_BOARDING_UTXOS: 20_000,
+    GET_RECOVERABLE_BALANCE: 20_000,
+    RELOAD_WALLET: 20_000,
+
+    // Transactions — need more headroom.
+    // SETTLE / RECOVER_VTXOS / RENEW_VTXOS go through the streaming path and
+    // are treated as long-running on both sides of the bus: the values below
+    // are retained only for type completeness and are never enforced.
+    SEND_BITCOIN: 50_000,
+    SEND: 50_000,
+    SETTLE: 50_000,
+    ISSUE: 50_000,
+    REISSUE: 50_000,
+    BURN: 50_000,
+    DELEGATE: 50_000,
+    RECOVER_VTXOS: 50_000,
+    RENEW_VTXOS: 50_000,
+    SWEEP_EXPIRED_BOARDING_UTXOS: 50_000,
+
+    // Misc writes
+    INIT_WALLET: 30_000,
+    CLEAR: 10_000,
+    SIGN_TRANSACTION: 30_000,
+    CREATE_CONTRACT: 30_000,
+    UPDATE_CONTRACT: 30_000,
+    DELETE_CONTRACT: 10_000,
+    REFRESH_VTXOS: 30_000,
+};
+
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_ADDRESS",
     "GET_BALANCE",
@@ -150,6 +213,7 @@ const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_VTXOS",
     "GET_CONTRACTS",
     "GET_CONTRACTS_WITH_VTXOS",
+    "ANNOTATE_VTXOS",
     "GET_SPENDABLE_PATHS",
     "GET_ALL_SPENDING_PATHS",
     "GET_ASSET_DETAILS",
@@ -162,13 +226,16 @@ function getRequestDedupKey(request: WalletUpdaterRequest): string {
     return JSON.stringify(rest);
 }
 
-type PrivateKeyIdentity = Identity & { toHex(): string };
-
-const isPrivateKeyIdentity = (
+function isSigningCapable(
     identity: Identity | ReadonlyIdentity
-): identity is PrivateKeyIdentity => {
-    return typeof (identity as any).toHex === "function";
-};
+): identity is Identity {
+    const candidate = identity as Partial<Identity>;
+    return (
+        typeof candidate.signMessage === "function" &&
+        typeof candidate.sign === "function" &&
+        typeof candidate.signerSession === "function"
+    );
+}
 
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
     constructor(
@@ -239,20 +306,18 @@ class ServiceWorkerAssetManager
  * @example
  * ```typescript
  * // SIMPLE: Recommended approach
- * const identity = SingleKey.fromHex('your_private_key_hex');
  * const wallet = await ServiceWorkerWallet.setup({
  *   serviceWorkerPath: '/service-worker.js',
- *   arkServerUrl: 'https://mutinynet.arkade.sh',
- *   identity
+ *   arkServerUrl: 'https://arkade.computer',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
  * // ADVANCED: Manual setup with service worker control
- * const worker = await setupServiceWorker("/service-worker.js");
- * const identity = SingleKey.fromHex('your_private_key_hex');
+ * const serviceWorker = await setupServiceWorker("/service-worker.js");
  * const wallet = await ServiceWorkerWallet.create({
- *   worker,
- *   identity,
- *   arkServerUrl: 'https://mutinynet.arkade.sh'
+ *   serviceWorker,
+ *   arkServerUrl: 'https://arkade.computer',
+ *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
  * });
  *
  * // Use like any other wallet
@@ -261,36 +326,67 @@ class ServiceWorkerAssetManager
  * ```
  */
 interface ServiceWorkerWalletOptions {
+    /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
+    /** Base URL of the Arkade server. */
     arkServerUrl: string;
+    /** Optional override for the indexer URL. */
     indexerUrl?: string;
+    /** Optional override for the Esplora API URL. */
     esploraUrl?: string;
+    /**
+     * Repository-backed storage configuration overrides.
+     * Defaults to IndexedDB if unset.
+     */
     storage?: StorageConfig;
+    /** Identity used to derive addresses and optionally sign operations. */
     identity: ReadonlyIdentity | Identity;
+    /** Optional delegation service URL. */
     delegatorUrl?: string;
-    // Override the default tag for the messages sent and received from the SW
+    /**
+     * Override the default tag used for messages sent to and received from the service worker.
+     * @see DEFAULT_MESSAGE_TAG
+     */
     walletUpdaterTag?: string;
+    /** Timeout used while bootstrapping the message bus inside the service worker. */
     messageBusTimeoutMs?: number;
+    /** Optional settlement configuration forwarded to the worker wallet. */
     settlementConfig?: SettlementConfig | false;
+    /** Optional contract watcher configuration forwarded to the worker wallet. */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    /**
+     * Per-request timeout overrides for wallet-updater messages.
+     * @see DEFAULT_MESSAGE_TIMEOUTS
+     */
+    messageTimeouts?: MessageTimeouts;
 }
+
+/**
+ * Options for creating a service-worker wallet with an existing worker instance.
+ *
+ * @see ServiceWorkerReadonlyWallet.create
+ * @see ServiceWorkerWallet.create
+ */
 export type ServiceWorkerWalletCreateOptions = ServiceWorkerWalletOptions & {
+    /** Existing service worker instance used for messaging. */
     serviceWorker: ServiceWorker;
 };
 
+/**
+ * Options for registering a service worker and then creating a wallet around it.
+ *
+ * @see ServiceWorkerReadonlyWallet.setup
+ * @see ServiceWorkerWallet.setup
+ */
 export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
+    /** Path to the service worker script to register. */
     serviceWorkerPath: string;
+    /** Timeout while waiting for the service worker to activate. */
     serviceWorkerActivationTimeoutMs?: number;
 };
 
 type MessageBusInitConfig = {
-    wallet:
-        | {
-              privateKey: string;
-          }
-        | {
-              publicKey: string;
-          };
+    wallet: SerializedIdentity | LegacySerializedIdentity;
     arkServer: {
         url: string;
         publicKey?: string;
@@ -301,6 +397,7 @@ type MessageBusInitConfig = {
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
+    messageTimeouts?: Record<string, number>;
 };
 
 const initializeMessageBus = (
@@ -349,6 +446,20 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected initConfig: MessageBusInitConfig | null = null;
     protected initWalletPayload: RequestInitWallet["payload"] | null = null;
     protected messageBusTimeoutMs?: number;
+    protected messageTimeouts: Record<RequestType, number> =
+        DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>;
+    // Denormalized from options so buildInitConfig() can rebuild the init
+    // envelope on demand for SDK-factory-created wallets. `create()` sets
+    // these immediately after construction.
+    protected arkServerUrl?: string;
+    protected arkServerPublicKey?: string;
+    protected delegatorUrl?: string;
+    protected indexerUrl?: string;
+    protected esploraUrl?: string;
+    protected watcherConfig?: Partial<
+        Omit<ContractWatcherConfig, "indexerProvider">
+    >;
+    protected settlementConfig?: SettlementConfig | false;
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<
@@ -376,6 +487,17 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         );
     }
 
+    private getTimeoutForRequest(request: WalletUpdaterRequest): number {
+        return this.messageTimeouts[request.type] ?? 30_000;
+    }
+
+    /**
+     * Create a readonly service-worker wallet bound to an already-registered worker.
+     *
+     * @param options - Service worker, identity, and backend configuration
+     * @returns Initialized readonly service-worker wallet
+     * @throws Error if service-worker initialization fails
+     */
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerReadonlyWallet> {
@@ -398,32 +520,48 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             messageTag
         );
 
+        const serializedWallet = await serializeReadonlyIdentity(
+            options.identity
+        );
+
+        // INIT_WALLET retains the legacy `key` payload for wire compatibility
+        // with older workers; the current handler does not read it.
         const publicKey = await options.identity
             .compressedPublicKey()
             .then(hex.encode);
-
-        const initConfig = {
+        const initWalletPayload = {
             key: { publicKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
 
+        // Precompute the merged timeout map so page-side waiting and
+        // worker-side enforcement are derived from the same source.
+        const messageTimeouts = options.messageTimeouts
+            ? ({
+                  ...DEFAULT_MESSAGE_TIMEOUTS,
+                  ...options.messageTimeouts,
+              } as Record<RequestType, number>)
+            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
+
+        const busInitConfig: MessageBusInitConfig = {
+            wallet: serializedWallet,
+            arkServer: {
+                url: options.arkServerUrl,
+                publicKey: options.arkServerPublicKey,
+            },
+            delegatorUrl: options.delegatorUrl,
+            indexerUrl: options.indexerUrl,
+            esploraUrl: options.esploraUrl,
+            watcherConfig: options.watcherConfig,
+            messageTimeouts,
+        };
+
         // Bootstrap the MessageBus in the service worker
         await initializeMessageBus(
             options.serviceWorker,
-            {
-                wallet: initConfig.key,
-                arkServer: {
-                    url: initConfig.arkServerUrl,
-                    publicKey: initConfig.arkServerPublicKey,
-                },
-                delegatorUrl: initConfig.delegatorUrl,
-                indexerUrl: options.indexerUrl,
-                esploraUrl: options.esploraUrl,
-                timeoutMs: options.messageBusTimeoutMs,
-                watcherConfig: options.watcherConfig,
-            },
+            { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
             options.messageBusTimeoutMs
         );
 
@@ -432,46 +570,33 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             tag: messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            payload: initConfig,
+            payload: initWalletPayload,
         };
 
         await wallet.sendMessage(initMessage);
 
-        wallet.initConfig = {
-            wallet: initConfig.key,
-            arkServer: {
-                url: initConfig.arkServerUrl,
-                publicKey: initConfig.arkServerPublicKey,
-            },
-            delegatorUrl: initConfig.delegatorUrl,
-            indexerUrl: options.indexerUrl,
-            esploraUrl: options.esploraUrl,
-            watcherConfig: options.watcherConfig,
-        };
-        wallet.initWalletPayload = initConfig;
+        // Persist the full init config (including messageTimeouts) so
+        // reinitialize() re-sends the same map to a restarted worker.
+        wallet.initConfig = busInitConfig;
+        wallet.initWalletPayload = initWalletPayload;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
+        wallet.messageTimeouts = messageTimeouts;
 
         return wallet;
     }
 
     /**
-     * Simplified setup method that handles service worker registration,
-     * identity creation, and wallet initialization automatically.
+     * Simplified setup method that handles service worker registration
+     * and wallet initialization automatically.
+     *
+     * @see ServiceWorkerReadonlyWallet.create
      *
      * @example
      * ```typescript
-     * // One-liner setup - handles everything automatically!
      * const wallet = await ServiceWorkerReadonlyWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh'
-     * });
-     *
-     * // With custom readonly identity
-     * const identity = ReadonlySingleKey.fromPublicKey('your_public_key_hex');
-     * const wallet = await ServiceWorkerReadonlyWallet.setup({
-     *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh',
-     *   identity
+     *   arkServerUrl: 'https://arkade.computer',
+     *   identity: ReadonlySingleKey.fromPublicKey('your_public_key_hex')
      * });
      * ```
      */
@@ -492,7 +617,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     }
 
     private sendMessageDirect(
-        request: WalletUpdaterRequest
+        request: WalletUpdaterRequest,
+        timeoutMs: number
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const cleanup = () => {
@@ -510,7 +636,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                         `Service worker message timed out (${request.type})`
                     )
                 );
-            }, 30_000);
+            }, timeoutMs);
 
             const messageHandler = (
                 event: MessageEvent<WalletUpdaterResponse>
@@ -535,37 +661,23 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
 
     // Like sendMessageDirect but supports streaming responses: intermediate
     // messages are forwarded via onEvent while the promise resolves on the
-    // first response for which isComplete returns true. The timeout resets
-    // on every intermediate event so long-running but progressing operations
-    // don't time out prematurely.
+    // first response for which isComplete returns true. No inactivity deadline:
+    // settlement-class flows surrender control to remote peers and can sit
+    // idle for long stretches between protocol events. Service-worker death
+    // is detected out-of-band via concurrent short requests that surface
+    // MESSAGE_BUS_NOT_INITIALIZED.
     private sendMessageStreaming(
         request: WalletUpdaterRequest,
         onEvent: (response: WalletUpdaterResponse) => void,
         isComplete: (response: WalletUpdaterResponse) => boolean
     ): Promise<WalletUpdaterResponse> {
         return new Promise((resolve, reject) => {
-            const resetTimeout = () => {
-                clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => {
-                    cleanup();
-                    reject(
-                        new ServiceWorkerTimeoutError(
-                            `Service worker message timed out (${request.type})`
-                        )
-                    );
-                }, 30_000);
-            };
-
             const cleanup = () => {
-                clearTimeout(timeoutId);
                 navigator.serviceWorker.removeEventListener(
                     "message",
                     messageHandler
                 );
             };
-
-            let timeoutId: ReturnType<typeof setTimeout>;
-            resetTimeout();
 
             const messageHandler = (
                 event: MessageEvent<WalletUpdaterResponse>
@@ -583,7 +695,6 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     cleanup();
                     resolve(response);
                 } else {
-                    resetTimeout();
                     onEvent(response);
                 }
             };
@@ -668,10 +779,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             }
         }
 
+        const timeoutMs = this.getTimeoutForRequest(request);
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
-                return await this.sendMessageDirect(request);
+                return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
                 if (
                     !isMessageBusNotInitializedError(error) ||
@@ -721,17 +833,71 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Produce a serialized envelope for the wallet's identity. The base
+     * class always emits a readonly envelope; `ServiceWorkerWallet`
+     * overrides to emit a signing envelope.
+     */
+    protected async serializeIdentity(): Promise<SerializedIdentity> {
+        return serializeReadonlyIdentity(this.identity);
+    }
+
+    /**
+     * Return the cached init config, or rebuild one from live instance
+     * state when the cache was never populated. Recovery path for
+     * SDK-factory-created wallets; manual constructor bypasses do not
+     * retain enough state here and will hit the "never initialized" throw.
+     */
+    protected async buildInitConfig(): Promise<MessageBusInitConfig> {
+        if (this.initConfig) return this.initConfig;
+        if (!this.arkServerUrl) {
+            throw new Error(
+                "Cannot re-initialize: wallet was not initialized via the SDK factory"
+            );
+        }
+        const wallet = await this.serializeIdentity();
+        this.initConfig = {
+            wallet,
+            arkServer: {
+                url: this.arkServerUrl,
+                publicKey: this.arkServerPublicKey,
+            },
+            delegatorUrl: this.delegatorUrl,
+            indexerUrl: this.indexerUrl,
+            esploraUrl: this.esploraUrl,
+            watcherConfig: this.watcherConfig,
+            settlementConfig: this.settlementConfig,
+        };
+        return this.initConfig;
+    }
+
+    /** Minimal INIT_WALLET payload used on reinitialize when the cache is gone. */
+    protected buildInitWalletPayload(): RequestInitWallet["payload"] {
+        if (this.initWalletPayload) return this.initWalletPayload;
+        if (!this.arkServerUrl) {
+            throw new Error(
+                "Cannot re-initialize: wallet was not initialized via the SDK factory"
+            );
+        }
+        this.initWalletPayload = {
+            // `key` is deprecated and ignored by the current handler.
+            key: {},
+            arkServerUrl: this.arkServerUrl,
+            arkServerPublicKey: this.arkServerPublicKey,
+        };
+        return this.initWalletPayload;
+    }
+
     private async reinitialize(): Promise<void> {
         if (this.reinitPromise) return this.reinitPromise;
 
         this.reinitPromise = (async () => {
-            if (!this.initConfig || !this.initWalletPayload) {
-                throw new Error("Cannot re-initialize: missing configuration");
-            }
+            const config = await this.buildInitConfig();
+            const payload = this.buildInitWalletPayload();
 
             await initializeMessageBus(
                 this.serviceWorker,
-                this.initConfig,
+                config,
                 this.messageBusTimeoutMs
             );
 
@@ -739,10 +905,13 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 tag: this.messageTag,
                 type: "INIT_WALLET",
                 id: getRandomId(),
-                payload: this.initWalletPayload,
+                payload,
             };
 
-            await this.sendMessageDirect(initMessage);
+            await this.sendMessageDirect(
+                initMessage,
+                this.getTimeoutForRequest(initMessage)
+            );
         })().finally(() => {
             this.reinitPromise = null;
         });
@@ -750,6 +919,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         return this.reinitPromise;
     }
 
+    /** Clear cached wallet state from both the page and service worker storage. */
     async clear() {
         const message: RequestClear = {
             id: getRandomId(),
@@ -827,6 +997,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Return service-worker wallet status, including connectivity and sync state.
+     *
+     * @returns Current service-worker wallet status payload including `walletInitalized` and `xOnlyPublicKey`
+     */
     async getStatus(): Promise<ResponseGetStatus["payload"]> {
         const message: RequestGetStatus = {
             id: getRandomId(),
@@ -873,6 +1048,11 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Trigger a wallet reload inside the service worker.
+     *
+     * @returns `true` when the wallet was reloaded
+     */
     async reload(): Promise<boolean> {
         const message: RequestReloadWallet = {
             id: getRandomId(),
@@ -949,6 +1129,24 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                         .contracts;
                 } catch (e) {
                     throw new Error("Failed to get contracts with vtxos");
+                }
+            },
+
+            async annotateVtxos(
+                vtxos: VirtualCoin[]
+            ): Promise<ExtendedVirtualCoin[]> {
+                if (vtxos.length === 0) return [];
+                const message: RequestAnnotateVtxos = {
+                    type: "ANNOTATE_VTXOS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { vtxos },
+                };
+                try {
+                    const response = await sendContractMessage(message);
+                    return (response as ResponseAnnotateVtxos).payload.vtxos;
+                } catch (e) {
+                    throw new Error("Failed to annotate vtxos");
                 }
             },
 
@@ -1118,7 +1316,7 @@ export class ServiceWorkerWallet
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
-        identity: PrivateKeyIdentity,
+        identity: Identity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
         messageTag: string,
@@ -1145,6 +1343,10 @@ export class ServiceWorkerWallet
         return this._assetManager;
     }
 
+    protected async serializeIdentity(): Promise<SerializedIdentity> {
+        return serializeSigningIdentity(this.identity);
+    }
+
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
@@ -1156,18 +1358,13 @@ export class ServiceWorkerWallet
             options.storage?.contractRepository ??
             new IndexedDBContractRepository();
 
-        // Extract identity and check if it can expose private key
-        const identity = isPrivateKeyIdentity(options.identity)
-            ? options.identity
-            : null;
-        if (!identity) {
+        if (!isSigningCapable(options.identity)) {
             throw new Error(
-                "ServiceWorkerWallet.create() requires a Identity that can expose a single private key"
+                "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity"
             );
         }
-
-        // Extract private key for service worker initialization
-        const privateKey = identity.toHex();
+        const identity: Identity = options.identity;
+        const serializedWallet = serializeSigningIdentity(identity);
 
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
@@ -1181,28 +1378,47 @@ export class ServiceWorkerWallet
             !!options.delegatorUrl
         );
 
-        const initConfig = {
-            key: { privateKey },
+        // INIT_WALLET retains the legacy `key` payload for wire compatibility
+        // with older workers; the current handler does not read it, and only
+        // SingleKey-style identities can populate it. Kept optional so seed /
+        // mnemonic identities simply omit it.
+        const legacyPrivateKey =
+            serializedWallet.type === "single-key"
+                ? serializedWallet.privateKey
+                : null;
+        const initWalletPayload = {
+            key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
 
+        // Precompute the merged timeout map so page-side waiting and
+        // worker-side enforcement are derived from the same source.
+        const messageTimeouts = options.messageTimeouts
+            ? ({
+                  ...DEFAULT_MESSAGE_TIMEOUTS,
+                  ...options.messageTimeouts,
+              } as Record<RequestType, number>)
+            : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
+
+        const busInitConfig: MessageBusInitConfig = {
+            wallet: serializedWallet,
+            arkServer: {
+                url: options.arkServerUrl,
+                publicKey: options.arkServerPublicKey,
+            },
+            delegatorUrl: options.delegatorUrl,
+            indexerUrl: options.indexerUrl,
+            esploraUrl: options.esploraUrl,
+            settlementConfig: options.settlementConfig,
+            watcherConfig: options.watcherConfig,
+            messageTimeouts,
+        };
+
         await initializeMessageBus(
             options.serviceWorker,
-            {
-                wallet: initConfig.key,
-                arkServer: {
-                    url: initConfig.arkServerUrl,
-                    publicKey: initConfig.arkServerPublicKey,
-                },
-                delegatorUrl: initConfig.delegatorUrl,
-                indexerUrl: options.indexerUrl,
-                esploraUrl: options.esploraUrl,
-                timeoutMs: options.messageBusTimeoutMs,
-                settlementConfig: options.settlementConfig,
-                watcherConfig: options.watcherConfig,
-            },
+            { ...busInitConfig, timeoutMs: options.messageBusTimeoutMs },
             options.messageBusTimeoutMs
         );
         // Initialize the service worker with the config
@@ -1210,48 +1426,32 @@ export class ServiceWorkerWallet
             tag: messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            payload: initConfig,
+            payload: initWalletPayload,
         };
 
         // Initialize the service worker
         await wallet.sendMessage(initMessage);
 
-        wallet.initConfig = {
-            wallet: initConfig.key,
-            arkServer: {
-                url: initConfig.arkServerUrl,
-                publicKey: initConfig.arkServerPublicKey,
-            },
-            delegatorUrl: initConfig.delegatorUrl,
-            indexerUrl: options.indexerUrl,
-            esploraUrl: options.esploraUrl,
-            settlementConfig: options.settlementConfig,
-            watcherConfig: options.watcherConfig,
-        };
-        wallet.initWalletPayload = initConfig;
+        // Persist the full init config (including messageTimeouts) so
+        // reinitialize() re-sends the same map to a restarted worker.
+        wallet.initConfig = busInitConfig;
+        wallet.initWalletPayload = initWalletPayload;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
+        wallet.messageTimeouts = messageTimeouts;
 
         return wallet;
     }
 
     /**
-     * Simplified setup method that handles service worker registration,
-     * identity creation, and wallet initialization automatically.
+     * Simplified setup method that handles service worker registration
+     * and wallet initialization automatically.
      *
      * @example
      * ```typescript
-     * // One-liner setup - handles everything automatically!
      * const wallet = await ServiceWorkerWallet.setup({
      *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh'
-     * });
-     *
-     * // With custom identity
-     * const identity = SingleKey.fromHex('your_private_key_hex');
-     * const wallet = await ServiceWorkerWallet.setup({
-     *   serviceWorkerPath: '/service-worker.js',
-     *   arkServerUrl: 'https://mutinynet.arkade.sh',
-     *   identity
+     *   arkServerUrl: 'https://arkade.computer',
+     *   identity: MnemonicIdentity.fromMnemonic('abandon abandon...')
      * });
      * ```
      */
@@ -1310,7 +1510,7 @@ export class ServiceWorkerWallet
         }
     }
 
-    async send(...recipients: Recipient[]): Promise<string> {
+    async send(...recipients: [Recipient, ...Recipient[]]): Promise<string> {
         const message: RequestSend = {
             tag: this.messageTag,
             type: "SEND",

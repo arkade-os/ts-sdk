@@ -9,7 +9,7 @@ import { ContractFilter } from "../repositories";
 export type ContractState = "active" | "inactive";
 
 /**
- * Represents a contract that can receive and manage VTXOs.
+ * Represents a contract that can receive and manage virtual outputs.
  *
  * A contract is defined by its type and parameters, which together
  * determine the VtxoScript (spending paths). The wallet's default
@@ -31,14 +31,14 @@ export type ContractState = "active" | "inactive";
  *     // ... timelocks
  *   },
  *   script: "5120...",
- *   address: "tark1...",
+ *   address: "ark1q...",
  *   state: "active",
  *   createdAt: 1704067200000,
  * };
  * ```
  */
 export interface Contract {
-    /** Human-readable label for display purposes */
+    /** Human-readable label for display purposes. */
     label?: string;
 
     /**
@@ -55,20 +55,17 @@ export interface Contract {
      */
     params: Record<string, string>;
 
-    /** The pkScript hex - unique identifier and primary key for contracts */
+    /** The pkScript hex, used as the unique identifier and primary key for contracts. */
     script: string;
 
-    /** The address derived from the script */
+    /** Address derived from the contract script. */
     address: string;
 
-    /** Current state of the contract */
+    /** Current state of the contract. */
     state: ContractState;
 
-    /** Unix timestamp (ms) when this contract was created */
+    /** Unix timestamp in milliseconds when this contract was created. */
     createdAt: number;
-
-    /** Unix timestamp (ms) when this contract expires (optional) */
-    expiresAt?: number;
 
     /**
      * Optional metadata for external integrations.
@@ -77,24 +74,28 @@ export interface Contract {
 }
 
 /**
- * A VTXO that has been associated with a specific contract.
+ * A virtual output that has been associated with a specific contract.
  */
 export interface ContractVtxo extends ExtendedVirtualCoin {
-    /** The contract script this VTXO belongs to */
+    /** The contract script this virtual output belongs to. */
     contractScript: string;
 }
 
 /**
- * Result of path selection - which tapleaf to use and extra witness data.
+ * Result of path selection, including the tapleaf to use and any extra witness data.
  */
 export interface PathSelection {
-    /** The tapleaf script to use for spending */
+    /** Tapleaf script to use for spending. */
     leaf: TapLeafScript;
 
-    /** Additional witness elements (e.g., preimage for HTLC) */
+    /** Additional witness elements, for example a preimage for HTLC-like paths. */
     extraWitness?: Bytes[];
 
-    /** Sequence number override (for CSV timelocks) */
+    /**
+     * nSequence for the spending input, BIP-68 encoded when the leaf
+     * uses CSV. Decode with `sequenceToTimelock`; do NOT use as an
+     * absolute `Transaction.lockTime`.
+     */
     sequence?: number;
 }
 
@@ -102,35 +103,44 @@ export interface PathSelection {
  * Context for path selection decisions.
  */
 export interface PathContext {
-    /** Is collaborative spending available (server cooperation)? */
+    /** Whether collaborative spending is available through server cooperation. */
     collaborative: boolean;
 
-    /** Current time in milliseconds */
+    /** Current time in milliseconds. */
     currentTime: number;
 
-    /** Current block height (optional) */
+    /** Current block height, when known. */
     blockHeight?: number;
 
     /**
-     * Wallet's public key (x-only, 32 bytes hex).
+     * Wallet's descriptor for signing.
+     * Format: tr(pubkey) for static keys, tr([fingerprint/path']xpub/0/{index}) for HD.
      * Used by handlers to determine wallet's role in multi-party contracts.
+     */
+    walletDescriptor?: string;
+
+    /**
+     * Wallet's public key (x-only, 32 bytes hex).
+     * @deprecated Use walletDescriptor instead.
      */
     walletPubKey?: string;
 
     /**
-     * Explicit role override (for multi-party contracts like VHTLC).
-     * If not provided, handler may derive role from walletPubKey.
+     * Explicit role override for multi-party contracts such as VHTLC.
+     * If not provided, the handler may derive the role by matching
+     * {@link walletDescriptor} (preferred) — or {@link walletPubKey} as a
+     * fallback — against the contract's sender/receiver params.
      */
     role?: string;
 
-    /** The specific VTXO being evaluated */
+    /** The specific virtual output being evaluated. */
     vtxo?: VirtualCoin;
 }
 
 /**
  * Handler for a specific contract type.
  *
- * Each contract type (default, vhtlc, etc.) has a handler that knows how to:
+ * Each contract type (`default`, `vhtlc`, etc.) has a handler that knows how to:
  * 1. Create the VtxoScript from parameters
  * 2. Serialize/deserialize parameters for storage
  * 3. Select the appropriate spending path based on context
@@ -158,16 +168,22 @@ export interface ContractHandler<
     P = Record<string, unknown>,
     S extends VtxoScript = VtxoScript,
 > {
-    /** The contract type this handler manages */
+    /** Contract type managed by this handler. */
     readonly type: string;
 
     /**
      * Create the VtxoScript from serialized parameters.
+     *
+     * @param params - Serialized contract parameters
+     * @returns Contract script instance
      */
     createScript(params: Record<string, string>): S;
 
     /**
      * Serialize typed parameters to string key-value pairs.
+     *
+     * @param params - Typed contract parameters
+     * @returns Serialized key-value representation
      */
     serializeParams(params: P): Record<string, string>;
 
@@ -230,12 +246,6 @@ export type ContractEvent =
           contract: Contract;
           timestamp: number;
       }
-    | {
-          type: "contract_expired";
-          contractScript: string;
-          contract: Contract;
-          timestamp: number;
-      }
     | { type: "connection_reset"; timestamp: number };
 
 /**
@@ -250,7 +260,7 @@ export type ContractEventCallback = (event: ContractEvent) => void;
 export type GetContractsFilter = ContractFilter;
 
 /**
- * Contract with its VTXOs included.
+ * Contract with its virtual outputs included.
  */
 export type ContractWithVtxos = {
     contract: Contract;
@@ -267,6 +277,6 @@ export interface ContractBalance {
     /** Spendable balance in satoshis */
     spendable: number;
 
-    /** Number of VTXOs in this contract */
+    /** Number of virtual outputs in this contract */
     vtxoCount: number;
 }

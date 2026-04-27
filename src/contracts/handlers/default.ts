@@ -12,6 +12,10 @@ import {
     sequenceToTimelock,
     timelockToSequence,
 } from "./helpers";
+import {
+    normalizeToDescriptor,
+    extractPubKey,
+} from "../../identity/descriptor";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
@@ -20,6 +24,13 @@ export interface DefaultContractParams {
     pubKey: Uint8Array;
     serverPubKey: Uint8Array;
     csvTimelock: RelativeTimelock;
+}
+
+/**
+ * Extract pubkey bytes from a descriptor or hex string.
+ */
+function extractPubKeyBytes(value: string): Uint8Array {
+    return hex.decode(extractPubKey(normalizeToDescriptor(value)));
 }
 
 /**
@@ -53,8 +64,8 @@ export const DefaultContractHandler: ContractHandler<
             ? sequenceToTimelock(Number(params.csvTimelock))
             : DefaultVtxo.Script.DEFAULT_TIMELOCK;
         return {
-            pubKey: hex.decode(params.pubKey),
-            serverPubKey: hex.decode(params.serverPubKey),
+            pubKey: extractPubKeyBytes(params.pubKey),
+            serverPubKey: extractPubKeyBytes(params.serverPubKey),
             csvTimelock,
         };
     },

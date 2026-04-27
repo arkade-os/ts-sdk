@@ -16,18 +16,6 @@ import { Bytes } from "@scure/btc-signer/utils";
 
 export const DUST_AMOUNT = 546; // sats
 
-export function extendVirtualCoin(
-    wallet: { offchainTapscript: ReadonlyWallet["offchainTapscript"] },
-    vtxo: VirtualCoin
-): ExtendedVirtualCoin {
-    return {
-        ...vtxo,
-        forfeitTapLeafScript: wallet.offchainTapscript.forfeit(),
-        intentTapLeafScript: wallet.offchainTapscript.forfeit(),
-        tapTree: wallet.offchainTapscript.encode(),
-    };
-}
-
 export function extendCoin(
     wallet: { boardingTapscript: ReadonlyWallet["boardingTapscript"] },
     utxo: Coin
@@ -40,7 +28,7 @@ export function extendCoin(
     };
 }
 
-export function extendVtxoFromContract(
+function extendVtxoFromContract(
     vtxo: VirtualCoin,
     contract: Contract
 ): ExtendedVirtualCoin {
@@ -57,6 +45,58 @@ export function extendVtxoFromContract(
         intentTapLeafScript: script.forfeit(),
         tapTree: script.encode(),
     };
+}
+
+/**
+ * Extend a VirtualCoin with the tap scripts of whichever contract locks it.
+ *
+ * The second argument accepts either form, so each callsite passes what it
+ * already has:
+ * - a single `Contract` (when the caller already knows the owning contract,
+ *   e.g. the contract manager iterating its own `scriptToContract` map), or
+ * - a `ReadonlyMap<script, Contract>` (when the caller resolves by
+ *   `vtxo.script`, populated by the indexer).
+ *
+ * Throws when no contract can be resolved — there is intentionally no
+ * default-tapscript fallback. When the wallet owns multiple contracts
+ * (default + delegate, several active vHTLCs, etc.) a default-tapscript path
+ * silently stamps every VTXO with the same forfeit/intent data, overwriting
+ * the correct data for any VTXO locked to a non-default contract. Callers
+ * must feed a Contract or a populated script→Contract map; otherwise the
+ * caller (typically `ContractManager.annotateVtxos`) should fetch the owning
+ * contract first.
+ */
+export function extendVirtualCoinForContract(
+    vtxo: VirtualCoin,
+    contractOrMap?: Contract | ReadonlyMap<string, Contract>
+): ExtendedVirtualCoin {
+    const contract = resolveContract(vtxo, contractOrMap);
+    if (!contract) {
+        throw new Error(
+            "extendVirtualCoinForContract: no contract matched vtxo.script — callers must resolve the owning contract before annotating"
+        );
+    }
+    return extendVtxoFromContract(vtxo, contract);
+}
+
+function isContractMap(
+    value: Contract | ReadonlyMap<string, Contract>
+): value is ReadonlyMap<string, Contract> {
+    // A `Contract` is a plain object with a string `type`. `ReadonlyMap` is
+    // an interface so `instanceof Map` is not enough to narrow it — but a
+    // contract has no `get` method, so duck-typing on that is unambiguous.
+    return typeof (value as { get?: unknown }).get === "function";
+}
+
+function resolveContract(
+    vtxo: VirtualCoin,
+    contractOrMap?: Contract | ReadonlyMap<string, Contract>
+): Contract | undefined {
+    if (!contractOrMap) return undefined;
+    if (isContractMap(contractOrMap)) {
+        return contractOrMap.get(vtxo.script);
+    }
+    return contractOrMap;
 }
 
 export function getRandomId(): string {
@@ -89,7 +129,7 @@ export function validateRecipients(
         try {
             address = ArkAddress.decode(recipient.address);
         } catch (e) {
-            throw new Error(`Invalid Ark address: ${recipient.address}`);
+            throw new Error(`Invalid Arkade address: ${recipient.address}`);
         }
 
         const amount = recipient.amount || dustAmount;

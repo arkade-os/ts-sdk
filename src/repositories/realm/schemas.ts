@@ -1,5 +1,5 @@
 /**
- * Realm object schemas for the Ark wallet.
+ * Realm object schemas for the Arkade wallet.
  *
  * All schema names are prefixed with "Ark" to avoid collisions with
  * other Realm schemas in the consuming application.
@@ -8,6 +8,8 @@
  * schemas are defined as plain JS objects conforming to Realm's
  * ObjectSchema shape.
  */
+
+import { scriptFromArkAddress } from "../scriptFromAddress";
 
 export const ArkVtxoSchema = {
     name: "ArkVtxo",
@@ -33,6 +35,11 @@ export const ArkVtxoSchema = {
         isUnrolled: "bool",
         isSpent: "bool?",
         assetsJson: "string?",
+        // scriptPubKey (hex) locking this VTXO, indexed so contract-scoped
+        // queries can resolve ownership without touching address mapping.
+        // Required as of schema v2; legacy rows are backfilled from `address`
+        // during migration (see `runArkRealmMigrations`).
+        script: { type: "string", indexed: true },
     },
 } as const;
 
@@ -99,7 +106,7 @@ export const ArkContractSchema = {
 } as const;
 
 /**
- * All Realm schemas needed by the Ark wallet repositories.
+ * All Realm schemas needed by the Arkade wallet repositories.
  * Pass this array to your Realm configuration's `schema` property.
  */
 export const ArkRealmSchemas = [
@@ -109,3 +116,47 @@ export const ArkRealmSchemas = [
     ArkWalletStateSchema,
     ArkContractSchema,
 ];
+
+/**
+ * Current Realm schema version for the Arkade wallet.
+ *
+ * Consumers opening Realm must pass a `schemaVersion` at least this high so
+ * legacy databases get migrated; merge it with your own app's version:
+ *
+ * ```ts
+ * await Realm.open({
+ *     schema: [...ArkRealmSchemas, ...yourSchemas],
+ *     schemaVersion: Math.max(ARK_REALM_SCHEMA_VERSION, yourSchemaVersion),
+ *     onMigration: (oldRealm, newRealm) => {
+ *         runArkRealmMigrations(oldRealm, newRealm);
+ *         // your own migrations
+ *     },
+ * });
+ * ```
+ *
+ * History:
+ *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
+ *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
+ *     the owning Ark address during migration.
+ */
+export const ARK_REALM_SCHEMA_VERSION = 2;
+
+/**
+ * Run every Arkade schema migration applicable to the open Realm.
+ *
+ * Designed to be composed with the consumer's own migrations inside a single
+ * `onMigration` callback. Each migration step does a per-row check so it
+ * remains idempotent and independent of the app's global `schemaVersion` —
+ * a consumer whose app is already at version 10 can still trigger the
+ * Arkade v1→v2 script backfill when the row has never been populated.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function runArkRealmMigrations(oldRealm: any, newRealm: any): void {
+    const newVtxos = newRealm.objects("ArkVtxo");
+    for (let i = 0; i < newVtxos.length; i++) {
+        const newVtxo = newVtxos[i];
+        if (!newVtxo.script) {
+            newVtxo.script = scriptFromArkAddress(newVtxo.address);
+        }
+    }
+}

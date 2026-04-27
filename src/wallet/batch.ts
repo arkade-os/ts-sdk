@@ -23,7 +23,7 @@ import { hex } from "@scure/base";
  * const handler = wallet.createBatchHandler(intentId, inputs, expectedRecipients, musig2session);
  *
  * const abortController = new AbortController();
- * // Get event stream from Ark provider
+ * // Get event stream from the Arkade provider
  * const eventStream = arkProvider.getEventStream(
  *   abortController.signal,
  *   ['your-topic-1', 'your-topic-2']
@@ -51,7 +51,7 @@ export namespace Batch {
         /**
          * Called when tree signing starts.
          * @param event The tree signing started event.
-         * @param vtxoTree The unsigned VTXO tree, reconstructed from the TreeTxEvent events.
+         * @param vtxoTree The unsigned virtual output tree, reconstructed from the TreeTxEvent events.
          * @returns Promise resolving to a boolean indicating whether to continue processing.
          */
         onTreeSigningStarted(
@@ -67,7 +67,7 @@ export namespace Batch {
         /**
          * Called during batch finalization.
          * @param event The batch finalization event.
-         * @param vtxoTree The signed VTXO tree, reconstructed from the TreeTxEvent events.
+         * @param vtxoTree The signed virtual output tree, reconstructed from the TreeTxEvent events.
          * @param connectorTree The connector transaction tree, reconstructed from the TreeTxEvent events.
          */
         onBatchFinalization(
@@ -76,18 +76,41 @@ export namespace Batch {
             connectorTree?: TxTree
         ): Promise<void>;
 
+        /**
+         * Called when batch finalization completes successfully.
+         *
+         * @param event - Batch finalized event
+         */
         onBatchFinalized?(event: BatchFinalizedEvent): Promise<void>;
+
+        /**
+         * Called when batch processing fails.
+         *
+         * @param event - Batch failed event
+         */
         onBatchFailed?(event: BatchFailedEvent): Promise<void>;
+
+        /**
+         * Called for each virtual output tree transaction chunk received during batch processing.
+         *
+         * @param event - Tree transaction event
+         */
         onTreeTxEvent?(event: TreeTxEvent): Promise<void>;
+
+        /**
+         * Called for each tree signature event received during batch processing.
+         *
+         * @param event - Tree signature event
+         */
         onTreeSignatureEvent?(event: TreeSignatureEvent): Promise<void>;
     }
 
     /**
      * Options for the join function.
-     * @param @optional abortController - The abort controller to use to abort the operation.
-     * @param @optional skipVtxoTreeSigning - ignore events related to vtxo tree musig2 signing session.
-     * @param @optional eventCallback - A callback to be called for each event.
-     * @param eventCallback - A callback to be called for each event.
+     *
+     * @property abortController - Abort controller used to cancel batch processing.
+     * @property skipVtxoTreeSigning - Ignore events related to the virtual output tree musig2 signing session.
+     * @property eventCallback - Callback invoked for each settlement event received while joining the batch.
      */
     export type JoinOptions = Partial<{
         abortController: AbortController;
@@ -184,7 +207,7 @@ export namespace Batch {
                         continue;
                     }
 
-                    // batchIndex 0 = vtxo tree, batchIndex 1 = connector tree
+                    // batchIndex 0 = virtual output tree, batchIndex 1 = connector tree
                     if (event.batchIndex === 0) {
                         flatVtxoTree.push(event.chunk);
                     } else {
@@ -206,7 +229,7 @@ export namespace Batch {
                         throw new Error("vtxo tree not initialized");
                     }
 
-                    // push signature to the vtxo tree
+                    // push signature to the virtual output tree
                     const tapKeySig = hex.decode(event.signature);
                     vtxoTree.update(event.txid, (tx) => {
                         tx.updateInput(0, {
@@ -225,7 +248,7 @@ export namespace Batch {
                         continue;
                     }
 
-                    // create vtxo tree from collected chunks
+                    // create virtual output tree from collected chunks
                     vtxoTree = TxTree.create(flatVtxoTree);
 
                     const { skip } = await handler.onTreeSigningStarted(
@@ -256,7 +279,7 @@ export namespace Batch {
                         continue;
                     }
 
-                    // Build vtxo tree if it hasn't been built yet
+                    // Build virtual output tree if it hasn't been built yet
                     if (!vtxoTree && flatVtxoTree.length > 0) {
                         vtxoTree = TxTree.create(flatVtxoTree);
                     }

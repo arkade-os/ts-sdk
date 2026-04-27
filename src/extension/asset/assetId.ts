@@ -4,9 +4,19 @@ import { BufferReader, BufferWriter } from "../utils";
 import { isZeroBytes } from "./utils";
 
 /**
- * AssetId represents the id of an asset.
- * @param txid - the genesis transaction id (decoded from hex)
- * @param groupIndex - the asset group index in the genesis transaction
+ * AssetId identifies a specific asset.
+ *
+ * @remarks
+ * Asset ids are derived from the genesis transaction id plus the asset group index.
+ *
+ * @see AssetRef
+ *
+ * @example
+ * ```typescript
+ * const assetId = AssetId.create('00'.repeat(32), 0)
+ * const encoded = assetId.toString()
+ * const decoded = AssetId.fromString(encoded)
+ * ```
  */
 export class AssetId {
     private constructor(
@@ -14,6 +24,15 @@ export class AssetId {
         readonly groupIndex: number
     ) {}
 
+    /**
+     * Create an asset id from a genesis transaction id and group index.
+     *
+     * @param txid - Hex-encoded genesis transaction id
+     * @param groupIndex - Asset group index within the genesis transaction
+     * @returns A validated asset id
+     * @throws Error if the txid is missing, malformed, or not 32 bytes long
+     * @see fromString
+     */
     static create(txid: string, groupIndex: number): AssetId {
         if (!txid) {
             throw new Error("missing txid");
@@ -37,6 +56,14 @@ export class AssetId {
         return assetId;
     }
 
+    /**
+     * Decode an asset id from its hex string representation.
+     *
+     * @param s - Hex-encoded asset id
+     * @returns Decoded asset id
+     * @throws Error if the string is not valid hex or does not encode a valid asset id
+     * @see toString
+     */
     static fromString(s: string): AssetId {
         let buf: Uint8Array;
         try {
@@ -47,6 +74,13 @@ export class AssetId {
         return AssetId.fromBytes(buf);
     }
 
+    /**
+     * Decode an asset id from its serialized bytes.
+     *
+     * @param buf - Serialized asset id bytes
+     * @returns Decoded asset id
+     * @throws Error if the buffer length is invalid
+     */
     static fromBytes(buf: Uint8Array): AssetId {
         if (!buf || buf.length === 0) {
             throw new Error("missing asset id");
@@ -60,16 +94,33 @@ export class AssetId {
         return AssetId.fromReader(reader);
     }
 
+    /**
+     * Serialize the asset id to raw bytes.
+     *
+     * @returns Serialized asset id bytes
+     * @see fromBytes
+     */
     serialize(): Uint8Array {
         const writer = new BufferWriter();
         this.serializeTo(writer);
         return writer.toBytes();
     }
 
+    /**
+     * Encode the asset id to a hex string.
+     *
+     * @returns Hex-encoded asset id
+     * @see fromString
+     */
     toString(): string {
         return hex.encode(this.serialize());
     }
 
+    /**
+     * Validate the asset id fields.
+     *
+     * @throws Error if the txid is empty or the group index is out of range
+     */
     validate(): void {
         if (isZeroBytes(this.txid)) {
             throw new Error("empty txid");
@@ -85,6 +136,13 @@ export class AssetId {
         }
     }
 
+    /**
+     * Decode an asset id from a binary reader.
+     *
+     * @param reader - Reader positioned at an asset id
+     * @returns Decoded asset id
+     * @throws Error if the reader does not contain enough bytes
+     */
     static fromReader(reader: BufferReader): AssetId {
         if (reader.remaining() < ASSET_ID_SIZE) {
             throw new Error(
@@ -100,6 +158,12 @@ export class AssetId {
         return assetId;
     }
 
+    /**
+     * Serialize the asset id into an existing binary writer.
+     *
+     * @param writer - Writer to append the asset id to
+     * @see serialize
+     */
     serializeTo(writer: BufferWriter): void {
         writer.write(this.txid);
         writer.writeUint16LE(this.groupIndex);

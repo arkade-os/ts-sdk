@@ -21,12 +21,6 @@ describe("SeedIdentity", () => {
             expect(xOnlyPubKey).toHaveLength(32);
         });
 
-        it("should require network selection", () => {
-            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-            // @ts-expect-error opts is required
-            expect(() => SeedIdentity.fromSeed(seed)).toThrow();
-        });
-
         it("should derive different keys for mainnet vs testnet", async () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
 
@@ -209,13 +203,6 @@ describe("MnemonicIdentity", () => {
             expect(xOnlyPubKey).toHaveLength(32);
         });
 
-        it("should require network selection", () => {
-            // @ts-expect-error opts is required
-            expect(() =>
-                MnemonicIdentity.fromMnemonic(TEST_MNEMONIC)
-            ).toThrow();
-        });
-
         it("should produce same key as SeedIdentity.fromSeed with equivalent seed", async () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
 
@@ -388,5 +375,31 @@ describe("module exports", () => {
         expect(typeof ReadonlyDescriptorIdentity.fromDescriptor).toBe(
             "function"
         );
+    });
+});
+
+describe("MnemonicIdentity", () => {
+    it("should produce same key as SeedIdentity.fromSeed", async () => {
+        const fromMnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const fromSeed = SeedIdentity.fromSeed(seed, { isMainnet: true });
+
+        const pubKey1 = await fromMnemonic.xOnlyPublicKey();
+        const pubKey2 = await fromSeed.xOnlyPublicKey();
+        expect(Array.from(pubKey1)).toEqual(Array.from(pubKey2));
+    });
+});
+
+describe("backwards compatibility", () => {
+    it("existing signMessage() API still works", async () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+        const message = new Uint8Array(32).fill(99);
+
+        const signature = await identity.signMessage(message);
+        expect(signature).toBeInstanceOf(Uint8Array);
+        expect(signature).toHaveLength(64);
     });
 });

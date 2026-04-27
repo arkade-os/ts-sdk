@@ -90,7 +90,6 @@ export class RealmContractRepository implements ContractRepository {
                     state: contract.state,
                     paramsJson: JSON.stringify(contract.params),
                     createdAt: contract.createdAt,
-                    expiresAt: contract.expiresAt ?? null,
                     label: contract.label ?? null,
                     metadataJson: contract.metadata
                         ? JSON.stringify(contract.metadata)
@@ -151,9 +150,6 @@ function contractObjectToDomain(obj: any): Contract {
         createdAt: obj.createdAt,
     };
 
-    if (obj.expiresAt !== null && obj.expiresAt !== undefined) {
-        contract.expiresAt = obj.expiresAt;
-    }
     if (obj.label !== null && obj.label !== undefined) {
         contract.label = obj.label;
     }

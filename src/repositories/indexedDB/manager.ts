@@ -32,14 +32,21 @@ const refCounts = new Map<string, number>();
  *
  * @param dbName The name of the database to open.
  * @param dbVersion The database version to open.
- * @param initDatabase A function that migrates the database schema, called on `onupgradeneeded` only.
+ * @param initDatabase A function that migrates the database schema, called
+ *   on `onupgradeneeded` only. Receives the database, the previous version
+ *   (0 for fresh installs), and the upgrade transaction — the transaction is
+ *   required for data migrations (cursor/update on existing stores).
  *
  * @returns A promise that resolves to the database instance.
  */
 export async function openDatabase(
     dbName: string,
     dbVersion: number,
-    initDatabase: (db: IDBDatabase) => void
+    initDatabase: (
+        db: IDBDatabase,
+        oldVersion: number,
+        transaction: IDBTransaction | null
+    ) => void
 ): Promise<IDBDatabase> {
     const { globalObject } = getGlobalObject();
     if (!globalObject.indexedDB) {
@@ -69,9 +76,9 @@ export async function openDatabase(
         request.onsuccess = () => {
             resolve(request.result);
         };
-        request.onupgradeneeded = () => {
+        request.onupgradeneeded = (event) => {
             const db = request.result;
-            initDatabase(db);
+            initDatabase(db, event.oldVersion, request.transaction);
         };
         request.onblocked = () => {
             console.warn(

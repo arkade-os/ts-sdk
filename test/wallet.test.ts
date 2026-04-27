@@ -6,13 +6,21 @@ import {
     OnchainWallet,
     RestArkProvider,
     ReadonlyWallet,
+    Batch,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
+    ArkError,
+    type IndexerProvider,
+    type ArkProvider,
+    type OnchainProvider,
 } from "../src";
+import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import {
     IndexedDBWalletRepository,
     IndexedDBContractRepository,
 } from "../src/repositories";
-import type { Coin } from "../src/wallet";
+import type { Coin, VirtualCoin } from "../src/wallet";
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -103,9 +111,12 @@ describe("Wallet", () => {
             };
 
             // Setup mocks in the correct order based on actual call sequence:
-            // 1. getInfo() call during wallet creation
-            // 2. getBoardingUtxos() -> getCoins() call
-            // 3. getVtxos() -> batched vtxos call
+            // 1. getInfo() during wallet creation
+            // 2. getBoardingUtxos() -> esplora getCoins()
+            // 3. ContractManager.createContract() full vtxo fetch for
+            //    the wallet's default contract (includeSpent=true)
+            // 4. ContractWatcher.subscribeForScripts for the wallet's script
+            // 5. getContractsWithVtxos -> syncContracts delta fetch
 
             mockFetch
                 .mockResolvedValueOnce({
@@ -127,6 +138,14 @@ describe("Wallet", () => {
                 .mockResolvedValueOnce({
                     ok: true,
                     json: () => Promise.resolve(mockUTXOs),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
+                })
+                .mockResolvedValueOnce({
+                    ok: true,
+                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
                 })
                 .mockImplementationOnce((url: string) => {
                     // Extract the script from the request URL so the
@@ -639,19 +658,44 @@ describe("Wallet", () => {
                 },
             ];
 
-            mockFetch
-                .mockResolvedValueOnce({
+            // Wallet.create triggers VtxoManager which lazily initializes
+            // ContractManager in the background (registering the default
+            // contract + subscribing). readonlyWallet.getBalance() then
+            // drives another round of CM work (delta + spendableOnly).
+            // Route by URL so ordering between the foreground Promise.all
+            // and the background VtxoManager init doesn't matter.
+            mockFetch.mockImplementation((url: string) => {
+                if (url.includes("/v1/info")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve(mockArkInfo),
+                    });
+                }
+                if (url.includes("/script/subscribe")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () =>
+                            Promise.resolve({ subscriptionId: "sub-1" }),
+                    });
+                }
+                if (url.includes("/address/") && url.includes("/utxo")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve(mockUTXOs),
+                    });
+                }
+                if (url.includes("/vtxos")) {
+                    return Promise.resolve({
+                        ok: true,
+                        json: () => Promise.resolve({ vtxos: [] }),
+                    });
+                }
+                return Promise.resolve({
                     ok: true,
-                    json: () => Promise.resolve(mockArkInfo),
-                })
-                // VtxoManager background init fetches VTXOs for the
-                // default contract via createContract; provide a mock
-                // so dispose() (which awaits that init) doesn't shift
-                // the queue.
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
+                    json: () => Promise.resolve({}),
+                    text: () => Promise.resolve(""),
                 });
+            });
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
@@ -659,24 +703,424 @@ describe("Wallet", () => {
             });
 
             const readonlyWallet = await wallet.toReadonly();
-
-            // Dispose the full wallet to stop its background VtxoManager/
-            // ContractManager operations that would consume fetch mocks.
             await wallet.dispose();
-
-            // Should be able to get balance
-            mockFetch
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve(mockUTXOs),
-                })
-                .mockResolvedValueOnce({
-                    ok: true,
-                    json: () => Promise.resolve({ vtxos: [] }),
-                });
 
             const balance = await readonlyWallet.getBalance();
             expect(balance.boarding.total).toBe(100000);
+        });
+    });
+
+    describe("delta-sync reconciliation", () => {
+        const mockArkInfo = {
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            boardingExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+            network: "mutinynet",
+            dust: BigInt(1000),
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        };
+        const mockBatchExpiry = 1767225600000;
+
+        async function createReadonlyTestWallet(
+            getVtxos: IndexerProvider["getVtxos"]
+        ) {
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: {
+                    getVtxos,
+                    subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                    getSubscription: async function* () {
+                        // Empty stream — the watcher's listenLoop will exit
+                        // cleanly and schedule a reconnect we never let run.
+                    },
+                } as Partial<IndexerProvider> as IndexerProvider,
+                onchainProvider: {} as OnchainProvider,
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+            });
+
+            return { wallet, walletRepository };
+        }
+
+        function createMockVtxo(
+            script: string,
+            state: "preconfirmed" | "settled" = "preconfirmed"
+        ): VirtualCoin {
+            return {
+                txid: "11".repeat(32),
+                vout: 0,
+                value: 50_000,
+                status: {
+                    confirmed: state !== "preconfirmed",
+                    isLeaf: state !== "preconfirmed",
+                },
+                virtualStatus: {
+                    state,
+                    commitmentTxIds: ["22".repeat(32)],
+                    batchExpiry: mockBatchExpiry,
+                },
+                spentBy: "",
+                settledBy: state === "settled" ? "33".repeat(32) : undefined,
+                arkTxId: "",
+                createdAt: new Date("2026-01-01T00:00:00.000Z"),
+                isUnrolled: false,
+                isSpent: false,
+                script,
+            };
+        }
+
+        it("should keep a preconfirmed VTXO when the full re-fetch still returns it", async () => {
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    return { vtxos: [createMockVtxo(walletScript)] };
+                });
+
+            const { wallet } = await createReadonlyTestWallet(getVtxos);
+
+            expect(await wallet.getVtxos()).toHaveLength(1);
+            expect(await wallet.getVtxos()).toHaveLength(1);
+        });
+
+        it("should update VTXO state when the full re-fetch shows it settled", async () => {
+            let walletScript = "";
+            let state: "preconfirmed" | "settled" = "preconfirmed";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    return {
+                        vtxos: [createMockVtxo(walletScript, state)],
+                    };
+                });
+
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
+
+            expect((await wallet.getVtxos())[0].virtualStatus.state).toBe(
+                "preconfirmed"
+            );
+
+            state = "settled";
+
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].virtualStatus.state).toBe("settled");
+            expect(vtxos[0].isSpent).toBe(false);
+
+            const cached = await walletRepository.getVtxos(
+                await wallet.getAddress()
+            );
+            expect(cached).toHaveLength(1);
+            expect(cached[0].virtualStatus.state).toBe("settled");
+        });
+
+        it("should mark a cached preconfirmed VTXO as spent when the full re-fetch no longer returns it", async () => {
+            let walletScript = "";
+            let markSpent = false;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    const vtxo = createMockVtxo(walletScript);
+                    if (markSpent) vtxo.isSpent = true;
+                    return { vtxos: [vtxo] };
+                });
+
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
+
+            expect(await wallet.getVtxos()).toHaveLength(1);
+
+            markSpent = true;
+
+            expect(await wallet.getVtxos()).toEqual([]);
+
+            const cached = await walletRepository.getVtxos(
+                await wallet.getAddress()
+            );
+            expect(cached).toHaveLength(1);
+            expect(cached[0].isSpent).toBe(true);
+        });
+
+        it("should mark a cached settled VTXO as spent when the full re-fetch no longer returns it", async () => {
+            let walletScript = "";
+            let markSpent = false;
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    const vtxo = createMockVtxo(walletScript, "settled");
+                    if (markSpent) vtxo.isSpent = true;
+                    return { vtxos: [vtxo] };
+                });
+
+            const { wallet, walletRepository } =
+                await createReadonlyTestWallet(getVtxos);
+
+            const vtxos = await wallet.getVtxos();
+            expect(vtxos).toHaveLength(1);
+            expect(vtxos[0].virtualStatus.state).toBe("settled");
+
+            markSpent = true;
+
+            expect(await wallet.getVtxos()).toEqual([]);
+
+            const cached = await walletRepository.getVtxos(
+                await wallet.getAddress()
+            );
+            expect(cached).toHaveLength(1);
+            expect(cached[0].isSpent).toBe(true);
+        });
+    });
+
+    describe("pending-spend filtering", () => {
+        const mockArkInfo = {
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            boardingExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+            network: "mutinynet",
+            dust: BigInt(1000),
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        };
+
+        function createMockVtxo(script: string, txid: string): VirtualCoin {
+            return {
+                txid,
+                vout: 0,
+                value: 50_000,
+                status: { confirmed: false },
+                virtualStatus: {
+                    state: "preconfirmed",
+                    commitmentTxIds: ["22".repeat(32)],
+                    batchExpiry: 1767225600000,
+                },
+                spentBy: "",
+                arkTxId: "",
+                createdAt: new Date("2026-01-01T00:00:00.000Z"),
+                isUnrolled: false,
+                isSpent: false,
+                script,
+            };
+        }
+
+        async function createWalletWithVtxos(txids: string[]) {
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+
+            let walletScript = "";
+            const getVtxos = vi
+                .fn<IndexerProvider["getVtxos"]>()
+                .mockImplementation(async (opts) => {
+                    if (!walletScript && opts?.scripts?.[0]) {
+                        walletScript = opts.scripts[0];
+                    }
+                    return {
+                        vtxos: txids.map((txid) =>
+                            createMockVtxo(walletScript, txid)
+                        ),
+                    };
+                });
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: {
+                    getVtxos,
+                    subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                    getSubscription: async function* () {},
+                } as Partial<IndexerProvider> as IndexerProvider,
+                onchainProvider: {} as OnchainProvider,
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+            });
+
+            return { wallet };
+        }
+
+        it("getVtxos excludes outpoints present in _pendingSpendOutpoints", async () => {
+            const txidA = "a".repeat(64);
+            const txidB = "b".repeat(64);
+            const { wallet } = await createWalletWithVtxos([txidA, txidB]);
+
+            expect((await wallet.getVtxos()).map((v) => v.txid).sort()).toEqual(
+                [txidA, txidB].sort()
+            );
+
+            (wallet as any)._pendingSpendOutpoints.add(`${txidA}:0`);
+            expect((await wallet.getVtxos()).map((v) => v.txid)).toEqual([
+                txidB,
+            ]);
+
+            (wallet as any)._pendingSpendOutpoints.delete(`${txidA}:0`);
+            expect((await wallet.getVtxos()).map((v) => v.txid).sort()).toEqual(
+                [txidA, txidB].sort()
+            );
+        });
+
+        it("the in-flight set is in-memory only — a fresh instance sees the VTXO again", async () => {
+            const txid = "c".repeat(64);
+            const { wallet } = await createWalletWithVtxos([txid]);
+
+            (wallet as any)._pendingSpendOutpoints.add(`${txid}:0`);
+            expect(await wallet.getVtxos()).toHaveLength(0);
+
+            // Simulating a process restart: a brand-new wallet instance over
+            // the same repositories must surface the VTXO (no persistence).
+            const { wallet: freshWallet } = await createWalletWithVtxos([txid]);
+            expect((await freshWallet.getVtxos()).map((v) => v.txid)).toEqual([
+                txid,
+            ]);
+        });
+
+        it("_addPendingSpends tracks VTXO inputs and ignores boarding UTXOs", () => {
+            const thisArg: any = { _pendingSpendOutpoints: new Set<string>() };
+            const vtxoInput = {
+                txid: "a".repeat(64),
+                vout: 0,
+                virtualStatus: {
+                    state: "preconfirmed",
+                    commitmentTxIds: [],
+                    batchExpiry: 0,
+                },
+            };
+            const boardingInput = {
+                txid: "b".repeat(64),
+                vout: 1,
+                status: { confirmed: true },
+            };
+
+            (Wallet.prototype as any)._addPendingSpends.call(thisArg, [
+                vtxoInput,
+                boardingInput,
+            ]);
+
+            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([
+                `${vtxoInput.txid}:0`,
+            ]);
+        });
+
+        it("_removePendingSpends clears only the passed outpoints", () => {
+            const thisArg: any = {
+                _pendingSpendOutpoints: new Set<string>([
+                    `${"a".repeat(64)}:0`,
+                    `${"b".repeat(64)}:0`,
+                ]),
+            };
+            const vtxoInput = {
+                txid: "a".repeat(64),
+                vout: 0,
+                virtualStatus: {
+                    state: "preconfirmed",
+                    commitmentTxIds: [],
+                    batchExpiry: 0,
+                },
+            };
+
+            (Wallet.prototype as any)._removePendingSpends.call(thisArg, [
+                vtxoInput,
+            ]);
+
+            expect(Array.from(thisArg._pendingSpendOutpoints)).toEqual([
+                `${"b".repeat(64)}:0`,
+            ]);
+        });
+    });
+
+    describe("mainnet unilateral exit delay pinning", () => {
+        // If this constant changes in the SDK, update both sides intentionally —
+        // changing the pinned value alters derived addresses for every mainnet
+        // wallet.
+        const MAINNET_PINNED_DELAY = 605184n;
+
+        const mockMainnetInfo = (unilateralExitDelay: bigint) => ({
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay,
+            roundInterval: BigInt(144),
+            network: "bitcoin",
+            forfeitAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        });
+
+        it("pins the exit timelock to 605184s on mainnet even when the server advertises a shorter delay", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+            });
+
+            const wallet = await Wallet.create({
+                identity: mockIdentity,
+                arkServerUrl: "http://localhost:7070",
+            });
+
+            expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
+                value: MAINNET_PINNED_DELAY,
+                type: "seconds",
+            });
+        });
+
+        it("lets an explicit config.exitTimelock override the mainnet pin", async () => {
+            mockFetch.mockResolvedValueOnce({
+                ok: true,
+                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+            });
+
+            // bip68 seconds must be multiples of 512.
+            const override = { value: 1024n, type: "seconds" as const };
+            const wallet = await Wallet.create({
+                identity: mockIdentity,
+                arkServerUrl: "http://localhost:7070",
+                exitTimelock: override,
+            });
+
+            expect(wallet.offchainTapscript.options.csvTimelock).toEqual(
+                override
+            );
         });
     });
 });
@@ -761,19 +1205,41 @@ describe("ReadonlyWallet", () => {
             },
         ];
 
-        mockFetch
-            .mockResolvedValueOnce({
+        // ReadonlyWallet.create + getBalance triggers: getInfo, boarding,
+        // ContractManager init (createContract fetch + subscribe),
+        // getContractsWithVtxos (syncContracts + getVtxosForContracts).
+        // Route by URL to keep ordering assumptions out of the test.
+        mockFetch.mockImplementation((url: string) => {
+            if (url.includes("/v1/info")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve(mockArkInfo),
+                });
+            }
+            if (url.includes("/script/subscribe")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ subscriptionId: "sub-1" }),
+                });
+            }
+            if (url.includes("/address/") && url.includes("/utxo")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve(mockUTXOs),
+                });
+            }
+            if (url.includes("/vtxos")) {
+                return Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ vtxos: [] }),
+                });
+            }
+            return Promise.resolve({
                 ok: true,
-                json: () => Promise.resolve(mockArkInfo),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockUTXOs),
-            })
-            .mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve({ vtxos: [] }),
+                json: () => Promise.resolve({}),
+                text: () => Promise.resolve(""),
             });
+        });
 
         const readonlyWallet = await ReadonlyWallet.create({
             identity: readonlyIdentity,
@@ -807,5 +1273,273 @@ describe("ReadonlyWallet", () => {
         // Should not have transaction methods
         expect((readonlyWallet as any).sendBitcoin).toBeUndefined();
         expect((readonlyWallet as any).settle).toBeUndefined();
+    });
+});
+
+describe("Wallet.safeRegisterIntent", () => {
+    it("signs the delete proof over the caller's inputs on 'duplicated input' retry", async () => {
+        // This regression covers the incident where the auto-settle path
+        // kept hitting "duplicated input" because the prior implementation
+        // signed the delete proof over `getVtxos()` — which misses the
+        // boarding UTXO that the stuck intent actually locked. The fix
+        // scopes the proof to the *caller's* inputs (which include the
+        // boarding UTXO for a boarding-settle), so the stuck intent is
+        // cleared on the very first retry.
+        const boardingInput = {
+            txid: "b".repeat(64),
+            vout: 0,
+            value: 10_000,
+            status: { confirmed: true, block_time: 1_700_000_000 },
+        } as ExtendedCoin;
+        const callerInputs: ExtendedCoin[] = [boardingInput];
+
+        const registerIntent = vi
+            .fn()
+            .mockRejectedValueOnce(
+                new ArkError(0, "duplicated input", "FailedPrecondition")
+            )
+            .mockResolvedValueOnce("intent-id-after-retry");
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+
+        const makeDeleteIntentSignature = vi.fn().mockResolvedValue({
+            proof: "delete-proof",
+            message: { type: "delete", expire_at: 0 },
+        });
+        const getVtxos = vi.fn().mockResolvedValue([]);
+
+        const thisArg: any = {
+            arkProvider: { registerIntent, deleteIntent },
+            makeDeleteIntentSignature,
+            getVtxos,
+        };
+
+        const intent = {
+            proof: "register-proof",
+            message: { type: "register" } as any,
+        };
+
+        const result = await (Wallet.prototype as any).safeRegisterIntent.call(
+            thisArg,
+            intent,
+            callerInputs
+        );
+
+        expect(result).toBe("intent-id-after-retry");
+        // The delete proof MUST be built from the caller's inputs, not
+        // from getVtxos() — otherwise boarding-input stuck intents
+        // remain on the server and the next registerIntent collides
+        // again, producing the DeleteIntent treadmill seen in the panic.
+        expect(makeDeleteIntentSignature).toHaveBeenCalledWith(callerInputs);
+        expect(getVtxos).not.toHaveBeenCalled();
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
+        expect(registerIntent).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not attempt delete/retry for unrelated ArkError codes", async () => {
+        const registerIntent = vi
+            .fn()
+            .mockRejectedValueOnce(
+                new ArkError(3, "some other failure", "InvalidArgument")
+            );
+        const deleteIntent = vi.fn();
+        const makeDeleteIntentSignature = vi.fn();
+
+        const thisArg: any = {
+            arkProvider: { registerIntent, deleteIntent },
+            makeDeleteIntentSignature,
+            getVtxos: vi.fn(),
+        };
+
+        await expect(
+            (Wallet.prototype as any).safeRegisterIntent.call(
+                thisArg,
+                { proof: "p", message: { type: "register" } },
+                [] as ExtendedCoin[]
+            )
+        ).rejects.toThrow("some other failure");
+
+        expect(deleteIntent).not.toHaveBeenCalled();
+        expect(makeDeleteIntentSignature).not.toHaveBeenCalled();
+        expect(registerIntent).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("Wallet._settleImpl", () => {
+    const walletAddress =
+        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g";
+
+    const input = {
+        txid: "a".repeat(64),
+        vout: 0,
+        value: 10_000,
+        status: { confirmed: true, block_time: 1_700_000_000 },
+    } as ExtendedCoin;
+
+    it("primes the stream before registering the intent and replays the primed event to Batch.join", async () => {
+        const callOrder: string[] = [];
+        const primedEvent = { type: "batch_started", id: "batch-1" };
+        const secondEvent = { type: "batch_finalized", id: "batch-1" };
+        const stream = {
+            next: vi
+                .fn()
+                .mockImplementationOnce(async () => {
+                    callOrder.push("stream.next#1");
+                    return { done: false, value: primedEvent };
+                })
+                .mockImplementationOnce(async () => {
+                    callOrder.push("stream.next#2");
+                    return { done: false, value: secondEvent };
+                }),
+            return: vi.fn(async () => {
+                callOrder.push("stream.return");
+                return { done: true, value: undefined };
+            }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        } as AsyncIterableIterator<any>;
+
+        const safeRegisterIntent = vi.fn(async () => {
+            callOrder.push("safeRegisterIntent");
+            return "intent-id";
+        });
+        const createBatchHandler = vi.fn().mockReturnValue({} as Batch.Handler);
+        const updateDbAfterSettle = vi.fn().mockResolvedValue(undefined);
+        const batchJoinSpy = vi
+            .spyOn(Batch, "join")
+            .mockImplementation(async (eventIterator) => {
+                callOrder.push("Batch.join");
+                expect(eventIterator).not.toBe(stream);
+                expect(await eventIterator.next()).toEqual({
+                    done: false,
+                    value: primedEvent,
+                });
+                expect(await eventIterator.next()).toEqual({
+                    done: false,
+                    value: secondEvent,
+                });
+                return "commitment-txid";
+            });
+
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue(stream),
+                deleteIntent: vi.fn().mockResolvedValue(undefined),
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            safeRegisterIntent,
+            createBatchHandler,
+            updateDbAfterSettle,
+        };
+
+        const result = await (Wallet.prototype as any)._settleImpl.call(
+            thisArg,
+            {
+                inputs: [input],
+                outputs: [],
+            }
+        );
+
+        expect(result).toBe("commitment-txid");
+        expect(callOrder).toEqual([
+            "stream.next#1",
+            "safeRegisterIntent",
+            "Batch.join",
+            "stream.next#2",
+            "stream.return",
+        ]);
+        expect(stream.next).toHaveBeenCalledTimes(2);
+        expect(stream.return).toHaveBeenCalledTimes(1);
+        expect(createBatchHandler).toHaveBeenCalledWith(
+            "intent-id",
+            [input],
+            [],
+            undefined
+        );
+        expect(updateDbAfterSettle).toHaveBeenCalledWith(
+            [input],
+            "commitment-txid"
+        );
+        batchJoinSpy.mockRestore();
+    });
+
+    it("closes the primed stream when safeRegisterIntent fails before Batch.join starts", async () => {
+        const callOrder: string[] = [];
+        let resolveFirstNext:
+            | ((value: IteratorResult<any>) => void)
+            | undefined = undefined;
+        const firstNext = new Promise<IteratorResult<any>>((resolve) => {
+            resolveFirstNext = resolve;
+        });
+        const stream = {
+            next: vi.fn(() => {
+                callOrder.push("stream.next");
+                return firstNext;
+            }),
+            return: vi.fn(async () => {
+                callOrder.push("stream.return");
+                resolveFirstNext?.({ done: true, value: undefined });
+                return { done: true, value: undefined };
+            }),
+            [Symbol.asyncIterator]() {
+                return this;
+            },
+        } as AsyncIterableIterator<any>;
+
+        const registerError = new Error("register failed");
+        const deleteIntent = vi.fn().mockResolvedValue(undefined);
+        const batchJoinSpy = vi.spyOn(Batch, "join");
+        const thisArg: any = {
+            network: "mutinynet",
+            arkProvider: {
+                getEventStream: vi.fn().mockReturnValue(stream),
+                deleteIntent,
+            },
+            _addPendingSpends: vi.fn(),
+            _removePendingSpends: vi.fn(),
+            getAddress: vi.fn().mockResolvedValue(walletAddress),
+            makeRegisterIntentSignature: vi.fn().mockResolvedValue({
+                proof: "register-proof",
+                message: { type: "register" },
+            }),
+            makeDeleteIntentSignature: vi.fn().mockResolvedValue({
+                proof: "delete-proof",
+                message: { type: "delete", expire_at: 0 },
+            }),
+            safeRegisterIntent: vi.fn(async () => {
+                callOrder.push("safeRegisterIntent");
+                throw registerError;
+            }),
+            createBatchHandler: vi.fn(),
+            updateDbAfterSettle: vi.fn(),
+        };
+
+        await expect(
+            (Wallet.prototype as any)._settleImpl.call(thisArg, {
+                inputs: [input],
+                outputs: [],
+            })
+        ).rejects.toThrow("register failed");
+
+        expect(callOrder).toEqual([
+            "stream.next",
+            "safeRegisterIntent",
+            "stream.return",
+        ]);
+        expect(stream.return).toHaveBeenCalledTimes(1);
+        expect(deleteIntent).toHaveBeenCalledTimes(1);
+        expect(batchJoinSpy).not.toHaveBeenCalled();
+        batchJoinSpy.mockRestore();
     });
 });

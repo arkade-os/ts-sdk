@@ -14,6 +14,7 @@ export class Packet implements ExtensionPacket {
 
     private constructor(readonly groups: AssetGroup[]) {}
 
+    /** Create a validated asset packet from a list of asset groups. */
     static create(groups: AssetGroup[]): Packet {
         const p = new Packet(groups);
         p.validate();
@@ -50,6 +51,7 @@ export class Packet implements ExtensionPacket {
         return Packet.PACKET_TYPE;
     }
 
+    /** Convert the packet into the batch-leaf form for a specific intent transaction id. */
     leafTxPacket(intentTxid: Uint8Array): Packet {
         const leafGroups = this.groups.map((group) =>
             group.toBatchLeafAssetGroup(intentTxid)
@@ -59,7 +61,7 @@ export class Packet implements ExtensionPacket {
 
     /**
      * serialize encodes the packet as raw bytes (varint group count + group data).
-     * Does NOT include OP_RETURN, ARK magic, or TLV type/length — those are
+     * Does NOT include OP_RETURN, Arkade magic bytes (`ARK`), or TLV type/length; those are
      * added by the Extension module.
      */
     serialize(): Uint8Array {
@@ -81,6 +83,7 @@ export class Packet implements ExtensionPacket {
         return hex.encode(this.serialize());
     }
 
+    /** Validate packet structure and cross-group references. */
     validate(): void {
         if (this.groups.length === 0) {
             throw new Error("missing assets");

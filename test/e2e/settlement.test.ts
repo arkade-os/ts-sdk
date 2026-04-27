@@ -5,6 +5,7 @@ import {
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    ArkError,
 } from "../../src";
 import { RestDelegatorProvider } from "../../src/providers/delegator";
 import { arkdExec, beforeEachFaucet, execCommand, waitFor } from "./utils";
@@ -344,7 +345,7 @@ describe("Settlement - Auto-delegation on vtxo_received", () => {
                     contractRepository: new InMemoryContractRepository(),
                 },
                 delegatorProvider: new RestDelegatorProvider(
-                    "http://localhost:7002"
+                    "http://localhost:7012"
                 ),
                 settlementConfig: {
                     pollIntervalMs: 5000,
@@ -623,35 +624,44 @@ describe("Settlement - VtxoManager concurrent operations", () => {
 
             // Settle the preconfirmed VTXO so it becomes spendable for send()
             const vtxos = await walletA.getVtxos();
-            const settledTxid = await walletA.settle({
-                inputs: vtxos,
-                outputs: [
-                    {
-                        address: addressA,
-                        amount: BigInt(
-                            vtxos.reduce((sum, v) => sum + v.value, 0)
-                        ),
-                    },
-                ],
-            });
-            expect(settledTxid).toHaveLength(64);
+            try {
+                const settledTxid = await walletA.settle({
+                    inputs: vtxos,
+                    outputs: [
+                        {
+                            address: addressA,
+                            amount: BigInt(
+                                vtxos.reduce((sum, v) => sum + v.value, 0)
+                            ),
+                        },
+                    ],
+                });
+                expect(settledTxid).toHaveLength(64);
+            } catch (error) {
+                // The background renew can win the race and consume the same
+                // preconfirmed VTXO first. That still leaves the wallet in the
+                // expected settled state for the remainder of the test.
+                expect(error).toBeInstanceOf(ArkError);
+                const arkError = error as ArkError;
+                expect(arkError.code).toBe(6);
+                expect(arkError.message).toContain("VTXO_ALREADY_SPENT");
+            }
 
-            // Wait for the settled VTXO to appear
+            const sendAmount = 5000;
+
+            // Wait for settled funds to become available, regardless of whether
+            // this test's settle() or the VtxoManager's background renew won.
             await waitFor(
                 async () => {
-                    const v = await walletA.getVtxos();
-                    return (
-                        v.length > 0 &&
-                        v.some((c) => c.virtualStatus.state === "settled")
-                    );
+                    const balance = await walletA.getBalance();
+                    return balance.settled >= sendAmount;
                 },
-                { timeout: 15000, interval: 1000 }
+                { timeout: 15000, interval: 500 }
             );
 
             // Now send while VtxoManager is actively running in the background.
             // VtxoManager's SSE subscription may fire vtxo_received for the
             // settle output and try to renewVtxos() concurrently with this send.
-            const sendAmount = 5000;
             const sendTxid = await walletA.send({
                 address: addressB,
                 amount: sendAmount,

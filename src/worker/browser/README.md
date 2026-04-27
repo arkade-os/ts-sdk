@@ -117,15 +117,29 @@ bus.start();
 On the client side:
 
 ```ts
+import {
+    serializeSigningIdentity,
+    serializeReadonlyIdentity,
+    SingleKey,
+    MnemonicIdentity,
+} from "@arkade-os/sdk";
+
 const sw = await MessageBus.setup("/service-worker.js");
 
-// Initialize the message bus with wallet config
+// Initialize the message bus with a tagged SerializedIdentity envelope.
+// Build one from any SDK-owned identity using the helpers:
+//   - serializeSigningIdentity(identity) for a wallet that signs.
+//   - serializeReadonlyIdentity(identity) for a watch-only wallet (always
+//     downgrades to readonly even if passed a signing identity).
+const identity = MnemonicIdentity.fromMnemonic("abandon abandon ...");
+const wallet = serializeSigningIdentity(identity);
+
 sw.postMessage({
     type: "INITIALIZE_MESSAGE_BUS",
     id: "init-1",
     tag: "INITIALIZE_MESSAGE_BUS",
     config: {
-        wallet: { privateKey: "..." },
+        wallet,
         arkServer: { url: "https://..." },
     },
 });
@@ -140,6 +154,75 @@ Notes:
 - Set `broadcast: true` on a request to fan it out to all handlers.
 - The `MessageBus` must receive `INITIALIZE_MESSAGE_BUS` before handlers process
   messages; earlier messages are dropped with a warning.
+
+### `SerializedIdentity` wire shape
+
+The `config.wallet` field carries a tagged `SerializedIdentity` envelope so
+that the worker can rehydrate the matching identity class:
+
+| Tag                    | Shape                                                             | Hydrates as                   |
+| ---------------------- | ----------------------------------------------------------------- | ----------------------------- |
+| `single-key`           | `{ type: "single-key", privateKey }`                              | `SingleKey`                   |
+| `seed`                 | `{ type: "seed", seed, descriptor }`                              | `SeedIdentity`                |
+| `mnemonic`             | `{ type: "mnemonic", mnemonic, descriptor, passphrase? }`         | `MnemonicIdentity`            |
+| `readonly-single-key`  | `{ type: "readonly-single-key", publicKey }`                      | `ReadonlySingleKey`           |
+| `readonly-descriptor`  | `{ type: "readonly-descriptor", descriptor }`                     | `ReadonlyDescriptorIdentity`  |
+
+All payloads are structured-clone safe. Signing envelopes ship the secret
+material needed for signing; readonly envelopes never do. The helpers
+`serializeSigningIdentity` / `serializeReadonlyIdentity` select the right
+variant for any SDK-owned identity class.
+
+### Wire-format compatibility
+
+Compatibility is one-way: **old page → new worker** is supported; new
+page → old worker is not.
+
+- Page-side: the SDK factories always emit tagged `SerializedIdentity`
+  envelopes via `serializeSigningIdentity` / `serializeReadonlyIdentity`.
+  Upgrading a page to a version of the SDK that uses tagged envelopes
+  requires a worker build that understands them.
+- Worker-side: `normalizeSerializedIdentity` still accepts the historic
+  untagged `{ privateKey }` / `{ publicKey }` shapes so an older page
+  build can initialize a newer worker during a rolling upgrade. A
+  one-time `[ts-sdk]` deprecation warning is logged when a legacy shape
+  is seen; the adapter is slated for removal in the next major.
+
+### Threat model for identity transport
+
+The page↔worker boundary is same-origin only. A service worker's
+`message` listener only fires for messages posted by documents and
+workers under the same origin, so any code that can send an
+`INITIALIZE_MESSAGE_BUS` message is already running inside the page's
+trust boundary and could read the identity from page memory directly.
+
+Working assumptions:
+
+- **Page memory and worker memory are both trusted.** The SDK does not
+  attempt to isolate secrets between the two — a compromise of either
+  is a full compromise. `serializeReadonlyIdentity` does, however,
+  downgrade signing identities to readonly envelopes when called on
+  the readonly factory, so watch-only wallets never ship signing
+  material even if the caller passes a signing identity.
+- **Envelopes carry what they need to reconstruct the identity class.**
+  For `SingleKey` that is the derived 32-byte private key. For
+  `SeedIdentity` / `MnemonicIdentity` it is master-seed material — the
+  raw seed or the BIP39 mnemonic (plus optional passphrase). A reader
+  of a seed / mnemonic envelope can derive **any** key in the HD tree,
+  not just the key currently in use; the blast radius is larger than
+  the historic `SingleKey` flow. This is an intentional trade for
+  class-preserving round-trip and descriptor fidelity; the page
+  already retains the same material so it can re-initialize a killed
+  worker without prompting the user again.
+- **Secrets are not scrubbed after use.** JavaScript strings are
+  immutable and cannot be overwritten; seed `Uint8Array`s have copies
+  inside `@scure/bip39` and the HD-key library that we cannot reach.
+  The SDK does not theater-clear state it cannot actually erase.
+
+If your application's threat model is tighter than same-origin trust
+(e.g., you assume the worker may be compromised independently of the
+page), prefer `SingleKey` for single-address flows so only one derived
+key is ever in transit.
 
 ## Registering with the built-in update handshake
 

@@ -11,6 +11,7 @@ import {
     deserializeUtxo,
     SerializedTapLeaf,
 } from "../serialization";
+import { scriptFromArkAddress } from "../scriptFromAddress";
 import { SQLExecutor } from "./types";
 
 interface SQLiteWalletRepositoryOptions {
@@ -61,30 +62,7 @@ export class SQLiteWalletRepository implements WalletRepository {
     }
 
     private async init(): Promise<void> {
-        await this.db.run(`
-            CREATE TABLE IF NOT EXISTS ${this.tables.vtxos} (
-                txid TEXT NOT NULL,
-                vout INTEGER NOT NULL,
-                value INTEGER NOT NULL,
-                address TEXT NOT NULL,
-                tap_tree TEXT NOT NULL,
-                forfeit_cb TEXT NOT NULL,
-                forfeit_s TEXT NOT NULL,
-                intent_cb TEXT NOT NULL,
-                intent_s TEXT NOT NULL,
-                status_json TEXT NOT NULL,
-                virtual_status_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                is_unrolled INTEGER NOT NULL DEFAULT 0,
-                is_spent INTEGER,
-                spent_by TEXT,
-                settled_by TEXT,
-                ark_tx_id TEXT,
-                extra_witness_json TEXT,
-                assets_json TEXT,
-                PRIMARY KEY (txid, vout)
-            )
-        `);
+        await this.migrateVtxosTable();
 
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS ${this.tables.utxos} (
@@ -121,8 +99,8 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.db.run(`
             CREATE TABLE IF NOT EXISTS ${this.tables.walletState} (
                 key TEXT PRIMARY KEY,
-                last_sync_time INTEGER,
-                settings_json TEXT
+                settings_json TEXT,
+                last_sync_time INTEGER
             )
         `);
 
@@ -130,11 +108,143 @@ export class SQLiteWalletRepository implements WalletRepository {
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_address ON ${this.tables.vtxos} (address)`
         );
         await this.db.run(
+            `CREATE INDEX IF NOT EXISTS idx_${this.prefix}vtxos_script ON ${this.tables.vtxos} (script)`
+        );
+        await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}utxos_address ON ${this.tables.utxos} (address)`
         );
         await this.db.run(
             `CREATE INDEX IF NOT EXISTS idx_${this.prefix}transactions_address ON ${this.tables.transactions} (address)`
         );
+    }
+
+    /**
+     * Bring the `vtxos` table to the current schema (v1 = `script` NOT NULL).
+     *
+     * Three cases:
+     *   - Fresh install: create the v1 schema directly.
+     *   - Legacy install without a `script` column: add it, backfill from
+     *     `address`, then rebuild the table with NOT NULL (SQLite cannot add
+     *     the NOT NULL constraint in place).
+     *   - Legacy install with a nullable `script` column: backfill the NULLs
+     *     and rebuild.
+     *
+     * The backfill derives `script` from the Ark address, matching what the
+     * indexer would have returned — new rows from the indexer always carry a
+     * populated `script`, so the migration is idempotent.
+     *
+     * The rebuild path is wrapped in a transaction: without it, a crash
+     * between the `DROP TABLE vtxos` and the `RENAME tmp → vtxos` commits
+     * would leave the next startup seeing no `vtxos` table and create a
+     * fresh empty one, silently orphaning every row in the temp table.
+     */
+    private async migrateVtxosTable(): Promise<void> {
+        const tableExists = await this.db.get<{ name: string }>(
+            `SELECT name FROM sqlite_master WHERE type='table' AND name=?`,
+            [this.tables.vtxos]
+        );
+
+        if (!tableExists) {
+            await this.db.run(this.vtxosCreateSql(this.tables.vtxos));
+            return;
+        }
+
+        const cols = await this.db.all<{ name: string; notnull: number }>(
+            `PRAGMA table_info(${this.tables.vtxos})`
+        );
+        const scriptCol = cols.find((c) => c.name === "script");
+        if (scriptCol && scriptCol.notnull === 1) {
+            // Already on v1 schema.
+            return;
+        }
+
+        await this.db.run("BEGIN IMMEDIATE");
+        try {
+            if (!scriptCol) {
+                await this.db.run(
+                    `ALTER TABLE ${this.tables.vtxos} ADD COLUMN script TEXT`
+                );
+            }
+
+            // Backfill any NULL scripts from the owning address. Derivation
+            // is deterministic, so re-running after a rolled-back attempt
+            // produces the same values.
+            const nullRows = await this.db.all<{
+                txid: string;
+                vout: number;
+                address: string;
+            }>(
+                `SELECT txid, vout, address FROM ${this.tables.vtxos} WHERE script IS NULL`
+            );
+            for (const row of nullRows) {
+                await this.db.run(
+                    `UPDATE ${this.tables.vtxos} SET script = ? WHERE txid = ? AND vout = ?`,
+                    [scriptFromArkAddress(row.address), row.txid, row.vout]
+                );
+            }
+
+            // SQLite can't turn a nullable column into NOT NULL in place —
+            // do the canonical 12-step table rebuild. Drop any stale temp
+            // table from a prior aborted attempt first.
+            const tempName = `${this.tables.vtxos}__migrate_tmp`;
+            await this.db.run(`DROP TABLE IF EXISTS ${tempName}`);
+            await this.db.run(this.vtxosCreateSql(tempName));
+            await this.db.run(`
+                INSERT INTO ${tempName}
+                    (txid, vout, value, address, tap_tree,
+                     forfeit_cb, forfeit_s, intent_cb, intent_s,
+                     status_json, virtual_status_json, created_at,
+                     is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
+                     extra_witness_json, assets_json, script)
+                SELECT txid, vout, value, address, tap_tree,
+                       forfeit_cb, forfeit_s, intent_cb, intent_s,
+                       status_json, virtual_status_json, created_at,
+                       is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
+                       extra_witness_json, assets_json, script
+                FROM ${this.tables.vtxos}
+            `);
+            await this.db.run(`DROP TABLE ${this.tables.vtxos}`);
+            await this.db.run(
+                `ALTER TABLE ${tempName} RENAME TO ${this.tables.vtxos}`
+            );
+            await this.db.run("COMMIT");
+        } catch (e) {
+            // A failed COMMIT auto-rolls-back in SQLite, which makes a
+            // follow-up ROLLBACK throw "no transaction is active". Swallow
+            // that secondary error so the original cause surfaces.
+            try {
+                await this.db.run("ROLLBACK");
+            } catch {
+                // already rolled back
+            }
+            throw e;
+        }
+    }
+
+    private vtxosCreateSql(tableName: string): string {
+        return `CREATE TABLE ${tableName} (
+            txid TEXT NOT NULL,
+            vout INTEGER NOT NULL,
+            value INTEGER NOT NULL,
+            address TEXT NOT NULL,
+            tap_tree TEXT NOT NULL,
+            forfeit_cb TEXT NOT NULL,
+            forfeit_s TEXT NOT NULL,
+            intent_cb TEXT NOT NULL,
+            intent_s TEXT NOT NULL,
+            status_json TEXT NOT NULL,
+            virtual_status_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            is_unrolled INTEGER NOT NULL DEFAULT 0,
+            is_spent INTEGER,
+            spent_by TEXT,
+            settled_by TEXT,
+            ark_tx_id TEXT,
+            extra_witness_json TEXT,
+            assets_json TEXT,
+            script TEXT NOT NULL,
+            PRIMARY KEY (txid, vout)
+        )`;
     }
 
     async [Symbol.asyncDispose](): Promise<void> {
@@ -175,12 +285,12 @@ export class SQLiteWalletRepository implements WalletRepository {
                      tap_tree, forfeit_cb, forfeit_s, intent_cb, intent_s,
                      status_json, virtual_status_json, created_at,
                      is_unrolled, is_spent, spent_by, settled_by, ark_tx_id,
-                     extra_witness_json, assets_json)
+                     extra_witness_json, assets_json, script)
                  VALUES (?, ?, ?, ?,
                          ?, ?, ?, ?, ?,
                          ?, ?, ?,
                          ?, ?, ?, ?, ?,
-                         ?, ?)`,
+                         ?, ?, ?)`,
                 [
                     s.txid,
                     s.vout,
@@ -205,6 +315,7 @@ export class SQLiteWalletRepository implements WalletRepository {
                     s.arkTxId ?? null,
                     s.extraWitness ? JSON.stringify(s.extraWitness) : null,
                     s.assets ? JSON.stringify(s.assets) : null,
+                    s.script ?? null,
                 ]
             );
         }
@@ -323,12 +434,10 @@ export class SQLiteWalletRepository implements WalletRepository {
         if (!row) return null;
 
         const state: WalletState = {};
-        if (row.last_sync_time !== null && row.last_sync_time !== undefined) {
-            state.lastSyncTime = row.last_sync_time;
-        }
         if (row.settings_json) {
             state.settings = JSON.parse(row.settings_json);
         }
+        state.lastSyncTime = row.last_sync_time ?? undefined;
         return state;
     }
 
@@ -336,12 +445,12 @@ export class SQLiteWalletRepository implements WalletRepository {
         await this.ensureInit();
         await this.db.run(
             `INSERT OR REPLACE INTO ${this.tables.walletState}
-                (key, last_sync_time, settings_json)
+                (key, settings_json, last_sync_time)
              VALUES (?, ?, ?)`,
             [
                 "state",
-                state.lastSyncTime ?? null,
                 state.settings ? JSON.stringify(state.settings) : null,
+                state.lastSyncTime ?? null,
             ]
         );
     }
@@ -369,6 +478,7 @@ interface VtxoRow {
     ark_tx_id: string | null;
     extra_witness_json: string | null;
     assets_json: string | null;
+    script: string | null;
 }
 
 interface UtxoRow {
@@ -399,8 +509,8 @@ interface TransactionRow {
 
 interface WalletStateRow {
     key: string;
-    last_sync_time: number | null;
     settings_json: string | null;
+    last_sync_time: number | null;
 }
 
 const SAFE_PREFIX = /^[a-zA-Z0-9_]+$/;
@@ -442,6 +552,10 @@ function vtxoRowToDomain(row: VtxoRow): ExtendedVirtualCoin {
             ? JSON.parse(row.extra_witness_json)
             : undefined,
         assets: row.assets_json ? JSON.parse(row.assets_json) : undefined,
+        // Post-migration every row has `script`, but the backfill is
+        // idempotent: derive from `address` if the legacy column is still
+        // null (e.g. the migration hasn't run yet on this handle).
+        script: row.script ?? scriptFromArkAddress(row.address),
     };
 
     return deserializeVtxo(serialized);
