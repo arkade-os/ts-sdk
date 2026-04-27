@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
-import { eventSourceIterator } from "./utils";
+import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
 
 export type PaginationOptions = {
@@ -524,7 +524,10 @@ export class RestIndexerProvider implements IndexerProvider {
                     eventSource.close();
                 }
             } catch (error) {
-                if (error instanceof Error && error.name === "AbortError") {
+                if (
+                    abortSignal?.aborted ||
+                    (error instanceof Error && error.name === "AbortError")
+                ) {
                     break;
                 }
 
@@ -532,6 +535,10 @@ export class RestIndexerProvider implements IndexerProvider {
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
+                }
+
+                if (isEventSourceError(error)) {
+                    throw error;
                 }
 
                 console.error("Subscription error:", error);

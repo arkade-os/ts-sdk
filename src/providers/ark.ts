@@ -2,7 +2,7 @@ import { TxTreeNode } from "../tree/txTree";
 import { TreeNonces, TreePartialSigs } from "../tree/signingSession";
 import { hex } from "@scure/base";
 import { Vtxo } from "./indexer";
-import { eventSourceIterator } from "./utils";
+import { eventSourceIterator, isEventSourceError } from "./utils";
 import { maybeArkError } from "./errors";
 import type { IntentFeeConfig } from "../arkfee";
 import { Intent } from "../intent";
@@ -583,8 +583,9 @@ export class RestArkProvider implements ArkProvider {
                         }
                     } catch (error) {
                         if (
-                            error instanceof Error &&
-                            error.name === "AbortError"
+                            signal?.aborted ||
+                            (error instanceof Error &&
+                                error.name === "AbortError")
                         ) {
                             break;
                         }
@@ -593,6 +594,10 @@ export class RestArkProvider implements ArkProvider {
                         if (isFetchTimeoutError(error)) {
                             console.debug("Timeout error ignored");
                             continue;
+                        }
+
+                        if (isEventSourceError(error)) {
+                            throw error;
                         }
 
                         console.error("Event stream error:", error);
@@ -658,7 +663,10 @@ export class RestArkProvider implements ArkProvider {
                     eventSource.close();
                 }
             } catch (error) {
-                if (error instanceof Error && error.name === "AbortError") {
+                if (
+                    signal?.aborted ||
+                    (error instanceof Error && error.name === "AbortError")
+                ) {
                     break;
                 }
 
@@ -666,6 +674,10 @@ export class RestArkProvider implements ArkProvider {
                 if (isFetchTimeoutError(error)) {
                     console.debug("Timeout error ignored");
                     continue;
+                }
+
+                if (isEventSourceError(error)) {
+                    throw error;
                 }
 
                 console.error("Transaction stream error:", error);

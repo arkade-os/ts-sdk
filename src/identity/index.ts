@@ -65,17 +65,22 @@ export function isBatchSignable(
 }
 
 export * from "./singleKey";
+// Explicit named re-export so the barrel stays a documented public surface.
+// `serializeSeedOwnedSigningIdentity` and `serializeSeedOwnedReadonlyIdentity`
+// are deliberately omitted — they are SDK-internal helpers consumed only by
+// `./serialize`, per Appendix A of the plan.
+export type {
+    NetworkOptions,
+    DescriptorOptions,
+    SeedIdentityOptions,
+    MnemonicOptions,
+} from "./seedIdentity";
 export {
     SeedIdentity,
     MnemonicIdentity,
     ReadonlyDescriptorIdentity,
 } from "./seedIdentity";
-export type {
-    SeedIdentityOptions,
-    MnemonicOptions,
-    NetworkOptions,
-    DescriptorOptions,
-} from "./seedIdentity";
+export * from "./serialize";
 
 // Descriptor utilities
 export {

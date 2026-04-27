@@ -71,7 +71,15 @@ export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 export type RequestInitWallet = RequestEnvelope & {
     type: "INIT_WALLET";
     payload: {
-        key: { privateKey: string } | { publicKey: string };
+        /**
+         * Legacy per-request key material. Ignored by the current handler —
+         * identity hydration happens during INITIALIZE_MESSAGE_BUS. Retained
+         * for wire compatibility with older workers that may still read it.
+         * Slated for removal in the next major.
+         *
+         * @deprecated Identity is now carried by INITIALIZE_MESSAGE_BUS.
+         */
+        key?: { privateKey: string } | { publicKey: string } | {};
         arkServerUrl: string;
         arkServerPublicKey?: string;
     };
@@ -611,6 +619,19 @@ export class WalletMessageHandler
             ...res,
             tag: this.messageTag,
         } as WalletUpdaterResponse;
+    }
+
+    // Flows that surrender control to the Ark server and the other participants
+    // in a batch round: quiet gaps between protocol events can easily exceed
+    // the bus-level messageTimeoutMs. Liveness is covered out-of-band by the
+    // page-side PING / MESSAGE_BUS_NOT_INITIALIZED path triggered by concurrent
+    // short requests (GET_STATUS, GET_BALANCE, ...).
+    isLongRunning(message: WalletUpdaterRequest): boolean {
+        return (
+            message.type === "SETTLE" ||
+            message.type === "RECOVER_VTXOS" ||
+            message.type === "RENEW_VTXOS"
+        );
     }
 
     async handleMessage(

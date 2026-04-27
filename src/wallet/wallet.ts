@@ -1491,10 +1491,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     weight: 0,
                     birth: vtxo.createdAt,
                     expiry: vtxo.virtualStatus.batchExpiry
-                        ? new Date(vtxo.virtualStatus.batchExpiry * 1000)
-                        : new Date(),
+                        ? new Date(vtxo.virtualStatus.batchExpiry)
+                        : undefined,
                 });
-                if (inputFee.value >= vtxo.value) {
+                if (inputFee.satoshis >= vtxo.value) {
                     // skip if fees are greater than the virtual output value
                     continue;
                 }
@@ -1650,6 +1650,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 topics
             );
 
+            // Prime the iterator so the provider opens the SSE subscription
+            // before safeRegisterIntent can trigger server-side batch events.
+            const firstNext = stream.next();
+            // If settle exits before Batch.join consumes the primed result,
+            // keep the orphaned promise from surfacing as an unhandled rejection.
+            void firstNext.catch(() => {});
+            const primedStream = (async function* () {
+                const first = await firstNext;
+                if (!first.done) {
+                    yield first.value;
+                }
+                yield* stream;
+            })();
+
             const intentId = await this.safeRegisterIntent(
                 intent,
                 params.inputs
@@ -1662,7 +1676,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 session
             );
 
-            const commitmentTxid = await Batch.join(stream, handler, {
+            const commitmentTxid = await Batch.join(primedStream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
                 eventCallback: eventCallback

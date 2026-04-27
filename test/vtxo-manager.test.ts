@@ -26,7 +26,7 @@ type MockWalletOptions = {
 // Mock wallet implementation
 const createMockWallet = (
     vtxos: ExtendedVirtualCoin[] = [],
-    arkAddress = "arkade1test",
+    arkAddress = "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
     options: MockWalletOptions = {}
 ): IWallet => {
     const contractManager = options.contractManager ?? {
@@ -342,7 +342,11 @@ describe("VtxoManager - Lifecycle", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
         };
-        const wallet = createMockWallet([], "arkade1test", { contractManager });
+        const wallet = createMockWallet(
+            [],
+            "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
+            { contractManager }
+        );
 
         new VtxoManager(wallet, undefined, {});
         await flushMicrotasks();
@@ -355,7 +359,11 @@ describe("VtxoManager - Lifecycle", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
         };
-        const wallet = createMockWallet([], "arkade1test", { contractManager });
+        const wallet = createMockWallet(
+            [],
+            "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
+            { contractManager }
+        );
 
         new VtxoManager(wallet, undefined, false);
         await flushMicrotasks();
@@ -369,7 +377,11 @@ describe("VtxoManager - Lifecycle", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
         };
-        const wallet = createMockWallet([], "arkade1test", { contractManager });
+        const wallet = createMockWallet(
+            [],
+            "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
+            { contractManager }
+        );
         const manager = new VtxoManager(wallet, undefined, {});
 
         await flushMicrotasks();
@@ -1224,7 +1236,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
-            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -1251,6 +1267,9 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     time: Math.floor(Date.now() / 1000),
                     hash: "0".repeat(64),
                 }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -1395,7 +1414,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             // A minimal IWallet that lacks boardingTapscript/onchainProvider/network
             const minimalWallet = {
                 getVtxos: vi.fn().mockResolvedValue([]),
-                getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                getAddress: vi
+                    .fn()
+                    .mockResolvedValue(
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue({
                     onContractEvent: vi.fn().mockReturnValue(() => {}),
@@ -1447,7 +1470,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             return {
                 getVtxos: vi.fn().mockResolvedValue([]),
-                getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                getAddress: vi
+                    .fn()
+                    .mockResolvedValue(
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue(contractManager),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -1476,6 +1503,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                         time: Math.floor(Date.now() / 1000),
                         hash: "0".repeat(64),
                     }),
+                },
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue({ fees: { intentFee: {} } }),
                 },
                 network: {
                     bech32: "bcrt",
@@ -1757,7 +1789,11 @@ describe("VtxoManager - Periodic settle cooldown", () => {
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
-            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -1775,6 +1811,9 @@ describe("VtxoManager - Periodic settle cooldown", () => {
                     time: Math.floor(Date.now() / 1000),
                     hash: "0".repeat(64),
                 }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -2043,7 +2082,11 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         };
         return {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
-            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -2061,6 +2104,9 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
                     time: Math.floor(Date.now() / 1000),
                     hash: "0".repeat(64),
                 }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -2127,6 +2173,57 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         // Output amount is the sum of both inputs.
         expect(call.outputs).toHaveLength(1);
         expect(call.outputs[0].amount).toBe(15_000n);
+    });
+
+    it("subtracts the server intent fee from the output so settle is not rejected with INTENT_INSUFFICIENT_FEE", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const wallet = buildWallet([boarding], []);
+        // Server charges 200 sats per onchain input and 50 sats per offchain output.
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: {
+                intentFee: {
+                    onchainInput: "200.0",
+                    offchainOutput: "50.0",
+                },
+            },
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toEqual([boarding]);
+        // 10_000 boarding - 200 input fee - 50 output fee = 9_750
+        expect(call.outputs[0].amount).toBe(9_750n);
+    });
+
+    it("skips a boarding UTXO whose onchain intent fee is greater than its value", async () => {
+        const tiny = makeUnexpiredUtxo(100);
+        const normal = makeUnexpiredUtxo(10_000, 1);
+        const wallet = buildWallet([tiny, normal], []);
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: { intentFee: { onchainInput: "200.0" } },
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([tiny, normal]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        // Tiny boarding UTXO is dropped (fee 200 >= value 100); only the 10k one settles.
+        expect(call.inputs).toEqual([normal]);
+        expect(call.outputs[0].amount).toBe(10_000n - 200n);
     });
 
     it("settles VTXOs alone when no unsettled boarding UTXOs are present", async () => {
@@ -2248,7 +2345,11 @@ describe("VtxoManager - Cross-instance poll guard", () => {
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
-            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -2266,6 +2367,9 @@ describe("VtxoManager - Cross-instance poll guard", () => {
                     time: Math.floor(Date.now() / 1000),
                     hash: "0".repeat(64),
                 }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -2385,7 +2489,11 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         return {
             wallet: {
                 getVtxos: vi.fn().mockResolvedValue(vtxos),
-                getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                getAddress: vi
+                    .fn()
+                    .mockResolvedValue(
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue(contractManager),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -2403,6 +2511,11 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
                         time: Math.floor(Date.now() / 1000),
                         hash: "0".repeat(64),
                     }),
+                },
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue({ fees: { intentFee: {} } }),
                 },
                 network: {
                     bech32: "bcrt",
