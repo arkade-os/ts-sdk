@@ -141,7 +141,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
-    private _syncVtxosInflight?: Promise<void>;
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
     // from getVtxos() so concurrent callers (UI, VtxoManager auto-renewal,
     // another send/settle racing the _txLock) can't reselect coins that are
