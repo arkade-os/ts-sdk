@@ -213,4 +213,35 @@ describe("ContractWatcher", () => {
             vi.useRealTimers();
         }
     });
+
+    it("opens listenLoop immediately when the first contract is added after a zero-script startWatching", async () => {
+        // Without the cold-start kick, the listener parks behind the
+        // reconnect timer and `getSubscription` is delayed by ≥1s.
+        await watcher.startWatching(() => {});
+
+        expect(mockIndexer.getSubscription).not.toHaveBeenCalled();
+        expect(watcher.getConnectionState()).not.toBe("connected");
+
+        const contract: Contract = {
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "address",
+            state: "active",
+            createdAt: Date.now(),
+        };
+        await watcher.addContract(contract);
+
+        // Yield so the cold-start kick reaches `getSubscription`.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        expect(mockIndexer.getSubscription).toHaveBeenCalledTimes(1);
+        expect(mockIndexer.getSubscription).toHaveBeenCalledWith(
+            "mock-subscription-id",
+            expect.anything()
+        );
+        expect(watcher.getConnectionState()).toBe("connected");
+
+        await watcher.stopWatching();
+    });
 });

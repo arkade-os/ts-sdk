@@ -21,18 +21,12 @@ import {
     IndexedDBContractRepository,
 } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
+import { MockEventSource } from "./mocks/eventSource";
 
 // Mock fetch
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
 
-// Mock EventSource
-const MockEventSource = vi.fn().mockImplementation((url: string) => ({
-    url,
-    onmessage: null,
-    onerror: null,
-    close: vi.fn(),
-}));
 vi.stubGlobal("EventSource", MockEventSource);
 
 // Shared IndexedDB repos — cleared between tests so cached VTXOs,
@@ -899,6 +893,72 @@ describe("Wallet", () => {
             );
             expect(cached).toHaveLength(1);
             expect(cached[0].isSpent).toBe(true);
+        });
+    });
+
+    describe("notifyIncomingFunds — single SSE stream", () => {
+        const mockArkInfo = {
+            signerPubkey: mockServerKeyHex,
+            forfeitPubkey: mockServerKeyHex,
+            batchExpiry: BigInt(144),
+            unilateralExitDelay: BigInt(144),
+            boardingExitDelay: BigInt(144),
+            roundInterval: BigInt(144),
+            network: "mutinynet",
+            dust: BigInt(1000),
+            forfeitAddress: "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
+            checkpointTapscript:
+                "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
+        };
+
+        it("opens exactly one getSubscription stream after notifyIncomingFunds", async () => {
+            // `subscribeForScripts` legitimately fires more than once to
+            // extend the same subscription id, so we count
+            // `getSubscription` (the actual SSE open).
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+
+            const getSubscriptionSpy = vi
+                .fn<IndexerProvider["getSubscription"]>()
+                .mockImplementation(async function* () {
+                    await new Promise(() => {});
+                });
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi.fn().mockResolvedValue(mockArkInfo),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: {
+                    getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+                    subscribeForScripts: vi
+                        .fn()
+                        .mockResolvedValue("sub-shared"),
+                    unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                    getSubscription: getSubscriptionSpy,
+                } as Partial<IndexerProvider> as IndexerProvider,
+                onchainProvider: {
+                    watchAddresses: vi
+                        .fn<OnchainProvider["watchAddresses"]>()
+                        .mockResolvedValue(() => {}),
+                } as Partial<OnchainProvider> as OnchainProvider,
+                storage: {
+                    walletRepository: new InMemoryWalletRepository(),
+                    contractRepository: new InMemoryContractRepository(),
+                },
+            });
+
+            expect(getSubscriptionSpy).toHaveBeenCalledTimes(0);
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            // Yield so the cold-start kick reaches `getSubscription`.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(getSubscriptionSpy).toHaveBeenCalledTimes(1);
+
+            stop();
         });
     });
 
