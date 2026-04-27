@@ -20,7 +20,14 @@ import {
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity } from "../../identity";
+import {
+    Identity,
+    ReadonlyIdentity,
+    type SerializedIdentity,
+    type LegacySerializedIdentity,
+    serializeReadonlyIdentity,
+    serializeSigningIdentity,
+} from "../../identity";
 import { WalletRepository } from "../../repositories/walletRepository";
 import { ContractRepository } from "../../repositories/contractRepository";
 import { setupServiceWorker } from "../../worker/browser/utils";
@@ -219,13 +226,16 @@ function getRequestDedupKey(request: WalletUpdaterRequest): string {
     return JSON.stringify(rest);
 }
 
-type PrivateKeyIdentity = Identity & { toHex(): string };
-
-const isPrivateKeyIdentity = (
+function isSigningCapable(
     identity: Identity | ReadonlyIdentity
-): identity is PrivateKeyIdentity => {
-    return typeof (identity as any).toHex === "function";
-};
+): identity is Identity {
+    const candidate = identity as Partial<Identity>;
+    return (
+        typeof candidate.signMessage === "function" &&
+        typeof candidate.sign === "function" &&
+        typeof candidate.signerSession === "function"
+    );
+}
 
 class ServiceWorkerReadonlyAssetManager implements IReadonlyAssetManager {
     constructor(
@@ -376,13 +386,7 @@ export type ServiceWorkerWalletSetupOptions = ServiceWorkerWalletOptions & {
 };
 
 type MessageBusInitConfig = {
-    wallet:
-        | {
-              privateKey: string;
-          }
-        | {
-              publicKey: string;
-          };
+    wallet: SerializedIdentity | LegacySerializedIdentity;
     arkServer: {
         url: string;
         publicKey?: string;
@@ -444,6 +448,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
     protected messageBusTimeoutMs?: number;
     protected messageTimeouts: Record<RequestType, number> =
         DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>;
+    // Denormalized from options so buildInitConfig() can rebuild the init
+    // envelope on demand for SDK-factory-created wallets. `create()` sets
+    // these immediately after construction.
+    protected arkServerUrl?: string;
+    protected arkServerPublicKey?: string;
+    protected delegatorUrl?: string;
+    protected indexerUrl?: string;
+    protected esploraUrl?: string;
+    protected watcherConfig?: Partial<
+        Omit<ContractWatcherConfig, "indexerProvider">
+    >;
+    protected settlementConfig?: SettlementConfig | false;
     private reinitPromise: Promise<void> | null = null;
     private pingPromise: Promise<void> | null = null;
     private inflightRequests = new Map<
@@ -504,11 +520,16 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             messageTag
         );
 
+        const serializedWallet = await serializeReadonlyIdentity(
+            options.identity
+        );
+
+        // INIT_WALLET retains the legacy `key` payload for wire compatibility
+        // with older workers; the current handler does not read it.
         const publicKey = await options.identity
             .compressedPublicKey()
             .then(hex.encode);
-
-        const initConfig = {
+        const initWalletPayload = {
             key: { publicKey },
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
@@ -525,12 +546,12 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
 
         const busInitConfig: MessageBusInitConfig = {
-            wallet: initConfig.key,
+            wallet: serializedWallet,
             arkServer: {
-                url: initConfig.arkServerUrl,
-                publicKey: initConfig.arkServerPublicKey,
+                url: options.arkServerUrl,
+                publicKey: options.arkServerPublicKey,
             },
-            delegatorUrl: initConfig.delegatorUrl,
+            delegatorUrl: options.delegatorUrl,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             watcherConfig: options.watcherConfig,
@@ -549,7 +570,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             tag: messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            payload: initConfig,
+            payload: initWalletPayload,
         };
 
         await wallet.sendMessage(initMessage);
@@ -557,7 +578,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         // Persist the full init config (including messageTimeouts) so
         // reinitialize() re-sends the same map to a restarted worker.
         wallet.initConfig = busInitConfig;
-        wallet.initWalletPayload = initConfig;
+        wallet.initWalletPayload = initWalletPayload;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
         wallet.messageTimeouts = messageTimeouts;
 
@@ -812,17 +833,71 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         }
     }
 
+    /**
+     * Produce a serialized envelope for the wallet's identity. The base
+     * class always emits a readonly envelope; `ServiceWorkerWallet`
+     * overrides to emit a signing envelope.
+     */
+    protected async serializeIdentity(): Promise<SerializedIdentity> {
+        return serializeReadonlyIdentity(this.identity);
+    }
+
+    /**
+     * Return the cached init config, or rebuild one from live instance
+     * state when the cache was never populated. Recovery path for
+     * SDK-factory-created wallets; manual constructor bypasses do not
+     * retain enough state here and will hit the "never initialized" throw.
+     */
+    protected async buildInitConfig(): Promise<MessageBusInitConfig> {
+        if (this.initConfig) return this.initConfig;
+        if (!this.arkServerUrl) {
+            throw new Error(
+                "Cannot re-initialize: wallet was not initialized via the SDK factory"
+            );
+        }
+        const wallet = await this.serializeIdentity();
+        this.initConfig = {
+            wallet,
+            arkServer: {
+                url: this.arkServerUrl,
+                publicKey: this.arkServerPublicKey,
+            },
+            delegatorUrl: this.delegatorUrl,
+            indexerUrl: this.indexerUrl,
+            esploraUrl: this.esploraUrl,
+            watcherConfig: this.watcherConfig,
+            settlementConfig: this.settlementConfig,
+        };
+        return this.initConfig;
+    }
+
+    /** Minimal INIT_WALLET payload used on reinitialize when the cache is gone. */
+    protected buildInitWalletPayload(): RequestInitWallet["payload"] {
+        if (this.initWalletPayload) return this.initWalletPayload;
+        if (!this.arkServerUrl) {
+            throw new Error(
+                "Cannot re-initialize: wallet was not initialized via the SDK factory"
+            );
+        }
+        this.initWalletPayload = {
+            // `key` is deprecated and ignored by the current handler.
+            key: {},
+            arkServerUrl: this.arkServerUrl,
+            arkServerPublicKey: this.arkServerPublicKey,
+        };
+        return this.initWalletPayload;
+    }
+
     private async reinitialize(): Promise<void> {
         if (this.reinitPromise) return this.reinitPromise;
 
         this.reinitPromise = (async () => {
-            if (!this.initConfig || !this.initWalletPayload) {
-                throw new Error("Cannot re-initialize: missing configuration");
-            }
+            const config = await this.buildInitConfig();
+            const payload = this.buildInitWalletPayload();
 
             await initializeMessageBus(
                 this.serviceWorker,
-                this.initConfig,
+                config,
                 this.messageBusTimeoutMs
             );
 
@@ -830,7 +905,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                 tag: this.messageTag,
                 type: "INIT_WALLET",
                 id: getRandomId(),
-                payload: this.initWalletPayload,
+                payload,
             };
 
             await this.sendMessageDirect(
@@ -1241,7 +1316,7 @@ export class ServiceWorkerWallet
 
     protected constructor(
         public readonly serviceWorker: ServiceWorker,
-        identity: PrivateKeyIdentity,
+        identity: Identity,
         walletRepository: WalletRepository,
         contractRepository: ContractRepository,
         messageTag: string,
@@ -1268,6 +1343,10 @@ export class ServiceWorkerWallet
         return this._assetManager;
     }
 
+    protected async serializeIdentity(): Promise<SerializedIdentity> {
+        return serializeSigningIdentity(this.identity);
+    }
+
     static async create(
         options: ServiceWorkerWalletCreateOptions
     ): Promise<ServiceWorkerWallet> {
@@ -1279,18 +1358,13 @@ export class ServiceWorkerWallet
             options.storage?.contractRepository ??
             new IndexedDBContractRepository();
 
-        // Extract identity and check if it can expose private key
-        const identity = isPrivateKeyIdentity(options.identity)
-            ? options.identity
-            : null;
-        if (!identity) {
+        if (!isSigningCapable(options.identity)) {
             throw new Error(
-                "ServiceWorkerWallet.create() requires a Identity that can expose a single private key"
+                "ServiceWorkerWallet.create() requires a signing Identity; got a ReadonlyIdentity"
             );
         }
-
-        // Extract private key for service worker initialization
-        const privateKey = identity.toHex();
+        const identity: Identity = options.identity;
+        const serializedWallet = serializeSigningIdentity(identity);
 
         const messageTag = options.walletUpdaterTag ?? DEFAULT_MESSAGE_TAG;
 
@@ -1304,8 +1378,16 @@ export class ServiceWorkerWallet
             !!options.delegatorUrl
         );
 
-        const initConfig = {
-            key: { privateKey },
+        // INIT_WALLET retains the legacy `key` payload for wire compatibility
+        // with older workers; the current handler does not read it, and only
+        // SingleKey-style identities can populate it. Kept optional so seed /
+        // mnemonic identities simply omit it.
+        const legacyPrivateKey =
+            serializedWallet.type === "single-key"
+                ? serializedWallet.privateKey
+                : null;
+        const initWalletPayload = {
+            key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
             arkServerUrl: options.arkServerUrl,
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
@@ -1321,12 +1403,12 @@ export class ServiceWorkerWallet
             : (DEFAULT_MESSAGE_TIMEOUTS as Record<RequestType, number>);
 
         const busInitConfig: MessageBusInitConfig = {
-            wallet: initConfig.key,
+            wallet: serializedWallet,
             arkServer: {
-                url: initConfig.arkServerUrl,
-                publicKey: initConfig.arkServerPublicKey,
+                url: options.arkServerUrl,
+                publicKey: options.arkServerPublicKey,
             },
-            delegatorUrl: initConfig.delegatorUrl,
+            delegatorUrl: options.delegatorUrl,
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             settlementConfig: options.settlementConfig,
@@ -1344,7 +1426,7 @@ export class ServiceWorkerWallet
             tag: messageTag,
             type: "INIT_WALLET",
             id: getRandomId(),
-            payload: initConfig,
+            payload: initWalletPayload,
         };
 
         // Initialize the service worker
@@ -1353,7 +1435,7 @@ export class ServiceWorkerWallet
         // Persist the full init config (including messageTimeouts) so
         // reinitialize() re-sends the same map to a restarted worker.
         wallet.initConfig = busInitConfig;
-        wallet.initWalletPayload = initConfig;
+        wallet.initWalletPayload = initWalletPayload;
         wallet.messageBusTimeoutMs = options.messageBusTimeoutMs;
         wallet.messageTimeouts = messageTimeouts;
 

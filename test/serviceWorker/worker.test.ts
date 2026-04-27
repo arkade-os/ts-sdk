@@ -8,7 +8,16 @@ import {
 import {
     InMemoryContractRepository,
     InMemoryWalletRepository,
+    SingleKey,
+    ReadonlySingleKey,
+    SeedIdentity,
+    MnemonicIdentity,
+    ReadonlyDescriptorIdentity,
 } from "../../src";
+import { Wallet, ReadonlyWallet } from "../../src/wallet/wallet";
+import { serializeSigningIdentity } from "../../src/identity/serialize";
+import { mnemonicToSeedSync } from "@scure/bip39";
+import { hex } from "@scure/base";
 
 type TestUpdater = MessageHandler<RequestEnvelope, ResponseEnvelope>;
 
@@ -362,6 +371,169 @@ describe("Worker", () => {
             tag: "wallet",
             id: "broadcast",
             broadcast: true,
+        });
+    });
+});
+
+describe("Worker buildServices identity hydration", () => {
+    let selfMock: SelfMock;
+    let listeners: Map<string, ((event: any) => void)[]>;
+    let walletCreateSpy: ReturnType<typeof vi.spyOn>;
+    let readonlyCreateSpy: ReturnType<typeof vi.spyOn>;
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    const TEST_MNEMONIC =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    const TEST_PRIVATE_KEY_HEX =
+        "153cd1982d6704b26da1a4a91baee0c27aeb7ada019adec2ea2ce5c4e717f99c";
+
+    const arkServer = {
+        url: "https://ark.example.test",
+        publicKey: "arkServerPublicKey",
+    };
+
+    beforeEach(() => {
+        vi.resetAllMocks();
+        ({ selfMock, listeners } = createSelfMock());
+        vi.stubGlobal("self", selfMock as any);
+        walletCreateSpy = vi
+            .spyOn(Wallet, "create")
+            .mockResolvedValue({ kind: "wallet-stub" } as any);
+        readonlyCreateSpy = vi
+            .spyOn(ReadonlyWallet, "create")
+            .mockResolvedValue({ kind: "readonly-stub" } as any);
+        // Silence the one-shot deprecation warning from the legacy adapter so
+        // it doesn't pollute test output.
+        warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+        walletCreateSpy.mockRestore();
+        readonlyCreateSpy.mockRestore();
+        warnSpy.mockRestore();
+    });
+
+    const startBusAndInit = async (walletConfig: unknown) => {
+        const sw = new MessageBus(
+            new InMemoryWalletRepository(),
+            new InMemoryContractRepository(),
+            { messageHandlers: [] }
+        );
+        await sw.start();
+        const source = { postMessage: vi.fn() };
+        const messageHandlers = listeners.get("message") || [];
+        expect(messageHandlers.length).toBeGreaterThan(0);
+        await messageHandlers[0]({
+            data: {
+                tag: "INITIALIZE_MESSAGE_BUS",
+                id: "init",
+                config: { wallet: walletConfig, arkServer },
+            },
+            source,
+        });
+    };
+
+    describe("legacy shapes (old page → new worker)", () => {
+        it("builds a Wallet with SingleKey from legacy { privateKey }", async () => {
+            await startBusAndInit({ privateKey: TEST_PRIVATE_KEY_HEX });
+            expect(walletCreateSpy).toHaveBeenCalledOnce();
+            expect(readonlyCreateSpy).not.toHaveBeenCalled();
+            const identity = walletCreateSpy.mock.calls[0][0].identity;
+            expect(identity).toBeInstanceOf(SingleKey);
+            expect(warnSpy).toHaveBeenCalledWith(
+                expect.stringMatching(/\[ts-sdk\].*legacy/i)
+            );
+        });
+
+        it("builds a ReadonlyWallet with ReadonlySingleKey from legacy { publicKey }", async () => {
+            const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+            const publicKey = hex.encode(await signing.compressedPublicKey());
+            await startBusAndInit({ publicKey });
+            expect(readonlyCreateSpy).toHaveBeenCalledOnce();
+            expect(walletCreateSpy).not.toHaveBeenCalled();
+            const identity = readonlyCreateSpy.mock.calls[0][0].identity;
+            expect(identity).toBeInstanceOf(ReadonlySingleKey);
+        });
+    });
+
+    describe("tagged envelopes (new page → new worker)", () => {
+        it("hydrates single-key into a SingleKey", async () => {
+            await startBusAndInit({
+                type: "single-key",
+                privateKey: TEST_PRIVATE_KEY_HEX,
+            });
+            expect(walletCreateSpy).toHaveBeenCalledOnce();
+            const identity = walletCreateSpy.mock.calls[0][0].identity;
+            expect(identity).toBeInstanceOf(SingleKey);
+            expect(warnSpy).not.toHaveBeenCalledWith(
+                expect.stringMatching(/\[ts-sdk\].*legacy/i)
+            );
+        });
+
+        it("hydrates readonly-single-key into a ReadonlySingleKey", async () => {
+            const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
+            const publicKey = hex.encode(await signing.compressedPublicKey());
+            await startBusAndInit({ type: "readonly-single-key", publicKey });
+            expect(readonlyCreateSpy).toHaveBeenCalledOnce();
+            const identity = readonlyCreateSpy.mock.calls[0][0].identity;
+            expect(identity).toBeInstanceOf(ReadonlySingleKey);
+        });
+
+        it("hydrates seed into a SeedIdentity", async () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const reference = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            await startBusAndInit({
+                type: "seed",
+                seed: hex.encode(seed),
+                descriptor: reference.descriptor,
+            });
+            expect(walletCreateSpy).toHaveBeenCalledOnce();
+            const identity = walletCreateSpy.mock.calls[0][0].identity;
+            expect(identity).toBeInstanceOf(SeedIdentity);
+            expect((identity as SeedIdentity).descriptor).toBe(
+                reference.descriptor
+            );
+        });
+
+        it("hydrates mnemonic into a MnemonicIdentity with preserved passphrase", async () => {
+            const passphrase = "extra secret";
+            const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+                passphrase,
+            });
+            await startBusAndInit({
+                type: "mnemonic",
+                mnemonic: TEST_MNEMONIC,
+                descriptor: reference.descriptor,
+                passphrase,
+            });
+            expect(walletCreateSpy).toHaveBeenCalledOnce();
+            const identity = walletCreateSpy.mock.calls[0][0]
+                .identity as MnemonicIdentity;
+            expect(identity).toBeInstanceOf(MnemonicIdentity);
+            // Mnemonic + passphrase are kept off the public instance surface
+            // (Appendix A). Verify retention by re-serializing and comparing
+            // the envelope.
+            expect(serializeSigningIdentity(identity)).toEqual({
+                type: "mnemonic",
+                mnemonic: TEST_MNEMONIC,
+                descriptor: reference.descriptor,
+                passphrase,
+            });
+        });
+
+        it("hydrates readonly-descriptor into a ReadonlyDescriptorIdentity", async () => {
+            const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+                isMainnet: true,
+            });
+            await startBusAndInit({
+                type: "readonly-descriptor",
+                descriptor: reference.descriptor,
+            });
+            expect(readonlyCreateSpy).toHaveBeenCalledOnce();
+            const identity = readonlyCreateSpy.mock.calls[0][0].identity;
+            expect(identity).toBeInstanceOf(ReadonlyDescriptorIdentity);
         });
     });
 });

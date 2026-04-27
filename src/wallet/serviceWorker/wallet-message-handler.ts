@@ -71,7 +71,15 @@ export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 export type RequestInitWallet = RequestEnvelope & {
     type: "INIT_WALLET";
     payload: {
-        key: { privateKey: string } | { publicKey: string };
+        /**
+         * Legacy per-request key material. Ignored by the current handler —
+         * identity hydration happens during INITIALIZE_MESSAGE_BUS. Retained
+         * for wire compatibility with older workers that may still read it.
+         * Slated for removal in the next major.
+         *
+         * @deprecated Identity is now carried by INITIALIZE_MESSAGE_BUS.
+         */
+        key?: { privateKey: string } | { publicKey: string } | {};
         arkServerUrl: string;
         arkServerPublicKey?: string;
     };
