@@ -43,6 +43,7 @@ export {
     arkadeWitnessHash,
     computeArkadeScriptPublicKey,
 } from "./tweak";
+export * as BigNum from "./bignum";
 export { createArkadeBatchHandler, type ArkadeExtendedCoin } from "./batch";
 export {
     ArkadeVtxoScript,

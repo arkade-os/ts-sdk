@@ -37,6 +37,7 @@ export interface IntrospectorProvider {
         signedForfeits: string[];
         signedCommitmentTx?: string;
     }>;
+    submitOnchainTx(tx: string): Promise<{ signedTx: string }>;
 }
 
 export interface ConnectorTreeNode {
@@ -216,5 +217,29 @@ export class RestIntrospectorProvider implements IntrospectorProvider {
             signedForfeits: data.signedForfeits,
             signedCommitmentTx: data.signedCommitmentTx,
         };
+    }
+
+    async submitOnchainTx(tx: string): Promise<{ signedTx: string }> {
+        const url = `${this.serverUrl}/v1/onchain-tx`;
+        const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tx }),
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+                `Failed to submit onchain tx to introspector: ${errorText}`
+            );
+        }
+
+        const data = await response.json();
+        if (typeof data.signedTx !== "string" || !data.signedTx) {
+            throw new Error(
+                "Invalid introspector submitOnchainTx response: missing signedTx"
+            );
+        }
+        return { signedTx: data.signedTx };
     }
 }

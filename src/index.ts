@@ -163,6 +163,8 @@ import {
 import {
     VtxoTaprootTree,
     ConditionWitness,
+    PrevArkTxField,
+    PrevoutTxField,
     getArkPsbtFields,
     setArkPsbtField,
     ArkPsbtFieldCoder,
@@ -352,6 +354,8 @@ export {
     VtxoTreeExpiry,
     VtxoTaprootTree,
     ConditionWitness,
+    PrevArkTxField,
+    PrevoutTxField,
     // Utils
     buildOffchainTx,
     verifyTapscriptSignatures,

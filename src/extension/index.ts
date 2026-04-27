@@ -235,6 +235,14 @@ export class Extension {
         }
         return null;
     }
+
+    /**
+     * Returns all embedded packets in insertion order. Used when callers need
+     * to rebuild an Extension from an existing one (e.g. appending a new packet).
+     */
+    getPackets(): readonly ExtensionPacket[] {
+        return this.packets;
+    }
 }
 
 /**

@@ -44,27 +44,6 @@ function makeIntrospectorExtensionOutput(
 const INTROSPECTOR_URL = "http://localhost:7073";
 const ARK_SERVER_URL = "http://localhost:7070";
 
-/**
- * Merge introspector + server checkpoint signatures, then counter-sign.
- */
-async function mergeAndSignCheckpoints(
-    serverCheckpoints: string[],
-    introCheckpoints: string[],
-    signer: ReturnType<typeof createTestIdentity>
-): Promise<string[]> {
-    return Promise.all(
-        serverCheckpoints.map(async (serverCp, i) => {
-            const serverTx = Transaction.fromPSBT(base64.decode(serverCp));
-            const introTx = Transaction.fromPSBT(
-                base64.decode(introCheckpoints[i])
-            );
-            serverTx.combine(introTx);
-            const signed = await signer.sign(serverTx, [0]);
-            return base64.encode(signed.toPSBT());
-        })
-    );
-}
-
 describe("arkade", () => {
     const introspector = new RestIntrospectorProvider(INTROSPECTOR_URL);
     const arkProvider = new RestArkProvider(ARK_SERVER_URL);
@@ -195,31 +174,23 @@ describe("arkade", () => {
             checkpointUnrollClosure
         );
 
-        // Bob signs the arkTx
+        // Bob signs the arkTx and the checkpoints. In v0.0.1 the introspector
+        // becomes the finalizer when it is the last non-arkd signer, and it
+        // verifies all non-arkd signatures on checkpoints before forwarding to
+        // arkd — so Bob's checkpoint sigs must be present BEFORE submitTx.
         const bobSignedArkTx = await bob.sign(arkTx);
+        const bobSignedCheckpoints = await Promise.all(
+            checkpoints.map((c) => bob.sign(c))
+        );
 
-        // Submit to introspector (signs with tweaked key)
+        // Submit to introspector. It signs with the tweaked key, then
+        // (because it is the last non-arkd signer) calls arkd internally to
+        // submit + finalize. No follow-up arkProvider.submitTx is needed.
         const introResult = await introspector.submitTx(
             base64.encode(bobSignedArkTx.toPSBT()),
-            checkpoints.map((c) => base64.encode(c.toPSBT()))
+            bobSignedCheckpoints.map((c) => base64.encode(c.toPSBT()))
         );
-
-        // Submit to server (signs with server key)
-        const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
-            introResult.signedArkTx,
-            introResult.signedCheckpointTxs
-        );
-        expect(arkTxid).toBeDefined();
-
-        // Merge introspector + server checkpoint signatures, then Bob counter-signs
-        const finalCheckpoints = await mergeAndSignCheckpoints(
-            signedCheckpointTxs,
-            introResult.signedCheckpointTxs,
-            bob
-        );
-
-        // Finalize
-        await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+        expect(introResult.signedArkTx).toBeTruthy();
     });
 
     // Settlement flow via intent + batch session (using arkade script)
@@ -620,26 +591,18 @@ describe("arkade", () => {
             checkpointUnrollClosure
         );
 
+        // Bob signs the arkTx and checkpoints; introspector auto-finalizes via
+        // arkd because it's the last non-arkd signer.
         const bobSignedArkTx = await bob.sign(arkTx);
+        const bobSignedCheckpoints = await Promise.all(
+            checkpoints.map((c) => bob.sign(c))
+        );
 
         const introResult = await introspector.submitTx(
             base64.encode(bobSignedArkTx.toPSBT()),
-            checkpoints.map((c) => base64.encode(c.toPSBT()))
+            bobSignedCheckpoints.map((c) => base64.encode(c.toPSBT()))
         );
-
-        const { arkTxid, signedCheckpointTxs } = await arkProvider.submitTx(
-            introResult.signedArkTx,
-            introResult.signedCheckpointTxs
-        );
-        expect(arkTxid).toBeDefined();
-
-        const finalCheckpoints = await mergeAndSignCheckpoints(
-            signedCheckpointTxs,
-            introResult.signedCheckpointTxs,
-            bob
-        );
-
-        await arkProvider.finalizeTx(arkTxid, finalCheckpoints);
+        expect(introResult.signedArkTx).toBeTruthy();
     });
 
     // Settlement flow with asset introspection
@@ -787,26 +750,22 @@ describe("arkade", () => {
             checkpointUnrollClosure
         );
 
+        // Bob signs the mint tx and checkpoints; introspector auto-finalizes via
+        // arkd because it's the last non-arkd signer.
         const bobSignedMintTx = await bob.sign(mintTx);
+        const bobSignedMintCheckpoints = await Promise.all(
+            mintCheckpoints.map((c) => bob.sign(c))
+        );
 
         const introMintResult = await introspector.submitTx(
             base64.encode(bobSignedMintTx.toPSBT()),
-            mintCheckpoints.map((c) => base64.encode(c.toPSBT()))
+            bobSignedMintCheckpoints.map((c) => base64.encode(c.toPSBT()))
         );
-
-        const { arkTxid: mintTxid, signedCheckpointTxs: mintSignedCPs } =
-            await arkProvider.submitTx(
-                introMintResult.signedArkTx,
-                introMintResult.signedCheckpointTxs
-            );
-        expect(mintTxid).toBeDefined();
-
-        const finalMintCPs = await mergeAndSignCheckpoints(
-            mintSignedCPs,
-            introMintResult.signedCheckpointTxs,
-            bob
-        );
-        await arkProvider.finalizeTx(mintTxid, finalMintCPs);
+        // Extract the mint txid from the introspector-finalized PSBT.
+        const mintTxid = Transaction.fromPSBT(
+            base64.decode(introMintResult.signedArkTx)
+        ).id;
+        expect(mintTxid).toBeTruthy();
 
         // === Phase 2: Settle via intent ===
 

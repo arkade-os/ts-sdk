@@ -82,6 +82,10 @@ export const ARKADE_OP = {
 
     // Transaction ID (0xf3)
     TXID: 0xf3,
+
+    // Packet Introspection (0xf4-0xf5) — added in introspector v0.0.1
+    INSPECTPACKET: 0xf4,
+    INSPECTINPUTPACKET: 0xf5,
 } as const;
 
 export const ARKADE_OPCODES: number[] = Object.values(ARKADE_OP);

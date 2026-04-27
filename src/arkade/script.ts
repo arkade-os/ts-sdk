@@ -12,6 +12,7 @@ import * as P from "micro-packed";
 import { Script, ScriptNum, type ScriptType, OP } from "@scure/btc-signer";
 import { hex } from "@scure/base";
 import { ARKADE_OP } from "./opcodes";
+import * as BigNum from "./bignum";
 
 // Re-export Script and ScriptType from @scure
 export { Script, type ScriptType };
@@ -28,8 +29,12 @@ for (const [k, v] of Object.entries(ARKADE_OPS)) {
     if (typeof v === "number") ArkadeOPNames[v] = k;
 }
 
-/** A single script operation: opcode string key, raw bytes, or number */
-export type ArkadeScriptOP = keyof typeof ARKADE_OPS | Uint8Array | number;
+/** A single script operation: opcode string key, raw bytes, number, or bigint */
+export type ArkadeScriptOP =
+    | keyof typeof ARKADE_OPS
+    | Uint8Array
+    | number
+    | bigint;
 
 /** Array of script operations — the type that ArkadeScript encodes/decodes */
 export type ArkadeScriptType = ArkadeScriptOP[];
@@ -63,8 +68,11 @@ export const ArkadeScript: P.CoderType<ArkadeScriptType> = P.wrap({
                     continue;
                 }
             }
-            // Encode big numbers
-            if (typeof o === "number") o = ScriptNum().encode(BigInt(o));
+            // Encode numbers (number or bigint) via BigNum (520-byte cap).
+            if (typeof o === "number" || typeof o === "bigint") {
+                const big = typeof o === "number" ? BigInt(o) : o;
+                o = BigNum.encode(big);
+            }
             if (!(o instanceof Uint8Array))
                 throw new Error(`Wrong Script OP=${o} (${typeof o})`);
             // Bytes (data push)
@@ -137,6 +145,8 @@ export function toASM(script: ArkadeScriptType): string {
             } else {
                 parts.push(op.toString());
             }
+        } else if (typeof op === "bigint") {
+            parts.push(op.toString());
         } else {
             // Uint8Array data
             parts.push(hex.encode(op));
