@@ -817,7 +817,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Get all pkScript hex strings for the wallet's own addresses
      * (both delegate and non-delegate, current and historical).
-     * Falls back to locally-derived wallet scripts if ContractManager is not yet initialized.
      */
     async getWalletScripts(): Promise<string[]> {
         const manager = await this.getContractManager();
