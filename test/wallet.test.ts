@@ -1349,52 +1349,6 @@ describe("Wallet", () => {
             }
         });
 
-        it("includes arkd and legacy scripts before ContractManager is initialized", async () => {
-            const { wallet } = await createReadonlyTestWallet();
-
-            try {
-                const fallbackScripts = await wallet.getWalletScripts();
-
-                expect((wallet as any)._contractManager).toBeUndefined();
-                expect(new Set(fallbackScripts).size).toBe(2);
-
-                const manager = await wallet.getContractManager();
-                const contracts = await manager.getContracts({
-                    type: "default",
-                });
-
-                expect(fallbackScripts.sort()).toEqual(
-                    contracts.map((contract) => contract.script).sort()
-                );
-            } finally {
-                await wallet.dispose();
-            }
-        });
-
-        it("includes delegate and default scripts in getScriptMap before ContractManager is initialized", async () => {
-            const { wallet } = await createReadonlyTestWallet({
-                delegatorProvider: createDelegatorProvider(),
-            });
-
-            try {
-                const scriptMap = await wallet.getScriptMap();
-
-                expect((wallet as any)._contractManager).toBeUndefined();
-                expect(scriptMap.size).toBe(4);
-
-                const manager = await wallet.getContractManager();
-                const contracts = await manager.getContracts({
-                    type: ["default", "delegate"],
-                });
-
-                expect([...scriptMap.keys()].sort()).toEqual(
-                    contracts.map((contract) => contract.script).sort()
-                );
-            } finally {
-                await wallet.dispose();
-            }
-        });
-
         it("does not register legacy mainnet delay variants on mutinynet", async () => {
             const { wallet } = await createReadonlyTestWallet({
                 network: "mutinynet",

@@ -824,7 +824,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contracts = await manager.getContracts({
             type: ["default", "delegate"],
         });
-            return contracts.map((c) => c.script);
+        return contracts.map((c) => c.script);
     }
 
     /**
