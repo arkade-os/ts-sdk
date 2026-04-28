@@ -442,6 +442,18 @@ describe("ElectrumOnchainProvider", () => {
             expect(methods).toContain("blockchain.block.header");
             expect(methods).not.toContain("blockchain.transaction.get");
         });
+
+        it("propagates non-'not in block' errors from get_merkle (no silent swallow)", async () => {
+            // Real backend errors (auth, network, malformed payload) MUST
+            // surface — silently treating them as "mempool / unconfirmed"
+            // would freeze any caller polling getTxStatus on a confirmed tx.
+            wsMock.request.mockRejectedValueOnce(
+                new Error("Authentication required")
+            );
+            await expect(provider.getTxStatus("abc")).rejects.toThrow(
+                /Authentication required/
+            );
+        });
     });
 
     describe("getTransactions", () => {
@@ -521,6 +533,21 @@ describe("ElectrumOnchainProvider", () => {
                 provider.getTransactions("not-a-real-address")
             ).rejects.toThrow(/Invalid address not-a-real-address/);
         });
+
+        it("propagates parse errors with the offending txid (no silent empty vout)", async () => {
+            // If the daemon returns gibberish for a tx, surfacing an empty
+            // vout would silently hide outputs (e.g. a deposit). Fail loud
+            // instead — let the caller decide whether to retry or skip.
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "txbad", height: 100 },
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce(["zz"]); // not valid hex
+            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+
+            await expect(
+                provider.getTransactions(REGTEST_ADDRESS)
+            ).rejects.toThrow(/Failed to parse raw tx for txbad/);
+        });
     });
 
     describe("watchAddresses", () => {
@@ -586,6 +613,74 @@ describe("ElectrumOnchainProvider", () => {
 
             stop();
             expect(wsMock.unsubscribe).toHaveBeenCalledTimes(2);
+        });
+
+        it("re-delivers a tx on the next notification when delivery fails the first time", async () => {
+            // Regression: the dedupe set must not be updated until the
+            // eventCallback has fired successfully. Previously a failed
+            // historyToExplorerTxs / eventCallback would permanently mark
+            // the txid as seen and the next notification would skip it.
+            const addr = REGTEST_ADDRESS;
+            wsMock.request.mockResolvedValueOnce([]); // initial fetchHistory: empty
+
+            const subscribeCallbacks = new Map<
+                string,
+                (scripthash: string, status: string | null) => void
+            >();
+            wsMock.subscribe.mockImplementation(
+                async (
+                    method: string,
+                    cb: (s: string, status: string | null) => void,
+                    scripthash: string
+                ) => {
+                    if (method === "blockchain.scripthash") {
+                        subscribeCallbacks.set(scripthash, cb);
+                    }
+                }
+            );
+
+            // Callback throws on first invocation, succeeds on second.
+            const events: unknown[] = [];
+            let firstCallSeen = false;
+            const stop = await provider.watchAddresses([addr], (txs) => {
+                if (!firstCallSeen) {
+                    firstCallSeen = true;
+                    throw new Error("simulated downstream failure");
+                }
+                events.push(txs);
+            });
+
+            const [scripthash, cb] = [...subscribeCallbacks.entries()][0];
+            const { txHex } = buildTestTx();
+
+            // First notification: history sees newtx, parse succeeds, but
+            // the user callback throws.
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "newtx", height: 100 },
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+            cb(scripthash, "status1");
+            for (let i = 0; i < 6; i++)
+                await new Promise((r) => setTimeout(r, 0));
+            expect(events).toHaveLength(0); // first call threw
+
+            // Second notification: same newtx still in history. Provider
+            // must NOT have marked it seen — should re-attempt delivery.
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "newtx", height: 100 },
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+            cb(scripthash, "status2");
+            for (let i = 0; i < 6; i++)
+                await new Promise((r) => setTimeout(r, 0));
+
+            expect(events).toHaveLength(1);
+            const delivered = (events[0] as Array<{ txid: string }>)[0];
+            expect(delivered.txid).toBe("newtx");
+
+            stop();
         });
     });
 

@@ -9,23 +9,15 @@ import {
     WsElectrumChainSource,
 } from "../../src";
 import { networks } from "../../src/networks";
+import { waitFor } from "./utils";
 
 // nigiri's electrum-ws bridge (from vulpemventures/nigiri#258) exposes the
 // existing electrs TCP endpoint as a WebSocket on this port.
 const ELECTRUM_WS_URL = "ws://localhost:50003";
 
-// Faucets propagate via electrs's mempool subscription within ~1 polling
-// interval; 5 seconds is the conservative upper bound used elsewhere in
-// the e2e suite.
-const FAUCET_PROPAGATION_MS = 5_000;
-
 function faucet(address: string, btc = 0.001): number {
     execSync(`nigiri faucet ${address} ${btc}`);
     return Math.round(btc * 100_000_000);
-}
-
-function delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 describe("ElectrumOnchainProvider integration tests", () => {
@@ -102,7 +94,12 @@ describe("ElectrumOnchainProvider integration tests", () => {
             expect(await provider.getTransactions(wallet.address)).toEqual([]);
 
             const sats = faucet(wallet.address, 0.001);
-            await delay(FAUCET_PROPAGATION_MS);
+            // Poll until electrs picks up the faucet tx — tighter than a
+            // fixed sleep, and aligns with the rest of the e2e suite.
+            await waitFor(async () => {
+                const coins = await provider.getCoins(wallet.address);
+                return coins.length === 1 && coins[0].value === sats;
+            });
 
             const coins = await provider.getCoins(wallet.address);
             expect(coins).toHaveLength(1);
@@ -150,7 +147,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
             );
 
             faucet(alice.address, 0.001);
-            await delay(FAUCET_PROPAGATION_MS);
+            await waitFor(async () => (await alice.getBalance()) > 0);
 
             // Send half the funded amount; remainder goes to fee + change.
             await alice.send({
@@ -158,7 +155,10 @@ describe("ElectrumOnchainProvider integration tests", () => {
                 amount: 50_000,
                 feeRate: 2,
             });
-            await delay(FAUCET_PROPAGATION_MS);
+            await waitFor(async () => {
+                const bobCoins = await provider.getCoins(bob.address);
+                return bobCoins.length === 1 && bobCoins[0].value === 50_000;
+            });
 
             const bobCoins = await provider.getCoins(bob.address);
             expect(bobCoins).toHaveLength(1);
@@ -187,7 +187,10 @@ describe("ElectrumOnchainProvider integration tests", () => {
             );
 
             faucet(alice.address, 0.001);
-            await delay(FAUCET_PROPAGATION_MS);
+            await waitFor(
+                async () =>
+                    (await provider.getCoins(alice.address)).length === 1
+            );
 
             const aliceCoins = await provider.getCoins(alice.address);
             expect(aliceCoins).toHaveLength(1);
@@ -199,7 +202,11 @@ describe("ElectrumOnchainProvider integration tests", () => {
                 amount: 30_000,
                 feeRate: 2,
             });
-            await delay(FAUCET_PROPAGATION_MS);
+            await waitFor(async () =>
+                (await provider.getTxOutspends(fundingTxid)).some(
+                    (o) => o.spent
+                )
+            );
 
             const outspends = await provider.getTxOutspends(fundingTxid);
             // The funded vout must report spent=true with a non-empty txid.
@@ -230,12 +237,14 @@ describe("ElectrumOnchainProvider integration tests", () => {
 
             try {
                 faucet(wallet.address, 0.0005);
-                // Subscriptions deliver via electrs's mempool notification —
-                // longer wait than getCoins because it depends on electrs's
-                // own poll interval, not just nigiri's tx broadcast.
-                await delay(FAUCET_PROPAGATION_MS * 2);
+                // Subscriptions deliver via electrs's mempool notification.
+                // Poll the captured array — finishes as soon as electrs
+                // pushes the notification, much shorter than a fixed sleep
+                // in the common case.
+                await waitFor(async () => seen.length >= 1, {
+                    timeout: 30_000,
+                });
 
-                expect(seen.length).toBeGreaterThanOrEqual(1);
                 // The reported txid must match the on-chain coin we can
                 // independently fetch via listunspent.
                 const coins = await provider.getCoins(wallet.address);
@@ -262,7 +271,13 @@ describe("ElectrumOnchainProvider integration tests", () => {
             );
             faucet(a.address, 0.0001);
             faucet(b.address, 0.0002);
-            await delay(FAUCET_PROPAGATION_MS);
+            await waitFor(async () => {
+                const [aCoins, bCoins] = await Promise.all([
+                    provider.getCoins(a.address),
+                    provider.getCoins(b.address),
+                ]);
+                return aCoins.length === 1 && bCoins.length === 1;
+            });
 
             const aScript = decodeP2trScript(a.address);
             const bScript = decodeP2trScript(b.address);
@@ -318,7 +333,7 @@ describe("OnchainWallet over ElectrumOnchainProvider", () => {
             expect(await bob.getBalance()).toBe(0);
 
             const sats = faucet(alice.address, 0.001);
-            await delay(FAUCET_PROPAGATION_MS);
+            await waitFor(async () => (await alice.getBalance()) === sats);
             expect(await alice.getBalance()).toBe(sats);
 
             const sendAmount = 50_000;
@@ -327,7 +342,7 @@ describe("OnchainWallet over ElectrumOnchainProvider", () => {
                 amount: sendAmount,
                 feeRate: 2,
             });
-            await delay(FAUCET_PROPAGATION_MS);
+            await waitFor(async () => (await bob.getBalance()) === sendAmount);
 
             expect(await bob.getBalance()).toBe(sendAmount);
             expect(await alice.getBalance()).toBeLessThan(sats);

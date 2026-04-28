@@ -213,25 +213,29 @@ export class WsElectrumChainSource {
      * electrs in that case rejects with a "not yet in a block" error.
      */
     async fetchTxMerkle(txid: string): Promise<{ blockHeight: number } | null> {
+        let result: { block_height: number } | undefined;
         try {
-            const result = await this.ws.request<{ block_height: number }>(
+            result = await this.ws.request<{ block_height: number }>(
                 GetTransactionMerkleMethod,
                 txid
             );
-            if (
-                !result ||
-                typeof result.block_height !== "number" ||
-                result.block_height <= 0
-            ) {
-                return null;
-            }
-            return { blockHeight: result.block_height };
-        } catch {
-            // electrs raises when the tx isn't yet in a block; treat any
-            // failure as "mempool / unknown" rather than propagating —
-            // callers map a `null` here to `{confirmed: false}`.
+        } catch (err) {
+            // electrs/Fulcrum raise a specific error when the tx isn't yet in
+            // a block. Map ONLY that case to mempool/unknown; everything else
+            // (auth failure, network outage, malformed response) must surface
+            // so callers can fail rather than silently treat the tx as
+            // unconfirmed forever.
+            if (isTxNotInBlockError(err)) return null;
+            throw err;
+        }
+        if (
+            !result ||
+            typeof result.block_height !== "number" ||
+            result.block_height <= 0
+        ) {
             return null;
         }
+        return { blockHeight: result.block_height };
     }
 
     async unsubscribeScriptStatus(script: Uint8Array): Promise<void> {
@@ -723,9 +727,10 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
     /**
      * Build an ExplorerTransaction from a history entry plus the raw tx hex
-     * (when known) and a height→block_time map. Falls back to an empty
-     * vout array if the raw hex is missing or unparseable so the txid + status
-     * still surface — callers tracking by id won't lose the tx.
+     * (when known) and a height→block_time map. Parse errors propagate —
+     * silently returning an empty vout would hide real outputs (e.g. a
+     * deposit) and is far worse for protocol-level money handling than
+     * failing the whole batch.
      */
     private buildExplorerTx(
         entry: TransactionHistory,
@@ -734,26 +739,28 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     ): ExplorerTransaction {
         const vout: ExplorerTransaction["vout"] = [];
         if (rawHex) {
+            let tx: Transaction;
             try {
-                const tx = Transaction.fromRaw(hex.decode(rawHex), {
+                tx = Transaction.fromRaw(hex.decode(rawHex), {
                     allowUnknownOutputs: true,
                     allowUnknownInputs: true,
                 });
-                for (let i = 0; i < tx.outputsLength; i++) {
-                    const output = tx.getOutput(i);
-                    const scriptHex = output.script
-                        ? hex.encode(output.script)
-                        : "";
-                    vout.push({
-                        scriptpubkey_address: scriptHex
-                            ? (this.chain.addressForScript(scriptHex) ?? "")
-                            : "",
-                        value: (output.amount ?? 0n).toString(),
-                    });
-                }
-            } catch {
-                // Malformed hex; leave vout empty rather than failing the
-                // whole batch — the txid + status are still useful.
+            } catch (err) {
+                throw new Error(
+                    `Failed to parse raw tx for ${entry.tx_hash}: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+            for (let i = 0; i < tx.outputsLength; i++) {
+                const output = tx.getOutput(i);
+                const scriptHex = output.script
+                    ? hex.encode(output.script)
+                    : "";
+                vout.push({
+                    scriptpubkey_address: scriptHex
+                        ? (this.chain.addressForScript(scriptHex) ?? "")
+                        : "",
+                    value: (output.amount ?? 0n).toString(),
+                });
             }
         }
 
@@ -866,14 +873,17 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
             if (newEntries.length === 0) return;
 
-            for (const entry of newEntries) known.add(entry.tx_hash);
-            knownTxids.set(scripthash, known);
-
             // Map the new history entries through the same non-verbose
             // pipeline getTransactions uses, so subscribe-driven and
             // poll-driven callers see ExplorerTransactions of identical shape.
+            // The dedupe set is updated ONLY after delivery succeeds —
+            // otherwise a failed fetch or callback would permanently mark
+            // these txids as seen and the next notification wouldn't
+            // re-deliver them.
             const explorerTxs = await this.historyToExplorerTxs(newEntries);
             eventCallback(explorerTxs);
+            for (const entry of newEntries) known.add(entry.tx_hash);
+            knownTxids.set(scripthash, known);
         };
 
         const handleStatusChange = (scripthash: string): Promise<void> => {
@@ -935,6 +945,25 @@ function isHeaderSubscribeResult(v: unknown): v is HeaderSubscribeResult {
     if (typeof v !== "object" || v === null) return false;
     const obj = v as Record<string, unknown>;
     return typeof obj.height === "number" && typeof obj.hex === "string";
+}
+
+/**
+ * Recognise the "transaction not in a block yet" failure shape returned by
+ * electrum servers when `blockchain.transaction.get_merkle` is asked about a
+ * mempool tx. electrs surfaces this as the strings below; Fulcrum mirrors
+ * the wording. We match conservatively so genuine errors (auth, network,
+ * malformed response) still propagate.
+ */
+function isTxNotInBlockError(err: unknown): boolean {
+    const msg =
+        err instanceof Error ? err.message : typeof err === "string" ? err : "";
+    const normalized = msg.toLowerCase();
+    return (
+        normalized.includes("not yet in a block") ||
+        normalized.includes("not in a block") ||
+        normalized.includes("not in block") ||
+        normalized.includes("no confirmed transaction")
+    );
 }
 
 /**
