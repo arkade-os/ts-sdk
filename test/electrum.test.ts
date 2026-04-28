@@ -68,6 +68,19 @@ function createMockWS(): {
     };
 }
 
+/**
+ * Queue N sequential responses on `wsMock.request` to mimic what
+ * `safeBatchRequest` (the in-house replacement for the library's leaky
+ * `batchRequest`) consumes — one ws.request call per batch element.
+ */
+function mockBatch<T>(
+    mock: ReturnType<typeof vi.fn>,
+    responses: T[]
+): ReturnType<typeof vi.fn> {
+    for (const r of responses) mock.mockResolvedValueOnce(r);
+    return mock;
+}
+
 // Bitcoin genesis block header (mainnet)
 const GENESIS_HEADER_HEX =
     "0100000000000000000000000000000000000000000000000000000000000000000000003ba3edfd7a7b12b27ac72c3e67768f617fc81bc3888a51323a9fb8aa4b1e5e4a29ab5f49ffff001d1dac2b7c";
@@ -503,7 +516,7 @@ describe("ElectrumOnchainProvider", () => {
                 { tx_hash: "tx1", height: 100 },
             ]);
             // 2. fetchTransactions([txid]) — ws.batchRequest returns raw hex
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            mockBatch(wsMock.request, [txHex]);
             // 3. Per-height fetchBlockHeader for height 100 — ws.request
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
 
@@ -521,9 +534,16 @@ describe("ElectrumOnchainProvider", () => {
                 block_time: GENESIS_BLOCK_TIME,
             });
 
-            // Critical: must not call the verbose-tx endpoint (electrs rejects it).
-            const methods = wsMock.request.mock.calls.map((c) => c[0]);
-            expect(methods).not.toContain("blockchain.transaction.get");
+            // Critical: must not call the verbose form of transaction.get
+            // (electrs rejects "verbose=true" for that method). The
+            // non-verbose form is fine and IS used for raw tx hex; the
+            // marker for the verbose form is the boolean second param.
+            const verboseTxCalls = wsMock.request.mock.calls.filter(
+                (c) =>
+                    c[0] === "blockchain.transaction.get" &&
+                    c[c.length - 1] === true
+            );
+            expect(verboseTxCalls).toHaveLength(0);
         });
 
         it("treats height=0 entries as unconfirmed (mempool)", async () => {
@@ -531,7 +551,7 @@ describe("ElectrumOnchainProvider", () => {
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "txm", height: 0 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            mockBatch(wsMock.request, [txHex]);
             // No block headers fetched: zero unique confirmed heights.
 
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
@@ -545,7 +565,7 @@ describe("ElectrumOnchainProvider", () => {
                 { tx_hash: "tx-b", height: 200 },
                 { tx_hash: "tx-c", height: 201 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex, txHex]);
+            mockBatch(wsMock.request, [txHex, txHex, txHex]);
             // Two unique heights → exactly TWO ws.request calls for headers.
             wsMock.request
                 .mockResolvedValueOnce(GENESIS_HEADER_HEX)
@@ -561,18 +581,25 @@ describe("ElectrumOnchainProvider", () => {
 
         it("tolerates per-height header failures without losing the rest of the batch (electrs index lag race)", async () => {
             // electrs sometimes returns a tx as confirmed (listunspent height>0)
-            // before its block header is indexable. Per-height fetches via
-            // Promise.allSettled keep one failure from poisoning the others.
+            // before its block header is indexable. historyToExplorerTxs
+            // tries fetchBlockHeaders first (safeBatchRequest, all-or-nothing);
+            // if that throws, falls back to per-height fetchBlockHeader under
+            // Promise.allSettled so one failure doesn't poison the rest.
             const { txHex } = buildTestTx();
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "tx-good", height: 100 },
                 { tx_hash: "tx-lag", height: 999 }, // lagging height
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex]); // raw tx batch
-            // One header succeeds, the other rejects with missingheight.
+            mockBatch(wsMock.request, [txHex, txHex]); // raw tx batch
+            // First header attempt (safeBatchRequest): one succeeds,
+            // one fails — safeBatchRequest throws, triggering fallback.
             wsMock.request
                 .mockResolvedValueOnce(GENESIS_HEADER_HEX) // block.header(100)
                 .mockRejectedValueOnce(new Error("missingheight")); // block.header(999)
+            // Fallback per-height attempt: same outcome.
+            wsMock.request
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX)
+                .mockRejectedValueOnce(new Error("missingheight"));
 
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
             expect(txs).toHaveLength(2);
@@ -586,28 +613,25 @@ describe("ElectrumOnchainProvider", () => {
             expect(lag.status).toEqual({ confirmed: true, block_time: 0 });
         });
 
-        it("never uses the library batchRequest for headers (avoids unhandled-rejection leak)", async () => {
-            // When one element of a batchRequest rejects, the library's
-            // Promise.all rejects with that error but leaves the other
-            // in-flight requests pending. Their later error responses
-            // surface as unhandled rejections that crash the test runner.
-            // Using per-height ws.request calls under Promise.allSettled
-            // gives every promise an explicit handler.
+        it("never uses the library's leaky batchRequest (uses safeBatchRequest instead)", async () => {
+            // The library's batchRequest is implemented as Promise.all over
+            // individual request promises — when one element rejects, the
+            // others stay pending and their later rejections become
+            // unhandled (crashing the test runner). Our safeBatchRequest
+            // wraps each request in Promise.allSettled so every promise
+            // has an explicit handler. This regression test asserts that
+            // the provider's hot path never reaches the leaky primitive.
             const { txHex } = buildTestTx();
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "tx-a", height: 100 },
                 { tx_hash: "tx-b", height: 101 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex]); // raw tx batch (only one batchRequest)
-            wsMock.request
-                .mockResolvedValueOnce(GENESIS_HEADER_HEX)
-                .mockResolvedValueOnce(GENESIS_HEADER_HEX);
+            mockBatch(wsMock.request, [txHex, txHex]); // safeBatchRequest for raw txs
+            mockBatch(wsMock.request, [GENESIS_HEADER_HEX, GENESIS_HEADER_HEX]);
 
             await provider.getTransactions(REGTEST_ADDRESS);
 
-            // Exactly ONE batchRequest call (for raw txs) — headers MUST
-            // go through ws.request to avoid the unhandled-rejection leak.
-            expect(wsMock.batchRequest).toHaveBeenCalledTimes(1);
+            expect(wsMock.batchRequest).not.toHaveBeenCalled();
         });
 
         it("rejects malformed addresses with a descriptive error", async () => {
@@ -623,7 +647,7 @@ describe("ElectrumOnchainProvider", () => {
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "txbad", height: 100 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce(["zz"]); // not valid hex
+            mockBatch(wsMock.request, ["zz"]); // not valid hex
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX); // header for height 100
 
             await expect(
@@ -678,7 +702,7 @@ describe("ElectrumOnchainProvider", () => {
                 { tx_hash: "newtx", height: 100 },
             ]);
             // 2. fetchTransactions batchRequest for raw tx hex
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            mockBatch(wsMock.request, [txHex]);
             // 3. Per-height block.header request (no longer batched)
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
             firstCb(firstScripthash, "deadbeef");
@@ -741,7 +765,7 @@ describe("ElectrumOnchainProvider", () => {
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "newtx", height: 100 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]); // raw tx
+            mockBatch(wsMock.request, [txHex]); // raw tx
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX); // header
             cb(scripthash, "status1");
             for (let i = 0; i < 6; i++)
@@ -753,7 +777,7 @@ describe("ElectrumOnchainProvider", () => {
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "newtx", height: 100 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            mockBatch(wsMock.request, [txHex]);
             wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
             cb(scripthash, "status2");
             for (let i = 0; i < 6; i++)
@@ -776,10 +800,10 @@ describe("ElectrumOnchainProvider", () => {
 
         it("returns all-unspent when both outputs are in listunspent", async () => {
             // Step 1: fetchTransactions for creator tx
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            mockBatch(wsMock.request, [txHex]);
 
             // Step 2: listunspent for each output scripthash — both show our tx
-            wsMock.batchRequest.mockResolvedValueOnce([
+            mockBatch(wsMock.request, [
                 [
                     {
                         tx_hash: parentTxid,
@@ -812,10 +836,10 @@ describe("ElectrumOnchainProvider", () => {
             );
 
             // Step 1: fetchTransactions for creator
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            mockBatch(wsMock.request, [txHex]);
 
             // Step 2: listunspent — vout 0 gone, vout 1 still there
-            wsMock.batchRequest.mockResolvedValueOnce([
+            mockBatch(wsMock.request, [
                 [], // vout 0 spent
                 [
                     {
@@ -829,7 +853,7 @@ describe("ElectrumOnchainProvider", () => {
 
             // Step 3: history for the spent output's scripthash
             // history has [parent, spender] → exactly one candidate that isn't the parent
-            wsMock.batchRequest.mockResolvedValueOnce([
+            mockBatch(wsMock.request, [
                 [
                     { tx_hash: parentTxid, height: 100 },
                     { tx_hash: spenderTxid, height: 101 },
@@ -856,10 +880,10 @@ describe("ElectrumOnchainProvider", () => {
             );
 
             // Step 1: fetch parent
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            mockBatch(wsMock.request, [txHex]);
 
             // Step 2: listunspent — vout 0 spent, vout 1 unspent
-            wsMock.batchRequest.mockResolvedValueOnce([
+            mockBatch(wsMock.request, [
                 [],
                 [
                     {
@@ -872,7 +896,7 @@ describe("ElectrumOnchainProvider", () => {
             ]);
 
             // Step 3: history for script 0 contains parent + two candidates
-            wsMock.batchRequest.mockResolvedValueOnce([
+            mockBatch(wsMock.request, [
                 [
                     { tx_hash: parentTxid, height: 100 },
                     { tx_hash: decoyTxid, height: 102 },
@@ -881,10 +905,7 @@ describe("ElectrumOnchainProvider", () => {
             ]);
 
             // Step 4: batch-fetch candidate txs to scan their inputs
-            wsMock.batchRequest.mockResolvedValueOnce([
-                decoyHex,
-                realSpenderHex,
-            ]);
+            mockBatch(wsMock.request, [decoyHex, realSpenderHex]);
 
             const results = await provider.getTxOutspends(parentTxid);
             expect(results[0]).toEqual({ spent: true, txid: realSpenderTxid });
@@ -919,15 +940,20 @@ describe("WsElectrumChainSource", () => {
             expect(header).toEqual({ height: 0, hex: GENESIS_HEADER_HEX });
         });
 
-        it("batches multiple heights into a single batchRequest", async () => {
-            wsMock.batchRequest.mockResolvedValueOnce(["h1", "h2", "h3"]);
+        it("issues per-height ws.request calls in parallel via safeBatchRequest", async () => {
+            mockBatch(wsMock.request, ["h1", "h2", "h3"]);
             const headers = await chain.fetchBlockHeaders([10, 20, 30]);
             expect(headers).toEqual([
                 { height: 10, hex: "h1" },
                 { height: 20, hex: "h2" },
                 { height: 30, hex: "h3" },
             ]);
-            expect(wsMock.batchRequest).toHaveBeenCalledTimes(1);
+            // Three ws.request calls, no library batchRequest.
+            const headerCalls = wsMock.request.mock.calls.filter(
+                (c) => c[0] === "blockchain.block.header"
+            );
+            expect(headerCalls).toHaveLength(3);
+            expect(wsMock.batchRequest).not.toHaveBeenCalled();
         });
     });
 
@@ -935,25 +961,33 @@ describe("WsElectrumChainSource", () => {
         it("returns empty array without calling ws when input is empty", async () => {
             const out = await chain.fetchVerboseTransactions([]);
             expect(out).toEqual([]);
+            expect(wsMock.request).not.toHaveBeenCalled();
             expect(wsMock.batchRequest).not.toHaveBeenCalled();
         });
     });
 
     describe("fetchTransactions retry on missing tx", () => {
         it("retries after a 'missingtransaction' error then succeeds", async () => {
-            wsMock.batchRequest
+            // First attempt: ws.request rejects with missingtransaction.
+            // safeBatchRequest forwards the rejection; the chain's retry
+            // loop catches it and attempts again.
+            wsMock.request
                 .mockRejectedValueOnce(
                     new Error("daemon error: missingtransaction")
                 )
-                .mockResolvedValueOnce(["0200"]);
+                .mockResolvedValueOnce("0200"); // second attempt succeeds
 
             const result = await chain.fetchTransactions(["tx1"]);
             expect(result).toEqual([{ txID: "tx1", hex: "0200" }]);
-            expect(wsMock.batchRequest).toHaveBeenCalledTimes(2);
+            // Two ws.request calls (one per attempt).
+            const txGetCalls = wsMock.request.mock.calls.filter(
+                (c) => c[0] === "blockchain.transaction.get"
+            );
+            expect(txGetCalls).toHaveLength(2);
         });
 
         it("propagates non-missing errors immediately", async () => {
-            wsMock.batchRequest.mockRejectedValueOnce(
+            wsMock.request.mockRejectedValueOnce(
                 new Error("connection refused")
             );
             await expect(chain.fetchTransactions(["tx1"])).rejects.toThrow(

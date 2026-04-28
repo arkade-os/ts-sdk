@@ -156,6 +156,43 @@ export class WsElectrumChainSource {
         private network: Network
     ) {}
 
+    /**
+     * Send N requests in parallel and aggregate the results, replacement
+     * for `ws.batchRequest`. The library's batchRequest is implemented as
+     * `Promise.all` over individual request promises — when one element
+     * rejects, the others remain pending. When their (often error)
+     * responses arrive later, the library rejects them too, and nobody is
+     * awaiting them: the rejections become unhandled and crash the test
+     * runner / pollute production logs.
+     *
+     * `safeBatchRequest` issues each request through `ws.request` (so each
+     * has its own request-promise lifecycle), waits for all of them via
+     * `Promise.allSettled` (every promise gets an explicit handler), and
+     * then surfaces the first error if any failed. Same wall-clock cost
+     * as the library's batch (parallel send), no orphan rejections.
+     *
+     * Use this in place of `ws.batchRequest` for any call where one or
+     * more elements may legitimately error (e.g. electrs index lag
+     * surfacing as `missingheight` for a subset of heights/txids).
+     */
+    async safeBatchRequest<T>(
+        requests: { method: string; params: unknown[] }[]
+    ): Promise<T[]> {
+        if (requests.length === 0) return [];
+        const settled = await Promise.allSettled(
+            requests.map((req) =>
+                this.ws.request<T>(
+                    req.method,
+                    ...(req.params as Parameters<typeof this.ws.request>[1][])
+                )
+            )
+        );
+        for (const r of settled) {
+            if (r.status === "rejected") throw r.reason;
+        }
+        return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
+    }
+
     async fetchTransactions(
         txids: string[]
     ): Promise<{ txID: string; hex: string }[]> {
@@ -165,9 +202,7 @@ export class WsElectrumChainSource {
         }));
         for (let i = 0; i < MAX_FETCH_TRANSACTIONS_ATTEMPTS; i++) {
             try {
-                const responses = await this.ws.batchRequest<string[]>(
-                    ...requests
-                );
+                const responses = await this.safeBatchRequest<string>(requests);
                 return responses.map((hexStr, i) => ({
                     txID: txids[i],
                     hex: hexStr,
@@ -201,7 +236,7 @@ export class WsElectrumChainSource {
             method: GetTransactionMethod,
             params: [txid, true],
         }));
-        return this.ws.batchRequest<VerboseTransaction[]>(...requests);
+        return this.safeBatchRequest<VerboseTransaction>(requests);
     }
 
     /**
@@ -264,13 +299,12 @@ export class WsElectrumChainSource {
         scripts: Uint8Array[]
     ): Promise<TransactionHistory[][]> {
         const scriptsHashes = scripts.map((s) => toScriptHash(s));
-        const responses = await this.ws.batchRequest<TransactionHistory[][]>(
-            ...scriptsHashes.map((s) => ({
+        return this.safeBatchRequest<TransactionHistory[]>(
+            scriptsHashes.map((s) => ({
                 method: GetHistoryMethod,
                 params: [s],
             }))
         );
-        return responses;
     }
 
     async fetchHistory(script: Uint8Array): Promise<TransactionHistory[]> {
@@ -282,8 +316,8 @@ export class WsElectrumChainSource {
     }
 
     async fetchBlockHeaders(heights: number[]): Promise<BlockHeader[]> {
-        const responses = await this.ws.batchRequest<string[]>(
-            ...heights.map((h) => ({ method: GetBlockHeader, params: [h] }))
+        const responses = await this.safeBatchRequest<string>(
+            heights.map((h) => ({ method: GetBlockHeader, params: [h] }))
         );
         return responses.map((hexStr, i) => ({
             height: heights[i],
@@ -578,8 +612,10 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         // Step 2: batch listunspent for all output scripthashes (1 round trip)
         // This tells us exactly which txid:vout pairs are still unspent.
-        const unspentBatch = await this.ws.batchRequest<UnspentElectrum[][]>(
-            ...validScriptHashes.map((sh) => ({
+        const unspentBatch = await this.chain.safeBatchRequest<
+            UnspentElectrum[]
+        >(
+            validScriptHashes.map((sh) => ({
                 method: ListUnspentMethod,
                 params: [sh],
             }))
@@ -609,8 +645,10 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         if (spentIndices.length === 0) return results;
 
-        const histories = await this.ws.batchRequest<TransactionHistory[][]>(
-            ...spentScriptHashes.map((sh) => ({
+        const histories = await this.chain.safeBatchRequest<
+            TransactionHistory[]
+        >(
+            spentScriptHashes.map((sh) => ({
                 method: GetHistoryMethod,
                 params: [sh],
             }))
@@ -698,38 +736,41 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const rawTxs = await this.chain.fetchTransactions(txids);
         const rawHexByTxid = new Map(rawTxs.map((t) => [t.txID, t.hex]));
 
-        // De-duplicated per-height header lookup via Promise.allSettled.
-        //
-        // We deliberately avoid `fetchBlockHeaders` (which uses the library's
-        // batchRequest) here: when one element of a batch fails (e.g. a height
-        // that hits electrs's "missingheight" index-lag race), the library's
-        // `Promise.all` rejects with that one error but leaves the other
-        // in-flight requests pending. When their responses arrive later, the
-        // library rejects them too — and nobody's awaiting them, so they
-        // surface as unhandled rejections that crash the test runner.
-        //
-        // Per-height fetches with allSettled give every promise a handler,
-        // and missing block_time degrades to 0 the same way the old verbose-
-        // tx code did via `vtx.blocktime || vtx.time || 0`. Txid + confirmed
-        // status are still authoritative.
+        // De-duplicated batch lookup of block headers (now safe — see
+        // safeBatchRequest above). Heights whose headers fail to resolve
+        // surface via the wrapper's first-error throw; we tolerate that
+        // here by falling back to per-height calls under Promise.allSettled
+        // so one missing header doesn't poison the whole history mapping.
+        // The old verbose-tx code had the same tolerance via
+        // `vtx.blocktime || vtx.time || 0`.
         const confirmedHeights = [
             ...new Set(history.map((h) => h.height).filter((h) => h > 0)),
         ];
         const blockTimeByHeight = new Map<number, number>();
         if (confirmedHeights.length > 0) {
-            const settled = await Promise.allSettled(
-                confirmedHeights.map((h) => this.chain.fetchBlockHeader(h))
-            );
-            settled.forEach((res) => {
-                if (res.status === "fulfilled") {
+            try {
+                const headers =
+                    await this.chain.fetchBlockHeaders(confirmedHeights);
+                for (const header of headers) {
                     blockTimeByHeight.set(
-                        res.value.height,
-                        parseBlockHeader(res.value.hex).timestamp
+                        header.height,
+                        parseBlockHeader(header.hex).timestamp
                     );
                 }
-                // Rejections leave the height absent from the map →
-                // buildExplorerTx falls back to block_time = 0.
-            });
+            } catch {
+                const settled = await Promise.allSettled(
+                    confirmedHeights.map((h) => this.chain.fetchBlockHeader(h))
+                );
+                settled.forEach((res) => {
+                    if (res.status === "fulfilled") {
+                        blockTimeByHeight.set(
+                            res.value.height,
+                            parseBlockHeader(res.value.hex).timestamp
+                        );
+                    }
+                    // Rejections leave the height absent → block_time = 0.
+                });
+            }
         }
 
         return history.map((entry) =>
