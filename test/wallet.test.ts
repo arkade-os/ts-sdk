@@ -13,6 +13,7 @@ import {
     type IndexerProvider,
     type ArkProvider,
     type OnchainProvider,
+    type DelegatorProvider,
 } from "../src";
 import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
@@ -21,6 +22,7 @@ import {
     IndexedDBContractRepository,
 } from "../src/repositories";
 import type { Coin, VirtualCoin } from "../src/wallet";
+import { timelockToSequence } from "../src/contracts/handlers/helpers";
 
 // Mock fetch
 const mockFetch = vi.fn();
@@ -1069,58 +1071,305 @@ describe("Wallet", () => {
         });
     });
 
-    describe("mainnet unilateral exit delay pinning", () => {
-        // If this constant changes in the SDK, update both sides intentionally —
-        // changing the pinned value alters derived addresses for every mainnet
-        // wallet.
-        const MAINNET_PINNED_DELAY = 605184n;
+    describe("mainnet unilateral exit delay compatibility", () => {
+        const MAINNET_LEGACY_DELAY = 605184n;
+        const ARKD_DELAY = 86528n;
+        const MUTINYNET_DELAY = 144n;
+        const DELEGATE_PUBKEY = mockServerKeyHex;
 
-        const mockMainnetInfo = (unilateralExitDelay: bigint) => ({
+        const mockArkInfo = (
+            network: "bitcoin" | "mutinynet",
+            unilateralExitDelay: bigint
+        ) => ({
             signerPubkey: mockServerKeyHex,
             forfeitPubkey: mockServerKeyHex,
             batchExpiry: BigInt(144),
             unilateralExitDelay,
+            boardingExitDelay: BigInt(144),
             roundInterval: BigInt(144),
-            network: "bitcoin",
-            forfeitAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+            network,
+            dust: BigInt(330),
+            forfeitAddress:
+                network === "bitcoin"
+                    ? "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+                    : "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx",
             checkpointTapscript:
                 "5ab27520e35799157be4b37565bb5afe4d04e6a0fa0a4b6a4f4e48b0d904685d253cdbdbac",
         });
 
-        it("pins the exit timelock to 605184s on mainnet even when the server advertises a shorter delay", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+        function sequence(value: bigint, type: "blocks" | "seconds") {
+            return timelockToSequence({ value, type }).toString();
+        }
+
+        function contractSummaries(
+            contracts: { type: string; params: Record<string, string> }[]
+        ) {
+            return contracts
+                .map(
+                    (contract) =>
+                        `${contract.type}:${contract.params.csvTimelock}`
+                )
+                .sort();
+        }
+
+        function createIndexerProvider() {
+            return {
+                getVtxos: vi.fn().mockResolvedValue({ vtxos: [] }),
+                subscribeForScripts: vi.fn().mockResolvedValue("sub-1"),
+                unsubscribeForScripts: vi.fn().mockResolvedValue(undefined),
+                getSubscription: async function* () {},
+            } as Partial<IndexerProvider> as IndexerProvider;
+        }
+
+        function createOnchainProvider() {
+            return {
+                getCoins: vi.fn().mockResolvedValue([]),
+                getFeeRate: vi.fn().mockResolvedValue(1),
+                broadcastTransaction: vi.fn().mockResolvedValue(""),
+                getTxOutspends: vi.fn().mockResolvedValue([]),
+                getTransactions: vi.fn().mockResolvedValue([]),
+                getTxStatus: vi.fn().mockResolvedValue({ confirmed: false }),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: 1,
+                    time: 1,
+                    hash: "00".repeat(32),
+                }),
+                watchAddresses: vi.fn().mockResolvedValue(() => {}),
+            } as Partial<OnchainProvider> as OnchainProvider;
+        }
+
+        function createDelegatorProvider() {
+            return {
+                getDelegateInfo: vi.fn().mockResolvedValue({
+                    pubkey: DELEGATE_PUBKEY,
+                    fee: "0",
+                    delegatorAddress: "",
+                }),
+                delegate: vi.fn().mockResolvedValue(undefined),
+            } as Partial<DelegatorProvider> as DelegatorProvider;
+        }
+
+        async function createReadonlyTestWallet(config?: {
+            network?: "bitcoin" | "mutinynet";
+            unilateralExitDelay?: bigint;
+            exitTimelock?: { value: bigint; type: "blocks" | "seconds" };
+            delegatorProvider?: DelegatorProvider;
+        }) {
+            const network = config?.network ?? "bitcoin";
+            const compressedPubKey = await mockIdentity.compressedPublicKey();
+            const readonlyIdentity =
+                ReadonlySingleKey.fromPublicKey(compressedPubKey);
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
+
+            const wallet = await ReadonlyWallet.create({
+                identity: readonlyIdentity,
+                arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue(
+                            mockArkInfo(
+                                network,
+                                config?.unilateralExitDelay ??
+                                    (network === "bitcoin"
+                                        ? ARKD_DELAY
+                                        : MUTINYNET_DELAY)
+                            )
+                        ),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: createIndexerProvider(),
+                onchainProvider: createOnchainProvider(),
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+                exitTimelock: config?.exitTimelock,
+                delegatorProvider: config?.delegatorProvider,
             });
+
+            return { wallet };
+        }
+
+        async function createFullMainnetWallet(config?: {
+            delegatorProvider?: DelegatorProvider;
+        }) {
+            const walletRepository = new InMemoryWalletRepository();
+            const contractRepository = new InMemoryContractRepository();
 
             const wallet = await Wallet.create({
                 identity: mockIdentity,
                 arkServerUrl: "http://localhost:7070",
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue(mockArkInfo("bitcoin", ARKD_DELAY)),
+                } as Partial<ArkProvider> as ArkProvider,
+                indexerProvider: createIndexerProvider(),
+                onchainProvider: createOnchainProvider(),
+                storage: {
+                    walletRepository,
+                    contractRepository,
+                },
+                delegatorProvider: config?.delegatorProvider,
+                settlementConfig: false,
             });
 
-            expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
-                value: MAINNET_PINNED_DELAY,
-                type: "seconds",
-            });
+            return { wallet };
+        }
+
+        it("uses the arkd exit timelock as the mainnet offchain address delay", async () => {
+            const { wallet } = await createReadonlyTestWallet();
+
+            try {
+                expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
+                    value: ARKD_DELAY,
+                    type: "seconds",
+                });
+            } finally {
+                await wallet.dispose();
+            }
         });
 
-        it("lets an explicit config.exitTimelock override the mainnet pin", async () => {
-            mockFetch.mockResolvedValueOnce({
-                ok: true,
-                json: () => Promise.resolve(mockMainnetInfo(86528n)),
+        it("registers arkd and legacy default contracts on mainnet", async () => {
+            const { wallet } = await createReadonlyTestWallet();
+
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(ARKD_DELAY, "seconds")}`,
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("registers arkd and legacy default and delegate contracts on mainnet", async () => {
+            const { wallet } = await createReadonlyTestWallet({
+                delegatorProvider: createDelegatorProvider(),
             });
 
-            // bip68 seconds must be multiples of 512.
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(ARKD_DELAY, "seconds")}`,
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                    `delegate:${sequence(ARKD_DELAY, "seconds")}`,
+                    `delegate:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("passes wallet contract timelocks through Wallet.create for delegate wallets", async () => {
+            const { wallet } = await createFullMainnetWallet({
+                delegatorProvider: createDelegatorProvider(),
+            });
+
+            try {
+                expect(wallet.offchainTapscript.options.csvTimelock).toEqual({
+                    value: ARKD_DELAY,
+                    type: "seconds",
+                });
+                expect(
+                    wallet.walletContractTimelocks.map((timelock) =>
+                        timelockToSequence(timelock).toString()
+                    )
+                ).toEqual([
+                    sequence(ARKD_DELAY, "seconds"),
+                    sequence(MAINNET_LEGACY_DELAY, "seconds"),
+                ]);
+
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(ARKD_DELAY, "seconds")}`,
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                    `delegate:${sequence(ARKD_DELAY, "seconds")}`,
+                    `delegate:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("lets an explicit config.exitTimelock override compatibility registration", async () => {
             const override = { value: 1024n, type: "seconds" as const };
-            const wallet = await Wallet.create({
-                identity: mockIdentity,
-                arkServerUrl: "http://localhost:7070",
+            const { wallet } = await createReadonlyTestWallet({
                 exitTimelock: override,
             });
 
             expect(wallet.offchainTapscript.options.csvTimelock).toEqual(
                 override
             );
+
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(override.value, override.type)}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("dedupes the legacy delay when arkd advertises the legacy value", async () => {
+            const { wallet } = await createReadonlyTestWallet({
+                unilateralExitDelay: MAINNET_LEGACY_DELAY,
+            });
+
+            try {
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(MAINNET_LEGACY_DELAY, "seconds")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
+        });
+
+        it("does not register legacy mainnet delay variants on mutinynet", async () => {
+            const { wallet } = await createReadonlyTestWallet({
+                network: "mutinynet",
+            });
+
+            try {
+                expect(wallet.walletContractTimelocks).toEqual([
+                    { value: MUTINYNET_DELAY, type: "blocks" },
+                ]);
+
+                const manager = await wallet.getContractManager();
+                const contracts = await manager.getContracts({
+                    type: ["default", "delegate"],
+                });
+
+                expect(contractSummaries(contracts)).toEqual([
+                    `default:${sequence(MUTINYNET_DELAY, "blocks")}`,
+                ]);
+            } finally {
+                await wallet.dispose();
+            }
         });
     });
 });
