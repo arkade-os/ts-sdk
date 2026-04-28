@@ -118,27 +118,16 @@ describe("ElectrumOnchainProvider integration tests", () => {
             expect(fundingTx).toBeDefined();
             expect(fundingTx!.txid).toBe(coins[0].txid);
 
-            // The faucet tx has at most 0 confirmations until the next block;
-            // either status is acceptable, just assert the shape. electrs
-            // can briefly race on `block.header(N)` right after a faucet —
-            // listunspent reports height>0 before the header is indexable —
-            // so retry until getTxStatus settles into a consistent state.
-            let status: Awaited<ReturnType<typeof provider.getTxStatus>>;
-            await waitFor(async () => {
-                try {
-                    status = await provider.getTxStatus(coins[0].txid);
-                    return true;
-                } catch (e) {
-                    if (/missingheight|not in block/i.test(String(e)))
-                        return false;
-                    throw e;
-                }
-            });
-            if (status!.confirmed) {
-                expect(status!.blockHeight).toBeGreaterThan(0);
-                expect(status!.blockTime).toBeGreaterThan(0);
+            // The faucet tx has at most 0 confirmations until the next
+            // block; either status is acceptable. getTxStatus tolerates
+            // electrs's index-lag race on block.header(N) by returning
+            // blockTime=0 (degraded but useful), so we just assert shape.
+            const status = await provider.getTxStatus(coins[0].txid);
+            if (status.confirmed) {
+                expect(status.blockHeight).toBeGreaterThan(0);
+                expect(status.blockTime).toBeGreaterThanOrEqual(0);
             } else {
-                expect(status!).toEqual({ confirmed: false });
+                expect(status).toEqual({ confirmed: false });
             }
         }
     );

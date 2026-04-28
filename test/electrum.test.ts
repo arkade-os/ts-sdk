@@ -454,6 +454,36 @@ describe("ElectrumOnchainProvider", () => {
                 /Authentication required/
             );
         });
+
+        it("returns confirmed=true with blockTime=0 when block.header races with index lag (missingheight)", async () => {
+            // electrs sometimes reports a tx as confirmed via get_merkle
+            // before the corresponding block header is indexable. Tolerate
+            // this — confirmation + height are still authoritative; only
+            // block_time degrades to 0 (same fallback historyToExplorerTxs
+            // uses, mirroring the old verbose-tx path's
+            // `blocktime || time || 0`).
+            wsMock.request
+                .mockResolvedValueOnce({ block_height: 200 })
+                .mockRejectedValueOnce(new Error("missingheight"));
+
+            expect(await provider.getTxStatus("abc")).toEqual({
+                confirmed: true,
+                blockHeight: 200,
+                blockTime: 0,
+            });
+        });
+
+        it("propagates non-'missingheight' errors from block.header", async () => {
+            // Same fail-loud principle as get_merkle: only the specific
+            // index-lag wording is tolerated.
+            wsMock.request
+                .mockResolvedValueOnce({ block_height: 200 })
+                .mockRejectedValueOnce(new Error("Network unreachable"));
+
+            await expect(provider.getTxStatus("abc")).rejects.toThrow(
+                /Network unreachable/
+            );
+        });
     });
 
     describe("getTransactions", () => {

@@ -823,12 +823,24 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const merkle = await this.chain.fetchTxMerkle(txid);
         if (!merkle) return { confirmed: false };
 
-        const header = await this.chain.fetchBlockHeader(merkle.blockHeight);
-        const { timestamp } = parseBlockHeader(header.hex);
+        // Header lookup can transiently race with electrs's index right
+        // after a fresh block — listunspent/get_merkle expose the new
+        // height before block.header(N) is queryable. Tolerate that the
+        // same way historyToExplorerTxs does: confirmation status and
+        // height are still authoritative; only block_time degrades.
+        let blockTime = 0;
+        try {
+            const header = await this.chain.fetchBlockHeader(
+                merkle.blockHeight
+            );
+            blockTime = parseBlockHeader(header.hex).timestamp;
+        } catch (err) {
+            if (!isMissingHeightError(err)) throw err;
+        }
         return {
             confirmed: true,
             blockHeight: merkle.blockHeight,
-            blockTime: timestamp,
+            blockTime,
         };
     }
 
@@ -967,6 +979,20 @@ function isHeaderSubscribeResult(v: unknown): v is HeaderSubscribeResult {
     if (typeof v !== "object" || v === null) return false;
     const obj = v as Record<string, unknown>;
     return typeof obj.height === "number" && typeof obj.hex === "string";
+}
+
+/**
+ * Recognise the "block header not yet indexable" failure shape returned by
+ * electrum servers (electrs in particular) when `block.header(N)` runs
+ * against a height that's already in `listunspent`/`get_merkle` but hasn't
+ * been indexed yet. Surfaced as `missingheight`. Tolerated by callers so
+ * the index-lag race doesn't poison confirmed-status reads; genuine
+ * failures (auth/network) propagate.
+ */
+function isMissingHeightError(err: unknown): boolean {
+    const msg =
+        err instanceof Error ? err.message : typeof err === "string" ? err : "";
+    return msg.toLowerCase().includes("missingheight");
 }
 
 /**
