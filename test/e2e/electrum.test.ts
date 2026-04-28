@@ -17,6 +17,12 @@ const ELECTRUM_WS_URL = "ws://localhost:50003";
 
 function faucet(address: string, btc = 0.001): number {
     execSync(`nigiri faucet ${address} ${btc}`);
+    // Mine a block immediately so electrs has a stable confirmed state to
+    // index. Without this the bridge can race: listunspent reports the tx
+    // at height N before block.header(N) is queryable, surfacing as
+    // "missingheight" errors. Other e2e suites mine after every state
+    // change for the same reason (settlement.test.ts etc.).
+    execSync(`nigiri rpc --generate 1`);
     return Math.round(btc * 100_000_000);
 }
 
