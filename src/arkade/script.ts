@@ -59,17 +59,17 @@ export const ArkadeScript: P.CoderType<ArkadeScriptType> = P.wrap({
                 if (v === undefined) throw new Error(`Unknown opcode=${o}`);
                 w.byte(v);
                 continue;
-            } else if (typeof o === "number") {
-                if (o === 0x00) {
+            } else if (typeof o === "number" || typeof o === "bigint") {
+                // Arkade VM enforces MINIMALDATA: values 0 and 1..16 must use
+                // OP_0 / OP_1..OP_16, not data pushes.
+                if (o === 0 || o === 0n) {
                     w.byte(0x00);
                     continue;
-                } else if (1 <= o && o <= 16) {
-                    w.byte(OP.OP_1 - 1 + o);
+                } else if (o >= 1 && o <= 16) {
+                    w.byte(OP.OP_1 - 1 + Number(o));
                     continue;
                 }
-            }
-            // Encode numbers (number or bigint) via BigNum (520-byte cap).
-            if (typeof o === "number" || typeof o === "bigint") {
+                // Encode numbers via BigNum (520-byte cap).
                 const big = typeof o === "number" ? BigInt(o) : o;
                 o = BigNum.encode(big);
             }
