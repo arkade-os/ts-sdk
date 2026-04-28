@@ -404,56 +404,43 @@ describe("ElectrumOnchainProvider", () => {
     });
 
     describe("getTxStatus", () => {
-        it("returns confirmed=false for mempool txs (0 confirmations)", async () => {
-            wsMock.request.mockResolvedValueOnce({
-                txid: "abc",
-                confirmations: 0,
-                vout: [],
-                vin: [],
-            });
-            const status = await provider.getTxStatus("abc");
-            expect(status).toEqual({ confirmed: false });
-        });
-
-        it("computes block height as tipHeight - confirmations + 1", async () => {
-            wsMock.request.mockResolvedValueOnce({
-                txid: "abc",
-                confirmations: 10,
-                blocktime: 1700_000_000,
-                vout: [],
-                vin: [],
-            });
-            deliverHeadersTip(wsMock.subscribe, {
-                height: 100,
-                hex: GENESIS_HEADER_HEX,
-            });
-
-            const status = await provider.getTxStatus("abc");
-            expect(status).toEqual({
-                confirmed: true,
-                blockTime: 1700_000_000,
-                blockHeight: 91, // 100 - 10 + 1
+        it("returns confirmed=false when transaction.get_merkle is not yet available (mempool)", async () => {
+            // electrs raises an error for txs not yet in a block; fetchTxMerkle
+            // catches and returns null. Either error or a resolved {block_height: 0}
+            // path is acceptable, but error is the realistic electrs case.
+            wsMock.request.mockRejectedValueOnce(
+                new Error("Transaction not yet in a block")
+            );
+            expect(await provider.getTxStatus("abc")).toEqual({
+                confirmed: false,
             });
         });
 
-        it("falls back to time when blocktime is absent", async () => {
-            wsMock.request.mockResolvedValueOnce({
-                txid: "abc",
-                confirmations: 5,
-                time: 1650_000_000,
-                vout: [],
-                vin: [],
+        it("returns confirmed=false when transaction.get_merkle reports block_height <= 0", async () => {
+            wsMock.request.mockResolvedValueOnce({ block_height: 0 });
+            expect(await provider.getTxStatus("abc")).toEqual({
+                confirmed: false,
             });
-            deliverHeadersTip(wsMock.subscribe, {
-                height: 50,
-                hex: GENESIS_HEADER_HEX,
+        });
+
+        it("derives blockHeight from get_merkle and blockTime from the header", async () => {
+            wsMock.request
+                .mockResolvedValueOnce({ block_height: 100 }) // get_merkle
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX); // block.header(100)
+
+            expect(await provider.getTxStatus("abc")).toEqual({
+                confirmed: true,
+                blockHeight: 100,
+                blockTime: GENESIS_BLOCK_TIME,
             });
 
-            const status = await provider.getTxStatus("abc");
-            expect(status).toMatchObject({
-                confirmed: true,
-                blockTime: 1650_000_000,
-            });
+            // Critical: the path must NOT use blockchain.transaction.get
+            // (which electrs rejects with "verbose transactions are
+            // currently unsupported"). Verify the methods we used.
+            const methods = wsMock.request.mock.calls.map((c) => c[0]);
+            expect(methods).toContain("blockchain.transaction.get_merkle");
+            expect(methods).toContain("blockchain.block.header");
+            expect(methods).not.toContain("blockchain.transaction.get");
         });
     });
 
@@ -464,79 +451,69 @@ describe("ElectrumOnchainProvider", () => {
             expect(txs).toEqual([]);
         });
 
-        it("maps verbose electrum txs to ExplorerTransaction shape", async () => {
-            // First call: fetchHistory (scripthash.get_history) via ws.request
+        it("maps history + raw tx + block header to ExplorerTransaction shape", async () => {
+            // buildTestTx() yields outputs of 10_000 and 20_000 sats with
+            // P2WPKH scriptPubKeys we can decode back to addresses.
+            const { txHex } = buildTestTx();
+
+            // 1. fetchHistory(script) — ws.request
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "tx1", height: 100 },
             ]);
-            // Second call: fetchVerboseTransactions via ws.batchRequest
-            wsMock.batchRequest.mockResolvedValueOnce([
-                {
-                    txid: "tx1",
-                    confirmations: 5,
-                    blocktime: 1700_000_000,
-                    vout: [
-                        {
-                            n: 0,
-                            value: 0.001, // 100_000 sat
-                            scriptPubKey: {
-                                address: "bcrt1qexample",
-                                hex: "",
-                            },
-                        },
-                    ],
-                    vin: [],
-                },
-            ]);
+            // 2. fetchTransactions([txid]) — ws.batchRequest returns raw hex
+            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            // 3. fetchBlockHeaders([100]) — ws.batchRequest returns headers
+            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
 
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
-            expect(txs).toEqual([
-                {
-                    txid: "tx1",
-                    vout: [
-                        {
-                            scriptpubkey_address: "bcrt1qexample",
-                            value: "100000",
-                        },
-                    ],
-                    status: { confirmed: true, block_time: 1700_000_000 },
-                },
-            ]);
+            expect(txs).toHaveLength(1);
+            expect(txs[0].txid).toBe("tx1");
+            // Sat amounts come from the parsed raw tx (exact bigints, no float rounding).
+            expect(txs[0].vout.map((v) => v.value)).toEqual(["10000", "20000"]);
+            // Addresses come from decoding each output's scriptPubKey.
+            expect(txs[0].vout[0].scriptpubkey_address).toMatch(/^bcrt1q/);
+            expect(txs[0].vout[1].scriptpubkey_address).toMatch(/^bcrt1q/);
+            // block_time comes from parsing the block header (genesis here).
+            expect(txs[0].status).toEqual({
+                confirmed: true,
+                block_time: GENESIS_BLOCK_TIME,
+            });
+
+            // Critical: must not call the verbose-tx endpoint (electrs rejects it).
+            const methods = wsMock.request.mock.calls.map((c) => c[0]);
+            expect(methods).not.toContain("blockchain.transaction.get");
         });
 
-        it("derives exact sat amounts from vtx.hex when present (no float rounding)", async () => {
-            // buildTestTx() yields outputs of 10_000 and 20_000 sats — exact
-            // values that survive the raw-tx parse without any float math.
+        it("treats height=0 entries as unconfirmed (mempool)", async () => {
             const { txHex } = buildTestTx();
-
             wsMock.request.mockResolvedValueOnce([
-                { tx_hash: "tx-exact", height: 100 },
+                { tx_hash: "txm", height: 0 },
             ]);
+            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            // No block headers fetched: zero unique confirmed heights.
+
+            const txs = await provider.getTransactions(REGTEST_ADDRESS);
+            expect(txs[0].status).toEqual({ confirmed: false, block_time: 0 });
+        });
+
+        it("batches block-header lookups across history entries that share heights", async () => {
+            const { txHex } = buildTestTx();
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "tx-a", height: 200 },
+                { tx_hash: "tx-b", height: 200 },
+                { tx_hash: "tx-c", height: 201 },
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex, txHex]);
+            // Only TWO unique heights → ONE batch with two entries.
             wsMock.batchRequest.mockResolvedValueOnce([
-                {
-                    txid: "tx-exact",
-                    confirmations: 5,
-                    blocktime: 1700_000_000,
-                    hex: txHex,
-                    vout: [
-                        {
-                            n: 0,
-                            // Deliberately wrong float to prove we use the hex.
-                            value: 0.00009999,
-                            scriptPubKey: { address: "addr0", hex: "" },
-                        },
-                        {
-                            n: 1,
-                            value: 0.00019999,
-                            scriptPubKey: { address: "addr1", hex: "" },
-                        },
-                    ],
-                    vin: [],
-                },
+                GENESIS_HEADER_HEX,
+                GENESIS_HEADER_HEX,
             ]);
 
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
-            expect(txs[0].vout.map((v) => v.value)).toEqual(["10000", "20000"]);
+            expect(txs).toHaveLength(3);
+            // Two batchRequest calls total: one for txs, one for headers.
+            expect(wsMock.batchRequest).toHaveBeenCalledTimes(2);
         });
 
         it("rejects malformed addresses with a descriptive error", async () => {
@@ -586,29 +563,26 @@ describe("ElectrumOnchainProvider", () => {
             const [firstScripthash, firstCb] = [
                 ...subscribeCallbacks.entries(),
             ][0];
+            const { txHex } = buildTestTx();
+            // 1. fetchHistory(script) — sees a new tx on this script
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "newtx", height: 100 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([
-                {
-                    txid: "newtx",
-                    confirmations: 1,
-                    blocktime: 1700_000_000,
-                    vout: [
-                        {
-                            n: 0,
-                            value: 0.0005,
-                            scriptPubKey: { address: "addrX", hex: "" },
-                        },
-                    ],
-                    vin: [],
-                },
-            ]);
+            // 2. historyToExplorerTxs internals: raw tx batch + headers batch
+            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
+            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
             firstCb(firstScripthash, "deadbeef");
 
-            // Wait for the async handleStatusChange chain to settle.
-            await new Promise((r) => setTimeout(r, 0));
+            // The chain involves two awaited round-trips before the callback
+            // fires; pump the microtask queue a few times rather than relying
+            // on a single setTimeout(0).
+            for (let i = 0; i < 5; i++) {
+                await new Promise((r) => setTimeout(r, 0));
+            }
+
             expect(events).toHaveLength(1);
+            const delivered = (events[0] as Array<{ txid: string }>)[0];
+            expect(delivered.txid).toBe("newtx");
 
             stop();
             expect(wsMock.unsubscribe).toHaveBeenCalledTimes(2);

@@ -13,6 +13,7 @@ const EstimateFee = "blockchain.estimatefee";
 const GetBlockHeader = "blockchain.block.header";
 const GetHistoryMethod = "blockchain.scripthash.get_history";
 const GetTransactionMethod = "blockchain.transaction.get";
+const GetTransactionMerkleMethod = "blockchain.transaction.get_merkle";
 const SubscribeStatusMethod = "blockchain.scripthash";
 const SubscribeHeadersMethod = "blockchain.headers";
 const GetRelayFeeMethod = "blockchain.relayfee";
@@ -201,6 +202,36 @@ export class WsElectrumChainSource {
             params: [txid, true],
         }));
         return this.ws.batchRequest<VerboseTransaction[]>(...requests);
+    }
+
+    /**
+     * Look up the block height of a confirmed transaction without relying
+     * on the verbose-tx endpoint. `blockchain.transaction.get_merkle` is
+     * part of the standard SPV protocol and is supported by both Fulcrum
+     * and electrs (whereas `blockchain.transaction.get` with verbose=true
+     * is Fulcrum-only). Returns `null` when the tx is in the mempool —
+     * electrs in that case rejects with a "not yet in a block" error.
+     */
+    async fetchTxMerkle(txid: string): Promise<{ blockHeight: number } | null> {
+        try {
+            const result = await this.ws.request<{ block_height: number }>(
+                GetTransactionMerkleMethod,
+                txid
+            );
+            if (
+                !result ||
+                typeof result.block_height !== "number" ||
+                result.block_height <= 0
+            ) {
+                return null;
+            }
+            return { blockHeight: result.block_height };
+        } catch {
+            // electrs raises when the tx isn't yet in a block; treat any
+            // failure as "mempool / unknown" rather than propagating —
+            // callers map a `null` here to `{confirmed: false}`.
+            return null;
+        }
     }
 
     async unsubscribeScriptStatus(script: Uint8Array): Promise<void> {
@@ -643,41 +674,95 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     async getTransactions(address: string): Promise<ExplorerTransaction[]> {
         const script = this.encodeAddress(address);
         const history = await this.chain.fetchHistory(script);
-
         if (history.length === 0) return [];
-
-        const txids = history.map((h) => h.tx_hash);
-        const verboseTxs = await this.chain.fetchVerboseTransactions(txids);
-
-        return verboseTxs.map((vtx) => this.verboseToExplorer(vtx));
+        return this.historyToExplorerTxs(history);
     }
 
     /**
-     * Map an electrum verbose transaction to the ExplorerTransaction shape.
-     *
-     * Output values are derived from the raw transaction hex when available,
-     * never from the floating-point `value` field returned by the daemon.
-     * That field has 8 decimal places and `Math.round(value * 1e8)` is safe
-     * in the common case but a footgun for protocol-level money handling —
-     * the raw bytes are exact.
+     * Resolve a list of `{tx_hash, height}` entries (as returned by the
+     * scripthash history endpoint) into ExplorerTransaction shape **without
+     * using the verbose-tx endpoint**, which only Fulcrum implements. We
+     * reconstruct everything the verbose response would have given us:
+     *   - vouts ← parse the raw tx (exact sat amounts, no float precision risk)
+     *   - block_time ← batch-fetch the block headers for the heights present
+     *   - addresses ← decode each output's scriptPubKey via @scure/btc-signer
      */
-    private verboseToExplorer(vtx: VerboseTransaction): ExplorerTransaction {
-        const exactValuesByVout = parseExactSats(vtx);
+    private async historyToExplorerTxs(
+        history: TransactionHistory[]
+    ): Promise<ExplorerTransaction[]> {
+        const txids = history.map((h) => h.tx_hash);
+        const rawTxs = await this.chain.fetchTransactions(txids);
+        const rawHexByTxid = new Map(rawTxs.map((t) => [t.txID, t.hex]));
+
+        // De-duplicated batch lookup of block headers — many history
+        // entries usually share the same height, so this collapses N
+        // round-trips into 1 batch request with K ≤ N parameters.
+        const confirmedHeights = [
+            ...new Set(history.map((h) => h.height).filter((h) => h > 0)),
+        ];
+        const blockTimeByHeight = new Map<number, number>();
+        if (confirmedHeights.length > 0) {
+            const headers =
+                await this.chain.fetchBlockHeaders(confirmedHeights);
+            for (const header of headers) {
+                blockTimeByHeight.set(
+                    header.height,
+                    parseBlockHeader(header.hex).timestamp
+                );
+            }
+        }
+
+        return history.map((entry) =>
+            this.buildExplorerTx(
+                entry,
+                rawHexByTxid.get(entry.tx_hash),
+                blockTimeByHeight
+            )
+        );
+    }
+
+    /**
+     * Build an ExplorerTransaction from a history entry plus the raw tx hex
+     * (when known) and a height→block_time map. Falls back to an empty
+     * vout array if the raw hex is missing or unparseable so the txid + status
+     * still surface — callers tracking by id won't lose the tx.
+     */
+    private buildExplorerTx(
+        entry: TransactionHistory,
+        rawHex: string | undefined,
+        blockTimeByHeight: Map<number, number>
+    ): ExplorerTransaction {
+        const vout: ExplorerTransaction["vout"] = [];
+        if (rawHex) {
+            try {
+                const tx = Transaction.fromRaw(hex.decode(rawHex), {
+                    allowUnknownOutputs: true,
+                    allowUnknownInputs: true,
+                });
+                for (let i = 0; i < tx.outputsLength; i++) {
+                    const output = tx.getOutput(i);
+                    const scriptHex = output.script
+                        ? hex.encode(output.script)
+                        : "";
+                    vout.push({
+                        scriptpubkey_address: scriptHex
+                            ? (this.chain.addressForScript(scriptHex) ?? "")
+                            : "",
+                        value: (output.amount ?? 0n).toString(),
+                    });
+                }
+            } catch {
+                // Malformed hex; leave vout empty rather than failing the
+                // whole batch — the txid + status are still useful.
+            }
+        }
+
         return {
-            txid: vtx.txid,
-            vout: vtx.vout.map((v) => ({
-                scriptpubkey_address:
-                    v.scriptPubKey.address ||
-                    v.scriptPubKey.addresses?.[0] ||
-                    this.chain.addressForScript(v.scriptPubKey.hex) ||
-                    "",
-                value:
-                    exactValuesByVout?.get(v.n) ??
-                    String(Math.round(v.value * 1e8)),
-            })),
+            txid: entry.tx_hash,
+            vout,
             status: {
-                confirmed: vtx.confirmations > 0,
-                block_time: vtx.blocktime || vtx.time || 0,
+                confirmed: entry.height > 0,
+                block_time: blockTimeByHeight.get(entry.height) ?? 0,
             },
         };
     }
@@ -702,21 +787,19 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         | { confirmed: false }
         | { confirmed: true; blockTime: number; blockHeight: number }
     > {
-        const vtx = await this.chain.fetchVerboseTransaction(txid);
-        if (vtx.confirmations <= 0) {
-            return { confirmed: false };
-        }
+        // Use `transaction.get_merkle` rather than the verbose `transaction.get`
+        // because electrs (used by mempool.space, blockstream.info, and the
+        // nigiri regtest) doesn't implement verbose. get_merkle is part of the
+        // standard SPV protocol and supported by every Electrum server.
+        const merkle = await this.chain.fetchTxMerkle(txid);
+        if (!merkle) return { confirmed: false };
 
-        // Get block height from the verbose tx's blockhash
-        // We need the height, which is confirmations-based:
-        // height = tipHeight - confirmations + 1
-        const tip = await this.chain.subscribeHeaders();
-        const blockHeight = tip.height - vtx.confirmations + 1;
-
+        const header = await this.chain.fetchBlockHeader(merkle.blockHeight);
+        const { timestamp } = parseBlockHeader(header.hex);
         return {
             confirmed: true,
-            blockTime: vtx.blocktime || vtx.time || 0,
-            blockHeight,
+            blockHeight: merkle.blockHeight,
+            blockTime: timestamp,
         };
     }
 
@@ -777,18 +860,20 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
             const history = await this.chain.fetchHistory(script);
             const known = knownTxids.get(scripthash) ?? new Set<string>();
-            const newTxids = history
-                .map((h) => h.tx_hash)
-                .filter((txid) => !known.has(txid));
+            const newEntries = history.filter(
+                (entry) => !known.has(entry.tx_hash)
+            );
 
-            if (newTxids.length === 0) return;
+            if (newEntries.length === 0) return;
 
-            for (const txid of newTxids) known.add(txid);
+            for (const entry of newEntries) known.add(entry.tx_hash);
             knownTxids.set(scripthash, known);
 
-            const verboseTxs =
-                await this.chain.fetchVerboseTransactions(newTxids);
-            eventCallback(verboseTxs.map((vtx) => this.verboseToExplorer(vtx)));
+            // Map the new history entries through the same non-verbose
+            // pipeline getTransactions uses, so subscribe-driven and
+            // poll-driven callers see ExplorerTransactions of identical shape.
+            const explorerTxs = await this.historyToExplorerTxs(newEntries);
+            eventCallback(explorerTxs);
         };
 
         const handleStatusChange = (scripthash: string): Promise<void> => {
@@ -869,28 +954,4 @@ function childTxidFromHex(txHex: string): string {
         allowUnknownInputs: true,
     });
     return tx.id;
-}
-
-/**
- * Decode `vtx.hex` (when the daemon includes it) and return a map of
- * vout-index → exact sat amount as a base-10 string. Returns `null` if
- * the hex is missing or unparseable; callers should fall back to the
- * float-derived value in that case.
- */
-function parseExactSats(vtx: VerboseTransaction): Map<number, string> | null {
-    if (!vtx.hex) return null;
-    try {
-        const tx = Transaction.fromRaw(hex.decode(vtx.hex), {
-            allowUnknownOutputs: true,
-        });
-        const result = new Map<number, string>();
-        for (let i = 0; i < tx.outputsLength; i++) {
-            const output = tx.getOutput(i);
-            if (output.amount === undefined) continue;
-            result.set(i, output.amount.toString());
-        }
-        return result;
-    } catch {
-        return null;
-    }
 }
