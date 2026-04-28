@@ -954,8 +954,20 @@ describe("Wallet", () => {
 
             expect(getSubscriptionSpy).toHaveBeenCalledTimes(0);
 
-            const stop = await wallet.notifyIncomingFunds(() => {});
+            // Boot the ContractManager up-front so its watcher is already
+            // running with an open SSE stream. Without this baseline,
+            // `notifyIncomingFunds` would lazy-init the CM itself and a
+            // regression where it opened its own subscription would still
+            // produce exactly one `getSubscription` call.
+            await wallet.getContractManager();
             // Yield so the cold-start kick reaches `getSubscription`.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+
+            expect(getSubscriptionSpy).toHaveBeenCalledTimes(1);
+
+            const stop = await wallet.notifyIncomingFunds(() => {});
+            // Yield again to surface any extra stream opened by
+            // `notifyIncomingFunds`.
             await new Promise((resolve) => setTimeout(resolve, 0));
 
             expect(getSubscriptionSpy).toHaveBeenCalledTimes(1);
