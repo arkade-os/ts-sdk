@@ -698,44 +698,38 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const rawTxs = await this.chain.fetchTransactions(txids);
         const rawHexByTxid = new Map(rawTxs.map((t) => [t.txID, t.hex]));
 
-        // De-duplicated header lookup. Try the batch first (fast path:
-        // 1 round-trip for the common case); fall back to per-height
-        // calls only if the batch rejects, because electrs sometimes
-        // races: a tx can show as confirmed via listunspent before its
-        // block header is indexable, which makes a batch including that
-        // height fail wholesale. The old verbose-tx code tolerated
-        // missing block_time by falling back to 0; we preserve that
-        // semantic so a fresh-block race doesn't poison the whole
-        // history mapping.
+        // De-duplicated per-height header lookup via Promise.allSettled.
+        //
+        // We deliberately avoid `fetchBlockHeaders` (which uses the library's
+        // batchRequest) here: when one element of a batch fails (e.g. a height
+        // that hits electrs's "missingheight" index-lag race), the library's
+        // `Promise.all` rejects with that one error but leaves the other
+        // in-flight requests pending. When their responses arrive later, the
+        // library rejects them too — and nobody's awaiting them, so they
+        // surface as unhandled rejections that crash the test runner.
+        //
+        // Per-height fetches with allSettled give every promise a handler,
+        // and missing block_time degrades to 0 the same way the old verbose-
+        // tx code did via `vtx.blocktime || vtx.time || 0`. Txid + confirmed
+        // status are still authoritative.
         const confirmedHeights = [
             ...new Set(history.map((h) => h.height).filter((h) => h > 0)),
         ];
         const blockTimeByHeight = new Map<number, number>();
         if (confirmedHeights.length > 0) {
-            try {
-                const headers =
-                    await this.chain.fetchBlockHeaders(confirmedHeights);
-                for (const header of headers) {
+            const settled = await Promise.allSettled(
+                confirmedHeights.map((h) => this.chain.fetchBlockHeader(h))
+            );
+            settled.forEach((res) => {
+                if (res.status === "fulfilled") {
                     blockTimeByHeight.set(
-                        header.height,
-                        parseBlockHeader(header.hex).timestamp
+                        res.value.height,
+                        parseBlockHeader(res.value.hex).timestamp
                     );
                 }
-            } catch {
-                const settled = await Promise.allSettled(
-                    confirmedHeights.map((h) => this.chain.fetchBlockHeader(h))
-                );
-                settled.forEach((res) => {
-                    if (res.status === "fulfilled") {
-                        blockTimeByHeight.set(
-                            res.value.height,
-                            parseBlockHeader(res.value.hex).timestamp
-                        );
-                    }
-                    // Failures leave the height absent from the map →
-                    // buildExplorerTx falls back to block_time = 0.
-                });
-            }
+                // Rejections leave the height absent from the map →
+                // buildExplorerTx falls back to block_time = 0.
+            });
         }
 
         return history.map((entry) =>

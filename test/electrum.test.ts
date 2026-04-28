@@ -504,8 +504,8 @@ describe("ElectrumOnchainProvider", () => {
             ]);
             // 2. fetchTransactions([txid]) — ws.batchRequest returns raw hex
             wsMock.batchRequest.mockResolvedValueOnce([txHex]);
-            // 3. fetchBlockHeaders([100]) — ws.batchRequest returns headers
-            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+            // 3. Per-height fetchBlockHeader for height 100 — ws.request
+            wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
 
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
             expect(txs).toHaveLength(1);
@@ -538,7 +538,7 @@ describe("ElectrumOnchainProvider", () => {
             expect(txs[0].status).toEqual({ confirmed: false, block_time: 0 });
         });
 
-        it("batches block-header lookups across history entries that share heights", async () => {
+        it("deduplicates block-header lookups across history entries that share heights", async () => {
             const { txHex } = buildTestTx();
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "tx-a", height: 200 },
@@ -546,36 +546,30 @@ describe("ElectrumOnchainProvider", () => {
                 { tx_hash: "tx-c", height: 201 },
             ]);
             wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex, txHex]);
-            // Only TWO unique heights → ONE batch with two entries.
-            wsMock.batchRequest.mockResolvedValueOnce([
-                GENESIS_HEADER_HEX,
-                GENESIS_HEADER_HEX,
-            ]);
+            // Two unique heights → exactly TWO ws.request calls for headers.
+            wsMock.request
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX)
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX);
 
             const txs = await provider.getTransactions(REGTEST_ADDRESS);
             expect(txs).toHaveLength(3);
-            // Two batchRequest calls total: one for txs, one for headers.
-            expect(wsMock.batchRequest).toHaveBeenCalledTimes(2);
+            const headerCalls = wsMock.request.mock.calls.filter(
+                (c) => c[0] === "blockchain.block.header"
+            );
+            expect(headerCalls).toHaveLength(2);
         });
 
-        it("falls back to per-height header fetches when the batch fails (electrs index lag race)", async () => {
+        it("tolerates per-height header failures without losing the rest of the batch (electrs index lag race)", async () => {
             // electrs sometimes returns a tx as confirmed (listunspent height>0)
-            // before its block header is indexable, which makes a batched
-            // block.header request reject with "missingheight". The provider
-            // must tolerate this — the txid + status are still correct, only
-            // block_time falls back to 0 for the affected entry.
+            // before its block header is indexable. Per-height fetches via
+            // Promise.allSettled keep one failure from poisoning the others.
             const { txHex } = buildTestTx();
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "tx-good", height: 100 },
                 { tx_hash: "tx-lag", height: 999 }, // lagging height
             ]);
             wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex]); // raw tx batch
-            // Header batch rejects (one height not yet indexable).
-            wsMock.batchRequest.mockRejectedValueOnce(
-                new Error("missingheight")
-            );
-            // Provider should fall back to individual fetches; one succeeds,
-            // the other still fails.
+            // One header succeeds, the other rejects with missingheight.
             wsMock.request
                 .mockResolvedValueOnce(GENESIS_HEADER_HEX) // block.header(100)
                 .mockRejectedValueOnce(new Error("missingheight")); // block.header(999)
@@ -592,6 +586,30 @@ describe("ElectrumOnchainProvider", () => {
             expect(lag.status).toEqual({ confirmed: true, block_time: 0 });
         });
 
+        it("never uses the library batchRequest for headers (avoids unhandled-rejection leak)", async () => {
+            // When one element of a batchRequest rejects, the library's
+            // Promise.all rejects with that error but leaves the other
+            // in-flight requests pending. Their later error responses
+            // surface as unhandled rejections that crash the test runner.
+            // Using per-height ws.request calls under Promise.allSettled
+            // gives every promise an explicit handler.
+            const { txHex } = buildTestTx();
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "tx-a", height: 100 },
+                { tx_hash: "tx-b", height: 101 },
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex]); // raw tx batch (only one batchRequest)
+            wsMock.request
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX)
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX);
+
+            await provider.getTransactions(REGTEST_ADDRESS);
+
+            // Exactly ONE batchRequest call (for raw txs) — headers MUST
+            // go through ws.request to avoid the unhandled-rejection leak.
+            expect(wsMock.batchRequest).toHaveBeenCalledTimes(1);
+        });
+
         it("rejects malformed addresses with a descriptive error", async () => {
             await expect(
                 provider.getTransactions("not-a-real-address")
@@ -606,7 +624,7 @@ describe("ElectrumOnchainProvider", () => {
                 { tx_hash: "txbad", height: 100 },
             ]);
             wsMock.batchRequest.mockResolvedValueOnce(["zz"]); // not valid hex
-            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+            wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX); // header for height 100
 
             await expect(
                 provider.getTransactions(REGTEST_ADDRESS)
@@ -659,9 +677,10 @@ describe("ElectrumOnchainProvider", () => {
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "newtx", height: 100 },
             ]);
-            // 2. historyToExplorerTxs internals: raw tx batch + headers batch
+            // 2. fetchTransactions batchRequest for raw tx hex
             wsMock.batchRequest.mockResolvedValueOnce([txHex]);
-            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+            // 3. Per-height block.header request (no longer batched)
+            wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
             firstCb(firstScripthash, "deadbeef");
 
             // The chain involves two awaited round-trips before the callback
@@ -722,8 +741,8 @@ describe("ElectrumOnchainProvider", () => {
             wsMock.request.mockResolvedValueOnce([
                 { tx_hash: "newtx", height: 100 },
             ]);
-            wsMock.batchRequest.mockResolvedValueOnce([txHex]);
-            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+            wsMock.batchRequest.mockResolvedValueOnce([txHex]); // raw tx
+            wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX); // header
             cb(scripthash, "status1");
             for (let i = 0; i < 6; i++)
                 await new Promise((r) => setTimeout(r, 0));
@@ -735,7 +754,7 @@ describe("ElectrumOnchainProvider", () => {
                 { tx_hash: "newtx", height: 100 },
             ]);
             wsMock.batchRequest.mockResolvedValueOnce([txHex]);
-            wsMock.batchRequest.mockResolvedValueOnce([GENESIS_HEADER_HEX]);
+            wsMock.request.mockResolvedValueOnce(GENESIS_HEADER_HEX);
             cb(scripthash, "status2");
             for (let i = 0; i < 6; i++)
                 await new Promise((r) => setTimeout(r, 0));
