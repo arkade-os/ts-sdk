@@ -141,7 +141,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
-    private _syncVtxosInflight?: Promise<void>;
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
     // from getVtxos() so concurrent callers (UI, VtxoManager auto-renewal,
     // another send/settle racing the _txLock) can't reselect coins that are
@@ -763,24 +762,14 @@ export class ReadonlyWallet implements IReadonlyWallet {
     /**
      * Get all pkScript hex strings for the wallet's own addresses
      * (both delegate and non-delegate, current and historical).
-     * Falls back to only the current script if ContractManager is not yet initialized.
      */
     async getWalletScripts(): Promise<string[]> {
-        // Only use the contract manager if it's already initialized or
-        // currently initializing — never trigger initialization here to
-        // avoid blocking callers that don't need it.
-        if (this._contractManager || this._contractManagerInitializing) {
-            try {
-                const manager = await this.getContractManager();
-                const contracts = await manager.getContracts({
-                    type: ["default", "delegate"],
-                });
-                if (contracts.length > 0) {
-                    return contracts.map((c) => c.script);
-                }
-            } catch {
-                // fall through to current script only
-            }
+        const manager = await this.getContractManager();
+        const contracts = await manager.getContracts({
+            type: ["default", "delegate"],
+        });
+        if (contracts.length > 0) {
+            return contracts.map((c) => c.script);
         }
         return [hex.encode(this.offchainTapscript.pkScript)];
     }
@@ -798,23 +787,18 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const currentScriptHex = hex.encode(this.offchainTapscript.pkScript);
         map.set(currentScriptHex, this.offchainTapscript);
 
-        if (this._contractManager) {
-            try {
-                const contracts = await this._contractManager.getContracts({
-                    type: ["default", "delegate"],
-                });
-                for (const contract of contracts) {
-                    if (map.has(contract.script)) continue;
-                    const handler = contractHandlers.get(contract.type);
-                    if (handler) {
-                        const script = handler.createScript(contract.params) as
-                            | DefaultVtxo.Script
-                            | DelegateVtxo.Script;
-                        map.set(contract.script, script);
-                    }
-                }
-            } catch {
-                // ContractManager error — only current script in map
+        const manager = await this.getContractManager();
+        const contracts = await manager.getContracts({
+            type: ["default", "delegate"],
+        });
+        for (const contract of contracts) {
+            if (map.has(contract.script)) continue;
+            const handler = contractHandlers.get(contract.type);
+            if (handler) {
+                const script = handler.createScript(contract.params) as
+                    | DefaultVtxo.Script
+                    | DelegateVtxo.Script;
+                map.set(contract.script, script);
             }
         }
 
