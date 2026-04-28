@@ -1,6 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { TapLeafScript, VtxoScript } from "../script/base";
-import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
+import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
+import { VirtualCoin, TapLeaves } from "../wallet";
 import { ContractFilter } from "../repositories";
 
 /**
@@ -76,10 +76,11 @@ export interface Contract {
 /**
  * A virtual output that has been associated with a specific contract.
  */
-export interface ContractVtxo extends ExtendedVirtualCoin {
-    /** The contract script this virtual output belongs to. */
-    contractScript: string;
-}
+export type ContractVtxo = VirtualCoin &
+    Partial<TapLeaves & EncodedVtxoScript> & {
+        extraWitness?: Bytes[];
+        contractScript: string;
+    };
 
 /**
  * Result of path selection, including the tapleaf to use and any extra witness data.
