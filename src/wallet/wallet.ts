@@ -101,10 +101,31 @@ import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 
-// Hardcoded unilateral exit delay for mainnet (~7 days in seconds).
-// Pinned here so that address derivation stays stable for existing mainnet
-// wallets even after the server lowers the delay it advertises.
+// Historical unilateral exit delay for mainnet (~7 days in seconds).
+// Kept so existing wallets can still discover and spend VTXOs sent to the
+// legacy address after arkd starts advertising a different delay.
 const MAINNET_UNILATERAL_EXIT_DELAY = 605184n;
+
+function delayToTimelock(delay: bigint): RelativeTimelock {
+    return {
+        value: delay,
+        type: delay < 512n ? "blocks" : "seconds",
+    };
+}
+
+function dedupeTimelocks(timelocks: RelativeTimelock[]): RelativeTimelock[] {
+    const seen = new Set<string>();
+    const deduped: RelativeTimelock[] = [];
+
+    for (const timelock of timelocks) {
+        const sequence = timelockToSequence(timelock).toString();
+        if (seen.has(sequence)) continue;
+        seen.add(sequence);
+        deduped.push(timelock);
+    }
+
+    return deduped;
+}
 
 export type IncomingFunds =
     | {
@@ -141,6 +162,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
     private readonly _assetManager: IReadonlyAssetManager;
+    private _syncVtxosInflight?: Promise<void>;
+    readonly walletContractTimelocks: RelativeTimelock[];
     // Outpoints ("txid:vout") committed to an in-flight settle/send. Filtered
     // from getVtxos() so concurrent callers (UI, VtxoManager auto-renewal,
     // another send/settle racing the _txLock) can't reselect coins that are
@@ -164,7 +187,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
         public readonly walletRepository: WalletRepository,
         public readonly contractRepository: ContractRepository,
         readonly delegatorProvider?: DelegatorProvider,
-        watcherConfig?: ReadonlyWalletConfig["watcherConfig"]
+        watcherConfig?: ReadonlyWalletConfig["watcherConfig"],
+        walletContractTimelocks?: RelativeTimelock[]
     ) {
         // Guard: detect identity/server network mismatch for descriptor-based identities.
         // This duplicates the check in setupWalletConfig() so that subclasses
@@ -183,6 +207,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
         this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
+        // Defensive for direct-construction callers; setupWalletConfig already
+        // passes a deduped list through the public create() factories.
+        this.walletContractTimelocks =
+            walletContractTimelocks && walletContractTimelocks.length > 0
+                ? dedupeTimelocks(walletContractTimelocks)
+                : [
+                      this.offchainTapscript.options.csvTimelock ??
+                          DefaultVtxo.Script.DEFAULT_TIMELOCK,
+                  ];
     }
 
     /**
@@ -265,19 +298,20 @@ export class ReadonlyWallet implements IReadonlyWallet {
             }
         }
 
-        // On mainnet, pin the unilateral exit delay to the historical value so
-        // that addresses derived by existing wallets remain stable even if the
-        // server starts advertising a shorter delay.
-        const unilateralExitDelay =
-            info.network === "bitcoin"
-                ? MAINNET_UNILATERAL_EXIT_DELAY
-                : info.unilateralExitDelay;
+        const arkdExitTimelock = delayToTimelock(info.unilateralExitDelay);
 
         // create unilateral exit timelock
-        const exitTimelock: RelativeTimelock = config.exitTimelock ?? {
-            value: unilateralExitDelay,
-            type: unilateralExitDelay < 512n ? "blocks" : "seconds",
-        };
+        const exitTimelock: RelativeTimelock =
+            config.exitTimelock ?? arkdExitTimelock;
+
+        const walletContractTimelocks = config.exitTimelock
+            ? [exitTimelock]
+            : dedupeTimelocks([
+                  arkdExitTimelock,
+                  ...(info.network === "bitcoin"
+                      ? [delayToTimelock(MAINNET_UNILATERAL_EXIT_DELAY)]
+                      : []),
+              ]);
 
         // validate boarding timelock passed in config if any
         if (config.boardingTimelock) {
@@ -339,6 +373,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             contractRepository,
             info,
             delegatorProvider: config.delegatorProvider,
+            walletContractTimelocks,
         };
     }
 
@@ -368,7 +403,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
             setup.walletRepository,
             setup.contractRepository,
             setup.delegatorProvider,
-            config.watcherConfig
+            config.watcherConfig,
+            setup.walletContractTimelocks
         );
     }
 
@@ -380,8 +416,8 @@ export class ReadonlyWallet implements IReadonlyWallet {
     }
 
     /**
-     * Get the contract script for the wallet's default address.
-     * This is the pkScript hex, used to identify the wallet in ContractManager.
+     * Get the pkScript hex for the wallet's primary offchain address.
+     * For the full wallet-owned script set registered in ContractManager, use getWalletScripts().
      */
     get defaultContractScript(): string {
         return hex.encode(this.offchainTapscript.pkScript);
@@ -768,10 +804,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const contracts = await manager.getContracts({
             type: ["default", "delegate"],
         });
-        if (contracts.length > 0) {
-            return contracts.map((c) => c.script);
-        }
-        return [hex.encode(this.offchainTapscript.pkScript)];
+        return contracts.map((c) => c.script);
     }
 
     /**
@@ -782,10 +815,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
         Map<string, DefaultVtxo.Script | DelegateVtxo.Script>
     > {
         const map = new Map<string, DefaultVtxo.Script | DelegateVtxo.Script>();
-
-        // Always include the current script
-        const currentScriptHex = hex.encode(this.offchainTapscript.pkScript);
-        map.set(currentScriptHex, this.offchainTapscript);
 
         const manager = await this.getContractManager();
         const contracts = await manager.getContracts({
@@ -872,76 +901,58 @@ export class ReadonlyWallet implements IReadonlyWallet {
             watcherConfig: this.watcherConfig,
         });
 
-        // Register the wallet's current address as a contract
-        const csvTimelock =
-            this.offchainTapscript.options.csvTimelock ??
-            DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        const csvTimelockStr = timelockToSequence(csvTimelock).toString();
-
-        const isDelegateScript =
-            this.offchainTapscript instanceof DelegateVtxo.Script;
-
-        if (isDelegateScript) {
-            const delegateScript = this
-                .offchainTapscript as DelegateVtxo.Script;
-
-            // Register the delegate contract (current address)
-            await manager.createContract({
-                type: "delegate",
-                params: {
-                    pubKey: hex.encode(delegateScript.options.pubKey),
-                    serverPubKey: hex.encode(
-                        delegateScript.options.serverPubKey
-                    ),
-                    delegatePubKey: hex.encode(
-                        delegateScript.options.delegatePubKey
-                    ),
-                    csvTimelock: csvTimelockStr,
-                },
-                script: this.defaultContractScript,
-                address: await this.getAddress(),
-                state: "active",
-            });
-
-            // Also register the non-delegate version so old virtual outputs remain visible
-            const nonDelegateScript = new DefaultVtxo.Script({
-                pubKey: delegateScript.options.pubKey,
-                serverPubKey: delegateScript.options.serverPubKey,
+        for (const csvTimelock of this.walletContractTimelocks) {
+            const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+            const defaultScript = new DefaultVtxo.Script({
+                pubKey: this.offchainTapscript.options.pubKey,
+                serverPubKey: this.offchainTapscript.options.serverPubKey,
                 csvTimelock,
             });
+
             await manager.createContract({
                 type: "default",
                 params: {
-                    pubKey: hex.encode(delegateScript.options.pubKey),
+                    pubKey: hex.encode(defaultScript.options.pubKey),
                     serverPubKey: hex.encode(
-                        delegateScript.options.serverPubKey
+                        defaultScript.options.serverPubKey
                     ),
                     csvTimelock: csvTimelockStr,
                 },
-                script: hex.encode(nonDelegateScript.pkScript),
-                address: nonDelegateScript
+                script: hex.encode(defaultScript.pkScript),
+                address: defaultScript
                     .address(this.network.hrp, this.arkServerPublicKey)
                     .encode(),
                 state: "active",
             });
-        } else {
-            // Register the default contract (current address)
-            await manager.createContract({
-                type: "default",
-                params: {
-                    pubKey: hex.encode(this.offchainTapscript.options.pubKey),
-                    serverPubKey: hex.encode(
-                        this.offchainTapscript.options.serverPubKey
-                    ),
-                    csvTimelock: csvTimelockStr,
-                },
-                script: this.defaultContractScript,
-                address: await this.getAddress(),
-                state: "active",
-            });
 
-            // Any old "delegate" contract from a prior wallet incarnation
-            // is already loaded by ContractManager.initialize() from ContractRepository
+            if (this.offchainTapscript instanceof DelegateVtxo.Script) {
+                const delegateScript = new DelegateVtxo.Script({
+                    pubKey: this.offchainTapscript.options.pubKey,
+                    serverPubKey: this.offchainTapscript.options.serverPubKey,
+                    delegatePubKey:
+                        this.offchainTapscript.options.delegatePubKey,
+                    csvTimelock,
+                });
+
+                await manager.createContract({
+                    type: "delegate",
+                    params: {
+                        pubKey: hex.encode(delegateScript.options.pubKey),
+                        serverPubKey: hex.encode(
+                            delegateScript.options.serverPubKey
+                        ),
+                        delegatePubKey: hex.encode(
+                            delegateScript.options.delegatePubKey
+                        ),
+                        csvTimelock: csvTimelockStr,
+                    },
+                    script: hex.encode(delegateScript.pkScript),
+                    address: delegateScript
+                        .address(this.network.hrp, this.arkServerPublicKey)
+                        .encode(),
+                    state: "active",
+                });
+            }
         }
 
         return manager;
@@ -1075,7 +1086,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         renewalConfig?: WalletConfig["renewalConfig"],
         delegatorProvider?: DelegatorProvider,
         watcherConfig?: WalletConfig["watcherConfig"],
-        settlementConfig?: WalletConfig["settlementConfig"]
+        settlementConfig?: WalletConfig["settlementConfig"],
+        walletContractTimelocks?: RelativeTimelock[]
     ) {
         super(
             identity,
@@ -1089,7 +1101,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             walletRepository,
             contractRepository,
             delegatorProvider,
-            watcherConfig
+            watcherConfig,
+            walletContractTimelocks
         );
         this.identity = identity;
 
@@ -1227,7 +1240,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             config.renewalConfig,
             config.delegatorProvider,
             config.watcherConfig,
-            config.settlementConfig
+            config.settlementConfig,
+            setup.walletContractTimelocks
         );
 
         await wallet.getVtxoManager();
@@ -1270,7 +1284,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.walletRepository,
             this.contractRepository,
             this.delegatorProvider,
-            this.watcherConfig
+            this.watcherConfig,
+            this.walletContractTimelocks
         );
     }
 
