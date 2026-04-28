@@ -698,21 +698,43 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         const rawTxs = await this.chain.fetchTransactions(txids);
         const rawHexByTxid = new Map(rawTxs.map((t) => [t.txID, t.hex]));
 
-        // De-duplicated batch lookup of block headers — many history
-        // entries usually share the same height, so this collapses N
-        // round-trips into 1 batch request with K ≤ N parameters.
+        // De-duplicated header lookup. Try the batch first (fast path:
+        // 1 round-trip for the common case); fall back to per-height
+        // calls only if the batch rejects, because electrs sometimes
+        // races: a tx can show as confirmed via listunspent before its
+        // block header is indexable, which makes a batch including that
+        // height fail wholesale. The old verbose-tx code tolerated
+        // missing block_time by falling back to 0; we preserve that
+        // semantic so a fresh-block race doesn't poison the whole
+        // history mapping.
         const confirmedHeights = [
             ...new Set(history.map((h) => h.height).filter((h) => h > 0)),
         ];
         const blockTimeByHeight = new Map<number, number>();
         if (confirmedHeights.length > 0) {
-            const headers =
-                await this.chain.fetchBlockHeaders(confirmedHeights);
-            for (const header of headers) {
-                blockTimeByHeight.set(
-                    header.height,
-                    parseBlockHeader(header.hex).timestamp
+            try {
+                const headers =
+                    await this.chain.fetchBlockHeaders(confirmedHeights);
+                for (const header of headers) {
+                    blockTimeByHeight.set(
+                        header.height,
+                        parseBlockHeader(header.hex).timestamp
+                    );
+                }
+            } catch {
+                const settled = await Promise.allSettled(
+                    confirmedHeights.map((h) => this.chain.fetchBlockHeader(h))
                 );
+                settled.forEach((res) => {
+                    if (res.status === "fulfilled") {
+                        blockTimeByHeight.set(
+                            res.value.height,
+                            parseBlockHeader(res.value.hex).timestamp
+                        );
+                    }
+                    // Failures leave the height absent from the map →
+                    // buildExplorerTx falls back to block_time = 0.
+                });
             }
         }
 

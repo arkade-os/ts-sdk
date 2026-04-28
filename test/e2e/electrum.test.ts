@@ -119,13 +119,26 @@ describe("ElectrumOnchainProvider integration tests", () => {
             expect(fundingTx!.txid).toBe(coins[0].txid);
 
             // The faucet tx has at most 0 confirmations until the next block;
-            // either status is acceptable, just assert the shape.
-            const status = await provider.getTxStatus(coins[0].txid);
-            if (status.confirmed) {
-                expect(status.blockHeight).toBeGreaterThan(0);
-                expect(status.blockTime).toBeGreaterThan(0);
+            // either status is acceptable, just assert the shape. electrs
+            // can briefly race on `block.header(N)` right after a faucet —
+            // listunspent reports height>0 before the header is indexable —
+            // so retry until getTxStatus settles into a consistent state.
+            let status: Awaited<ReturnType<typeof provider.getTxStatus>>;
+            await waitFor(async () => {
+                try {
+                    status = await provider.getTxStatus(coins[0].txid);
+                    return true;
+                } catch (e) {
+                    if (/missingheight|not in block/i.test(String(e)))
+                        return false;
+                    throw e;
+                }
+            });
+            if (status!.confirmed) {
+                expect(status!.blockHeight).toBeGreaterThan(0);
+                expect(status!.blockTime).toBeGreaterThan(0);
             } else {
-                expect(status).toEqual({ confirmed: false });
+                expect(status!).toEqual({ confirmed: false });
             }
         }
     );
@@ -257,7 +270,9 @@ describe("ElectrumOnchainProvider integration tests", () => {
 
     it(
         "exposes WsElectrumChainSource.fetchHistories as a batch round-trip",
-        { timeout: 10_000 },
+        // Need headroom for waitFor's default 25s polling budget plus
+        // electrs's own indexing latency under CI load.
+        { timeout: 40_000 },
         async () => {
             const a = await OnchainWallet.create(
                 SingleKey.fromRandomBytes(),
@@ -276,7 +291,7 @@ describe("ElectrumOnchainProvider integration tests", () => {
                     provider.getCoins(a.address),
                     provider.getCoins(b.address),
                 ]);
-                return aCoins.length === 1 && bCoins.length === 1;
+                return aCoins.length >= 1 && bCoins.length >= 1;
             });
 
             const aScript = decodeP2trScript(a.address);

@@ -528,6 +528,40 @@ describe("ElectrumOnchainProvider", () => {
             expect(wsMock.batchRequest).toHaveBeenCalledTimes(2);
         });
 
+        it("falls back to per-height header fetches when the batch fails (electrs index lag race)", async () => {
+            // electrs sometimes returns a tx as confirmed (listunspent height>0)
+            // before its block header is indexable, which makes a batched
+            // block.header request reject with "missingheight". The provider
+            // must tolerate this — the txid + status are still correct, only
+            // block_time falls back to 0 for the affected entry.
+            const { txHex } = buildTestTx();
+            wsMock.request.mockResolvedValueOnce([
+                { tx_hash: "tx-good", height: 100 },
+                { tx_hash: "tx-lag", height: 999 }, // lagging height
+            ]);
+            wsMock.batchRequest.mockResolvedValueOnce([txHex, txHex]); // raw tx batch
+            // Header batch rejects (one height not yet indexable).
+            wsMock.batchRequest.mockRejectedValueOnce(
+                new Error("missingheight")
+            );
+            // Provider should fall back to individual fetches; one succeeds,
+            // the other still fails.
+            wsMock.request
+                .mockResolvedValueOnce(GENESIS_HEADER_HEX) // block.header(100)
+                .mockRejectedValueOnce(new Error("missingheight")); // block.header(999)
+
+            const txs = await provider.getTransactions(REGTEST_ADDRESS);
+            expect(txs).toHaveLength(2);
+            const good = txs.find((t) => t.txid === "tx-good")!;
+            const lag = txs.find((t) => t.txid === "tx-lag")!;
+            expect(good.status).toEqual({
+                confirmed: true,
+                block_time: GENESIS_BLOCK_TIME,
+            });
+            // The lagging entry still surfaces, just without a block_time.
+            expect(lag.status).toEqual({ confirmed: true, block_time: 0 });
+        });
+
         it("rejects malformed addresses with a descriptive error", async () => {
             await expect(
                 provider.getTransactions("not-a-real-address")
