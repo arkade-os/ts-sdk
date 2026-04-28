@@ -584,7 +584,12 @@ export class ContractWatcher {
                 this.reconnectTimeoutId = undefined;
             }
             this.reconnectAttempts = 0;
-            this.connect(true).catch(() => {});
+            this.connect(true).catch((error) => {
+                console.warn(
+                    "ContractWatcher cold-start connect failed:",
+                    error
+                );
+            });
         }
     }
 
