@@ -775,7 +775,10 @@ export class ContractManager implements IContractManager {
         }
 
         for (const [addr, contractVtxos] of byContract) {
-            await this.config.walletRepository.saveVtxos(addr, contractVtxos);
+            await this.config.walletRepository.saveVtxos(
+                addr,
+                contractVtxos as ExtendedVirtualCoin[]
+            );
         }
     }
 
@@ -796,7 +799,7 @@ export class ContractManager implements IContractManager {
             if (contract) {
                 await this.config.walletRepository.saveVtxos(
                     contract.address,
-                    vtxos
+                    vtxos as ExtendedVirtualCoin[]
                 );
             }
         }
