@@ -720,69 +720,50 @@ export class ReadonlyWallet implements IReadonlyWallet {
         }
 
         if (this.indexerProvider && arkAddress) {
-            const walletScripts = await this.getWalletScripts();
+            // Share the ContractWatcher's single subscription instead of
+            // opening a second SSE stream.
+            const cm = await this.getContractManager();
 
-            const subscriptionId =
-                await this.indexerProvider.subscribeForScripts(walletScripts);
+            // Serialize annotation+notification: parallel `annotateVtxos`
+            // awaits could resolve out of order and deliver eventCallback
+            // calls in the wrong sequence (e.g. `vtxo_spent` before its
+            // matching `vtxo_received`).
+            let annotationQueue: Promise<void> = Promise.resolve();
 
-            const abortController = new AbortController();
-            const subscription = this.indexerProvider.getSubscription(
-                subscriptionId,
-                abortController.signal
-            );
-
-            indexerStopFunc = async () => {
-                abortController.abort();
-                await this.indexerProvider?.unsubscribeForScripts(
-                    subscriptionId
-                );
-            };
-
-            // Handle subscription updates asynchronously without blocking.
-            // Subscription covers all wallet scripts (default + delegate) plus
-            // any additional registered contracts. Virtual outputs carry a
-            // `script` field from the indexer which the contract manager
-            // resolves to the owning contract so the extension uses the
-            // correct forfeit/intent tapscripts.
-            (async () => {
-                try {
-                    const cm = await this.getContractManager();
-                    for await (const update of subscription) {
-                        if (
-                            update.newVtxos?.length === 0 &&
-                            update.spentVtxos?.length === 0
-                        ) {
-                            continue;
-                        }
-                        // Isolate per-update annotation failures (e.g. a VTXO
-                        // arriving for a contract we haven't registered yet).
-                        // Without this a single bad update would kill the
-                        // for-await loop and silently drop every subsequent
-                        // subscription event for the session.
-                        try {
-                            // Default to `[]` so a one-sided update (e.g.
-                            // only `newVtxos`) doesn't pass `undefined` into
-                            // annotateVtxos and throw on `.length`.
-                            const [newVtxos, spentVtxos] = await Promise.all([
-                                cm.annotateVtxos(update.newVtxos ?? []),
-                                cm.annotateVtxos(update.spentVtxos ?? []),
-                            ]);
-                            eventCallback({
-                                type: "vtxo",
-                                newVtxos,
-                                spentVtxos,
-                            });
-                        } catch (error) {
-                            console.warn(
-                                "Dropping subscription update after annotation failed; next sync will reconcile:",
-                                error
-                            );
-                        }
-                    }
-                } catch (error) {
-                    console.error("Subscription error:", error);
+            indexerStopFunc = cm.onContractEvent((event) => {
+                if (
+                    event.type !== "vtxo_received" &&
+                    event.type !== "vtxo_spent"
+                ) {
+                    return;
                 }
-            })();
+                if (
+                    event.contract.type !== "default" &&
+                    event.contract.type !== "delegate"
+                ) {
+                    return;
+                }
+
+                // `event.vtxos` carries placeholder tapscript fields from
+                // the watcher; `annotateVtxos` fills them in.
+                annotationQueue = annotationQueue.then(async () => {
+                    try {
+                        const annotated = await cm.annotateVtxos(event.vtxos);
+                        eventCallback({
+                            type: "vtxo",
+                            newVtxos:
+                                event.type === "vtxo_received" ? annotated : [],
+                            spentVtxos:
+                                event.type === "vtxo_spent" ? annotated : [],
+                        });
+                    } catch (error) {
+                        console.warn(
+                            "Dropping subscription update after annotation failed; next sync will reconcile:",
+                            error
+                        );
+                    }
+                });
+            });
         }
 
         const stopFunc = () => {

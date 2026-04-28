@@ -380,14 +380,19 @@ export class ContractWatcher {
 
     /**
      * Connect to the subscription.
+     *
+     * @param skipUpdate - Skip the leading `updateSubscription` call when
+     *   the caller has already established `subscriptionId`.
      */
-    private async connect(): Promise<void> {
+    private async connect(skipUpdate = false): Promise<void> {
         if (!this.isWatching) return;
 
         this.connectionState = "connecting";
 
         try {
-            await this.updateSubscription();
+            if (!skipUpdate) {
+                await this.updateSubscription();
+            }
 
             // Poll immediately after connection to sync state
             await this.pollAllContracts();
@@ -556,10 +561,35 @@ export class ContractWatcher {
     }
 
     private async tryUpdateSubscription() {
+        const hadSubscription = this.subscriptionId !== undefined;
         try {
             await this.updateSubscription();
         } catch (error) {
             // nothing, the connection will be retried later
+            return;
+        }
+
+        // Cold start: `startWatching` may have run with zero scripts,
+        // leaving `listenLoop` parked behind the reconnect timer. Kick
+        // `connect` now so streaming resumes without waiting on the
+        // backoff. `skipUpdate` avoids re-issuing `subscribeForScripts`.
+        const justGotSubscription =
+            !hadSubscription && this.subscriptionId !== undefined;
+        const listenerParked =
+            this.connectionState === "disconnected" ||
+            this.connectionState === "reconnecting";
+        if (this.isWatching && justGotSubscription && listenerParked) {
+            if (this.reconnectTimeoutId) {
+                clearTimeout(this.reconnectTimeoutId);
+                this.reconnectTimeoutId = undefined;
+            }
+            this.reconnectAttempts = 0;
+            this.connect(true).catch((error) => {
+                console.warn(
+                    "ContractWatcher cold-start connect failed:",
+                    error
+                );
+            });
         }
     }
 
