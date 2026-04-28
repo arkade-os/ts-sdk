@@ -44,13 +44,13 @@ importers:
         specifier: '>=54.0.0'
         version: 54.0.33(@babel/core@7.29.0)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
       expo-background-task:
-        specifier: ~1.0.10
+        specifier: ~1.0.10 || >=55.0.0
         version: 1.0.10(expo@54.0.33(@babel/core@7.29.0)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))
       expo-sqlite:
-        specifier: ~16.0.10
+        specifier: ~16.0.10 || >=55.0.0
         version: 16.0.10(expo@54.0.33(@babel/core@7.29.0)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
       expo-task-manager:
-        specifier: ~14.0.9
+        specifier: ~14.0.9 || >=55.0.0
         version: 14.0.9(expo@54.0.33(@babel/core@7.29.0)(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(react-native@0.83.1(@babel/core@7.29.0)(react@19.2.4))
       ws-electrumx-client:
         specifier: 1.0.5
@@ -1380,6 +1380,7 @@ packages:
   '@xmldom/xmldom@0.8.11':
     resolution: {integrity: sha512-cQzWCtO6C8TQiYl1ruKNn2U6Ao4o4WBBcbL61yJl84x+j5sOWWFU9X7DpND8XZG3daDppSsigMdfAIl2upQBRw==}
     engines: {node: '>=10.0.0'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abbrev@1.1.1:
     resolution: {integrity: sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q==}
