@@ -301,12 +301,16 @@ export class WsElectrumChainSource {
                 txid
             );
         } catch (err) {
-            // electrs/Fulcrum raise a specific error when the tx isn't yet in
-            // a block. Map ONLY that case to mempool/unknown; everything else
+            // electrs/Fulcrum raise specific errors when the tx isn't yet in
+            // a block — either "not in a block" wording, or "missingheight"
+            // when get_merkle hits the same index-lag race that block.header
+            // hits (the tx is reportedly confirmed but the height isn't
+            // queryable yet). Map both to mempool/unknown; everything else
             // (auth failure, network outage, malformed response) must surface
             // so callers can fail rather than silently treat the tx as
             // unconfirmed forever.
-            if (isTxNotInBlockError(err)) return null;
+            if (isTxNotInBlockError(err) || isMissingHeightError(err))
+                return null;
             throw err;
         }
         if (

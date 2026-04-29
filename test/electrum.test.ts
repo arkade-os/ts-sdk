@@ -436,6 +436,17 @@ describe("ElectrumOnchainProvider", () => {
             });
         });
 
+        it("returns confirmed=false when get_merkle hits the missingheight index-lag race", async () => {
+            // electrs can fail get_merkle with "missingheight" when the tx
+            // is reportedly confirmed but the block index isn't ready yet —
+            // same race that block.header(N) hits. Treat as not-yet-confirmed
+            // so the caller can poll again rather than throw indefinitely.
+            wsMock.request.mockRejectedValueOnce(new Error("missingheight"));
+            expect(await provider.getTxStatus("abc")).toEqual({
+                confirmed: false,
+            });
+        });
+
         it("derives blockHeight from get_merkle and blockTime from the header", async () => {
             wsMock.request
                 .mockResolvedValueOnce({ block_height: 100 }) // get_merkle
