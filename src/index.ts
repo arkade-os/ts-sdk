@@ -194,6 +194,9 @@ import {
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
+import { TxWeightEstimator } from "./utils/txSizeEstimator";
+import type { VSize } from "./utils/txSizeEstimator";
+import { timelockToSequence } from "./contracts/handlers/helpers";
 import { Unroll } from "./wallet/unroll";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
@@ -384,6 +387,8 @@ export {
     P2A,
     Unroll,
     Transaction,
+    TxWeightEstimator,
+    timelockToSequence,
 
     // Errors
     ArkError,
@@ -530,6 +535,7 @@ export type {
 
     // Anchor
     AnchorBumper,
+    VSize,
 
     // Storage
     StorageConfig,
