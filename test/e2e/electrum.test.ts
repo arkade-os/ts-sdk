@@ -286,14 +286,22 @@ describe("ElectrumOnchainProvider integration tests", () => {
             const bScript = decodeP2trScript(b.address);
 
             // Drive the assertion via fetchHistories directly so the wait
-            // loop and the test target use the same code path. Polling
-            // sequential getCoins from two addresses in parallel under
-            // waitFor put enough concurrent strain on the WS connection in
-            // CI to occasionally trip the library's 10s request timeout.
+            // loop and the test target use the same code path. The wait
+            // also swallows the library's 10s per-request timeout — under
+            // CI load electrs occasionally wedges on get_history for the
+            // full window. Treat that as "not ready yet" and retry; only
+            // genuine errors propagate.
             let histories: Awaited<ReturnType<typeof chain.fetchHistories>>;
             await waitFor(async () => {
-                histories = await chain.fetchHistories([aScript, bScript]);
-                return histories[0].length >= 1 && histories[1].length >= 1;
+                try {
+                    histories = await chain.fetchHistories([aScript, bScript]);
+                    return histories[0].length >= 1 && histories[1].length >= 1;
+                } catch (err) {
+                    if (/request timeout|missingheight/i.test(String(err))) {
+                        return false;
+                    }
+                    throw err;
+                }
             });
 
             expect(histories!).toHaveLength(2);
