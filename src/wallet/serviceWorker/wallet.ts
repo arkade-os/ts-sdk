@@ -17,6 +17,7 @@ import {
     ReissuanceParams,
     BurnParams,
     Recipient,
+    DEFAULT_ARKADE_SERVER_URL,
 } from "..";
 import { SettlementEvent } from "../../providers/ark";
 import { hex } from "@scure/base";
@@ -329,7 +330,7 @@ interface ServiceWorkerWalletOptions {
     /** Optional Arkade server public key used to construct and validate Arkade addresses. */
     arkServerPublicKey?: string;
     /** Base URL of the Arkade server. */
-    arkServerUrl: string;
+    arkServerUrl?: string;
     /** Optional override for the indexer URL. */
     indexerUrl?: string;
     /** Optional override for the Esplora API URL. */
@@ -531,7 +532,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             .then(hex.encode);
         const initWalletPayload = {
             key: { publicKey },
-            arkServerUrl: options.arkServerUrl,
+            arkServerUrl: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
@@ -548,7 +549,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
             arkServer: {
-                url: options.arkServerUrl,
+                url: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
                 publicKey: options.arkServerPublicKey,
             },
             delegatorUrl: options.delegatorUrl,
@@ -1388,7 +1389,7 @@ export class ServiceWorkerWallet
                 : null;
         const initWalletPayload = {
             key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
-            arkServerUrl: options.arkServerUrl,
+            arkServerUrl: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
@@ -1405,7 +1406,7 @@ export class ServiceWorkerWallet
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
             arkServer: {
-                url: options.arkServerUrl,
+                url: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
                 publicKey: options.arkServerPublicKey,
             },
             delegatorUrl: options.delegatorUrl,

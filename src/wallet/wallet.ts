@@ -33,6 +33,7 @@ import {
     ArkTransaction,
     Asset,
     Coin,
+    DEFAULT_ARKADE_SERVER_URL,
     ExtendedCoin,
     ExtendedVirtualCoin,
     GetVtxosFilter,
@@ -230,12 +231,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const arkProvider =
             config.arkProvider ||
             (() => {
-                if (!config.arkServerUrl) {
-                    throw new Error(
-                        "Either arkProvider or arkServerUrl must be provided"
-                    );
-                }
-                return new RestArkProvider(config.arkServerUrl);
+                return new RestArkProvider(
+                    config.arkServerUrl || DEFAULT_ARKADE_SERVER_URL
+                );
             })();
 
         // Extract arkServerUrl from provider if not explicitly provided

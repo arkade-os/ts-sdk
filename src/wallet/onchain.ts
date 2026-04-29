@@ -1,6 +1,6 @@
 import { p2tr } from "@scure/btc-signer";
 import { P2TR } from "@scure/btc-signer/payment.js";
-import { Coin, SendBitcoinParams } from ".";
+import { Coin, DEFAULT_NETWORK_NAME, SendBitcoinParams } from ".";
 import { Identity } from "../identity";
 import { getNetwork, Network, NetworkName } from "../networks";
 import {
@@ -60,7 +60,7 @@ export class OnchainWallet implements AnchorBumper {
      */
     static async create(
         identity: Identity,
-        networkName: NetworkName,
+        networkName: NetworkName = DEFAULT_NETWORK_NAME,
         provider?: OnchainProvider
     ): Promise<OnchainWallet> {
         const pubkey = await identity.xOnlyPublicKey();
