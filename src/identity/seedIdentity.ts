@@ -230,8 +230,11 @@ export class SeedIdentity implements Identity, DescriptorProvider {
 
     /**
      * Returns the account descriptor template with the final path segment
-     * replaced by a wildcard `*`. Use {@link deriveSigningDescriptor} to
-     * materialize a concrete descriptor at a given index.
+     * replaced by a wildcard `*`. The template is the canonical thing to
+     * pass through the system; consumers that need a concrete descriptor
+     * at a specific index materialize it themselves (see
+     * `HDDescriptorProvider` in the wallet layer for the rotating-counter
+     * use case).
      *
      * @example
      * ```ts
@@ -248,19 +251,6 @@ export class SeedIdentity implements Identity, DescriptorProvider {
             );
         }
         return `${match[1]}*)`;
-    }
-
-    /**
-     * Returns a concrete descriptor at `index` by substituting the wildcard
-     * in {@link getAccountDescriptor}.
-     *
-     * @param index - unhardened child index (0 <= index < 2^31)
-     */
-    deriveSigningDescriptor(index: number): string {
-        if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
-            throw new Error("Derivation index must be an integer in [0, 2^31)");
-        }
-        return this.getAccountDescriptor().replace("/*)", `/${index})`);
     }
 
     /**

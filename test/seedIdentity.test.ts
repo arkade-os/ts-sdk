@@ -14,6 +14,20 @@ import { Transaction } from "../src/utils/transaction";
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
+/**
+ * Substitute the wildcard in a SeedIdentity's account-descriptor template
+ * with a concrete index. Used by tests as a stand-in for what
+ * `HDDescriptorProvider` does in production: SeedIdentity itself no
+ * longer exposes an index-aware helper because the template is the
+ * canonical thing it provides.
+ */
+function descriptorAtIndex(identity: SeedIdentity, index: number): string {
+    if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
+        throw new Error("Derivation index must be an integer in [0, 2^31)");
+    }
+    return identity.getAccountDescriptor().replace("/*)", `/${index})`);
+}
+
 describe("SeedIdentity", () => {
     describe("fromSeed", () => {
         it("should create identity from 64-byte seed", async () => {
@@ -451,20 +465,17 @@ describe("SeedIdentity.getAccountDescriptor", () => {
     });
 });
 
-describe("SeedIdentity.deriveSigningDescriptor", () => {
-    it("substitutes the wildcard with the given index", () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-
-        const at5 = identity.deriveSigningDescriptor(5);
-        expect(at5).toBe(identity.getAccountDescriptor().replace("/*)", "/5)"));
-    });
-
+describe("Index substitution against the account descriptor template", () => {
+    // SeedIdentity exposes the template only — concrete-at-index materialization
+    // is the consumer's responsibility (HDDescriptorProvider in production,
+    // descriptorAtIndex helper in tests). These tests verify the round-trip
+    // property holds: a descriptor materialized from the template re-derives
+    // the expected key.
     it("produces a descriptor that re-constructs the expected key", async () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
-        const derivedDesc = identity.deriveSigningDescriptor(7);
+        const derivedDesc = descriptorAtIndex(identity, 7);
         const derivedIdentity = SeedIdentity.fromSeed(seed, {
             descriptor: derivedDesc,
         });
@@ -477,29 +488,7 @@ describe("SeedIdentity.deriveSigningDescriptor", () => {
     it("round-trips for index 0 to the original identity descriptor", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(identity.deriveSigningDescriptor(0)).toBe(identity.descriptor);
-    });
-
-    it("rejects negative indexes", () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(() => identity.deriveSigningDescriptor(-1)).toThrow("[0, 2^31)");
-    });
-
-    it("rejects non-integer indexes", () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(() => identity.deriveSigningDescriptor(1.5)).toThrow(
-            "[0, 2^31)"
-        );
-    });
-
-    it("rejects hardened-range indexes (>= 2^31)", () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(() => identity.deriveSigningDescriptor(0x80000000)).toThrow(
-            "[0, 2^31)"
-        );
+        expect(descriptorAtIndex(identity, 0)).toBe(identity.descriptor);
     });
 });
 
@@ -523,9 +512,7 @@ describe("SeedIdentity.isOurs", () => {
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
         for (const i of [0, 1, 42, 100, 0x7fffffff]) {
-            expect(identity.isOurs(identity.deriveSigningDescriptor(i))).toBe(
-                true
-            );
+            expect(identity.isOurs(descriptorAtIndex(identity, i))).toBe(true);
         }
     });
 
@@ -579,7 +566,7 @@ describe("SeedIdentity.signMessageWithDescriptor", () => {
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
         const message = new Uint8Array(32).fill(7);
 
-        const descriptor = identity.deriveSigningDescriptor(12);
+        const descriptor = descriptorAtIndex(identity, 12);
         const signature = await identity.signMessageWithDescriptor(
             descriptor,
             message
@@ -595,7 +582,7 @@ describe("SeedIdentity.signMessageWithDescriptor", () => {
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
         const message = new Uint8Array(32).fill(9);
 
-        const descriptor = identity.deriveSigningDescriptor(3);
+        const descriptor = descriptorAtIndex(identity, 3);
         const signature = await identity.signMessageWithDescriptor(
             descriptor,
             message,
@@ -650,7 +637,7 @@ describe("SeedIdentity.signWithDescriptor", () => {
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
         const tx = new Transaction();
-        const desc = identity.deriveSigningDescriptor(2);
+        const desc = descriptorAtIndex(identity, 2);
 
         const result = await identity.signWithDescriptor([
             { tx, descriptor: desc },
@@ -692,11 +679,9 @@ describe("MnemonicIdentity DescriptorProvider", () => {
         expect(identity.getAccountDescriptor()).toBe(
             seedIdentity.getAccountDescriptor()
         );
-        expect(identity.deriveSigningDescriptor(42)).toBe(
-            seedIdentity.deriveSigningDescriptor(42)
+        expect(descriptorAtIndex(identity, 42)).toBe(
+            descriptorAtIndex(seedIdentity, 42)
         );
-        expect(identity.isOurs(identity.deriveSigningDescriptor(99))).toBe(
-            true
-        );
+        expect(identity.isOurs(descriptorAtIndex(identity, 99))).toBe(true);
     });
 });
