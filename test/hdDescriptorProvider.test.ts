@@ -405,7 +405,9 @@ describe("HDDescriptorProvider", () => {
             // The post-rotation pubkey should match what identity derives at
             // the new index directly.
             const newIndex = provider.getCurrentReceiveIndex();
-            const newDesc = identity.deriveSigningDescriptor(newIndex);
+            const newDesc = identity
+                .getAccountDescriptor()
+                .replace("/*)", `/${newIndex})`);
             // Sanity — rotation advanced to a non-zero index
             expect(newIndex).toBeGreaterThan(0);
             expect(newDesc).toBe(provider.getSigningDescriptor());

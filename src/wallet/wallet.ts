@@ -139,14 +139,17 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 }
 
 /**
- * Returns `identity.deriveSigningDescriptor(0)` or `undefined` if the
- * identity's descriptor cannot produce a BIP-86-style template (e.g. a
- * user-pinned static descriptor). Used only to decide whether to enable
- * the HD rotation path on wallet construction.
+ * Returns the index-0 materialization of the identity's account descriptor
+ * template, or `undefined` if the template lacks the wildcard suffix
+ * (e.g. a user-pinned static descriptor). Used only to decide whether to
+ * enable the HD rotation path on wallet construction.
  */
 function safeDeriveIndex0(identity: SeedIdentity): string | undefined {
     try {
-        return identity.deriveSigningDescriptor(0);
+        const template = identity.getAccountDescriptor();
+        const materialized = template.replace("/*)", "/0)");
+        if (materialized === template) return undefined;
+        return materialized;
     } catch {
         return undefined;
     }
