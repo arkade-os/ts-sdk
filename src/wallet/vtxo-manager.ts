@@ -1104,13 +1104,10 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                         console.error("Error renewing VTXOs:", e);
                     });
                 }
-                // delegate only for "delegate" contract
-                if (delegatorManager && event.contract.type === "delegate") {
+
+                if (delegatorManager) {
                     delegatorManager
-                        .delegate(
-                            event.vtxos as ExtendedVirtualCoin[],
-                            destination
-                        )
+                        .delegate(event.vtxos, destination)
                         .catch((e) => {
                             console.error("Error delegating VTXOs:", e);
                         });
