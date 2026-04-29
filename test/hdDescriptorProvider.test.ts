@@ -116,10 +116,13 @@ describe("HDDescriptorProvider", () => {
             expect([a.index, b.index, c.index]).toEqual([1, 2, 3]);
         });
 
-        it("returns a descriptor matching identity.deriveSigningDescriptor", async () => {
+        it("returns a descriptor matching the substituted template at that index", async () => {
             const { provider, identity } = await makeProvider();
             const { index, descriptor } = await provider.consumeNextIndex();
-            expect(descriptor).toBe(identity.deriveSigningDescriptor(index));
+            const expected = identity
+                .getAccountDescriptor()
+                .replace("/*)", `/${index})`);
+            expect(descriptor).toBe(expected);
         });
 
         it("does not change the active receive descriptor", async () => {

@@ -142,7 +142,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
             await this.saveSettings(settings);
             return {
                 index,
-                descriptor: this.identity.deriveSigningDescriptor(index),
+                descriptor: this.materializeAt(index),
             };
         });
     }
@@ -160,7 +160,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
             await this.saveSettings(settings);
             const next: CurrentReceive = {
                 index,
-                descriptor: this.identity.deriveSigningDescriptor(index),
+                descriptor: this.materializeAt(index),
             };
             this.current = next;
             return next;
@@ -207,7 +207,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
             if (settings.currentReceiveIndex !== undefined) {
                 return {
                     index: settings.currentReceiveIndex,
-                    descriptor: this.identity.deriveSigningDescriptor(
+                    descriptor: this.materializeAt(
                         settings.currentReceiveIndex
                     ),
                 };
@@ -217,9 +217,27 @@ export class HDDescriptorProvider implements DescriptorProvider {
             await this.saveSettings(settings);
             return {
                 index,
-                descriptor: this.identity.deriveSigningDescriptor(index),
+                descriptor: this.materializeAt(index),
             };
         });
+    }
+
+    /**
+     * Substitute the wildcard in this provider's identity's account-descriptor
+     * template with a concrete index. SeedIdentity intentionally exposes only
+     * the template; the "current index" concept lives here in the provider.
+     */
+    private materializeAt(index: number): string {
+        if (
+            !Number.isInteger(index) ||
+            index < 0 ||
+            index >= MAX_NON_HARDENED_INDEX
+        ) {
+            throw new Error("Derivation index must be an integer in [0, 2^31)");
+        }
+        return this.identity
+            .getAccountDescriptor()
+            .replace("/*)", `/${index})`);
     }
 
     /**
