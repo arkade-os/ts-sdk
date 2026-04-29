@@ -774,7 +774,7 @@ export class ContractWatcher {
         const state = this.contracts.get(contractScript);
         if (!state) return;
 
-        const extended = [];
+        const extended: ContractVtxo[] = [];
         for (const v of vtxos) {
             try {
                 const extendedVtxo = extendVirtualCoinForContract(
@@ -782,8 +782,8 @@ export class ContractWatcher {
                     state.contract
                 );
                 extended.push({ ...extendedVtxo, contractScript });
-            } catch {
-                console.warn("failed to extend vtxo: ", v);
+            } catch (err) {
+                console.warn(`failed to extend vtxo ${v.txid}:${v.vout}`, err);
                 extended.push({ ...v, contractScript });
             }
         }
