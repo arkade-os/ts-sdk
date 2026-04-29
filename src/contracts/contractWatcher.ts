@@ -1,5 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
+import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -765,18 +766,26 @@ export class ContractWatcher {
         if (!this.eventCallback) return;
         const state = this.contracts.get(contractScript);
         if (!state) return;
+
+        const extended = [];
+        for (const v of vtxos) {
+            try {
+                const extendedVtxo = extendVirtualCoinForContract(
+                    v,
+                    state.contract
+                );
+                extended.push({ ...extendedVtxo, contractScript });
+            } catch {
+                console.warn("failed to extend vtxo: ", v);
+                extended.push({ ...v, contractScript });
+            }
+        }
+
         switch (eventType) {
             case "vtxo_received":
                 this.eventCallback({
                     type: "vtxo_received",
-                    vtxos: vtxos.map((v) => ({
-                        ...v,
-                        contractScript,
-                        // These fields may not be available from basic VirtualCoin
-                        forfeitTapLeafScript: undefined as any,
-                        intentTapLeafScript: undefined as any,
-                        tapTree: undefined as any,
-                    })),
+                    vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,
@@ -785,14 +794,7 @@ export class ContractWatcher {
             case "vtxo_spent":
                 this.eventCallback({
                     type: "vtxo_spent",
-                    vtxos: vtxos.map((v) => ({
-                        ...v,
-                        contractScript,
-                        // These fields may not be available from basic VirtualCoin
-                        forfeitTapLeafScript: undefined as any,
-                        intentTapLeafScript: undefined as any,
-                        tapTree: undefined as any,
-                    })),
+                    vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,
