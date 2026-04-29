@@ -11,7 +11,13 @@ import {
     normalizeToDescriptor,
     extractPubKey,
     parseHDDescriptor,
+    detectNetwork,
+    isWildcardTemplate,
+    materializeAtIndex,
+    templateOf,
+    descriptorIsOurs,
 } from "../src/identity/descriptor";
+import { SeedIdentity } from "../src/identity/seedIdentity";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -151,6 +157,132 @@ describe("parseHDDescriptor", () => {
         expect(result).not.toBeNull();
         expect(result!.xpub).toBe(
             "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
+        );
+    });
+});
+
+describe("detectNetwork", () => {
+    it("returns testnet for tpub-prefixed descriptors", () => {
+        expect(detectNetwork(makeDescriptor({ isMainnet: false }))).toBe(
+            networks.testnet
+        );
+    });
+
+    it("returns mainnet for xpub-prefixed descriptors", () => {
+        expect(detectNetwork(makeDescriptor({}))).toBe(networks.bitcoin);
+    });
+});
+
+describe("isWildcardTemplate", () => {
+    it("returns true for descriptors ending with /*)", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const template = SeedIdentity.fromSeed(seed, {
+            isMainnet: true,
+        }).getAccountDescriptor();
+        expect(isWildcardTemplate(template)).toBe(true);
+    });
+
+    it("returns false for concrete descriptors", () => {
+        expect(isWildcardTemplate(makeDescriptor({}))).toBe(false);
+    });
+
+    it("returns false for descriptors with bare *", () => {
+        // Defensive: only the exact "/*)" suffix counts.
+        expect(isWildcardTemplate("tr(*)")).toBe(false);
+    });
+});
+
+describe("materializeAtIndex", () => {
+    const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+    const TEMPLATE = SeedIdentity.fromSeed(seed, {
+        isMainnet: true,
+    }).getAccountDescriptor();
+
+    it("substitutes the wildcard with the given index", () => {
+        const at0 = materializeAtIndex(TEMPLATE, 0);
+        expect(at0.endsWith("/0)")).toBe(true);
+        expect(isWildcardTemplate(at0)).toBe(false);
+
+        const at7 = materializeAtIndex(TEMPLATE, 7);
+        expect(at7.endsWith("/7)")).toBe(true);
+    });
+
+    it("rejects non-template descriptors", () => {
+        expect(() => materializeAtIndex(makeDescriptor({}), 1)).toThrow(
+            /wildcard template/
+        );
+    });
+
+    it("rejects out-of-range indices", () => {
+        expect(() => materializeAtIndex(TEMPLATE, -1)).toThrow(/\[0, 2\^31\)/);
+        expect(() => materializeAtIndex(TEMPLATE, 0x80000000)).toThrow(
+            /\[0, 2\^31\)/
+        );
+        expect(() => materializeAtIndex(TEMPLATE, 1.5)).toThrow(/\[0, 2\^31\)/);
+    });
+});
+
+describe("templateOf", () => {
+    it("returns templates as-is", () => {
+        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+        const template = SeedIdentity.fromSeed(seed, {
+            isMainnet: true,
+        }).getAccountDescriptor();
+        expect(templateOf(template)).toBe(template);
+    });
+
+    it("derives the template by chopping a trailing numeric index", () => {
+        const concrete = makeDescriptor({ index: 42 });
+        const expected = concrete.replace(/\/42\)$/, "/*)");
+        expect(templateOf(concrete)).toBe(expected);
+    });
+
+    it("rejects descriptors without a numeric trailing index", () => {
+        expect(() => templateOf("tr([fp/0']xpub.../0/abc)")).toThrow();
+    });
+
+    it("rejects descriptors with leading-zero indices", () => {
+        // "01" parses as 1 but the round-trip through String(1) is "1",
+        // so we reject ambiguous index encodings.
+        expect(() => templateOf("tr([fp/0']xpub.../0/01)")).toThrow();
+    });
+});
+
+describe("descriptorIsOurs", () => {
+    const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+    const us = SeedIdentity.fromSeed(seed, { isMainnet: true });
+    const otherSeed = mnemonicToSeedSync(
+        "legal winner thank year wave sausage worth useful legal winner thank yellow"
+    );
+    const other = SeedIdentity.fromSeed(otherSeed, { isMainnet: true });
+
+    it("matches descriptors at any index from the same xpub", () => {
+        // SeedIdentity.isOurs delegates to descriptorIsOurs; using it as
+        // the entry point keeps us from having to expose the private
+        // accountXpub field just to test the helper.
+        const template = us.getAccountDescriptor();
+        for (const index of [0, 1, 7, 1024]) {
+            expect(us.isOurs(materializeAtIndex(template, index))).toBe(true);
+        }
+        expect(us.isOurs(template)).toBe(true);
+    });
+
+    it("rejects descriptors derived from a different seed", () => {
+        expect(us.isOurs(other.descriptor)).toBe(false);
+        expect(us.isOurs(other.getAccountDescriptor())).toBe(false);
+    });
+
+    it("matches a bare tr(pubkey) descriptor against a fallback x-only pubkey", () => {
+        const pubkey = hex.decode(getXOnlyPubKey());
+        expect(
+            descriptorIsOurs(`tr(${getXOnlyPubKey()})`, undefined, pubkey)
+        ).toBe(true);
+    });
+
+    it("returns false for non-descriptor strings", () => {
+        const pubkey = hex.decode(getXOnlyPubKey());
+        expect(descriptorIsOurs("not a descriptor", undefined, pubkey)).toBe(
+            false
         );
     });
 });

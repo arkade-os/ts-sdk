@@ -5,8 +5,114 @@ import {
 } from "@bitcoinerlab/descriptors-scure";
 import { hex } from "@scure/base";
 
-function inferNetwork(descriptor: string): Network {
+/**
+ * Suffix that marks an HD wildcard template
+ * (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). The leading `/` is included so
+ * that we never confuse the wildcard with bracketed literals
+ * elsewhere in the descriptor.
+ */
+const WILDCARD_SUFFIX = "/*)";
+
+/**
+ * Pick the BIP32 network from a descriptor by inspecting its key prefix.
+ * `tpub` → testnet, anything else → mainnet. Cheaper and more permissive
+ * than fully expanding the descriptor; safe because it's only used to
+ * tell {@link expand} which network constants to apply.
+ */
+export function detectNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
+}
+
+/** True iff `descriptor` ends with the HD wildcard suffix. */
+export function isWildcardTemplate(descriptor: string): boolean {
+    return descriptor.endsWith(WILDCARD_SUFFIX);
+}
+
+/**
+ * Substitute the wildcard in `template` with a concrete derivation
+ * index. Throws if the input is not a wildcard template, or if `index`
+ * falls outside the BIP-32 non-hardened range.
+ */
+export function materializeAtIndex(template: string, index: number): string {
+    if (!isWildcardTemplate(template)) {
+        throw new Error(
+            `Descriptor is not a wildcard template (must end in "${WILDCARD_SUFFIX}")`
+        );
+    }
+    if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
+        throw new Error("Derivation index must be an integer in [0, 2^31)");
+    }
+    return template.replace(WILDCARD_SUFFIX, `/${index})`);
+}
+
+/**
+ * Returns the wildcard-template form of `descriptor`. If already a
+ * template, returns it unchanged. If concrete (`.../N)`), chops the
+ * trailing numeric index and replaces it with `*`. Throws otherwise.
+ */
+export function templateOf(descriptor: string): string {
+    if (isWildcardTemplate(descriptor)) return descriptor;
+    if (!descriptor.endsWith(")")) {
+        throw new Error(
+            "Cannot derive account descriptor template: descriptor must end with ')'"
+        );
+    }
+    const lastSlash = descriptor.lastIndexOf("/");
+    if (lastSlash === -1) {
+        throw new Error(
+            "Cannot derive account descriptor template: descriptor has no path"
+        );
+    }
+    const trailing = descriptor.slice(lastSlash + 1, -1);
+    const idx = Number(trailing);
+    if (!Number.isInteger(idx) || idx < 0 || trailing !== String(idx)) {
+        throw new Error(
+            "Cannot derive account descriptor template: trailing path segment is not a non-negative integer"
+        );
+    }
+    return `${descriptor.slice(0, lastSlash + 1)}*)`;
+}
+
+/**
+ * Shared "does `descriptor` belong to an HD-or-static identity
+ * characterized by (`accountXpub`, `xOnlyPubkey`)?" predicate.
+ *
+ * - HD descriptors (those expanding to a `bip32` key) match by
+ *   account xpub.
+ * - Bare `tr(pubkey)` descriptors fall back to comparing the candidate
+ *   pubkey against `xOnlyPubkey`.
+ *
+ * Wildcard candidates are accepted: the index-0 substitution is used
+ * for parsing only (the xpub comparison is index-agnostic).
+ *
+ * Used by both seed-backed and watch-only descriptor identities so the
+ * branching stays in one place.
+ */
+export function descriptorIsOurs(
+    descriptor: string,
+    accountXpub: string | undefined,
+    xOnlyPubkey: Uint8Array
+): boolean {
+    if (!isDescriptor(descriptor)) return false;
+    try {
+        const network = detectNetwork(descriptor);
+        const probe = isWildcardTemplate(descriptor)
+            ? materializeAtIndex(descriptor, 0)
+            : descriptor;
+        const expansion = expand({ descriptor: probe, network });
+        const keyInfo = expansion.expansionMap?.["@0"];
+        if (!keyInfo) return false;
+
+        if (keyInfo.bip32 && accountXpub) {
+            return keyInfo.bip32.toBase58() === accountXpub;
+        }
+        if (keyInfo.pubkey) {
+            return hex.encode(keyInfo.pubkey) === hex.encode(xOnlyPubkey);
+        }
+        return false;
+    } catch {
+        return false;
+    }
 }
 
 /**
@@ -52,7 +158,7 @@ export function extractPubKey(descriptor: string): string {
         return descriptor;
     }
 
-    const network = inferNetwork(descriptor);
+    const network = detectNetwork(descriptor);
     const expansion = expand({ descriptor, network });
 
     if (!expansion.expansionMap) {
@@ -100,7 +206,7 @@ export function parseHDDescriptor(
 
     let expansion;
     try {
-        const network = inferNetwork(descriptor);
+        const network = detectNetwork(descriptor);
         expansion = expand({ descriptor, network });
     } catch {
         return null;

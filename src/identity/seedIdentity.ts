@@ -11,7 +11,6 @@ import {
     expand,
     networks,
     scriptExpressions,
-    type Network,
 } from "@bitcoinerlab/descriptors-scure";
 import type {
     SerializedSigningIdentity,
@@ -22,7 +21,13 @@ import {
     HDCapableIdentity,
     ReadonlyHDCapableIdentity,
 } from "./hdCapableIdentity";
-import { isDescriptor } from "./descriptor";
+import {
+    descriptorIsOurs,
+    detectNetwork,
+    isWildcardTemplate,
+    materializeAtIndex,
+    templateOf,
+} from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
@@ -68,15 +73,6 @@ export type MnemonicOptions = SeedIdentityOptions & {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────
-
-/**
- * Detects the network from a descriptor string by checking for tpub (testnet)
- * vs xpub (mainnet) key prefix.
- * @internal
- */
-function detectNetwork(descriptor: string): Network {
-    return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
-}
 
 function hasDescriptor(
     opts: SeedIdentityOptions = {}
@@ -252,50 +248,20 @@ export class SeedIdentity implements HDCapableIdentity {
      * ```
      */
     getAccountDescriptor(): string {
-        const match = this.descriptor.match(/^(.*\/)\d+\)$/);
-        if (!match) {
-            throw new Error(
-                "Cannot build account descriptor: missing trailing numeric index"
-            );
-        }
-        return `${match[1]}*)`;
+        return templateOf(this.descriptor);
     }
 
     /**
      * Returns true when `descriptor` is derived from this identity's seed.
-     *
-     * HD descriptors match when the master fingerprint and account xpub
-     * agree — index and change path are irrelevant. Simple `tr(pubkey)`
-     * descriptors match when the x-only pubkey matches.
+     * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
+     * match by raw pubkey. See {@link descriptorIsOurs}.
      */
     isOurs(descriptor: string): boolean {
-        if (!isDescriptor(descriptor)) return false;
-        try {
-            const network = detectNetwork(descriptor);
-            // expand() may reject wildcard descriptors — substitute index 0
-            // for parsing purposes only.
-            const probe = descriptor.replace(/\/\*\)$/, "/0)");
-            const expansion = expand({ descriptor: probe, network });
-            const keyInfo = expansion.expansionMap?.["@0"];
-            if (!keyInfo) return false;
-
-            // HD case: compare account xpub (and implicitly the fingerprint
-            // because two seeds cannot produce the same xpub).
-            if (keyInfo.bip32) {
-                return keyInfo.bip32.toBase58() === this.accountXpub;
-            }
-
-            // Static case: compare raw pubkey against our derived key.
-            if (keyInfo.pubkey) {
-                return (
-                    hex.encode(keyInfo.pubkey) ===
-                    hex.encode(pubSchnorr(this.derivedKey))
-                );
-            }
-            return false;
-        } catch {
-            return false;
-        }
+        return descriptorIsOurs(
+            descriptor,
+            this.accountXpub,
+            pubSchnorr(this.derivedKey)
+        );
     }
 
     /**
@@ -336,7 +302,7 @@ export class SeedIdentity implements HDCapableIdentity {
     // ── internal helpers ─────────────────────────────────────────────
 
     private derivePrivateKeyForDescriptor(descriptor: string): Uint8Array {
-        if (descriptor.includes("/*)")) {
+        if (isWildcardTemplate(descriptor)) {
             throw new Error(
                 "Cannot sign with a wildcard descriptor; derive a concrete index first"
             );
@@ -493,11 +459,10 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly template: string;
 
     private constructor(readonly descriptor: string) {
-        // Templates can't be parsed directly by `expand()` — substitute
-        // /*) → /0) for parsing, then remember the template separately.
-        const isTemplate = descriptor.endsWith("/*)");
-        const probe = isTemplate
-            ? descriptor.replace(/\/\*\)$/, "/0)")
+        // Templates can't be parsed directly by `expand()` — materialize
+        // at index 0 for parsing only.
+        const probe = isWildcardTemplate(descriptor)
+            ? materializeAtIndex(descriptor, 0)
             : descriptor;
         const network = detectNetwork(probe);
         const expansion = expand({ descriptor: probe, network });
@@ -524,20 +489,7 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
         }
 
         this.accountXpub = keyInfo.bip32?.toBase58();
-
-        // Derive the wildcard template either by trusting the input or by
-        // chopping the trailing /N) off a concrete descriptor.
-        if (isTemplate) {
-            this.template = descriptor;
-        } else {
-            const match = descriptor.match(/^(.*\/)\d+\)$/);
-            if (!match) {
-                throw new Error(
-                    "Cannot derive account descriptor template: missing trailing numeric index"
-                );
-            }
-            this.template = `${match[1]}*)`;
-        }
+        this.template = templateOf(descriptor);
     }
 
     /**
@@ -569,36 +521,12 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
 
     /**
      * Returns true when `descriptor` derives from this identity's xpub.
-     *
-     * HD descriptors match by account xpub (and implicitly fingerprint).
-     * Bare `tr(pubkey)` descriptors fall back to comparing against this
-     * identity's cached x-only pubkey (i.e. the index-0 pubkey for a
-     * template input).
+     * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
+     * fall back to comparing against the cached x-only pubkey (index 0
+     * for a template input). See {@link descriptorIsOurs}.
      */
     isOurs(descriptor: string): boolean {
-        if (!isDescriptor(descriptor)) return false;
-        try {
-            const network = detectNetwork(descriptor);
-            // expand() may reject wildcard descriptors — substitute index 0
-            // for parsing purposes only.
-            const probe = descriptor.replace(/\/\*\)$/, "/0)");
-            const expansion = expand({ descriptor: probe, network });
-            const keyInfo = expansion.expansionMap?.["@0"];
-            if (!keyInfo) return false;
-
-            if (keyInfo.bip32 && this.accountXpub) {
-                return keyInfo.bip32.toBase58() === this.accountXpub;
-            }
-
-            if (keyInfo.pubkey) {
-                return (
-                    hex.encode(keyInfo.pubkey) === hex.encode(this.xOnlyPubKey)
-                );
-            }
-            return false;
-        } catch {
-            return false;
-        }
+        return descriptorIsOurs(descriptor, this.accountXpub, this.xOnlyPubKey);
     }
 }
 
