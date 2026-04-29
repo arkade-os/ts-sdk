@@ -1336,9 +1336,9 @@ export class WalletMessageHandler
         const outpointSet = new Set(
             vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`)
         );
-        const filtered = allVtxos.filter((v) =>
-            outpointSet.has(`${v.txid}:${v.vout}`)
-        );
+        const filtered = allVtxos
+            .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
+            .map((v) => ({ ...v, contractScript: v.script }));
 
         const result = await delegatorManager.delegate(
             filtered,

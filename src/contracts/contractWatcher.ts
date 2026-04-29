@@ -776,6 +776,7 @@ export class ContractWatcher {
                 );
                 extended.push({ ...extendedVtxo, contractScript });
             } catch {
+                console.warn("failed to extend vtxo: ", v);
                 extended.push({ ...v, contractScript });
             }
         }
