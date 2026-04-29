@@ -281,21 +281,24 @@ describe("ElectrumOnchainProvider integration tests", () => {
             );
             faucet(a.address, 0.0001);
             faucet(b.address, 0.0002);
-            await waitFor(async () => {
-                const [aCoins, bCoins] = await Promise.all([
-                    provider.getCoins(a.address),
-                    provider.getCoins(b.address),
-                ]);
-                return aCoins.length >= 1 && bCoins.length >= 1;
-            });
 
             const aScript = decodeP2trScript(a.address);
             const bScript = decodeP2trScript(b.address);
 
-            const histories = await chain.fetchHistories([aScript, bScript]);
-            expect(histories).toHaveLength(2);
-            expect(histories[0].length).toBeGreaterThanOrEqual(1);
-            expect(histories[1].length).toBeGreaterThanOrEqual(1);
+            // Drive the assertion via fetchHistories directly so the wait
+            // loop and the test target use the same code path. Polling
+            // sequential getCoins from two addresses in parallel under
+            // waitFor put enough concurrent strain on the WS connection in
+            // CI to occasionally trip the library's 10s request timeout.
+            let histories: Awaited<ReturnType<typeof chain.fetchHistories>>;
+            await waitFor(async () => {
+                histories = await chain.fetchHistories([aScript, bScript]);
+                return histories[0].length >= 1 && histories[1].length >= 1;
+            });
+
+            expect(histories!).toHaveLength(2);
+            expect(histories![0].length).toBeGreaterThanOrEqual(1);
+            expect(histories![1].length).toBeGreaterThanOrEqual(1);
         }
     );
 });
