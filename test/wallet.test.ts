@@ -15,6 +15,7 @@ import {
     type OnchainProvider,
     type DelegatorProvider,
 } from "../src";
+import { DEFAULT_ARKADE_SERVER_URL } from "../src/wallet";
 import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
 import {
@@ -49,6 +50,15 @@ describe("Wallet", () => {
         mockFetch.mockReset();
         await sharedRepo.clear();
         await sharedContractRepo.clear();
+    });
+
+    describe("create", () => {
+        it("defaults OnchainWallet to the bitcoin network", async () => {
+            const wallet = await OnchainWallet.create(mockIdentity);
+
+            expect(wallet.network.bech32).toBe("bc");
+            expect(wallet.address.startsWith("bc1p")).toBe(true);
+        });
     });
 
     describe("getBalance", () => {
@@ -1502,6 +1512,31 @@ describe("ReadonlyWallet", () => {
 
         const boardingAddress = await readonlyWallet.getBoardingAddress();
         expect(boardingAddress).toBeDefined();
+    });
+
+    it("should create ReadonlyWallet with the default Arkade server URL", async () => {
+        const key = SingleKey.fromRandomBytes();
+        const compressedPubKey = await key.compressedPublicKey();
+        const readonlyIdentity =
+            ReadonlySingleKey.fromPublicKey(compressedPubKey);
+
+        mockFetch.mockResolvedValueOnce({
+            ok: true,
+            json: () => Promise.resolve(mockArkInfo),
+        });
+
+        const readonlyWallet = await ReadonlyWallet.create({
+            identity: readonlyIdentity,
+            storage: {
+                walletRepository: new InMemoryWalletRepository(),
+                contractRepository: new InMemoryContractRepository(),
+            },
+        });
+
+        expect(readonlyWallet).toBeInstanceOf(ReadonlyWallet);
+        expect(mockFetch).toHaveBeenCalledWith(
+            `${DEFAULT_ARKADE_SERVER_URL}/v1/info`
+        );
     });
 
     it("should query balance with ReadonlyWallet", async () => {
