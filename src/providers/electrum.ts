@@ -2,9 +2,55 @@ import { Address, OutScript, Transaction } from "@scure/btc-signer";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import type { ElectrumWS } from "ws-electrumx-client";
-import type { Network } from "../networks";
+import type { Network, NetworkName } from "../networks";
 import type { Coin } from "../wallet";
 import type { ExplorerTransaction, OnchainProvider } from "./onchain";
+
+/**
+ * Default WebSocket Electrum endpoints. Mainnet, mutinynet, and signet
+ * point at Ark Labs–operated Fulcrum 2.1 deployments (which support
+ * `blockchain.transaction.broadcast_package` for atomic 1P1C TRUC
+ * relay; see `ElectrumOnchainProvider.broadcastTransaction`). Testnet
+ * defaults to Blockstream's public Fulcrum because Ark doesn't host
+ * it. Regtest assumes the `electrum-ws` websocat bridge from
+ * `vulpemventures/nigiri`.
+ *
+ * @example
+ * ```typescript
+ * import { ElectrumWS } from "ws-electrumx-client";
+ * import { ELECTRUM_WS_URL, ElectrumOnchainProvider, networks } from "@arkade-os/sdk";
+ *
+ * const ws = new ElectrumWS(ELECTRUM_WS_URL.bitcoin);
+ * const provider = new ElectrumOnchainProvider(ws, networks.bitcoin);
+ * ```
+ */
+export const ELECTRUM_WS_URL: Record<NetworkName, string> = {
+    bitcoin: "wss://electrum.arkade.sh",
+    testnet: "wss://electrum.blockstream.info:60004",
+    signet: "wss://electrum.signet.arkade.sh",
+    mutinynet: "wss://electrum.mutinynet.arkade.sh",
+    regtest: "ws://localhost:50003",
+};
+
+/**
+ * Hostnames for Electrum endpoints reachable over raw TCP. Provided as
+ * a reference for Node-side consumers — the SDK's
+ * {@link ElectrumOnchainProvider} only speaks WebSocket because it has
+ * to run in browsers, so this map is informational only and not
+ * consumed by any built-in provider.
+ *
+ * Public Ark Labs Fulcrum instances expose:
+ *   - port 50001 — plain TCP (Electrum protocol)
+ *   - port 50002 — TCP + TLS (Electrum protocol)
+ *   - port 50003 — WebSocket (Electrum-over-WS, see {@link ELECTRUM_WS_URL})
+ */
+export const ELECTRUM_TCP_HOST: Record<NetworkName, string | null> = {
+    bitcoin: "electrum.arkade.sh",
+    testnet: null,
+    signet: "electrum.signet.arkade.sh",
+    mutinynet: "electrum.mutinynet.arkade.sh",
+    regtest: "localhost",
+};
 
 // Electrum protocol method names
 const BroadcastTransaction = "blockchain.transaction.broadcast";

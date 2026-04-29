@@ -104,6 +104,8 @@ import {
     ExplorerTransaction,
 } from "./providers/onchain";
 import {
+    ELECTRUM_TCP_HOST,
+    ELECTRUM_WS_URL,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
 } from "./providers/electrum";
@@ -288,6 +290,8 @@ export {
     // Providers
     ESPLORA_URL,
     EsploraProvider,
+    ELECTRUM_WS_URL,
+    ELECTRUM_TCP_HOST,
     ElectrumOnchainProvider,
     WsElectrumChainSource,
     RestArkProvider,
