@@ -546,19 +546,45 @@ export class WsElectrumChainSource {
 }
 
 /**
- * Electrum-based implementation of the OnchainProvider interface.
- * Replaces esplora polling with electrum subscriptions where possible.
+ * Electrum-based implementation of the {@link OnchainProvider} interface.
  *
- * @example
+ * Built around the subset of the Electrum protocol that both **Fulcrum**
+ * and **electrs** support — listunspent, get_history, transaction.get
+ * (non-verbose), transaction.get_merkle, block.header,
+ * headers.subscribe, scripthash.subscribe, estimatefee, relayfee, and
+ * broadcast. The verbose form of `transaction.get` is **not** used (it's
+ * Fulcrum-only and rejected by electrs); confirmation status is derived
+ * from `transaction.get_merkle` plus parsed block headers.
+ *
+ * Output amounts are derived from parsed raw transaction bytes (exact
+ * bigints), never the floating-point `value` fields some servers return.
+ *
+ * Atomic 1P1C package broadcast (TRUC / BIP 431) is supported via
+ * Fulcrum's `blockchain.transaction.broadcast_package`. There is **no
+ * fallback** to sequential parent-then-child broadcasts — TRUC packages
+ * with a zero-fee parent would silently fail, so the call surfaces an
+ * error against servers that don't support the method.
+ *
+ * @example Default URL via {@link ELECTRUM_WS_URL}
  * ```typescript
  * import { ElectrumWS } from "ws-electrumx-client";
- * import { ElectrumOnchainProvider } from "./providers/electrum";
- * import { networks } from "./networks";
+ * import {
+ *   ElectrumOnchainProvider,
+ *   ELECTRUM_WS_URL,
+ *   networks,
+ * } from "@arkade-os/sdk";
  *
- * const ws = new ElectrumWS("wss://electrum.blockstream.info:50004");
+ * const ws = new ElectrumWS(ELECTRUM_WS_URL.bitcoin);
  * const provider = new ElectrumOnchainProvider(ws, networks.bitcoin);
  *
  * const coins = await provider.getCoins("bc1q...");
+ * await provider.close();
+ * ```
+ *
+ * @example Custom server
+ * ```typescript
+ * const ws = new ElectrumWS("wss://my-fulcrum.example:50004");
+ * const provider = new ElectrumOnchainProvider(ws, networks.bitcoin);
  * ```
  */
 export class ElectrumOnchainProvider implements OnchainProvider {
