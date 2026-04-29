@@ -492,14 +492,6 @@ describe("Index substitution against the account descriptor template", () => {
     });
 });
 
-describe("SeedIdentity.getSigningDescriptor", () => {
-    it("returns the current concrete descriptor", () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(identity.getSigningDescriptor()).toBe(identity.descriptor);
-    });
-});
-
 describe("SeedIdentity.isOurs", () => {
     it("returns true for the identity's own descriptor", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);

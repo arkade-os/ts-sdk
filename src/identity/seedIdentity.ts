@@ -3,7 +3,7 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity } from ".";
+import { ReadonlyIdentity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
@@ -18,10 +18,8 @@ import type {
     SerializedSigningIdentity,
     SerializedReadonlyIdentity,
 } from "./serialize";
-import {
-    DescriptorProvider,
-    DescriptorSigningRequest,
-} from "./descriptorProvider";
+import { DescriptorSigningRequest } from "./descriptorProvider";
+import { HDCapableIdentity } from "./hdCapableIdentity";
 import { isDescriptor } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
@@ -111,7 +109,15 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * integrations — `SingleKey` exists for backward compatibility with
  * raw nsec-style keys.
  *
- * For descriptor-based signing, wrap with {@link StaticDescriptorProvider}.
+ * Exposes seed-level primitives (signing, derivation, the account
+ * descriptor *template*) but is deliberately NOT a `DescriptorProvider`.
+ * Wrap it explicitly to get one:
+ *  - `HDDescriptorProvider` for rotating receive addresses.
+ *  - {@link StaticDescriptorProvider} for legacy, single-key behaviour.
+ *
+ * The split prevents a SeedIdentity from being silently used as a
+ * concrete descriptor source, which would defeat HD rotation without
+ * any compile-time signal that something was wrong.
  *
  * @example
  * ```typescript
@@ -127,7 +133,7 @@ function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
  * const identity = SeedIdentity.fromSeed(seed, { descriptor });
  * ```
  */
-export class SeedIdentity implements Identity, DescriptorProvider {
+export class SeedIdentity implements HDCapableIdentity {
     private readonly derivedKey: Uint8Array;
     readonly descriptor: string;
     readonly isMainnet: boolean;
@@ -226,7 +232,7 @@ export class SeedIdentity implements Identity, DescriptorProvider {
         return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
     }
 
-    // ── DescriptorProvider ───────────────────────────────────────────
+    // ── HDCapableIdentity ────────────────────────────────────────────
 
     /**
      * Returns the account descriptor template with the final path segment
@@ -251,15 +257,6 @@ export class SeedIdentity implements Identity, DescriptorProvider {
             );
         }
         return `${match[1]}*)`;
-    }
-
-    /**
-     * Returns the current signing descriptor (concrete, at the index this
-     * identity was constructed with). Phase C's `HDDescriptorProvider` will
-     * return the currently-active receive descriptor instead.
-     */
-    getSigningDescriptor(): string {
-        return this.descriptor;
     }
 
     /**
