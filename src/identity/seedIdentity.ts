@@ -3,7 +3,6 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { ReadonlyIdentity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
@@ -19,7 +18,10 @@ import type {
     SerializedReadonlyIdentity,
 } from "./serialize";
 import { DescriptorSigningRequest } from "./descriptorProvider";
-import { HDCapableIdentity } from "./hdCapableIdentity";
+import {
+    HDCapableIdentity,
+    ReadonlyHDCapableIdentity,
+} from "./hdCapableIdentity";
 import { isDescriptor } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
@@ -462,20 +464,43 @@ export class MnemonicIdentity extends SeedIdentity {
  * watch-only wallets or when sharing identity information without
  * exposing private keys.
  *
+ * Accepts either a concrete descriptor (e.g. `tr([fp/86'/0'/0']xpub/0/0)`)
+ * or a wildcard template (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). When given
+ * a template, the index-0 substitution is used to derive the cached
+ * pubkeys, and {@link getAccountDescriptor} returns the original
+ * template — letting watch-only wallets rotate through HD indices
+ * without seed access.
+ *
  * @example
  * ```typescript
- * const descriptor = "tr([fingerprint/86'/0'/0']xpub.../0/0)";
- * const readonly = ReadonlyDescriptorIdentity.fromDescriptor(descriptor);
- * const pubKey = await readonly.xOnlyPublicKey();
+ * // Concrete: pinned to one address
+ * const r1 = ReadonlyDescriptorIdentity.fromDescriptor(
+ *   "tr([fp/86'/0'/0']xpub.../0/0)"
+ * );
+ *
+ * // Template: HD watch-only
+ * const r2 = ReadonlyDescriptorIdentity.fromDescriptor(
+ *   "tr([fp/86'/0'/0']xpub.../0/*)"
+ * );
+ * r2.getAccountDescriptor();
+ * // => "tr([fp/86'/0'/0']xpub.../0/*)"
  * ```
  */
-export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
+export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly xOnlyPubKey: Uint8Array;
     private readonly compressedPubKey: Uint8Array;
+    private readonly accountXpub: string | undefined;
+    private readonly template: string;
 
     private constructor(readonly descriptor: string) {
-        const network = detectNetwork(descriptor);
-        const expansion = expand({ descriptor, network });
+        // Templates can't be parsed directly by `expand()` — substitute
+        // /*) → /0) for parsing, then remember the template separately.
+        const isTemplate = descriptor.endsWith("/*)");
+        const probe = isTemplate
+            ? descriptor.replace(/\/\*\)$/, "/0)")
+            : descriptor;
+        const network = detectNetwork(probe);
+        const expansion = expand({ descriptor: probe, network });
         const keyInfo = expansion.expansionMap?.["@0"];
 
         if (!keyInfo?.pubkey) {
@@ -497,12 +522,30 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
                 "Cannot determine compressed public key parity from descriptor"
             );
         }
+
+        this.accountXpub = keyInfo.bip32?.toBase58();
+
+        // Derive the wildcard template either by trusting the input or by
+        // chopping the trailing /N) off a concrete descriptor.
+        if (isTemplate) {
+            this.template = descriptor;
+        } else {
+            const match = descriptor.match(/^(.*\/)\d+\)$/);
+            if (!match) {
+                throw new Error(
+                    "Cannot derive account descriptor template: missing trailing numeric index"
+                );
+            }
+            this.template = `${match[1]}*)`;
+        }
     }
 
     /**
      * Creates a ReadonlyDescriptorIdentity from an output descriptor.
      *
-     * @param descriptor - Taproot descriptor: tr([fingerprint/path']xpub.../child/path)
+     * @param descriptor - Taproot descriptor, either concrete
+     *   (`tr([fp/path']xpub.../child/N)`) or wildcard template
+     *   (`tr([fp/path']xpub.../child/*)`).
      */
     static fromDescriptor(descriptor: string): ReadonlyDescriptorIdentity {
         return new ReadonlyDescriptorIdentity(descriptor);
@@ -514,6 +557,48 @@ export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
 
     async compressedPublicKey(): Promise<Uint8Array> {
         return this.compressedPubKey;
+    }
+
+    /**
+     * Returns the wildcard-suffixed account descriptor template — the
+     * canonical thing to pass through the system for HD rotation.
+     */
+    getAccountDescriptor(): string {
+        return this.template;
+    }
+
+    /**
+     * Returns true when `descriptor` derives from this identity's xpub.
+     *
+     * HD descriptors match by account xpub (and implicitly fingerprint).
+     * Bare `tr(pubkey)` descriptors fall back to comparing against this
+     * identity's cached x-only pubkey (i.e. the index-0 pubkey for a
+     * template input).
+     */
+    isOurs(descriptor: string): boolean {
+        if (!isDescriptor(descriptor)) return false;
+        try {
+            const network = detectNetwork(descriptor);
+            // expand() may reject wildcard descriptors — substitute index 0
+            // for parsing purposes only.
+            const probe = descriptor.replace(/\/\*\)$/, "/0)");
+            const expansion = expand({ descriptor: probe, network });
+            const keyInfo = expansion.expansionMap?.["@0"];
+            if (!keyInfo) return false;
+
+            if (keyInfo.bip32 && this.accountXpub) {
+                return keyInfo.bip32.toBase58() === this.accountXpub;
+            }
+
+            if (keyInfo.pubkey) {
+                return (
+                    hex.encode(keyInfo.pubkey) === hex.encode(this.xOnlyPubKey)
+                );
+            }
+            return false;
+        } catch {
+            return false;
+        }
     }
 }
 

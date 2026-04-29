@@ -97,8 +97,11 @@ export type {
     DescriptorSigningRequest,
 } from "./descriptorProvider";
 
-// HD capability marker for seed-backed identities
-export type { HDCapableIdentity } from "./hdCapableIdentity";
+// HD capability markers — readonly (xpub-only) and signing variants
+export type {
+    HDCapableIdentity,
+    ReadonlyHDCapableIdentity,
+} from "./hdCapableIdentity";
 
 // Static descriptor provider (wrapper for legacy Identity)
 export { StaticDescriptorProvider } from "./staticDescriptorProvider";

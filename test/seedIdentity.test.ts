@@ -372,6 +372,75 @@ describe("ReadonlyDescriptorIdentity", () => {
         expect((readonly as any).signMessage).toBeUndefined();
         expect((readonly as any).signerSession).toBeUndefined();
     });
+
+    describe("HD template support", () => {
+        it("accepts a wildcard template and exposes it via getAccountDescriptor", () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            const template = identity.getAccountDescriptor();
+
+            const readonly =
+                ReadonlyDescriptorIdentity.fromDescriptor(template);
+            expect(readonly.getAccountDescriptor()).toBe(template);
+            expect(readonly.descriptor).toBe(template);
+        });
+
+        it("derives the template from a concrete descriptor", () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
+                identity.descriptor
+            );
+            expect(readonly.getAccountDescriptor()).toBe(
+                identity.getAccountDescriptor()
+            );
+        });
+
+        it("template input cached pubkey matches the index-0 substitution", async () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const signing = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
+                signing.getAccountDescriptor()
+            );
+            const signingPubKey = await signing.xOnlyPublicKey();
+            const readonlyPubKey = await readonly.xOnlyPublicKey();
+            expect(Array.from(readonlyPubKey)).toEqual(
+                Array.from(signingPubKey)
+            );
+        });
+
+        it("isOurs accepts descriptors from the same xpub at any index", () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            const template = identity.getAccountDescriptor();
+            const readonly =
+                ReadonlyDescriptorIdentity.fromDescriptor(template);
+
+            for (const index of [0, 1, 7, 1024]) {
+                const concrete = template.replace("/*)", `/${index})`);
+                expect(readonly.isOurs(concrete)).toBe(true);
+            }
+            // The template itself round-trips
+            expect(readonly.isOurs(template)).toBe(true);
+        });
+
+        it("isOurs rejects descriptors derived from a different seed", () => {
+            const ourSeed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const ourReadonly = ReadonlyDescriptorIdentity.fromDescriptor(
+                SeedIdentity.fromSeed(ourSeed, {
+                    isMainnet: true,
+                }).getAccountDescriptor()
+            );
+
+            const otherSeed = mnemonicToSeedSync(
+                "legal winner thank year wave sausage worth useful legal winner thank yellow"
+            );
+            const otherDescriptor = SeedIdentity.fromSeed(otherSeed, {
+                isMainnet: true,
+            }).descriptor;
+            expect(ourReadonly.isOurs(otherDescriptor)).toBe(false);
+        });
+    });
 });
 
 describe("module exports", () => {
