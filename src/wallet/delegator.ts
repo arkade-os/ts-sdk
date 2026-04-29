@@ -32,6 +32,7 @@ import { equalBytes } from "@scure/btc-signer/utils.js";
 import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";
 import { Extension } from "../extension";
+import { toSafeNumber } from "../utils/safeNumber";
 
 export interface IDelegatorManager {
     /**
@@ -428,13 +429,17 @@ async function makeSignedDelegateIntent(
         for (const [, assets] of assetInputs) {
             for (const asset of assets) {
                 const existing = allAssets.get(asset.assetId) ?? 0n;
-                allAssets.set(asset.assetId, existing + BigInt(asset.amount));
+                allAssets.set(asset.assetId, existing + asset.assetAmount);
             }
         }
 
         outputAssets = [];
-        for (const [assetId, amount] of allAssets) {
-            outputAssets.push({ assetId, amount: Number(amount) });
+        for (const [assetId, assetAmount] of allAssets) {
+            outputAssets.push({
+                assetId,
+                amount: toSafeNumber(assetAmount),
+                assetAmount,
+            });
         }
     }
 

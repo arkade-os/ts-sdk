@@ -100,6 +100,7 @@ import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
+import { toSafeNumber } from "../utils/safeNumber";
 
 // Historical unilateral exit delay for mainnet (~7 days in seconds).
 // Kept so existing wallets can still discover and spend VTXOs sent to the
@@ -474,20 +475,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const totalOffchain = settled + preconfirmed + recoverable;
 
         // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, number>();
+        const assetBalances = new Map<string, bigint>();
         for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0;
-                    assetBalances.set(a.assetId, current + a.amount);
+                    const current = assetBalances.get(a.assetId) ?? 0n;
+                    assetBalances.set(a.assetId, current + a.assetAmount);
                 }
             }
         }
         const assets = Array.from(assetBalances.entries()).map(
-            ([assetId, amount]) => ({
+            ([assetId, assetAmount]) => ({
                 assetId,
-                amount,
+                amount: toSafeNumber(assetAmount),
+                assetAmount,
             })
         );
 
@@ -1577,8 +1579,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             outputAssets = [];
-            for (const [assetId, amount] of allAssets) {
-                outputAssets.push({ assetId, amount: Number(amount) });
+            for (const [assetId, assetAmount] of allAssets) {
+                outputAssets.push({
+                    assetId,
+                    amount: toSafeNumber(assetAmount),
+                    assetAmount,
+                });
             }
         }
 
@@ -2405,9 +2411,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         let changeIndex = 0;
         if (changeAmount > 0) {
             const changeAssets: Asset[] = [];
-            for (const [assetId, amount] of assetChanges) {
-                if (amount > 0n) {
-                    changeAssets.push({ assetId, amount: Number(amount) });
+            for (const [assetId, assetAmount] of assetChanges) {
+                if (assetAmount > 0n) {
+                    changeAssets.push({
+                        assetId,
+                        amount: toSafeNumber(assetAmount),
+                        assetAmount,
+                    });
                 }
             }
 

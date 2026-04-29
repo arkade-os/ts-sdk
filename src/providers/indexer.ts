@@ -3,6 +3,7 @@ import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
 import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
+import { toSafeNumber } from "../utils/safeNumber";
 
 export type PaginationOptions = {
     pageIndex?: number;
@@ -721,7 +722,8 @@ export class RestIndexerProvider implements IndexerProvider {
             : undefined;
         return {
             assetId: data.assetId ?? assetId,
-            supply: Number(data.supply ?? 0),
+            supply: toSafeNumber(data.supply ?? 0),
+            assetSupply: BigInt(data.supply ?? 0),
             metadata,
             controlAssetId: data.controlAsset || undefined,
         };
@@ -827,7 +829,8 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         script: vtxo.script,
         assets: vtxo.assets?.map((a) => ({
             assetId: a.assetId,
-            amount: Number(a.amount),
+            amount: toSafeNumber(a.amount),
+            assetAmount: BigInt(a.amount),
         })),
     };
 }

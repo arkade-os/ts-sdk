@@ -44,6 +44,7 @@ import {
 } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
+import { toSafeNumber } from "../../utils/safeNumber";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -1091,17 +1092,21 @@ export class WalletMessageHandler
         const totalOffchain = settled + preconfirmed + recoverable;
 
         // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, number>();
+        const assetBalances = new Map<string, bigint>();
         for (const vtxo of spendableVtxos) {
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0;
-                    assetBalances.set(a.assetId, current + a.amount);
+                    const current = assetBalances.get(a.assetId) ?? 0n;
+                    assetBalances.set(a.assetId, current + a.assetAmount);
                 }
             }
         }
         const assets = Array.from(assetBalances.entries()).map(
-            ([assetId, amount]) => ({ assetId, amount })
+            ([assetId, assetAmount]) => ({
+                assetId,
+                amount: toSafeNumber(assetAmount),
+                assetAmount,
+            })
         );
 
         return {

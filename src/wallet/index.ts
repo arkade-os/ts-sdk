@@ -272,8 +272,15 @@ export interface Asset {
     /** Asset identifier. */
     assetId: string;
 
-    /** Asset amount in base units. */
+    /**
+     * Asset amount in base units.
+     * @deprecated (unsuitable for large values)
+     * @see Asset.assetAmount
+     */
     amount: number;
+
+    /** Asset amount in base units. */
+    assetAmount: bigint;
 }
 
 /**
@@ -334,8 +341,15 @@ export type AssetDetails = {
     /** Asset identifier. */
     assetId: string;
 
-    /** Total issued supply in base units. */
+    /**
+     * Total issued supply in base units.
+     * @deprecated (unsuitable for large values)
+     * @see AssetDetails.assetSupply
+     */
     supply: number;
+
+    /** Total issued supply in base units. */
+    assetSupply: bigint;
 
     /** Optional immutable metadata associated with the asset. */
     metadata?: AssetMetadata;

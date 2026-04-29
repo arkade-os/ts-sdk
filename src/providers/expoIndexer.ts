@@ -2,6 +2,7 @@ import { RestIndexerProvider, SubscriptionResponse, Vtxo } from "./indexer";
 import { isFetchTimeoutError } from "./ark";
 import { VirtualCoin } from "../wallet";
 import { getExpoFetch, sseStreamIterator } from "./expoUtils";
+import { toSafeNumber } from "../utils/safeNumber";
 
 // Helper function to convert Vtxo to VirtualCoin (same as in indexer.ts)
 function convertVtxo(vtxo: Vtxo): VirtualCoin {
@@ -33,7 +34,8 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         script: vtxo.script,
         assets: vtxo.assets?.map((a) => ({
             assetId: a.assetId,
-            amount: Number(a.amount),
+            amount: toSafeNumber(a.amount),
+            assetAmount: BigInt(a.amount),
         })),
     };
 }
