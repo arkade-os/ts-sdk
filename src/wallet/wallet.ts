@@ -523,7 +523,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const vtxos = await contractManager.getContractsWithVtxos();
 
         return vtxos
-            .flatMap((_) => _.vtxos as ExtendedVirtualCoin[])
+            .flatMap((_) => _.vtxos)
             .filter((vtxo) => {
                 if (
                     this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)

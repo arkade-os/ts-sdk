@@ -11,6 +11,7 @@ import {
     GetContractsFilter,
     PathContext,
     PathSelection,
+    PersistedContractVtxo,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
@@ -750,7 +751,7 @@ export class ContractManager implements IContractManager {
 
     private async getVtxosForContracts(
         contracts: Contract[]
-    ): Promise<ContractVtxo[]> {
+    ): Promise<PersistedContractVtxo[]> {
         const res = await Promise.all(
             contracts.map((contract) =>
                 getVtxosForContract(
@@ -758,11 +759,10 @@ export class ContractManager implements IContractManager {
                     contract
                 ).then((vtxos) =>
                     vtxos.map(
-                        (vtxo) =>
-                            ({
-                                ...vtxo,
-                                contractScript: contract.script,
-                            }) as ContractVtxo
+                        (vtxo): PersistedContractVtxo => ({
+                            ...vtxo,
+                            contractScript: contract.script,
+                        })
                     )
                 )
             )
@@ -785,7 +785,7 @@ export class ContractManager implements IContractManager {
         pageSize?: number;
         // Overrides the cursor-derived window.
         window?: { after?: number; before?: number };
-    }): Promise<Map<string, ContractVtxo[]>> {
+    }): Promise<Map<string, PersistedContractVtxo[]>> {
         const cursor = await getSyncCursor(this.config.walletRepository);
         const window = options.window ?? computeSyncWindow(cursor);
 
@@ -842,7 +842,7 @@ export class ContractManager implements IContractManager {
         const owned = vtxos.filter((v) => scriptToContract.has(v.script));
         const annotated = await this.annotateVtxos(owned);
 
-        const byContract = new Map<string, ContractVtxo[]>();
+        const byContract = new Map<string, PersistedContractVtxo[]>();
         for (const vtxo of annotated) {
             const contract = scriptToContract.get(vtxo.script)!;
             let arr = byContract.get(contract.address);
@@ -879,13 +879,13 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         pageSize?: number,
         syncWindow?: { after?: number; before?: number }
-    ): Promise<Map<string, ContractVtxo[]>> {
+    ): Promise<Map<string, PersistedContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
             pageSize,
             syncWindow
         );
-        const result = new Map<string, ContractVtxo[]>();
+        const result = new Map<string, PersistedContractVtxo[]>();
         for (const [contractScript, vtxos] of fetched) {
             result.set(contractScript, vtxos);
             const contract = contracts.find((c) => c.script === contractScript);
@@ -910,7 +910,7 @@ export class ContractManager implements IContractManager {
         contracts: Contract[],
         pageSize: number = DEFAULT_PAGE_SIZE,
         syncWindow?: { after?: number; before?: number }
-    ): Promise<Map<string, ContractVtxo[]>> {
+    ): Promise<Map<string, PersistedContractVtxo[]>> {
         if (contracts.length === 0) {
             return new Map();
         }
@@ -922,7 +922,7 @@ export class ContractManager implements IContractManager {
         const scriptToContract = new Map<string, Contract>(
             contracts.map((c) => [c.script, c])
         );
-        const result = new Map<string, ContractVtxo[]>(
+        const result = new Map<string, PersistedContractVtxo[]>(
             contracts.map((c) => [c.script, []])
         );
 

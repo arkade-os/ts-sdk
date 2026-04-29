@@ -89,12 +89,14 @@ export class DelegatorManagerImpl implements IDelegatorManager {
         const arkInfo = await this.arkInfoProvider.getInfo();
         const delegateInfo = await this.delegatorProvider.getDelegateInfo();
 
-        // keep only vtxos that can be signed by the delegate
-        const eligible: ExtendedVirtualCoin[] = vtxos
-            .filter(
-                (v) => findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined
-            )
-            .map((v) => v as ExtendedVirtualCoin);
+        // keep only vtxos that can be signed by the delegate. The guard
+        // narrows ContractVtxo (with optional taproot fields) to the
+        // ExtendedVirtualCoin shape required by makeDelegateForfeitTx.
+        const eligible = vtxos.filter(
+            (v): v is ContractVtxo & ExtendedVirtualCoin =>
+                isAnnotated(v) &&
+                findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined
+        );
         if (eligible.length === 0) {
             return { delegated: [], failed: [] };
         }
@@ -498,4 +500,12 @@ function findDelegateTapLeaf(
         if (!MultisigTapscript.is(arkTapscript)) return false;
         return arkTapscript.params.pubkeys.map(hex.encode).includes(pk);
     });
+}
+
+function isAnnotated(v: ContractVtxo): v is ContractVtxo & ExtendedVirtualCoin {
+    return (
+        v.tapTree !== undefined &&
+        v.forfeitTapLeafScript !== undefined &&
+        v.intentTapLeafScript !== undefined
+    );
 }

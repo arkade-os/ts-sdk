@@ -1,6 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
-import { VirtualCoin, TapLeaves } from "../wallet";
+import { ExtendedVirtualCoin, VirtualCoin, TapLeaves } from "../wallet";
 import { ContractFilter } from "../repositories";
 
 /**
@@ -81,6 +81,19 @@ export type ContractVtxo = VirtualCoin &
         extraWitness?: Bytes[];
         contractScript: string;
     };
+
+/**
+ * A contract vtxo with a fully-populated taproot annotation.
+ *
+ * Produced by paths that go through `annotateVtxos` or repository reads.
+ * Strictly narrower than {@link ContractVtxo} — useful where downstream
+ * code requires the `ExtendedVirtualCoin` shape (e.g. `saveVtxos`,
+ * forfeit tx construction) and the compiler should enforce that the
+ * annotation has actually run.
+ */
+export type PersistedContractVtxo = ExtendedVirtualCoin & {
+    contractScript: string;
+};
 
 /**
  * Result of path selection, including the tapleaf to use and any extra witness data.
@@ -265,7 +278,7 @@ export type GetContractsFilter = ContractFilter;
  */
 export type ContractWithVtxos = {
     contract: Contract;
-    vtxos: ContractVtxo[];
+    vtxos: PersistedContractVtxo[];
 };
 
 /**
