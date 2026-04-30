@@ -25,7 +25,7 @@ import {
     descriptorIsOurs,
     detectNetwork,
     isWildcardTemplate,
-    templateOf,
+    materializeAtIndex,
 } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
@@ -56,14 +56,19 @@ export interface NetworkOptions {
     isMainnet?: boolean;
 }
 
-/** Used for custom output descriptor derivation. */
-export interface DescriptorOptions {
-    /** Custom output descriptor that determines the derivation path. */
-    descriptor: string;
+/** Used for a caller-supplied account-descriptor template. */
+export interface TemplateOptions {
+    /**
+     * Account descriptor *template* — must end with the BIP-32 wildcard
+     * suffix `/*)`. The seed-backed identity materializes at index 0
+     * for its public {@link SeedIdentity.descriptor} field; the
+     * template itself drives HD rotation.
+     */
+    template: string;
 }
 
-/** Either default BIP86 derivation (with optional network selection) or a custom descriptor. */
-export type SeedIdentityOptions = NetworkOptions | DescriptorOptions;
+/** Either default BIP86 derivation (with optional network selection) or a caller-supplied template. */
+export type SeedIdentityOptions = NetworkOptions | TemplateOptions;
 
 /** Used for deriving an identity from a BIP39 mnemonic. */
 export type MnemonicOptions = SeedIdentityOptions & {
@@ -73,47 +78,53 @@ export type MnemonicOptions = SeedIdentityOptions & {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function hasDescriptor(
-    opts: SeedIdentityOptions = {}
-): opts is DescriptorOptions {
-    return "descriptor" in opts && typeof opts.descriptor === "string";
+function hasTemplate(opts: SeedIdentityOptions = {}): opts is TemplateOptions {
+    return "template" in opts && typeof opts.template === "string";
 }
 
 /**
- * Builds a BIP86 Taproot output descriptor (concrete index 0) along
- * with the wildcard *template* form for the same account, both via
- * `scriptExpressions.trBIP32`. The template is the library-built
- * counterpart we'd otherwise have to chop out of the concrete form
- * with {@link templateOf}.
+ * Builds the BIP86 Taproot account-descriptor *template* for the
+ * default account/change branch, via `scriptExpressions.trBIP32` with
+ * the library's `index: '*'` wildcard. Used by the
+ * {@link SeedIdentity.fromSeed} / {@link MnemonicIdentity.fromMnemonic}
+ * default paths; callers that want a different path supply a template
+ * directly via {@link TemplateOptions}.
  * @internal
  */
-function buildDescriptor(
-    seed: Uint8Array,
-    isMainnet: boolean
-): { descriptor: string; template: string } {
+function buildTemplate(seed: Uint8Array, isMainnet: boolean): string {
     const network = isMainnet ? networks.bitcoin : networks.testnet;
     const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
-    const base = { masterNode, network, account: 0, change: 0 };
-    return {
-        descriptor: scriptExpressions.trBIP32({ ...base, index: 0 }),
-        template: scriptExpressions.trBIP32({ ...base, index: "*" }),
-    };
+    return scriptExpressions.trBIP32({
+        masterNode,
+        network,
+        account: 0,
+        change: 0,
+        index: "*",
+    });
 }
 
 /**
- * Seed-based identity derived from a raw seed and an output descriptor.
+ * Seed-based identity derived from a raw seed and an account descriptor
+ * *template*.
  *
  * This is the recommended identity type for most applications. It uses
- * standard BIP86 (Taproot) derivation by default and stores an output
- * descriptor for interoperability with other wallets.
+ * standard BIP86 (Taproot) derivation by default; callers that need a
+ * different path supply the wildcard template directly.
  *
  * Prefer this (or @see MnemonicIdentity) over `SingleKey` for new
  * integrations — `SingleKey` exists for backward compatibility with
  * raw nsec-style keys.
  *
- * Exposes seed-level primitives (signing, derivation, the account
- * descriptor *template*) but is deliberately NOT a `DescriptorProvider`.
- * Wrap it explicitly to get one:
+ * The identity holds the *template* (e.g. `tr([fp/86'/0'/0']xpub/0/*)`)
+ * and exposes a single static "this is who I am" descriptor — the
+ * template materialized at index 0 — through {@link descriptor}. HD
+ * rotation through other indices happens at the
+ * `HDDescriptorProvider` layer, which reads the template via
+ * {@link getAccountDescriptor}.
+ *
+ * Exposes seed-level primitives (signing, derivation, the template)
+ * but is deliberately NOT a `DescriptorProvider`. Wrap it explicitly
+ * to get one:
  *  - `HDDescriptorProvider` for rotating receive addresses.
  *  - {@link StaticDescriptorProvider} for legacy, single-key behaviour.
  *
@@ -125,34 +136,46 @@ function buildDescriptor(
  * ```typescript
  * const seed = mnemonicToSeedSync(mnemonic);
  *
- * // Testnet (BIP86 path m/86'/1'/0'/0/0)
+ * // Testnet (BIP86 template m/86'/1'/0'/0/*)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
  *
- * // Mainnet (BIP86 path m/86'/0'/0'/0/0)
+ * // Mainnet (BIP86 template m/86'/0'/0'/0/*)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
  *
- * // Custom descriptor
- * const identity = SeedIdentity.fromSeed(seed, { descriptor });
+ * // Caller-supplied template
+ * const identity = SeedIdentity.fromSeed(seed, { template });
  * ```
  */
 export class SeedIdentity implements HDCapableIdentity {
     private readonly derivedKey: Uint8Array;
+    /**
+     * Static "this is who I am" descriptor — the {@link template}
+     * materialized at index 0. Useful as a stable per-identity handle
+     * (e.g. for serialization / display); HD rotation reads the
+     * template directly via {@link getAccountDescriptor}.
+     */
     readonly descriptor: string;
     readonly isMainnet: boolean;
     private readonly accountXpub: string;
     private readonly template: string;
 
     /**
-     * Constructs a SeedIdentity. Prefer the {@link fromSeed} factory,
-     * which builds the BIP86 template via the descriptors library
-     * directly. The optional `template` parameter exists so that
-     * factory paths can pass the library-built template through; when
-     * omitted, it falls back to deriving the template from
-     * `descriptor` via {@link templateOf}.
+     * Constructs a SeedIdentity from a 64-byte seed and an account
+     * descriptor *template* (must end in `/*)`). Prefer the
+     * {@link fromSeed} factory, which builds the BIP86 template via
+     * `scriptExpressions.trBIP32` for the default path.
+     *
+     * Throws on a non-template descriptor, an xpub mismatch with the
+     * seed, or a missing derivation path in the template.
      */
-    constructor(seed: Uint8Array, descriptor: string, template?: string) {
+    constructor(seed: Uint8Array, template: string) {
         if (seed.length !== 64) {
             throw new Error("Seed must be 64 bytes");
+        }
+        if (!isWildcardTemplate(template)) {
+            throw new Error(
+                `SeedIdentity requires a wildcard descriptor template (must end in "/*)"); got "${template}"`
+            );
         }
 
         // Defensive copy: `derivedKey` and `descriptor` are computed eagerly
@@ -160,63 +183,59 @@ export class SeedIdentity implements HDCapableIdentity {
         // caller's buffer must not drift the serialized `seed` out of sync
         // with the live identity state.
         seedBytes.set(this, new Uint8Array(seed));
-        this.descriptor = descriptor;
+        this.template = template;
+        this.descriptor = materializeAtIndex(template, 0);
 
-        const network = detectNetwork(descriptor);
+        const network = detectNetwork(template);
         this.isMainnet = network === networks.bitcoin;
 
-        // Parse and validate the descriptor using the library
-        const expansion = expand({ descriptor, network });
+        // Parse and validate the template using the library — pass
+        // `index: 0` so `expand()` substitutes the wildcard for us.
+        const expansion = expand({ descriptor: template, network, index: 0 });
         const keyInfo = expansion.expansionMap?.["@0"];
 
         if (!keyInfo?.originPath) {
-            throw new Error("Descriptor must include a key origin path");
+            throw new Error("Template must include a key origin path");
         }
 
-        // Verify the xpub in the descriptor matches our seed
+        // Verify the xpub in the template matches our seed
         const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
         const accountNode = masterNode.derive(`m${keyInfo.originPath}`);
         if (accountNode.publicExtendedKey !== keyInfo.bip32?.toBase58()) {
             throw new Error(
-                "xpub mismatch: derived key does not match descriptor"
+                "xpub mismatch: derived key does not match template"
             );
         }
         this.accountXpub = accountNode.publicExtendedKey;
 
-        // Derive the private key using the full path from the descriptor
+        // Derive the private key for index 0 using the full path
         if (!keyInfo.path) {
-            throw new Error("Descriptor must specify a full derivation path");
+            throw new Error("Template must specify a full derivation path");
         }
         const derivedNode = masterNode.derive(keyInfo.path);
         if (!derivedNode.privateKey) {
             throw new Error("Failed to derive private key");
         }
         this.derivedKey = derivedNode.privateKey;
-
-        this.template = template ?? templateOf(descriptor);
     }
 
     /**
      * Creates a SeedIdentity from a raw 64-byte seed.
      *
      * Pass `{ isMainnet }` for default BIP86 derivation, or
-     * `{ descriptor }` for a custom derivation path.
+     * `{ template }` for a caller-supplied account-descriptor template.
      *
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
-     * @param opts - Network selection or custom descriptor.
+     * @param opts - Network selection or template descriptor.
      */
     static fromSeed(
         seed: Uint8Array,
         opts: SeedIdentityOptions = {}
     ): SeedIdentity {
-        if (hasDescriptor(opts)) {
-            return new SeedIdentity(seed, opts.descriptor);
-        }
-        const { descriptor, template } = buildDescriptor(
-            seed,
-            (opts as NetworkOptions).isMainnet ?? true
-        );
-        return new SeedIdentity(seed, descriptor, template);
+        const template = hasTemplate(opts)
+            ? opts.template
+            : buildTemplate(seed, (opts as NetworkOptions).isMainnet ?? true);
+        return new SeedIdentity(seed, template);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -243,33 +262,26 @@ export class SeedIdentity implements HDCapableIdentity {
     }
 
     /**
-     * Converts to a watch-only identity that cannot sign.
+     * Converts to a watch-only identity that cannot sign. Carries the
+     * template forward, so the readonly side stays HD-capable (can
+     * derive descriptors at any index without seed access).
      */
     async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
-        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
+        return ReadonlyDescriptorIdentity.fromTemplate(this.template);
     }
 
     // ── HDCapableIdentity ────────────────────────────────────────────
 
     /**
-     * Returns the account descriptor template with the final path segment
-     * replaced by a wildcard `*`. The template is the canonical thing to
-     * pass through the system; consumers that need a concrete descriptor
-     * at a specific index materialize it themselves (see
-     * `HDDescriptorProvider` in the wallet layer for the rotating-counter
-     * use case).
+     * Returns the account descriptor template (e.g.
+     * `tr([fp/86'/0'/0']xpub/0/*)`). The template is the canonical
+     * thing to pass through the system; consumers that need a concrete
+     * descriptor at a specific index materialize it themselves (see
+     * `HDDescriptorProvider` in the wallet layer for the rotating-
+     * counter use case).
      *
-     * Cached on construction — built directly via the descriptors library
-     * (`scriptExpressions.trBIP32({ index: '*' })`) for the default-BIP86
-     * factory paths, or derived from `this.descriptor` via {@link templateOf}
-     * for the custom-descriptor path.
-     *
-     * @example
-     * ```ts
-     * // If this.descriptor is tr([fp/86'/0'/0']xpub/0/0)
-     * identity.getAccountDescriptor();
-     * // returns tr([fp/86'/0'/0']xpub/0/*)
-     * ```
+     * The template is exactly what was passed to the constructor; this
+     * is a getter, not a recomputation.
      */
     getAccountDescriptor(): string {
         return this.template;
@@ -414,12 +426,11 @@ export class SeedIdentity implements HDCapableIdentity {
 export class MnemonicIdentity extends SeedIdentity {
     private constructor(
         seed: Uint8Array,
-        descriptor: string,
+        template: string,
         mnemonic: string,
-        passphrase: string | undefined,
-        template?: string
+        passphrase: string | undefined
     ) {
-        super(seed, descriptor, template);
+        super(seed, template);
         mnemonicMeta.set(this, { mnemonic, passphrase });
     }
 
@@ -427,10 +438,10 @@ export class MnemonicIdentity extends SeedIdentity {
      * Creates a MnemonicIdentity from a BIP39 mnemonic phrase.
      *
      * Pass `{ isMainnet }` for default BIP86 derivation, or
-     * `{ descriptor }` for a custom derivation path.
+     * `{ template }` for a caller-supplied account-descriptor template.
      *
      * @param phrase - BIP39 mnemonic phrase (12 or 24 words)
-     * @param opts - Network selection or custom descriptor, plus optional passphrase
+     * @param opts - Network selection or template descriptor, plus optional passphrase
      */
     static fromMnemonic(
         phrase: string,
@@ -441,55 +452,35 @@ export class MnemonicIdentity extends SeedIdentity {
         }
         const passphrase = opts.passphrase;
         const seed = mnemonicToSeedSync(phrase, passphrase);
-        if (hasDescriptor(opts)) {
-            return new MnemonicIdentity(
-                seed,
-                opts.descriptor,
-                phrase,
-                passphrase
-            );
-        }
-        const { descriptor, template } = buildDescriptor(
-            seed,
-            (opts as NetworkOptions).isMainnet ?? true
-        );
-        return new MnemonicIdentity(
-            seed,
-            descriptor,
-            phrase,
-            passphrase,
-            template
-        );
+        const template = hasTemplate(opts)
+            ? opts.template
+            : buildTemplate(seed, (opts as NetworkOptions).isMainnet ?? true);
+        return new MnemonicIdentity(seed, template, phrase, passphrase);
     }
 }
 
 /**
- * Watch-only identity from an output descriptor.
+ * Watch-only HD identity from a descriptor *template*.
  *
  * Can derive public keys but cannot sign transactions. Use this for
- * watch-only wallets or when sharing identity information without
- * exposing private keys.
+ * watch-only wallets — given just an xpub-based template, the readonly
+ * side still rotates through HD indices.
  *
- * Accepts either a concrete descriptor (e.g. `tr([fp/86'/0'/0']xpub/0/0)`)
- * or a wildcard template (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). When given
- * a template, the index-0 substitution is used to derive the cached
- * pubkeys, and {@link getAccountDescriptor} returns the original
- * template — letting watch-only wallets rotate through HD indices
- * without seed access.
+ * Constructed from a wildcard template (e.g.
+ * `tr([fp/86'/0'/0']xpub.../0/*)`). The {@link descriptor} field
+ * exposes the index-0 materialization as a stable per-identity handle;
+ * the template itself is what HD providers consume via
+ * {@link getAccountDescriptor}.
  *
  * @example
  * ```typescript
- * // Concrete: pinned to one address
- * const r1 = ReadonlyDescriptorIdentity.fromDescriptor(
- *   "tr([fp/86'/0'/0']xpub.../0/0)"
- * );
- *
- * // Template: HD watch-only
- * const r2 = ReadonlyDescriptorIdentity.fromDescriptor(
+ * const ro = ReadonlyDescriptorIdentity.fromTemplate(
  *   "tr([fp/86'/0'/0']xpub.../0/*)"
  * );
- * r2.getAccountDescriptor();
- * // => "tr([fp/86'/0'/0']xpub.../0/*)"
+ * ro.descriptor;
+ * // => "tr([fp/86'/0'/0']xpub.../0/0)" — index-0 form
+ * ro.getAccountDescriptor();
+ * // => "tr([fp/86'/0'/0']xpub.../0/*)" — original template
  * ```
  */
 export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
@@ -497,23 +488,31 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly compressedPubKey: Uint8Array;
     private readonly accountXpub: string | undefined;
     private readonly template: string;
+    /**
+     * Static "this is who I am" descriptor — the template materialized
+     * at index 0. Useful as a stable per-identity handle (e.g. for
+     * serialization / display); HD rotation reads the template
+     * directly via {@link getAccountDescriptor}.
+     */
+    readonly descriptor: string;
 
-    private constructor(readonly descriptor: string) {
-        const network = detectNetwork(descriptor);
-        // For wildcard templates, let the library substitute the
-        // wildcard via its `index` parameter rather than rewriting the
-        // string ourselves. expand() rejects `index` for non-ranged
-        // descriptors, so it's only set when there's a wildcard to
-        // resolve.
-        const expansion = expand({
-            descriptor,
-            network,
-            ...(isWildcardTemplate(descriptor) ? { index: 0 } : {}),
-        });
+    private constructor(template: string) {
+        if (!isWildcardTemplate(template)) {
+            throw new Error(
+                `ReadonlyDescriptorIdentity requires a wildcard descriptor template (must end in "/*)"); got "${template}"`
+            );
+        }
+        this.template = template;
+        this.descriptor = materializeAtIndex(template, 0);
+
+        // Let the library substitute the wildcard via its `index`
+        // parameter rather than re-doing it ourselves.
+        const network = detectNetwork(template);
+        const expansion = expand({ descriptor: template, network, index: 0 });
         const keyInfo = expansion.expansionMap?.["@0"];
 
         if (!keyInfo?.pubkey) {
-            throw new Error("Failed to derive public key from descriptor");
+            throw new Error("Failed to derive public key from template");
         }
 
         // For taproot, the library returns 32-byte x-only pubkey
@@ -528,23 +527,22 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
             this.compressedPubKey = keyInfo.bip32.publicKey;
         } else {
             throw new Error(
-                "Cannot determine compressed public key parity from descriptor"
+                "Cannot determine compressed public key parity from template"
             );
         }
 
         this.accountXpub = keyInfo.bip32?.toBase58();
-        this.template = templateOf(descriptor);
     }
 
     /**
-     * Creates a ReadonlyDescriptorIdentity from an output descriptor.
+     * Creates a ReadonlyDescriptorIdentity from an account-descriptor
+     * *template*.
      *
-     * @param descriptor - Taproot descriptor, either concrete
-     *   (`tr([fp/path']xpub.../child/N)`) or wildcard template
+     * @param template - Wildcard-suffixed Taproot template
      *   (`tr([fp/path']xpub.../child/*)`).
      */
-    static fromDescriptor(descriptor: string): ReadonlyDescriptorIdentity {
-        return new ReadonlyDescriptorIdentity(descriptor);
+    static fromTemplate(template: string): ReadonlyDescriptorIdentity {
+        return new ReadonlyDescriptorIdentity(template);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {

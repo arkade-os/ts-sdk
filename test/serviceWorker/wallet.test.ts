@@ -1274,8 +1274,8 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
-        const identity = ReadonlyDescriptorIdentity.fromDescriptor(
-            reference.descriptor
+        const identity = ReadonlyDescriptorIdentity.fromTemplate(
+            reference.getAccountDescriptor()
         );
 
         await ServiceWorkerReadonlyWallet.create({

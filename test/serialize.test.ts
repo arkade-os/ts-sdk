@@ -163,8 +163,8 @@ describe("serializeReadonlyIdentity", () => {
         const mnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
-        const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
-            mnemonic.descriptor
+        const readonly = ReadonlyDescriptorIdentity.fromTemplate(
+            mnemonic.getAccountDescriptor()
         );
         const envelope = await serializeReadonlyIdentity(readonly);
         expect(envelope).toEqual({
@@ -324,17 +324,20 @@ describe("hydrateIdentity round-trip", () => {
         expect(serializeSigningIdentity(identity)).toEqual(envelope);
     });
 
-    it("MnemonicIdentity with custom descriptor preserves the descriptor", async () => {
+    it("MnemonicIdentity with custom template preserves the descriptor", async () => {
         const testnetReference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: false,
         });
         const original = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-            descriptor: testnetReference.descriptor,
+            template: testnetReference.getAccountDescriptor(),
         });
         const rehydrated = hydrateIdentity(
             serializeSigningIdentity(original)
         ) as MnemonicIdentity;
         expect(rehydrated.descriptor).toBe(testnetReference.descriptor);
+        expect(rehydrated.getAccountDescriptor()).toBe(
+            testnetReference.getAccountDescriptor()
+        );
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
             Array.from(await testnetReference.xOnlyPublicKey())
         );

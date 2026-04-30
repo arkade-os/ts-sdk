@@ -8,6 +8,7 @@ import {
     serializeSeedOwnedSigningIdentity,
     serializeSeedOwnedReadonlyIdentity,
 } from "./seedIdentity";
+import { isWildcardTemplate, templateOf } from "./descriptor";
 
 /**
  * Tagged envelope for a signing identity transported across the
@@ -107,6 +108,17 @@ export async function serializeReadonlyIdentity(
 }
 
 /**
+ * Coerce an envelope's `descriptor` field to the wildcard template form
+ * expected by the seed-backed identity factories. Templates pass
+ * through; concrete `.../N)` descriptors are chopped via
+ * {@link templateOf} for backward compatibility with older envelopes
+ * that stored the index-0 materialization.
+ */
+function toTemplate(descriptor: string): string {
+    return isWildcardTemplate(descriptor) ? descriptor : templateOf(descriptor);
+}
+
+/**
  * Rehydrate a serialized identity envelope back into an identity instance.
  * The return type is the union of signing and readonly; use
  * {@link isSigningSerialized} on the envelope before hydration if the caller
@@ -122,15 +134,17 @@ export function hydrateIdentity(
             return ReadonlySingleKey.fromPublicKey(hex.decode(s.publicKey));
         case "seed":
             return SeedIdentity.fromSeed(hex.decode(s.seed), {
-                descriptor: s.descriptor,
+                template: toTemplate(s.descriptor),
             });
         case "mnemonic":
             return MnemonicIdentity.fromMnemonic(s.mnemonic, {
-                descriptor: s.descriptor,
+                template: toTemplate(s.descriptor),
                 passphrase: s.passphrase,
             });
         case "readonly-descriptor":
-            return ReadonlyDescriptorIdentity.fromDescriptor(s.descriptor);
+            return ReadonlyDescriptorIdentity.fromTemplate(
+                toTemplate(s.descriptor)
+            );
         default:
             // Belt-and-suspenders: `normalizeSerializedIdentity` already
             // rejects unknown `type` values at the wire boundary. Without
