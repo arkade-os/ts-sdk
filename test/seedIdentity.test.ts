@@ -123,7 +123,9 @@ describe("SeedIdentity", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const reference = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
-            const identity = new SeedIdentity(seed, reference.descriptor);
+            const identity = new SeedIdentity(seed, {
+                descriptor: reference.descriptor,
+            });
 
             const refPubKey = await reference.xOnlyPublicKey();
             const pubKey = await identity.xOnlyPublicKey();
@@ -137,7 +139,10 @@ describe("SeedIdentity", () => {
             const otherSeed = mnemonicToSeedSync(TEST_MNEMONIC, "different");
 
             expect(
-                () => new SeedIdentity(otherSeed, identity.descriptor)
+                () =>
+                    new SeedIdentity(otherSeed, {
+                        descriptor: identity.descriptor,
+                    })
             ).toThrow("xpub mismatch");
         });
 
@@ -146,9 +151,9 @@ describe("SeedIdentity", () => {
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
             // Materialize at index 0 to get a concrete descriptor.
             const concrete = identity.descriptor.replace("/*)", "/0)");
-            expect(() => new SeedIdentity(seed, concrete)).toThrow(
-                /wildcard descriptor template/
-            );
+            expect(
+                () => new SeedIdentity(seed, { descriptor: concrete })
+            ).toThrow(/wildcard descriptor template/);
         });
     });
 

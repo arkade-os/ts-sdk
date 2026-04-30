@@ -71,40 +71,6 @@ export type MnemonicOptions = SeedIdentityOptions & {
     passphrase?: string;
 };
 
-// ── Helpers ──────────────────────────────────────────────────────
-
-function hasDescriptor(
-    opts: SeedIdentityOptions = {}
-): opts is DescriptorOptions {
-    return "descriptor" in opts && typeof opts.descriptor === "string";
-}
-
-/**
- * Pick the wildcard descriptor a {@link SeedIdentityOptions} resolves to:
- * either the caller-supplied `{ descriptor }` or a freshly-built BIP86
- * default at the requested network. Shared between
- * {@link SeedIdentity.fromSeed} and
- * {@link MnemonicIdentity.fromMnemonic} so the two factories agree on
- * the rule.
- */
-function descriptorForOptions(
-    seed: Uint8Array,
-    opts: SeedIdentityOptions
-): string {
-    if (hasDescriptor(opts)) return opts.descriptor;
-    const network =
-        ((opts as NetworkOptions).isMainnet ?? true)
-            ? networks.bitcoin
-            : networks.testnet;
-    return scriptExpressions.trBIP32({
-        masterNode: HDKey.fromMasterSeed(seed, network.bip32),
-        network,
-        account: 0,
-        change: 0,
-        index: "*",
-    });
-}
-
 /**
  * Seed-based identity derived from a raw seed and an account descriptor
  * *template*.
@@ -159,22 +125,42 @@ export class SeedIdentity implements HDCapableIdentity {
     readonly descriptor: string;
 
     /**
-     * Constructs a SeedIdentity from a 64-byte seed and an account
-     * descriptor *template* (must end in `/*)`). Prefer the
-     * {@link fromSeed} factory, which builds the BIP86 template via
-     * `scriptExpressions.trBIP32` for the default path.
+     * Constructs a SeedIdentity from a 64-byte seed and either a
+     * caller-supplied wildcard descriptor (`{ descriptor }`) or the
+     * default BIP86 path at the requested network (`{ isMainnet }`).
+     * Prefer the {@link fromSeed} factory for symmetry with
+     * {@link MnemonicIdentity.fromMnemonic}.
      *
-     * Throws on a non-template descriptor, an xpub mismatch with the
-     * seed, or a missing derivation path in the template.
+     * Throws on a non-wildcard descriptor, an xpub mismatch with the
+     * seed, or a missing derivation path.
      */
-    constructor(seed: Uint8Array, descriptor: string) {
+    constructor(seed: Uint8Array, opts: SeedIdentityOptions = {}) {
         if (seed.length !== 64) {
             throw new Error("Seed must be 64 bytes");
         }
 
-        const network = isMainnetDescriptor(descriptor)
-            ? networks.bitcoin
-            : networks.testnet;
+        // Resolve the descriptor: caller-supplied wins; otherwise build
+        // the BIP86 default at the requested network via the library.
+        let descriptor: string;
+        let network: typeof networks.bitcoin;
+        if ("descriptor" in opts && typeof opts.descriptor === "string") {
+            descriptor = opts.descriptor;
+            network = isMainnetDescriptor(descriptor)
+                ? networks.bitcoin
+                : networks.testnet;
+        } else {
+            network =
+                ((opts as NetworkOptions).isMainnet ?? true)
+                    ? networks.bitcoin
+                    : networks.testnet;
+            descriptor = scriptExpressions.trBIP32({
+                masterNode: HDKey.fromMasterSeed(seed, network.bip32),
+                network,
+                account: 0,
+                change: 0,
+                index: "*",
+            });
+        }
 
         // Parse the descriptor, substituting the wildcard at index 0.
         // The library raises "index passed for non-ranged descriptor"
@@ -238,7 +224,7 @@ export class SeedIdentity implements HDCapableIdentity {
         seed: Uint8Array,
         opts: SeedIdentityOptions = {}
     ): SeedIdentity {
-        return new SeedIdentity(seed, descriptorForOptions(seed, opts));
+        return new SeedIdentity(seed, opts);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -414,8 +400,7 @@ export class SeedIdentity implements HDCapableIdentity {
 export class MnemonicIdentity extends SeedIdentity {
     private constructor(phrase: string, opts: MnemonicOptions) {
         const { passphrase } = opts;
-        const seed = mnemonicToSeedSync(phrase, passphrase);
-        super(seed, descriptorForOptions(seed, opts));
+        super(mnemonicToSeedSync(phrase, passphrase), opts);
         mnemonicMeta.set(this, { mnemonic: phrase, passphrase });
     }
 
