@@ -187,7 +187,7 @@ const balance = await readonlyWallet.getBalance()
 **Derivation Path:** `m/86'/{coinType}'/0'/0/*`
 - BIP86 (Taproot) purpose
 - Coin type 0 for mainnet, 1 for testnet
-- Account 0, external chain, wildcard index — `identity.descriptor` exposes the index-0 form as the static "this is who I am" handle, while `getAccountDescriptor()` returns the wildcard template that drives HD rotation.
+- Account 0, external chain, wildcard index — `identity.descriptor` is the wildcard template that drives HD rotation; consumers materialize a concrete descriptor at a specific index when they need one.
 
 ### Batch Signing for Browser Wallets
 

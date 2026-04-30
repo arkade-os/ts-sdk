@@ -91,12 +91,11 @@ function hasDescriptor(
  * integrations — `SingleKey` exists for backward compatibility with
  * raw nsec-style keys.
  *
- * The identity holds the *template* (e.g. `tr([fp/86'/0'/0']xpub/0/*)`)
- * and exposes a single static "this is who I am" descriptor — the
- * template materialized at index 0 — through {@link descriptor}. HD
- * rotation through other indices happens at the
- * `HDDescriptorProvider` layer, which reads the template via
- * {@link getAccountDescriptor}.
+ * The identity holds the wildcard *template* (e.g.
+ * `tr([fp/86'/0'/0']xpub/0/*)`) on its public {@link descriptor}
+ * field. HD rotation reads it directly; consumers that need a
+ * concrete descriptor at a specific index materialize it themselves
+ * (see `HDDescriptorProvider` in the wallet layer).
  *
  * Exposes seed-level primitives (signing, derivation, the template)
  * but is deliberately NOT a `DescriptorProvider`. Wrap it explicitly
@@ -126,15 +125,15 @@ function hasDescriptor(
 export class SeedIdentity implements HDCapableIdentity {
     private readonly derivedKey: Uint8Array;
     /**
-     * Static "this is who I am" descriptor — the {@link template}
-     * materialized at index 0. Useful as a stable per-identity handle
-     * (e.g. for serialization / display); HD rotation reads the
-     * template directly via {@link getAccountDescriptor}.
+     * Wildcard account-descriptor template (e.g.
+     * `tr([fp/86'/0'/0']xpub/0/*)`). The canonical thing to pass
+     * through the system; consumers materialize a concrete descriptor
+     * at a specific index themselves (see `HDDescriptorProvider` in
+     * the wallet layer for the rotating-counter use case).
      */
     readonly descriptor: string;
     readonly isMainnet: boolean;
     private readonly accountXpub: string;
-    private readonly template: string;
 
     /**
      * Constructs a SeedIdentity from a 64-byte seed and an account
@@ -172,8 +171,7 @@ export class SeedIdentity implements HDCapableIdentity {
         // caller's buffer must not drift the serialized `seed` out of sync
         // with the live identity state.
         seedBytes.set(this, new Uint8Array(seed));
-        this.template = template;
-        this.descriptor = expansion.canonicalExpression;
+        this.descriptor = template;
 
         if (!keyInfo?.originPath) {
             throw new Error("Template must include a key origin path");
@@ -260,24 +258,7 @@ export class SeedIdentity implements HDCapableIdentity {
      * derive descriptors at any index without seed access).
      */
     async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
-        return ReadonlyDescriptorIdentity.fromDescriptor(this.template);
-    }
-
-    // ── HDCapableIdentity ────────────────────────────────────────────
-
-    /**
-     * Returns the account descriptor template (e.g.
-     * `tr([fp/86'/0'/0']xpub/0/*)`). The template is the canonical
-     * thing to pass through the system; consumers that need a concrete
-     * descriptor at a specific index materialize it themselves (see
-     * `HDDescriptorProvider` in the wallet layer for the rotating-
-     * counter use case).
-     *
-     * The template is exactly what was passed to the constructor; this
-     * is a getter, not a recomputation.
-     */
-    getAccountDescriptor(): string {
-        return this.template;
+        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
     }
 
     /**
@@ -479,10 +460,8 @@ export class MnemonicIdentity extends SeedIdentity {
  * side still rotates through HD indices.
  *
  * Constructed from a wildcard template (e.g.
- * `tr([fp/86'/0'/0']xpub.../0/*)`). The {@link descriptor} field
- * exposes the index-0 materialization as a stable per-identity handle;
- * the template itself is what HD providers consume via
- * {@link getAccountDescriptor}.
+ * `tr([fp/86'/0'/0']xpub.../0/*)`); the {@link descriptor} field
+ * holds it for HD providers to consume.
  *
  * @example
  * ```typescript
@@ -490,21 +469,17 @@ export class MnemonicIdentity extends SeedIdentity {
  *   "tr([fp/86'/0'/0']xpub.../0/*)"
  * );
  * ro.descriptor;
- * // => "tr([fp/86'/0'/0']xpub.../0/0)" — index-0 form
- * ro.getAccountDescriptor();
- * // => "tr([fp/86'/0'/0']xpub.../0/*)" — original template
+ * // => "tr([fp/86'/0'/0']xpub.../0/*)" — the template
  * ```
  */
 export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly xOnlyPubKey: Uint8Array;
     private readonly compressedPubKey: Uint8Array;
     private readonly accountXpub: string | undefined;
-    private readonly template: string;
     /**
-     * Static "this is who I am" descriptor — the template materialized
-     * at index 0. Useful as a stable per-identity handle (e.g. for
-     * serialization / display); HD rotation reads the template
-     * directly via {@link getAccountDescriptor}.
+     * Wildcard account-descriptor template (e.g.
+     * `tr([fp/86'/0'/0']xpub/0/*)`). HD rotation consumers materialize
+     * a concrete descriptor at a specific index themselves.
      */
     readonly descriptor: string;
 
@@ -526,8 +501,7 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
         }
         const keyInfo = expansion.expansionMap?.["@0"];
 
-        this.template = template;
-        this.descriptor = expansion.canonicalExpression;
+        this.descriptor = template;
 
         if (!keyInfo?.pubkey) {
             throw new Error("Failed to derive public key from template");
@@ -569,14 +543,6 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
 
     async compressedPublicKey(): Promise<Uint8Array> {
         return this.compressedPubKey;
-    }
-
-    /**
-     * Returns the wildcard-suffixed account descriptor template — the
-     * canonical thing to pass through the system for HD rotation.
-     */
-    getAccountDescriptor(): string {
-        return this.template;
     }
 
     /**
@@ -627,7 +593,7 @@ export function serializeSeedOwnedSigningIdentity(
         const envelope: SerializedSigningIdentity = {
             type: "mnemonic",
             mnemonic: meta.mnemonic,
-            descriptor: identity.getAccountDescriptor(),
+            descriptor: identity.descriptor,
         };
         if (meta.passphrase !== undefined) {
             envelope.passphrase = meta.passphrase;
@@ -643,7 +609,7 @@ export function serializeSeedOwnedSigningIdentity(
     return {
         type: "seed",
         seed: hex.encode(seed),
-        descriptor: identity.getAccountDescriptor(),
+        descriptor: identity.descriptor,
     };
 }
 
@@ -663,6 +629,6 @@ export function serializeSeedOwnedReadonlyIdentity(
 ): SerializedReadonlyIdentity {
     return {
         type: "readonly-descriptor",
-        descriptor: identity.getAccountDescriptor(),
+        descriptor: identity.descriptor,
     };
 }

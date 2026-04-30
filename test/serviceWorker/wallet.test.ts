@@ -1223,7 +1223,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         expect(wallet).toEqual({
             type: "mnemonic",
             mnemonic: TEST_MNEMONIC,
-            descriptor: identity.getAccountDescriptor(),
+            descriptor: identity.descriptor,
         });
     });
 
@@ -1265,7 +1265,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         expect(wallet).toEqual({
             type: "seed",
             seed: hex.encode(seed),
-            descriptor: identity.getAccountDescriptor(),
+            descriptor: identity.descriptor,
         });
     });
 
@@ -1275,7 +1275,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
             isMainnet: true,
         });
         const identity = ReadonlyDescriptorIdentity.fromDescriptor(
-            reference.getAccountDescriptor()
+            reference.descriptor
         );
 
         await ServiceWorkerReadonlyWallet.create({
@@ -1288,7 +1288,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         const wallet = getInitConfigWallet(serviceWorker);
         expect(wallet).toEqual({
             type: "readonly-descriptor",
-            descriptor: reference.getAccountDescriptor(),
+            descriptor: reference.descriptor,
         });
     });
 
@@ -1309,7 +1309,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         const wallet = getInitConfigWallet(serviceWorker);
         expect(wallet).toEqual({
             type: "readonly-descriptor",
-            descriptor: identity.getAccountDescriptor(),
+            descriptor: identity.descriptor,
         });
         const onWire = JSON.stringify(wallet);
         expect(onWire).not.toContain("abandon");

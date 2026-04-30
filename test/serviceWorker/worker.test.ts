@@ -486,7 +486,7 @@ describe("Worker buildServices identity hydration", () => {
             await startBusAndInit({
                 type: "seed",
                 seed: hex.encode(seed),
-                descriptor: reference.getAccountDescriptor(),
+                descriptor: reference.descriptor,
             });
             expect(walletCreateSpy).toHaveBeenCalledOnce();
             const identity = walletCreateSpy.mock.calls[0][0].identity;
@@ -505,7 +505,7 @@ describe("Worker buildServices identity hydration", () => {
             await startBusAndInit({
                 type: "mnemonic",
                 mnemonic: TEST_MNEMONIC,
-                descriptor: reference.getAccountDescriptor(),
+                descriptor: reference.descriptor,
                 passphrase,
             });
             expect(walletCreateSpy).toHaveBeenCalledOnce();
@@ -518,7 +518,7 @@ describe("Worker buildServices identity hydration", () => {
             expect(serializeSigningIdentity(identity)).toEqual({
                 type: "mnemonic",
                 mnemonic: TEST_MNEMONIC,
-                descriptor: reference.getAccountDescriptor(),
+                descriptor: reference.descriptor,
                 passphrase,
             });
         });
@@ -529,7 +529,7 @@ describe("Worker buildServices identity hydration", () => {
             });
             await startBusAndInit({
                 type: "readonly-descriptor",
-                descriptor: reference.getAccountDescriptor(),
+                descriptor: reference.descriptor,
             });
             expect(readonlyCreateSpy).toHaveBeenCalledOnce();
             const identity = readonlyCreateSpy.mock.calls[0][0].identity;

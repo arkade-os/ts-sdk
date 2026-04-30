@@ -184,7 +184,7 @@ describe("descriptorIsOurs", () => {
         // SeedIdentity.isOurs delegates to descriptorIsOurs; using it as
         // the entry point keeps us from having to expose the private
         // accountXpub field just to test the helper.
-        const template = us.getAccountDescriptor();
+        const template = us.descriptor;
         for (const index of [0, 1, 7, 1024]) {
             const concrete = template.replace("/*)", `/${index})`);
             expect(us.isOurs(concrete)).toBe(true);
@@ -194,7 +194,7 @@ describe("descriptorIsOurs", () => {
 
     it("rejects descriptors derived from a different seed", () => {
         expect(us.isOurs(other.descriptor)).toBe(false);
-        expect(us.isOurs(other.getAccountDescriptor())).toBe(false);
+        expect(us.isOurs(other.descriptor)).toBe(false);
     });
 
     it("matches a bare tr(pubkey) descriptor against a fallback x-only pubkey", () => {

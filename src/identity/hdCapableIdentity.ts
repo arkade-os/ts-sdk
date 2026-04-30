@@ -15,11 +15,11 @@ import { Transaction } from "../utils/transaction";
  */
 export interface ReadonlyHDCapableIdentity extends ReadonlyIdentity {
     /**
-     * Returns the wildcard-suffixed account descriptor template
+     * The wildcard-suffixed account descriptor template
      * (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). Consumers materialize a
      * concrete descriptor by replacing the `*` with a derivation index.
      */
-    getAccountDescriptor(): string;
+    readonly descriptor: string;
 
     /** True iff `descriptor` derives from this identity's xpub/seed. */
     isOurs(descriptor: string): boolean;

@@ -25,7 +25,7 @@ function descriptorAtIndex(identity: SeedIdentity, index: number): string {
     if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
         throw new Error("Derivation index must be an integer in [0, 2^31)");
     }
-    return identity.getAccountDescriptor().replace("/*)", `/${index})`);
+    return identity.descriptor.replace("/*)", `/${index})`);
 }
 
 describe("SeedIdentity", () => {
@@ -64,12 +64,12 @@ describe("SeedIdentity", () => {
             ).toThrow("Seed must be 64 bytes");
         });
 
-        it("should expose descriptor with specific child derivation index", () => {
+        it("should expose the wildcard template as descriptor", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
             expect(identity.descriptor).toMatch(
-                /^tr\(\[[\da-f]{8}\/86'\/0'\/0'\]xpub.+\/0\/0\)$/
+                /^tr\(\[[\da-f]{8}\/86'\/0'\/0'\]xpub.+\/0\/\*\)$/
             );
         });
 
@@ -78,16 +78,13 @@ describe("SeedIdentity", () => {
             const reference = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
             const identity = SeedIdentity.fromSeed(seed, {
-                descriptor: reference.getAccountDescriptor(),
+                descriptor: reference.descriptor,
             });
 
             const refPubKey = await reference.xOnlyPublicKey();
             const pubKey = await identity.xOnlyPublicKey();
             expect(Array.from(pubKey)).toEqual(Array.from(refPubKey));
             expect(identity.descriptor).toBe(reference.descriptor);
-            expect(identity.getAccountDescriptor()).toBe(
-                reference.getAccountDescriptor()
-            );
         });
 
         it("should use the supplied template instead of default BIP86", async () => {
@@ -99,7 +96,7 @@ describe("SeedIdentity", () => {
 
             // Pass the mainnet template explicitly — should match mainnet, not testnet
             const identity = SeedIdentity.fromSeed(seed, {
-                descriptor: mainnet.getAccountDescriptor(),
+                descriptor: mainnet.descriptor,
             });
 
             const mainnetPubKey = await mainnet.xOnlyPublicKey();
@@ -112,12 +109,11 @@ describe("SeedIdentity", () => {
         it("should reject non-template descriptors at construction", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const reference = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            // reference.descriptor is the materialized index-0 form — not
-            // a template.
+            // Materialize the template at index 5 to get a concrete
+            // descriptor — must be rejected.
+            const concrete = reference.descriptor.replace("/*)", "/5)");
             expect(() =>
-                SeedIdentity.fromSeed(seed, {
-                    descriptor: reference.descriptor,
-                })
+                SeedIdentity.fromSeed(seed, { descriptor: concrete })
             ).toThrow(/wildcard descriptor template/);
         });
     });
@@ -127,10 +123,7 @@ describe("SeedIdentity", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const reference = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
-            const identity = new SeedIdentity(
-                seed,
-                reference.getAccountDescriptor()
-            );
+            const identity = new SeedIdentity(seed, reference.descriptor);
 
             const refPubKey = await reference.xOnlyPublicKey();
             const pubKey = await identity.xOnlyPublicKey();
@@ -144,16 +137,16 @@ describe("SeedIdentity", () => {
             const otherSeed = mnemonicToSeedSync(TEST_MNEMONIC, "different");
 
             expect(
-                () =>
-                    new SeedIdentity(otherSeed, identity.getAccountDescriptor())
+                () => new SeedIdentity(otherSeed, identity.descriptor)
             ).toThrow("xpub mismatch");
         });
 
         it("should throw if descriptor is not a wildcard template", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            // identity.descriptor is the index-0 form, not a template.
-            expect(() => new SeedIdentity(seed, identity.descriptor)).toThrow(
+            // Materialize at index 0 to get a concrete descriptor.
+            const concrete = identity.descriptor.replace("/*)", "/0)");
+            expect(() => new SeedIdentity(seed, concrete)).toThrow(
                 /wildcard descriptor template/
             );
         });
@@ -310,16 +303,13 @@ describe("MnemonicIdentity", () => {
             });
 
             const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-                descriptor: reference.getAccountDescriptor(),
+                descriptor: reference.descriptor,
             });
 
             const refPubKey = await reference.xOnlyPublicKey();
             const pubKey = await identity.xOnlyPublicKey();
             expect(Array.from(pubKey)).toEqual(Array.from(refPubKey));
             expect(identity.descriptor).toBe(reference.descriptor);
-            expect(identity.getAccountDescriptor()).toBe(
-                reference.getAccountDescriptor()
-            );
         });
     });
 });
@@ -331,7 +321,7 @@ describe("ReadonlyDescriptorIdentity", () => {
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
             const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
-                identity.getAccountDescriptor()
+                identity.descriptor
             );
 
             const identityPubKey = await identity.xOnlyPublicKey();
@@ -346,7 +336,7 @@ describe("ReadonlyDescriptorIdentity", () => {
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
             const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
-                identity.getAccountDescriptor()
+                identity.descriptor
             );
 
             const identityPubKey = await identity.compressedPublicKey();
@@ -359,9 +349,9 @@ describe("ReadonlyDescriptorIdentity", () => {
         it("should reject non-template descriptors", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            // identity.descriptor is the index-0 materialization — not a template.
+            const concrete = identity.descriptor.replace("/*)", "/0)");
             expect(() =>
-                ReadonlyDescriptorIdentity.fromDescriptor(identity.descriptor)
+                ReadonlyDescriptorIdentity.fromDescriptor(concrete)
             ).toThrow(/wildcard descriptor template/);
         });
 
@@ -417,11 +407,11 @@ describe("ReadonlyDescriptorIdentity", () => {
         it("exposes the template via getAccountDescriptor and the index-0 form via descriptor", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const template = identity.getAccountDescriptor();
+            const template = identity.descriptor;
 
             const readonly =
                 ReadonlyDescriptorIdentity.fromDescriptor(template);
-            expect(readonly.getAccountDescriptor()).toBe(template);
+            expect(readonly.descriptor).toBe(template);
             expect(readonly.descriptor).toBe(identity.descriptor);
         });
 
@@ -429,7 +419,7 @@ describe("ReadonlyDescriptorIdentity", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const signing = SeedIdentity.fromSeed(seed, { isMainnet: true });
             const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
-                signing.getAccountDescriptor()
+                signing.descriptor
             );
             const signingPubKey = await signing.xOnlyPublicKey();
             const readonlyPubKey = await readonly.xOnlyPublicKey();
@@ -441,7 +431,7 @@ describe("ReadonlyDescriptorIdentity", () => {
         it("isOurs accepts descriptors from the same xpub at any index", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const template = identity.getAccountDescriptor();
+            const template = identity.descriptor;
             const readonly =
                 ReadonlyDescriptorIdentity.fromDescriptor(template);
 
@@ -458,7 +448,7 @@ describe("ReadonlyDescriptorIdentity", () => {
             const ourReadonly = ReadonlyDescriptorIdentity.fromDescriptor(
                 SeedIdentity.fromSeed(ourSeed, {
                     isMainnet: true,
-                }).getAccountDescriptor()
+                }).descriptor
             );
 
             const otherSeed = mnemonicToSeedSync(
@@ -541,23 +531,20 @@ function expectedXOnlyAtIndex(
     return pubSchnorr(derived.privateKey!);
 }
 
-describe("SeedIdentity.getAccountDescriptor", () => {
-    it("replaces the trailing numeric index with a wildcard", () => {
+describe("SeedIdentity.descriptor", () => {
+    it("is a wildcard template ending in /*)", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
-        const template = identity.getAccountDescriptor();
-        expect(template).toMatch(
+        expect(identity.descriptor).toMatch(
             /^tr\(\[[\da-f]{8}\/86'\/0'\/0'\]xpub.+\/0\/\*\)$/
         );
-        // Sanity: original descriptor ended with /0/0) — template ends with /0/*)
-        expect(template).toBe(identity.descriptor.replace(/\/0\)$/, "/*)"));
     });
 
-    it("matches testnet originPath when identity is testnet", () => {
+    it("uses the testnet originPath when identity is testnet", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
-        expect(identity.getAccountDescriptor()).toMatch(
+        expect(identity.descriptor).toMatch(
             /^tr\(\[[\da-f]{8}\/86'\/1'\/0'\]tpub.+\/0\/\*\)$/
         );
     });
@@ -588,10 +575,17 @@ describe("Index substitution against the account descriptor template", () => {
         expect(hex.encode(actual!)).toBe(hex.encode(expected));
     });
 
-    it("round-trips for index 0 to the original identity descriptor", () => {
+    it("round-trips: the template's index-0 form matches the BIP86 derivation at index 0", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(descriptorAtIndex(identity, 0)).toBe(identity.descriptor);
+        const derived = descriptorAtIndex(identity, 0);
+        const expected = expectedXOnlyAtIndex(true, 0);
+        const actual = expand({
+            descriptor: derived,
+            network: networks.bitcoin,
+        }).expansionMap?.["@0"]?.pubkey;
+        expect(actual).toBeDefined();
+        expect(hex.encode(actual!)).toBe(hex.encode(expected));
     });
 });
 
@@ -614,7 +608,7 @@ describe("SeedIdentity.isOurs", () => {
     it("returns true for the wildcard template", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-        expect(identity.isOurs(identity.getAccountDescriptor())).toBe(true);
+        expect(identity.isOurs(identity.descriptor)).toBe(true);
     });
 
     it("returns false for a different seed's descriptor", () => {
@@ -719,7 +713,7 @@ describe("SeedIdentity.signMessageWithDescriptor", () => {
 
         await expect(
             identity.signMessageWithDescriptor(
-                identity.getAccountDescriptor(),
+                identity.descriptor,
                 new Uint8Array(32)
             )
         ).rejects.toThrow("wildcard descriptor");
@@ -732,11 +726,9 @@ describe("SeedIdentity.signWithDescriptor", () => {
         const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
         const tx = new Transaction();
-        const desc = descriptorAtIndex(identity, 2);
-
         const result = await identity.signWithDescriptor([
-            { tx, descriptor: desc },
-            { tx, descriptor: identity.descriptor },
+            { tx, descriptor: descriptorAtIndex(identity, 0) },
+            { tx, descriptor: descriptorAtIndex(identity, 2) },
         ]);
         expect(result).toHaveLength(2);
         // tx.clone() from @scure/btc-signer returns a BtcSignerTransaction, not
@@ -758,7 +750,9 @@ describe("SeedIdentity.signWithDescriptor", () => {
 
         const tx = new Transaction();
         await expect(
-            identity.signWithDescriptor([{ tx, descriptor: other.descriptor }])
+            identity.signWithDescriptor([
+                { tx, descriptor: descriptorAtIndex(other, 0) },
+            ])
         ).rejects.toThrow("does not belong to this identity");
     });
 });
@@ -771,9 +765,7 @@ describe("MnemonicIdentity DescriptorProvider", () => {
         const seed = mnemonicToSeedSync(TEST_MNEMONIC);
         const seedIdentity = SeedIdentity.fromSeed(seed, { isMainnet: true });
 
-        expect(identity.getAccountDescriptor()).toBe(
-            seedIdentity.getAccountDescriptor()
-        );
+        expect(identity.descriptor).toBe(seedIdentity.descriptor);
         expect(descriptorAtIndex(identity, 42)).toBe(
             descriptorAtIndex(seedIdentity, 42)
         );
