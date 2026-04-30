@@ -48,7 +48,16 @@ export function descriptorIsOurs(
             return keyInfo.bip32.toBase58() === accountXpub;
         }
         if (keyInfo.pubkey) {
-            return hex.encode(keyInfo.pubkey) === hex.encode(xOnlyPubkey);
+            // For tr() the library hands back a 32-byte x-only key, but
+            // strip a leading parity byte defensively so a 33-byte
+            // compressed key (mismatched length) doesn't silently
+            // false-negative against our 32-byte x-only side.
+            const candidate =
+                keyInfo.pubkey.length === 33
+                    ? keyInfo.pubkey.subarray(1)
+                    : keyInfo.pubkey;
+            if (candidate.length !== xOnlyPubkey.length) return false;
+            return hex.encode(candidate) === hex.encode(xOnlyPubkey);
         }
         return false;
     } catch {
