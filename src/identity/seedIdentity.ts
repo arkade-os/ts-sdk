@@ -11,6 +11,7 @@ import {
     expand,
     networks,
     scriptExpressions,
+    type KeyInfo,
 } from "@bitcoinerlab/descriptors-scure";
 import type {
     SerializedSigningIdentity,
@@ -473,8 +474,13 @@ export class MnemonicIdentity extends SeedIdentity {
  * ```
  */
 export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
-    private readonly xOnlyPubKey: Uint8Array;
-    private readonly compressedPubKey: Uint8Array;
+    /**
+     * Index-0 expansion of {@link descriptor}. Both the x-only pubkey
+     * (taproot, returned by the library as 32 bytes) and the compressed
+     * pubkey (derived through the bip32 node when needed) are read off
+     * this on demand — no separate caches.
+     */
+    private readonly indexZero: KeyInfo;
     /**
      * Wildcard account-descriptor template (e.g.
      * `tr([fp/86'/0'/0']xpub/0/*)`). HD rotation consumers materialize
@@ -500,27 +506,17 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
         }
         const keyInfo = expansion.expansionMap?.["@0"];
 
-        this.descriptor = template;
-
         if (!keyInfo?.pubkey) {
             throw new Error("Failed to derive public key from template");
         }
-
-        // For taproot, the library returns 32-byte x-only pubkey
-        this.xOnlyPubKey = keyInfo.pubkey;
-
-        // Get 33-byte compressed key with correct parity from the bip32 node
-        if (keyInfo.bip32 && keyInfo.keyPath) {
-            // Strip leading "/" — the library's derivePath prepends "m/" itself
-            const relPath = keyInfo.keyPath.replace(/^\//, "");
-            this.compressedPubKey = keyInfo.bip32.derivePath(relPath).publicKey;
-        } else if (keyInfo.bip32) {
-            this.compressedPubKey = keyInfo.bip32.publicKey;
-        } else {
+        if (!keyInfo.bip32) {
             throw new Error(
                 "Cannot determine compressed public key parity from template"
             );
         }
+
+        this.descriptor = template;
+        this.indexZero = keyInfo;
     }
 
     /**
@@ -535,21 +531,34 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
-        return this.xOnlyPubKey;
+        // Validated non-null in the constructor.
+        return this.indexZero.pubkey!;
     }
 
     async compressedPublicKey(): Promise<Uint8Array> {
-        return this.compressedPubKey;
+        const { bip32, keyPath } = this.indexZero;
+        // bip32 validated non-null in the constructor; derivePath
+        // returns a fresh node so this is a read of the index-0
+        // compressed pubkey, not a mutation of the stored one.
+        if (keyPath) {
+            // Strip leading "/" — the library's derivePath prepends "m/" itself
+            return bip32!.derivePath(keyPath.replace(/^\//, "")).publicKey;
+        }
+        return bip32!.publicKey;
     }
 
     /**
      * Returns true when `descriptor` derives from this identity's xpub.
      * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
-     * fall back to comparing against the cached x-only pubkey (index 0
-     * for a template input). See {@link descriptorIsOurs}.
+     * fall back to comparing against the index-0 x-only pubkey. See
+     * {@link descriptorIsOurs}.
      */
     isOurs(descriptor: string): boolean {
-        return descriptorIsOurs(descriptor, this.descriptor, this.xOnlyPubKey);
+        return descriptorIsOurs(
+            descriptor,
+            this.descriptor,
+            this.indexZero.pubkey!
+        );
     }
 }
 
