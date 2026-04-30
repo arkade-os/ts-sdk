@@ -82,11 +82,11 @@ export function templateOf(descriptor: string): string {
  * - Bare `tr(pubkey)` descriptors fall back to comparing the candidate
  *   pubkey against `xOnlyPubkey`.
  *
- * Wildcard candidates are accepted: the index-0 substitution is used
- * for parsing only (the xpub comparison is index-agnostic).
- *
- * Used by both seed-backed and watch-only descriptor identities so the
- * branching stays in one place.
+ * Wildcard candidates are accepted: the library handles wildcard
+ * resolution via the `index` parameter to {@link expand}, so we don't
+ * have to substitute the descriptor manually before parsing. The
+ * actual index doesn't matter for the xpub comparison since every
+ * index under the same template shares the account xpub.
  */
 export function descriptorIsOurs(
     descriptor: string,
@@ -96,10 +96,13 @@ export function descriptorIsOurs(
     if (!isDescriptor(descriptor)) return false;
     try {
         const network = detectNetwork(descriptor);
-        const probe = isWildcardTemplate(descriptor)
-            ? materializeAtIndex(descriptor, 0)
-            : descriptor;
-        const expansion = expand({ descriptor: probe, network });
+        const expansion = expand({
+            descriptor,
+            network,
+            // expand() rejects `index` for non-ranged descriptors, so
+            // only set it when the candidate carries the wildcard.
+            ...(isWildcardTemplate(descriptor) ? { index: 0 } : {}),
+        });
         const keyInfo = expansion.expansionMap?.["@0"];
         if (!keyInfo) return false;
 

@@ -25,7 +25,6 @@ import {
     descriptorIsOurs,
     detectNetwork,
     isWildcardTemplate,
-    materializeAtIndex,
     templateOf,
 } from "./descriptor";
 
@@ -81,19 +80,24 @@ function hasDescriptor(
 }
 
 /**
- * Builds a BIP86 Taproot output descriptor from a seed and network flag.
+ * Builds a BIP86 Taproot output descriptor (concrete index 0) along
+ * with the wildcard *template* form for the same account, both via
+ * `scriptExpressions.trBIP32`. The template is the library-built
+ * counterpart we'd otherwise have to chop out of the concrete form
+ * with {@link templateOf}.
  * @internal
  */
-function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
+function buildDescriptor(
+    seed: Uint8Array,
+    isMainnet: boolean
+): { descriptor: string; template: string } {
     const network = isMainnet ? networks.bitcoin : networks.testnet;
     const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
-    return scriptExpressions.trBIP32({
-        masterNode,
-        network,
-        account: 0,
-        change: 0,
-        index: 0,
-    });
+    const base = { masterNode, network, account: 0, change: 0 };
+    return {
+        descriptor: scriptExpressions.trBIP32({ ...base, index: 0 }),
+        template: scriptExpressions.trBIP32({ ...base, index: "*" }),
+    };
 }
 
 /**
@@ -136,8 +140,17 @@ export class SeedIdentity implements HDCapableIdentity {
     readonly descriptor: string;
     readonly isMainnet: boolean;
     private readonly accountXpub: string;
+    private readonly template: string;
 
-    constructor(seed: Uint8Array, descriptor: string) {
+    /**
+     * Constructs a SeedIdentity. Prefer the {@link fromSeed} factory,
+     * which builds the BIP86 template via the descriptors library
+     * directly. The optional `template` parameter exists so that
+     * factory paths can pass the library-built template through; when
+     * omitted, it falls back to deriving the template from
+     * `descriptor` via {@link templateOf}.
+     */
+    constructor(seed: Uint8Array, descriptor: string, template?: string) {
         if (seed.length !== 64) {
             throw new Error("Seed must be 64 bytes");
         }
@@ -179,6 +192,8 @@ export class SeedIdentity implements HDCapableIdentity {
             throw new Error("Failed to derive private key");
         }
         this.derivedKey = derivedNode.privateKey;
+
+        this.template = template ?? templateOf(descriptor);
     }
 
     /**
@@ -194,10 +209,14 @@ export class SeedIdentity implements HDCapableIdentity {
         seed: Uint8Array,
         opts: SeedIdentityOptions = {}
     ): SeedIdentity {
-        const descriptor = hasDescriptor(opts)
-            ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new SeedIdentity(seed, descriptor);
+        if (hasDescriptor(opts)) {
+            return new SeedIdentity(seed, opts.descriptor);
+        }
+        const { descriptor, template } = buildDescriptor(
+            seed,
+            (opts as NetworkOptions).isMainnet ?? true
+        );
+        return new SeedIdentity(seed, descriptor, template);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -240,6 +259,11 @@ export class SeedIdentity implements HDCapableIdentity {
      * `HDDescriptorProvider` in the wallet layer for the rotating-counter
      * use case).
      *
+     * Cached on construction — built directly via the descriptors library
+     * (`scriptExpressions.trBIP32({ index: '*' })`) for the default-BIP86
+     * factory paths, or derived from `this.descriptor` via {@link templateOf}
+     * for the custom-descriptor path.
+     *
      * @example
      * ```ts
      * // If this.descriptor is tr([fp/86'/0'/0']xpub/0/0)
@@ -248,7 +272,7 @@ export class SeedIdentity implements HDCapableIdentity {
      * ```
      */
     getAccountDescriptor(): string {
-        return templateOf(this.descriptor);
+        return this.template;
     }
 
     /**
@@ -392,9 +416,10 @@ export class MnemonicIdentity extends SeedIdentity {
         seed: Uint8Array,
         descriptor: string,
         mnemonic: string,
-        passphrase: string | undefined
+        passphrase: string | undefined,
+        template?: string
     ) {
-        super(seed, descriptor);
+        super(seed, descriptor, template);
         mnemonicMeta.set(this, { mnemonic, passphrase });
     }
 
@@ -416,10 +441,25 @@ export class MnemonicIdentity extends SeedIdentity {
         }
         const passphrase = opts.passphrase;
         const seed = mnemonicToSeedSync(phrase, passphrase);
-        const descriptor = hasDescriptor(opts)
-            ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
+        if (hasDescriptor(opts)) {
+            return new MnemonicIdentity(
+                seed,
+                opts.descriptor,
+                phrase,
+                passphrase
+            );
+        }
+        const { descriptor, template } = buildDescriptor(
+            seed,
+            (opts as NetworkOptions).isMainnet ?? true
+        );
+        return new MnemonicIdentity(
+            seed,
+            descriptor,
+            phrase,
+            passphrase,
+            template
+        );
     }
 }
 
@@ -459,13 +499,17 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly template: string;
 
     private constructor(readonly descriptor: string) {
-        // Templates can't be parsed directly by `expand()` — materialize
-        // at index 0 for parsing only.
-        const probe = isWildcardTemplate(descriptor)
-            ? materializeAtIndex(descriptor, 0)
-            : descriptor;
-        const network = detectNetwork(probe);
-        const expansion = expand({ descriptor: probe, network });
+        const network = detectNetwork(descriptor);
+        // For wildcard templates, let the library substitute the
+        // wildcard via its `index` parameter rather than rewriting the
+        // string ourselves. expand() rejects `index` for non-ranged
+        // descriptors, so it's only set when there's a wildcard to
+        // resolve.
+        const expansion = expand({
+            descriptor,
+            network,
+            ...(isWildcardTemplate(descriptor) ? { index: 0 } : {}),
+        });
         const keyInfo = expansion.expansionMap?.["@0"];
 
         if (!keyInfo?.pubkey) {
