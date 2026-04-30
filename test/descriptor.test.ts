@@ -194,20 +194,27 @@ describe("descriptorIsOurs", () => {
 
     it("rejects descriptors derived from a different seed", () => {
         expect(us.isOurs(other.descriptor)).toBe(false);
-        expect(us.isOurs(other.descriptor)).toBe(false);
     });
 
-    it("matches a bare tr(pubkey) descriptor against a fallback x-only pubkey", () => {
+    it("matches a bare tr(pubkey) candidate against the cached x-only pubkey", () => {
         const pubkey = hex.decode(getXOnlyPubKey());
+        // ourDescriptor isn't actually consulted in the bare-pubkey
+        // branch; pass a placeholder template just to satisfy the
+        // signature.
+        const placeholderTemplate = us.descriptor;
         expect(
-            descriptorIsOurs(`tr(${getXOnlyPubKey()})`, undefined, pubkey)
+            descriptorIsOurs(
+                `tr(${getXOnlyPubKey()})`,
+                placeholderTemplate,
+                pubkey
+            )
         ).toBe(true);
     });
 
     it("returns false for non-descriptor strings", () => {
         const pubkey = hex.decode(getXOnlyPubKey());
-        expect(descriptorIsOurs("not a descriptor", undefined, pubkey)).toBe(
-            false
-        );
+        expect(
+            descriptorIsOurs("not a descriptor", us.descriptor, pubkey)
+        ).toBe(false);
     });
 });

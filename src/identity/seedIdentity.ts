@@ -131,8 +131,6 @@ export class SeedIdentity implements HDCapableIdentity {
      * the wallet layer for the rotating-counter use case).
      */
     readonly descriptor: string;
-    readonly isMainnet: boolean;
-    private readonly accountXpub: string;
 
     /**
      * Constructs a SeedIdentity from a 64-byte seed and an account
@@ -148,8 +146,9 @@ export class SeedIdentity implements HDCapableIdentity {
             throw new Error("Seed must be 64 bytes");
         }
 
-        this.isMainnet = isMainnetDescriptor(template);
-        const network = this.isMainnet ? networks.bitcoin : networks.testnet;
+        const network = isMainnetDescriptor(template)
+            ? networks.bitcoin
+            : networks.testnet;
 
         // Parse the template, substituting the wildcard at index 0.
         // The library raises "index passed for non-ranged descriptor"
@@ -176,7 +175,10 @@ export class SeedIdentity implements HDCapableIdentity {
             throw new Error("Template must include a key origin path");
         }
 
-        // Verify the xpub in the template matches our seed
+        // Verify the xpub in the template matches our seed (validates
+        // that the template was generated from this seed; we don't
+        // need to keep the xpub around afterwards — `isOurs` re-derives
+        // it from `this.descriptor` on demand).
         const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
         const accountNode = masterNode.derive(`m${keyInfo.originPath}`);
         if (accountNode.publicExtendedKey !== keyInfo.bip32?.toBase58()) {
@@ -184,7 +186,6 @@ export class SeedIdentity implements HDCapableIdentity {
                 "xpub mismatch: derived key does not match template"
             );
         }
-        this.accountXpub = accountNode.publicExtendedKey;
 
         // Derive the private key for index 0 using the full path
         if (!keyInfo.path) {
@@ -268,7 +269,7 @@ export class SeedIdentity implements HDCapableIdentity {
     isOurs(descriptor: string): boolean {
         return descriptorIsOurs(
             descriptor,
-            this.accountXpub,
+            this.descriptor,
             pubSchnorr(this.derivedKey)
         );
     }
@@ -474,7 +475,6 @@ export class MnemonicIdentity extends SeedIdentity {
 export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     private readonly xOnlyPubKey: Uint8Array;
     private readonly compressedPubKey: Uint8Array;
-    private readonly accountXpub: string | undefined;
     /**
      * Wildcard account-descriptor template (e.g.
      * `tr([fp/86'/0'/0']xpub/0/*)`). HD rotation consumers materialize
@@ -521,8 +521,6 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
                 "Cannot determine compressed public key parity from template"
             );
         }
-
-        this.accountXpub = keyInfo.bip32?.toBase58();
     }
 
     /**
@@ -551,7 +549,7 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
      * for a template input). See {@link descriptorIsOurs}.
      */
     isOurs(descriptor: string): boolean {
-        return descriptorIsOurs(descriptor, this.accountXpub, this.xOnlyPubKey);
+        return descriptorIsOurs(descriptor, this.descriptor, this.xOnlyPubKey);
     }
 }
 

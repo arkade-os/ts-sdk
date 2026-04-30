@@ -18,46 +18,53 @@ export function isMainnetDescriptor(descriptor: string): boolean {
 }
 
 /**
- * Shared "does `descriptor` belong to an HD-or-static identity
- * characterized by (`accountXpub`, `xOnlyPubkey`)?" predicate.
+ * Shared "does `candidate` belong to the identity backed by
+ * `ourDescriptor`?" predicate.
  *
- * - HD descriptors (those expanding to a `bip32` key) match by
- *   account xpub.
- * - Bare `tr(pubkey)` descriptors fall back to comparing the candidate
- *   pubkey against `xOnlyPubkey`.
- *
- * Works uniformly on ranged (template) and non-ranged inputs:
- * `Expansion.expansionMap['@0'].bip32` is the index-agnostic account
- * xpub, present in both cases, so we don't need to substitute the
- * wildcard before parsing.
+ * - HD descriptors (expanding to a `bip32` key) match by account xpub
+ *   on both sides — index-agnostic, so a wildcard template and any
+ *   concrete index under it all collapse to the same xpub.
+ * - Bare `tr(pubkey)` candidates fall back to comparing the candidate
+ *   pubkey against `ourXOnlyPubkey` (the cached pubkey on the identity
+ *   side, since pulling it from `ourDescriptor` would require an index
+ *   substitution the caller already performed).
  */
 export function descriptorIsOurs(
-    descriptor: string,
-    accountXpub: string | undefined,
-    xOnlyPubkey: Uint8Array
+    candidate: string,
+    ourDescriptor: string,
+    ourXOnlyPubkey: Uint8Array
 ): boolean {
-    if (!isDescriptor(descriptor)) return false;
+    if (!isDescriptor(candidate)) return false;
     try {
-        const network = isMainnetDescriptor(descriptor)
-            ? networks.bitcoin
-            : networks.testnet;
-        const keyInfo = expand({ descriptor, network }).expansionMap?.["@0"];
-        if (!keyInfo) return false;
+        const candidateInfo = expand({
+            descriptor: candidate,
+            network: isMainnetDescriptor(candidate)
+                ? networks.bitcoin
+                : networks.testnet,
+        }).expansionMap?.["@0"];
+        if (!candidateInfo) return false;
 
-        if (keyInfo.bip32 && accountXpub) {
-            return keyInfo.bip32.toBase58() === accountXpub;
+        if (candidateInfo.bip32) {
+            const ourBip32 = expand({
+                descriptor: ourDescriptor,
+                network: isMainnetDescriptor(ourDescriptor)
+                    ? networks.bitcoin
+                    : networks.testnet,
+            }).expansionMap?.["@0"]?.bip32;
+            if (!ourBip32) return false;
+            return ourBip32.toBase58() === candidateInfo.bip32.toBase58();
         }
-        if (keyInfo.pubkey) {
+        if (candidateInfo.pubkey) {
             // For tr() the library hands back a 32-byte x-only key, but
             // strip a leading parity byte defensively so a 33-byte
             // compressed key (mismatched length) doesn't silently
             // false-negative against our 32-byte x-only side.
-            const candidate =
-                keyInfo.pubkey.length === 33
-                    ? keyInfo.pubkey.subarray(1)
-                    : keyInfo.pubkey;
-            if (candidate.length !== xOnlyPubkey.length) return false;
-            return hex.encode(candidate) === hex.encode(xOnlyPubkey);
+            const candidatePub =
+                candidateInfo.pubkey.length === 33
+                    ? candidateInfo.pubkey.subarray(1)
+                    : candidateInfo.pubkey;
+            if (candidatePub.length !== ourXOnlyPubkey.length) return false;
+            return hex.encode(candidatePub) === hex.encode(ourXOnlyPubkey);
         }
         return false;
     } catch {
