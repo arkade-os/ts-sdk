@@ -55,9 +55,8 @@ export interface NetworkOptions {
 export interface DescriptorOptions {
     /**
      * Account-descriptor *template* — must end with the BIP-32 wildcard
-     * suffix `/*)`. The seed-backed identity materializes at index 0
-     * for its public {@link SeedIdentity.descriptor} field; the
-     * template itself drives HD rotation.
+     * suffix `/*)`. Stored as-is on {@link SeedIdentity.descriptor} and
+     * read by HD providers to rotate through derivation indices.
      */
     descriptor: string;
 }
