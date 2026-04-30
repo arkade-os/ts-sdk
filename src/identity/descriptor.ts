@@ -6,14 +6,6 @@ import {
 import { hex } from "@scure/base";
 
 /**
- * Suffix that marks an HD wildcard template
- * (e.g. `tr([fp/86'/0'/0']xpub/0/*)`). The leading `/` is included so
- * that we never confuse the wildcard with bracketed literals
- * elsewhere in the descriptor.
- */
-const WILDCARD_SUFFIX = "/*)";
-
-/**
  * Pick the BIP32 network from a descriptor by inspecting its key prefix.
  * `tpub` → testnet, anything else → mainnet. Cheaper and more permissive
  * than fully expanding the descriptor; safe because it's only used to
@@ -23,9 +15,9 @@ export function detectNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
 }
 
-/** True iff `descriptor` ends with the HD wildcard suffix. */
+/** True iff `descriptor` ends with the HD wildcard suffix `/*)`. */
 export function isWildcardTemplate(descriptor: string): boolean {
-    return descriptor.endsWith(WILDCARD_SUFFIX);
+    return descriptor.endsWith("/*)");
 }
 
 /**
@@ -36,13 +28,13 @@ export function isWildcardTemplate(descriptor: string): boolean {
 export function materializeAtIndex(template: string, index: number): string {
     if (!isWildcardTemplate(template)) {
         throw new Error(
-            `Descriptor is not a wildcard template (must end in "${WILDCARD_SUFFIX}")`
+            `Descriptor is not a wildcard template (must end in "/*)")`
         );
     }
     if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
         throw new Error("Derivation index must be an integer in [0, 2^31)");
     }
-    return template.replace(WILDCARD_SUFFIX, `/${index})`);
+    return template.replace("/*)", `/${index})`);
 }
 
 /**
