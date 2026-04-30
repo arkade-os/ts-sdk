@@ -80,27 +80,6 @@ function hasDescriptor(
 }
 
 /**
- * Builds the BIP86 Taproot account-descriptor *template* for the
- * default account/change branch, via `scriptExpressions.trBIP32` with
- * the library's `index: '*'` wildcard. Used by the
- * {@link SeedIdentity.fromSeed} / {@link MnemonicIdentity.fromMnemonic}
- * default paths; callers that want a different path supply a template
- * directly via {@link TemplateOptions}.
- * @internal
- */
-function buildTemplate(seed: Uint8Array, isMainnet: boolean): string {
-    const network = isMainnet ? networks.bitcoin : networks.testnet;
-    const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
-    return scriptExpressions.trBIP32({
-        masterNode,
-        network,
-        account: 0,
-        change: 0,
-        index: "*",
-    });
-}
-
-/**
  * Seed-based identity derived from a raw seed and an account descriptor
  * *template*.
  *
@@ -235,9 +214,20 @@ export class SeedIdentity implements HDCapableIdentity {
         seed: Uint8Array,
         opts: SeedIdentityOptions = {}
     ): SeedIdentity {
-        const template = hasDescriptor(opts)
-            ? opts.descriptor
-            : buildTemplate(seed, (opts as NetworkOptions).isMainnet ?? true);
+        if (hasDescriptor(opts)) {
+            return new SeedIdentity(seed, opts.descriptor);
+        }
+        const network =
+            ((opts as NetworkOptions).isMainnet ?? true)
+                ? networks.bitcoin
+                : networks.testnet;
+        const template = scriptExpressions.trBIP32({
+            masterNode: HDKey.fromMasterSeed(seed, network.bip32),
+            network,
+            account: 0,
+            change: 0,
+            index: "*",
+        });
         return new SeedIdentity(seed, template);
     }
 
@@ -458,9 +448,25 @@ export class MnemonicIdentity extends SeedIdentity {
         }
         const passphrase = opts.passphrase;
         const seed = mnemonicToSeedSync(phrase, passphrase);
-        const template = hasDescriptor(opts)
-            ? opts.descriptor
-            : buildTemplate(seed, (opts as NetworkOptions).isMainnet ?? true);
+        if (hasDescriptor(opts)) {
+            return new MnemonicIdentity(
+                seed,
+                opts.descriptor,
+                phrase,
+                passphrase
+            );
+        }
+        const network =
+            ((opts as NetworkOptions).isMainnet ?? true)
+                ? networks.bitcoin
+                : networks.testnet;
+        const template = scriptExpressions.trBIP32({
+            masterNode: HDKey.fromMasterSeed(seed, network.bip32),
+            network,
+            account: 0,
+            change: 0,
+            index: "*",
+        });
         return new MnemonicIdentity(seed, template, phrase, passphrase);
     }
 }
