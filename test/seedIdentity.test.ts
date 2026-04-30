@@ -403,19 +403,18 @@ describe("ReadonlyDescriptorIdentity", () => {
         expect((readonly as any).signerSession).toBeUndefined();
     });
 
-    describe("HD template support", () => {
-        it("exposes the template via getAccountDescriptor and the index-0 form via descriptor", () => {
+    describe("HD wildcard descriptor support", () => {
+        it("round-trips identity.descriptor through fromDescriptor", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const template = identity.descriptor;
 
-            const readonly =
-                ReadonlyDescriptorIdentity.fromDescriptor(template);
-            expect(readonly.descriptor).toBe(template);
+            const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
+                identity.descriptor
+            );
             expect(readonly.descriptor).toBe(identity.descriptor);
         });
 
-        it("template input cached pubkey matches the index-0 substitution", async () => {
+        it("readonly cached pubkey matches the signing identity's index-0 pubkey", async () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const signing = SeedIdentity.fromSeed(seed, { isMainnet: true });
             const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
@@ -431,16 +430,19 @@ describe("ReadonlyDescriptorIdentity", () => {
         it("isOurs accepts descriptors from the same xpub at any index", () => {
             const seed = mnemonicToSeedSync(TEST_MNEMONIC);
             const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
-            const template = identity.descriptor;
-            const readonly =
-                ReadonlyDescriptorIdentity.fromDescriptor(template);
+            const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
+                identity.descriptor
+            );
 
             for (const index of [0, 1, 7, 1024]) {
-                const concrete = template.replace("/*)", `/${index})`);
+                const concrete = identity.descriptor.replace(
+                    "/*)",
+                    `/${index})`
+                );
                 expect(readonly.isOurs(concrete)).toBe(true);
             }
-            // The template itself round-trips
-            expect(readonly.isOurs(template)).toBe(true);
+            // The wildcard descriptor itself round-trips
+            expect(readonly.isOurs(identity.descriptor)).toBe(true);
         });
 
         it("isOurs rejects descriptors derived from a different seed", () => {

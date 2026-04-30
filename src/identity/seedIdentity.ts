@@ -111,15 +111,14 @@ function hasDescriptor(
  * ```typescript
  * const seed = mnemonicToSeedSync(mnemonic);
  *
- * // Testnet (BIP86 template m/86'/1'/0'/0/*)
+ * // Testnet (BIP86 wildcard descriptor m/86'/1'/0'/0/*)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
  *
- * // Mainnet (BIP86 template m/86'/0'/0'/0/*)
+ * // Mainnet (BIP86 wildcard descriptor m/86'/0'/0'/0/*)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
  *
- * // Caller-supplied template (the option is named `descriptor`, but
- * // its value must be a wildcard template ending in `/*)`).
- * const identity = SeedIdentity.fromSeed(seed, { descriptor: template });
+ * // Caller-supplied wildcard descriptor (must end in `/*)`).
+ * const identity = SeedIdentity.fromSeed(seed, { descriptor });
  * ```
  */
 export class SeedIdentity implements HDCapableIdentity {
@@ -142,22 +141,22 @@ export class SeedIdentity implements HDCapableIdentity {
      * Throws on a non-template descriptor, an xpub mismatch with the
      * seed, or a missing derivation path in the template.
      */
-    constructor(seed: Uint8Array, template: string) {
+    constructor(seed: Uint8Array, descriptor: string) {
         if (seed.length !== 64) {
             throw new Error("Seed must be 64 bytes");
         }
 
-        const network = isMainnetDescriptor(template)
+        const network = isMainnetDescriptor(descriptor)
             ? networks.bitcoin
             : networks.testnet;
 
-        // Parse the template, substituting the wildcard at index 0.
+        // Parse the descriptor, substituting the wildcard at index 0.
         // The library raises "index passed for non-ranged descriptor"
         // if the input isn't a wildcard template, which we re-wrap so
         // the caller sees what they actually got wrong.
         let expansion;
         try {
-            expansion = expand({ descriptor: template, network, index: 0 });
+            expansion = expand({ descriptor, network, index: 0 });
         } catch (e) {
             throw new Error(
                 `SeedIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
@@ -170,27 +169,27 @@ export class SeedIdentity implements HDCapableIdentity {
         // caller's buffer must not drift the serialized `seed` out of sync
         // with the live identity state.
         seedBytes.set(this, new Uint8Array(seed));
-        this.descriptor = template;
+        this.descriptor = descriptor;
 
         if (!keyInfo?.originPath) {
-            throw new Error("Template must include a key origin path");
+            throw new Error("Descriptor must include a key origin path");
         }
 
-        // Verify the xpub in the template matches our seed (validates
-        // that the template was generated from this seed; we don't
+        // Verify the xpub in the descriptor matches our seed (validates
+        // that the descriptor was generated from this seed; we don't
         // need to keep the xpub around afterwards — `isOurs` re-derives
         // it from `this.descriptor` on demand).
         const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
         const accountNode = masterNode.derive(`m${keyInfo.originPath}`);
         if (accountNode.publicExtendedKey !== keyInfo.bip32?.toBase58()) {
             throw new Error(
-                "xpub mismatch: derived key does not match template"
+                "xpub mismatch: derived key does not match descriptor"
             );
         }
 
         // Derive the private key for index 0 using the full path
         if (!keyInfo.path) {
-            throw new Error("Template must specify a full derivation path");
+            throw new Error("Descriptor must specify a full derivation path");
         }
         const derivedNode = masterNode.derive(keyInfo.path);
         if (!derivedNode.privateKey) {
@@ -220,14 +219,14 @@ export class SeedIdentity implements HDCapableIdentity {
             ((opts as NetworkOptions).isMainnet ?? true)
                 ? networks.bitcoin
                 : networks.testnet;
-        const template = scriptExpressions.trBIP32({
+        const descriptor = scriptExpressions.trBIP32({
             masterNode: HDKey.fromMasterSeed(seed, network.bip32),
             network,
             account: 0,
             change: 0,
             index: "*",
         });
-        return new SeedIdentity(seed, template);
+        return new SeedIdentity(seed, descriptor);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -403,11 +402,11 @@ export class SeedIdentity implements HDCapableIdentity {
 export class MnemonicIdentity extends SeedIdentity {
     private constructor(
         seed: Uint8Array,
-        template: string,
+        descriptor: string,
         mnemonic: string,
         passphrase: string | undefined
     ) {
-        super(seed, template);
+        super(seed, descriptor);
         mnemonicMeta.set(this, { mnemonic, passphrase });
     }
 
@@ -442,14 +441,14 @@ export class MnemonicIdentity extends SeedIdentity {
             ((opts as NetworkOptions).isMainnet ?? true)
                 ? networks.bitcoin
                 : networks.testnet;
-        const template = scriptExpressions.trBIP32({
+        const descriptor = scriptExpressions.trBIP32({
             masterNode: HDKey.fromMasterSeed(seed, network.bip32),
             network,
             account: 0,
             change: 0,
             index: "*",
         });
-        return new MnemonicIdentity(seed, template, phrase, passphrase);
+        return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
     }
 }
 
@@ -488,17 +487,17 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
      */
     readonly descriptor: string;
 
-    private constructor(template: string) {
-        const network = isMainnetDescriptor(template)
+    private constructor(descriptor: string) {
+        const network = isMainnetDescriptor(descriptor)
             ? networks.bitcoin
             : networks.testnet;
         // Library substitutes the wildcard at index 0 and raises
-        // "index passed for non-ranged descriptor" if `template` isn't
-        // actually a template — re-wrap so the caller sees the
-        // higher-level invariant they violated.
+        // "index passed for non-ranged descriptor" if `descriptor` isn't
+        // actually a wildcard template — re-wrap so the caller sees
+        // the higher-level invariant they violated.
         let expansion;
         try {
-            expansion = expand({ descriptor: template, network, index: 0 });
+            expansion = expand({ descriptor, network, index: 0 });
         } catch (e) {
             throw new Error(
                 `ReadonlyDescriptorIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
@@ -507,15 +506,15 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
         const keyInfo = expansion.expansionMap?.["@0"];
 
         if (!keyInfo?.pubkey) {
-            throw new Error("Failed to derive public key from template");
+            throw new Error("Failed to derive public key from descriptor");
         }
         if (!keyInfo.bip32) {
             throw new Error(
-                "Cannot determine compressed public key parity from template"
+                "Cannot determine compressed public key parity from descriptor"
             );
         }
 
-        this.descriptor = template;
+        this.descriptor = descriptor;
         this.indexZero = keyInfo;
     }
 
