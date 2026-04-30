@@ -8,7 +8,6 @@ import {
     serializeSeedOwnedSigningIdentity,
     serializeSeedOwnedReadonlyIdentity,
 } from "./seedIdentity";
-import { isWildcardTemplate, templateOf } from "./descriptor";
 
 /**
  * Tagged envelope for a signing identity transported across the
@@ -108,14 +107,18 @@ export async function serializeReadonlyIdentity(
 }
 
 /**
- * Coerce an envelope's `descriptor` field to the wildcard template form
- * expected by the seed-backed identity factories. Templates pass
- * through; concrete `.../N)` descriptors are chopped via
- * {@link templateOf} for backward compatibility with older envelopes
- * that stored the index-0 materialization.
+ * Coerce an envelope's `descriptor` field to the wildcard template
+ * form expected by the seed-backed identity factories. Envelopes
+ * store the concrete index-0 materialization (matches
+ * `identity.descriptor`), so we replace the trailing `/N)` with `/*)`.
+ * Already-template inputs pass through unchanged.
  */
 function toTemplate(descriptor: string): string {
-    return isWildcardTemplate(descriptor) ? descriptor : templateOf(descriptor);
+    if (descriptor.endsWith("/*)")) return descriptor;
+    const lastSlash = descriptor.lastIndexOf("/");
+    return lastSlash === -1
+        ? descriptor
+        : `${descriptor.slice(0, lastSlash + 1)}*)`;
 }
 
 /**

@@ -12,9 +12,6 @@ import {
     extractPubKey,
     parseHDDescriptor,
     isMainnetDescriptor,
-    isWildcardTemplate,
-    materializeAtIndex,
-    templateOf,
     descriptorIsOurs,
 } from "../src/identity/descriptor";
 import { SeedIdentity } from "../src/identity/seedIdentity";
@@ -175,82 +172,6 @@ describe("isMainnetDescriptor", () => {
     });
 });
 
-describe("isWildcardTemplate", () => {
-    it("returns true for descriptors ending with /*)", () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const template = SeedIdentity.fromSeed(seed, {
-            isMainnet: true,
-        }).getAccountDescriptor();
-        expect(isWildcardTemplate(template)).toBe(true);
-    });
-
-    it("returns false for concrete descriptors", () => {
-        expect(isWildcardTemplate(makeDescriptor({}))).toBe(false);
-    });
-
-    it("returns false for descriptors with bare *", () => {
-        // Defensive: only the exact "/*)" suffix counts.
-        expect(isWildcardTemplate("tr(*)")).toBe(false);
-    });
-});
-
-describe("materializeAtIndex", () => {
-    const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-    const TEMPLATE = SeedIdentity.fromSeed(seed, {
-        isMainnet: true,
-    }).getAccountDescriptor();
-
-    it("substitutes the wildcard with the given index", () => {
-        const at0 = materializeAtIndex(TEMPLATE, 0);
-        expect(at0.endsWith("/0)")).toBe(true);
-        expect(isWildcardTemplate(at0)).toBe(false);
-
-        const at7 = materializeAtIndex(TEMPLATE, 7);
-        expect(at7.endsWith("/7)")).toBe(true);
-    });
-
-    it("rejects non-template descriptors", () => {
-        // Library raises "index passed for non-ranged descriptor".
-        expect(() => materializeAtIndex(makeDescriptor({}), 1)).toThrow(
-            /non-ranged/
-        );
-    });
-
-    it("rejects out-of-range indices", () => {
-        expect(() => materializeAtIndex(TEMPLATE, -1)).toThrow(/\[0, 2\^31\)/);
-        expect(() => materializeAtIndex(TEMPLATE, 0x80000000)).toThrow(
-            /\[0, 2\^31\)/
-        );
-        expect(() => materializeAtIndex(TEMPLATE, 1.5)).toThrow(/\[0, 2\^31\)/);
-    });
-});
-
-describe("templateOf", () => {
-    it("returns templates as-is", () => {
-        const seed = mnemonicToSeedSync(TEST_MNEMONIC);
-        const template = SeedIdentity.fromSeed(seed, {
-            isMainnet: true,
-        }).getAccountDescriptor();
-        expect(templateOf(template)).toBe(template);
-    });
-
-    it("derives the template by chopping a trailing numeric index", () => {
-        const concrete = makeDescriptor({ index: 42 });
-        const expected = concrete.replace(/\/42\)$/, "/*)");
-        expect(templateOf(concrete)).toBe(expected);
-    });
-
-    it("rejects descriptors without a numeric trailing index", () => {
-        expect(() => templateOf("tr([fp/0']xpub.../0/abc)")).toThrow();
-    });
-
-    it("rejects descriptors with leading-zero indices", () => {
-        // "01" parses as 1 but the round-trip through String(1) is "1",
-        // so we reject ambiguous index encodings.
-        expect(() => templateOf("tr([fp/0']xpub.../0/01)")).toThrow();
-    });
-});
-
 describe("descriptorIsOurs", () => {
     const seed = mnemonicToSeedSync(TEST_MNEMONIC);
     const us = SeedIdentity.fromSeed(seed, { isMainnet: true });
@@ -265,7 +186,8 @@ describe("descriptorIsOurs", () => {
         // accountXpub field just to test the helper.
         const template = us.getAccountDescriptor();
         for (const index of [0, 1, 7, 1024]) {
-            expect(us.isOurs(materializeAtIndex(template, index))).toBe(true);
+            const concrete = template.replace("/*)", `/${index})`);
+            expect(us.isOurs(concrete)).toBe(true);
         }
         expect(us.isOurs(template)).toBe(true);
     });

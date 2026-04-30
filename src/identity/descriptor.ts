@@ -8,99 +8,13 @@ import { hex } from "@scure/base";
  * Note: testnet, signet, regtest, mutinynet, and other non-mainnet
  * networks all share the same `tpub` BIP32 version bytes — they cannot
  * be distinguished from one another at the descriptor level. Callers
- * that need to pick a `Network` constants object for `expand()`
- * convert via `bip32NetworkOf` below; callers that need the *actual*
- * network the wallet is on must track that out-of-band.
+ * that need a `Network` constants object for `expand()` pick
+ * `networks.bitcoin` vs `networks.testnet` themselves; callers that
+ * need the *actual* network the wallet is on must track that
+ * out-of-band.
  */
 export function isMainnetDescriptor(descriptor: string): boolean {
     return !descriptor.includes("tpub");
-}
-
-/**
- * Pick the `Network` constants the descriptors library needs to parse
- * `descriptor` — `networks.bitcoin` for mainnet, otherwise
- * `networks.testnet`. The latter is shared across all non-mainnet
- * networks because they have identical BIP32 version bytes; this
- * function does not (and cannot) tell signet from regtest from
- * testnet. See {@link isMainnetDescriptor}.
- */
-function bip32NetworkOf(descriptor: string) {
-    return isMainnetDescriptor(descriptor)
-        ? networks.bitcoin
-        : networks.testnet;
-}
-
-/**
- * True iff `descriptor` is a ranged (wildcard) output descriptor.
- *
- * Delegates to `expand()`, reading the library's `Expansion.isRanged`
- * field — this catches checksum-suffixed templates like
- * `tr(...)/0/*)#abcdefgh` that a naive `endsWith("/*)")` check would
- * miss. Returns false on parse failure rather than propagating.
- */
-export function isWildcardTemplate(descriptor: string): boolean {
-    try {
-        return expand({ descriptor, network: bip32NetworkOf(descriptor) })
-            .isRanged;
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Substitute the wildcard in `template` with a concrete derivation
- * index. Throws if `template` is not a ranged descriptor (the library
- * raises "index passed for non-ranged descriptor"), or if `index` falls
- * outside the BIP-32 non-hardened range.
- *
- * Delegates the substitution to `expand()` and returns
- * `Expansion.canonicalExpression` — the library's authoritative,
- * checksum-stripped representation of the descriptor at the given
- * index. This handles any input the library accepts (including
- * checksum-suffixed templates like `tr(...)/0/*)#abcdefgh`) without
- * us needing to teach our string ops about each shape.
- */
-export function materializeAtIndex(template: string, index: number): string {
-    if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
-        throw new Error("Derivation index must be an integer in [0, 2^31)");
-    }
-    return expand({
-        descriptor: template,
-        network: bip32NetworkOf(template),
-        index,
-    }).canonicalExpression;
-}
-
-/**
- * Returns the wildcard-template form of `descriptor`. If `descriptor`
- * is already a template, returns its canonical form (checksum
- * stripped). If concrete (`.../N)`), canonicalizes via the library and
- * chops the trailing numeric index, replacing it with `*`.
- *
- * Going from concrete → template has no library equivalent, but
- * leaning on `Expansion.canonicalExpression` first lets us accept
- * everything `expand()` does (including checksum-suffixed forms) and
- * operate on a known-clean string when chopping. Throws via the
- * library on any input it can't parse.
- */
-export function templateOf(descriptor: string): string {
-    const expansion = expand({
-        descriptor,
-        network: bip32NetworkOf(descriptor),
-    });
-    if (expansion.isRanged) return expansion.canonicalExpression;
-
-    // canonicalExpression always ends in `)` and reflects the
-    // descriptor's structure with no checksum, so chopping the
-    // trailing /N) is unambiguous.
-    const canonical = expansion.canonicalExpression;
-    const lastSlash = canonical.lastIndexOf("/");
-    if (lastSlash === -1) {
-        throw new Error(
-            `Cannot derive account descriptor template: "${canonical}" has no derivation path`
-        );
-    }
-    return `${canonical.slice(0, lastSlash + 1)}*)`;
 }
 
 /**
@@ -112,11 +26,10 @@ export function templateOf(descriptor: string): string {
  * - Bare `tr(pubkey)` descriptors fall back to comparing the candidate
  *   pubkey against `xOnlyPubkey`.
  *
- * Wildcard candidates are accepted: the library handles wildcard
- * resolution via the `index` parameter to {@link expand}, so we don't
- * have to substitute the descriptor manually before parsing. The
- * actual index doesn't matter for the xpub comparison since every
- * index under the same template shares the account xpub.
+ * Works uniformly on ranged (template) and non-ranged inputs:
+ * `Expansion.expansionMap['@0'].bip32` is the index-agnostic account
+ * xpub, present in both cases, so we don't need to substitute the
+ * wildcard before parsing.
  */
 export function descriptorIsOurs(
     descriptor: string,
@@ -125,15 +38,10 @@ export function descriptorIsOurs(
 ): boolean {
     if (!isDescriptor(descriptor)) return false;
     try {
-        const network = bip32NetworkOf(descriptor);
-        const expansion = expand({
-            descriptor,
-            network,
-            // expand() rejects `index` for non-ranged descriptors, so
-            // only set it when the candidate carries the wildcard.
-            ...(isWildcardTemplate(descriptor) ? { index: 0 } : {}),
-        });
-        const keyInfo = expansion.expansionMap?.["@0"];
+        const network = isMainnetDescriptor(descriptor)
+            ? networks.bitcoin
+            : networks.testnet;
+        const keyInfo = expand({ descriptor, network }).expansionMap?.["@0"];
         if (!keyInfo) return false;
 
         if (keyInfo.bip32 && accountXpub) {
@@ -191,7 +99,9 @@ export function extractPubKey(descriptor: string): string {
         return descriptor;
     }
 
-    const network = bip32NetworkOf(descriptor);
+    const network = isMainnetDescriptor(descriptor)
+        ? networks.bitcoin
+        : networks.testnet;
     const expansion = expand({ descriptor, network });
 
     if (!expansion.expansionMap) {
@@ -239,7 +149,9 @@ export function parseHDDescriptor(
 
     let expansion;
     try {
-        const network = bip32NetworkOf(descriptor);
+        const network = isMainnetDescriptor(descriptor)
+            ? networks.bitcoin
+            : networks.testnet;
         expansion = expand({ descriptor, network });
     } catch {
         return null;

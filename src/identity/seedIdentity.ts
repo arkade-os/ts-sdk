@@ -21,12 +21,7 @@ import {
     HDCapableIdentity,
     ReadonlyHDCapableIdentity,
 } from "./hdCapableIdentity";
-import {
-    descriptorIsOurs,
-    isMainnetDescriptor,
-    isWildcardTemplate,
-    materializeAtIndex,
-} from "./descriptor";
+import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
@@ -175,11 +170,23 @@ export class SeedIdentity implements HDCapableIdentity {
         if (seed.length !== 64) {
             throw new Error("Seed must be 64 bytes");
         }
-        if (!isWildcardTemplate(template)) {
+
+        this.isMainnet = isMainnetDescriptor(template);
+        const network = this.isMainnet ? networks.bitcoin : networks.testnet;
+
+        // Parse the template, substituting the wildcard at index 0.
+        // The library raises "index passed for non-ranged descriptor"
+        // if the input isn't a wildcard template, which we re-wrap so
+        // the caller sees what they actually got wrong.
+        let expansion;
+        try {
+            expansion = expand({ descriptor: template, network, index: 0 });
+        } catch (e) {
             throw new Error(
-                `SeedIdentity requires a wildcard descriptor template (must end in "/*)"); got "${template}"`
+                `SeedIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
             );
         }
+        const keyInfo = expansion.expansionMap?.["@0"];
 
         // Defensive copy: `derivedKey` and `descriptor` are computed eagerly
         // from the bytes we're about to stash, so a later mutation of the
@@ -187,15 +194,7 @@ export class SeedIdentity implements HDCapableIdentity {
         // with the live identity state.
         seedBytes.set(this, new Uint8Array(seed));
         this.template = template;
-        this.descriptor = materializeAtIndex(template, 0);
-
-        this.isMainnet = isMainnetDescriptor(template);
-        const network = this.isMainnet ? networks.bitcoin : networks.testnet;
-
-        // Parse and validate the template using the library — pass
-        // `index: 0` so `expand()` substitutes the wildcard for us.
-        const expansion = expand({ descriptor: template, network, index: 0 });
-        const keyInfo = expansion.expansionMap?.["@0"];
+        this.descriptor = expansion.canonicalExpression;
 
         if (!keyInfo?.originPath) {
             throw new Error("Template must include a key origin path");
@@ -342,15 +341,15 @@ export class SeedIdentity implements HDCapableIdentity {
     // ── internal helpers ─────────────────────────────────────────────
 
     private derivePrivateKeyForDescriptor(descriptor: string): Uint8Array {
-        if (isWildcardTemplate(descriptor)) {
-            throw new Error(
-                "Cannot sign with a wildcard descriptor; derive a concrete index first"
-            );
-        }
         const network = isMainnetDescriptor(descriptor)
             ? networks.bitcoin
             : networks.testnet;
         const expansion = expand({ descriptor, network });
+        if (expansion.isRanged) {
+            throw new Error(
+                "Cannot sign with a wildcard descriptor; derive a concrete index first"
+            );
+        }
         const keyInfo = expansion.expansionMap?.["@0"];
         if (!keyInfo?.path) {
             throw new Error(
@@ -504,21 +503,25 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
     readonly descriptor: string;
 
     private constructor(template: string) {
-        if (!isWildcardTemplate(template)) {
-            throw new Error(
-                `ReadonlyDescriptorIdentity requires a wildcard descriptor template (must end in "/*)"); got "${template}"`
-            );
-        }
-        this.template = template;
-        this.descriptor = materializeAtIndex(template, 0);
-
-        // Let the library substitute the wildcard via its `index`
-        // parameter rather than re-doing it ourselves.
         const network = isMainnetDescriptor(template)
             ? networks.bitcoin
             : networks.testnet;
-        const expansion = expand({ descriptor: template, network, index: 0 });
+        // Library substitutes the wildcard at index 0 and raises
+        // "index passed for non-ranged descriptor" if `template` isn't
+        // actually a template — re-wrap so the caller sees the
+        // higher-level invariant they violated.
+        let expansion;
+        try {
+            expansion = expand({ descriptor: template, network, index: 0 });
+        } catch (e) {
+            throw new Error(
+                `ReadonlyDescriptorIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
+            );
+        }
         const keyInfo = expansion.expansionMap?.["@0"];
+
+        this.template = template;
+        this.descriptor = expansion.canonicalExpression;
 
         if (!keyInfo?.pubkey) {
             throw new Error("Failed to derive public key from template");
