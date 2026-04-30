@@ -412,14 +412,11 @@ export class SeedIdentity implements HDCapableIdentity {
  * ```
  */
 export class MnemonicIdentity extends SeedIdentity {
-    private constructor(
-        seed: Uint8Array,
-        descriptor: string,
-        mnemonic: string,
-        passphrase: string | undefined
-    ) {
-        super(seed, descriptor);
-        mnemonicMeta.set(this, { mnemonic, passphrase });
+    private constructor(phrase: string, opts: MnemonicOptions) {
+        const { passphrase } = opts;
+        const seed = mnemonicToSeedSync(phrase, passphrase);
+        super(seed, descriptorForOptions(seed, opts));
+        mnemonicMeta.set(this, { mnemonic: phrase, passphrase });
     }
 
     /**
@@ -439,14 +436,7 @@ export class MnemonicIdentity extends SeedIdentity {
         if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");
         }
-        const passphrase = opts.passphrase;
-        const seed = mnemonicToSeedSync(phrase, passphrase);
-        return new MnemonicIdentity(
-            seed,
-            descriptorForOptions(seed, opts),
-            phrase,
-            passphrase
-        );
+        return new MnemonicIdentity(phrase, opts);
     }
 }
 
