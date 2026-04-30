@@ -9,7 +9,7 @@ import type {
     SeedIdentityOptions,
     MnemonicOptions,
     NetworkOptions,
-    TemplateOptions,
+    DescriptorOptions,
 } from "./identity/seedIdentity";
 import {
     Identity,
@@ -448,7 +448,7 @@ export type {
     SeedIdentityOptions,
     MnemonicOptions,
     NetworkOptions,
-    TemplateOptions,
+    DescriptorOptions,
     // Indexer types
     IndexerProvider,
     PageResponse,

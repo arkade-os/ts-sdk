@@ -147,11 +147,11 @@ const seed = mnemonicToSeedSync(mnemonic)
 const identity = SeedIdentity.fromSeed(seed)
 
 // Or with a custom account-descriptor template (must end in "/*)")
-const identityWithTemplate = SeedIdentity.fromSeed(seed, { template })
+const identityWithDescriptor = SeedIdentity.fromSeed(seed, { descriptor: template })
 
 // Or with a custom template and passphrase (MnemonicIdentity)
-const identityWithTemplateAndPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
-  template,
+const identityWithDescriptorAndPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
+  descriptor: template,
   passphrase: 'my secret passphrase'
 })
 ```
@@ -172,7 +172,7 @@ const readonly = await identity.toReadonly()
 
 // Or directly from a wildcard template (e.g., exported from another wallet)
 const template = "tr([12345678/86'/0'/0']xpub.../0/*)"
-const readonlyFromTemplate = ReadonlyDescriptorIdentity.fromTemplate(template)
+const readonlyFromTemplate = ReadonlyDescriptorIdentity.fromDescriptor(template)
 
 // Use in a watch-only wallet
 const readonlyWallet = await ReadonlyWallet.create({

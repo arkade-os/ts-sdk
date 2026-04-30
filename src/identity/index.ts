@@ -71,7 +71,7 @@ export * from "./singleKey";
 // `./serialize`, per Appendix A of the plan.
 export type {
     NetworkOptions,
-    TemplateOptions,
+    DescriptorOptions,
     SeedIdentityOptions,
     MnemonicOptions,
 } from "./seedIdentity";

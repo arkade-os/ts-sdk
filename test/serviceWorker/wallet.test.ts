@@ -1274,7 +1274,7 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         const reference = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
-        const identity = ReadonlyDescriptorIdentity.fromTemplate(
+        const identity = ReadonlyDescriptorIdentity.fromDescriptor(
             reference.getAccountDescriptor()
         );
 

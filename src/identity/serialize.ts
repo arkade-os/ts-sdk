@@ -134,15 +134,15 @@ export function hydrateIdentity(
             return ReadonlySingleKey.fromPublicKey(hex.decode(s.publicKey));
         case "seed":
             return SeedIdentity.fromSeed(hex.decode(s.seed), {
-                template: toTemplate(s.descriptor),
+                descriptor: toTemplate(s.descriptor),
             });
         case "mnemonic":
             return MnemonicIdentity.fromMnemonic(s.mnemonic, {
-                template: toTemplate(s.descriptor),
+                descriptor: toTemplate(s.descriptor),
                 passphrase: s.passphrase,
             });
         case "readonly-descriptor":
-            return ReadonlyDescriptorIdentity.fromTemplate(
+            return ReadonlyDescriptorIdentity.fromDescriptor(
                 toTemplate(s.descriptor)
             );
         default:

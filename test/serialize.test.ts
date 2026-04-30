@@ -163,7 +163,7 @@ describe("serializeReadonlyIdentity", () => {
         const mnemonic = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
             isMainnet: true,
         });
-        const readonly = ReadonlyDescriptorIdentity.fromTemplate(
+        const readonly = ReadonlyDescriptorIdentity.fromDescriptor(
             mnemonic.getAccountDescriptor()
         );
         const envelope = await serializeReadonlyIdentity(readonly);
@@ -329,7 +329,7 @@ describe("hydrateIdentity round-trip", () => {
             isMainnet: false,
         });
         const original = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
-            template: testnetReference.getAccountDescriptor(),
+            descriptor: testnetReference.getAccountDescriptor(),
         });
         const rehydrated = hydrateIdentity(
             serializeSigningIdentity(original)

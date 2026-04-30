@@ -57,18 +57,18 @@ export interface NetworkOptions {
 }
 
 /** Used for a caller-supplied account-descriptor template. */
-export interface TemplateOptions {
+export interface DescriptorOptions {
     /**
-     * Account descriptor *template* — must end with the BIP-32 wildcard
+     * Account-descriptor *template* — must end with the BIP-32 wildcard
      * suffix `/*)`. The seed-backed identity materializes at index 0
      * for its public {@link SeedIdentity.descriptor} field; the
      * template itself drives HD rotation.
      */
-    template: string;
+    descriptor: string;
 }
 
 /** Either default BIP86 derivation (with optional network selection) or a caller-supplied template. */
-export type SeedIdentityOptions = NetworkOptions | TemplateOptions;
+export type SeedIdentityOptions = NetworkOptions | DescriptorOptions;
 
 /** Used for deriving an identity from a BIP39 mnemonic. */
 export type MnemonicOptions = SeedIdentityOptions & {
@@ -78,8 +78,10 @@ export type MnemonicOptions = SeedIdentityOptions & {
 
 // ── Helpers ──────────────────────────────────────────────────────
 
-function hasTemplate(opts: SeedIdentityOptions = {}): opts is TemplateOptions {
-    return "template" in opts && typeof opts.template === "string";
+function hasDescriptor(
+    opts: SeedIdentityOptions = {}
+): opts is DescriptorOptions {
+    return "descriptor" in opts && typeof opts.descriptor === "string";
 }
 
 /**
@@ -142,8 +144,9 @@ function buildTemplate(seed: Uint8Array, isMainnet: boolean): string {
  * // Mainnet (BIP86 template m/86'/0'/0'/0/*)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
  *
- * // Caller-supplied template
- * const identity = SeedIdentity.fromSeed(seed, { template });
+ * // Caller-supplied template (the option is named `descriptor`, but
+ * // its value must be a wildcard template ending in `/*)`).
+ * const identity = SeedIdentity.fromSeed(seed, { descriptor: template });
  * ```
  */
 export class SeedIdentity implements HDCapableIdentity {
@@ -223,17 +226,18 @@ export class SeedIdentity implements HDCapableIdentity {
      * Creates a SeedIdentity from a raw 64-byte seed.
      *
      * Pass `{ isMainnet }` for default BIP86 derivation, or
-     * `{ template }` for a caller-supplied account-descriptor template.
+     * `{ descriptor }` for a caller-supplied account-descriptor
+     * template (the option's value must end with `/*)`).
      *
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
-     * @param opts - Network selection or template descriptor.
+     * @param opts - Network selection or descriptor template.
      */
     static fromSeed(
         seed: Uint8Array,
         opts: SeedIdentityOptions = {}
     ): SeedIdentity {
-        const template = hasTemplate(opts)
-            ? opts.template
+        const template = hasDescriptor(opts)
+            ? opts.descriptor
             : buildTemplate(seed, (opts as NetworkOptions).isMainnet ?? true);
         return new SeedIdentity(seed, template);
     }
@@ -267,7 +271,7 @@ export class SeedIdentity implements HDCapableIdentity {
      * derive descriptors at any index without seed access).
      */
     async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
-        return ReadonlyDescriptorIdentity.fromTemplate(this.template);
+        return ReadonlyDescriptorIdentity.fromDescriptor(this.template);
     }
 
     // ── HDCapableIdentity ────────────────────────────────────────────
@@ -440,10 +444,11 @@ export class MnemonicIdentity extends SeedIdentity {
      * Creates a MnemonicIdentity from a BIP39 mnemonic phrase.
      *
      * Pass `{ isMainnet }` for default BIP86 derivation, or
-     * `{ template }` for a caller-supplied account-descriptor template.
+     * `{ descriptor }` for a caller-supplied account-descriptor
+     * template (the option's value must end with `/*)`).
      *
      * @param phrase - BIP39 mnemonic phrase (12 or 24 words)
-     * @param opts - Network selection or template descriptor, plus optional passphrase
+     * @param opts - Network selection or descriptor template, plus optional passphrase
      */
     static fromMnemonic(
         phrase: string,
@@ -454,8 +459,8 @@ export class MnemonicIdentity extends SeedIdentity {
         }
         const passphrase = opts.passphrase;
         const seed = mnemonicToSeedSync(phrase, passphrase);
-        const template = hasTemplate(opts)
-            ? opts.template
+        const template = hasDescriptor(opts)
+            ? opts.descriptor
             : buildTemplate(seed, (opts as NetworkOptions).isMainnet ?? true);
         return new MnemonicIdentity(seed, template, phrase, passphrase);
     }
@@ -476,7 +481,7 @@ export class MnemonicIdentity extends SeedIdentity {
  *
  * @example
  * ```typescript
- * const ro = ReadonlyDescriptorIdentity.fromTemplate(
+ * const ro = ReadonlyDescriptorIdentity.fromDescriptor(
  *   "tr([fp/86'/0'/0']xpub.../0/*)"
  * );
  * ro.descriptor;
@@ -540,13 +545,13 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
 
     /**
      * Creates a ReadonlyDescriptorIdentity from an account-descriptor
-     * *template*.
+     * *template* (must end with the BIP-32 wildcard suffix `/*)`).
      *
-     * @param template - Wildcard-suffixed Taproot template
+     * @param descriptor - Wildcard-suffixed Taproot template
      *   (`tr([fp/path']xpub.../child/*)`).
      */
-    static fromTemplate(template: string): ReadonlyDescriptorIdentity {
-        return new ReadonlyDescriptorIdentity(template);
+    static fromDescriptor(descriptor: string): ReadonlyDescriptorIdentity {
+        return new ReadonlyDescriptorIdentity(descriptor);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
