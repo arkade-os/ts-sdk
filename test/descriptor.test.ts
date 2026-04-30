@@ -208,8 +208,9 @@ describe("materializeAtIndex", () => {
     });
 
     it("rejects non-template descriptors", () => {
+        // Library raises "index passed for non-ranged descriptor".
         expect(() => materializeAtIndex(makeDescriptor({}), 1)).toThrow(
-            /wildcard template/
+            /non-ranged/
         );
     });
 

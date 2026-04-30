@@ -22,19 +22,26 @@ export function isWildcardTemplate(descriptor: string): boolean {
 
 /**
  * Substitute the wildcard in `template` with a concrete derivation
- * index. Throws if the input is not a wildcard template, or if `index`
- * falls outside the BIP-32 non-hardened range.
+ * index. Throws if `template` is not a ranged descriptor (the library
+ * raises "index passed for non-ranged descriptor"), or if `index` falls
+ * outside the BIP-32 non-hardened range.
+ *
+ * Delegates the substitution to `expand()` and returns
+ * `Expansion.canonicalExpression` — the library's authoritative,
+ * checksum-stripped representation of the descriptor at the given
+ * index. This handles any input the library accepts (including
+ * checksum-suffixed templates like `tr(...)/0/*)#abcdefgh`) without
+ * us needing to teach our string ops about each shape.
  */
 export function materializeAtIndex(template: string, index: number): string {
-    if (!isWildcardTemplate(template)) {
-        throw new Error(
-            `Descriptor is not a wildcard template (must end in "/*)")`
-        );
-    }
     if (!Number.isInteger(index) || index < 0 || index >= 0x80000000) {
         throw new Error("Derivation index must be an integer in [0, 2^31)");
     }
-    return template.replace("/*)", `/${index})`);
+    return expand({
+        descriptor: template,
+        network: detectNetwork(template),
+        index,
+    }).canonicalExpression;
 }
 
 /**
