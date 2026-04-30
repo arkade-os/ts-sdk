@@ -15,9 +15,21 @@ export function detectNetwork(descriptor: string): Network {
     return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
 }
 
-/** True iff `descriptor` ends with the HD wildcard suffix `/*)`. */
+/**
+ * True iff `descriptor` is a ranged (wildcard) output descriptor.
+ *
+ * Delegates to `expand()`, reading the library's `Expansion.isRanged`
+ * field — this catches checksum-suffixed templates like
+ * `tr(...)/0/*)#abcdefgh` that a naive `endsWith("/*)")` check would
+ * miss. Returns false on parse failure rather than propagating.
+ */
 export function isWildcardTemplate(descriptor: string): boolean {
-    return descriptor.endsWith("/*)");
+    try {
+        return expand({ descriptor, network: detectNetwork(descriptor) })
+            .isRanged;
+    } catch {
+        return false;
+    }
 }
 
 /**
