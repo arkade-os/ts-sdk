@@ -14,6 +14,11 @@ import {
  * service-worker boundary. All variants are structured-clone safe
  * (plain strings only — no functions or prototypes).
  *
+ * `descriptor` carries the wildcard *template* (e.g.
+ * `tr([fp/86'/0'/0']xpub.../0/*)`), not a concrete index — the
+ * receiving factories require a template, and storing it directly
+ * means nothing here has to convert concrete → template on rehydrate.
+ *
  * Adding a new variant is a source change in every worker build; keep
  * old variants around until all deployed workers handle them.
  */
@@ -30,6 +35,8 @@ export type SerializedSigningIdentity =
 /**
  * Tagged envelope for a readonly identity transported across the
  * service-worker boundary. All variants are structured-clone safe.
+ * `descriptor` is the wildcard template (see
+ * {@link SerializedSigningIdentity}).
  */
 export type SerializedReadonlyIdentity =
     | { type: "readonly-single-key"; publicKey: string }
@@ -107,25 +114,15 @@ export async function serializeReadonlyIdentity(
 }
 
 /**
- * Coerce an envelope's `descriptor` field to the wildcard template
- * form expected by the seed-backed identity factories. Envelopes
- * store the concrete index-0 materialization (matches
- * `identity.descriptor`), so we replace the trailing `/N)` with `/*)`.
- * Already-template inputs pass through unchanged.
- */
-function toTemplate(descriptor: string): string {
-    if (descriptor.endsWith("/*)")) return descriptor;
-    const lastSlash = descriptor.lastIndexOf("/");
-    return lastSlash === -1
-        ? descriptor
-        : `${descriptor.slice(0, lastSlash + 1)}*)`;
-}
-
-/**
  * Rehydrate a serialized identity envelope back into an identity instance.
  * The return type is the union of signing and readonly; use
  * {@link isSigningSerialized} on the envelope before hydration if the caller
  * needs to know which side it ends up on.
+ *
+ * Envelopes store the wildcard template directly (see
+ * `serializeSeedOwnedSigningIdentity` / `serializeSeedOwnedReadonlyIdentity`),
+ * so the `descriptor` field is passed straight through to the
+ * template-only factories.
  */
 export function hydrateIdentity(
     s: SerializedIdentity
@@ -137,17 +134,15 @@ export function hydrateIdentity(
             return ReadonlySingleKey.fromPublicKey(hex.decode(s.publicKey));
         case "seed":
             return SeedIdentity.fromSeed(hex.decode(s.seed), {
-                descriptor: toTemplate(s.descriptor),
+                descriptor: s.descriptor,
             });
         case "mnemonic":
             return MnemonicIdentity.fromMnemonic(s.mnemonic, {
-                descriptor: toTemplate(s.descriptor),
+                descriptor: s.descriptor,
                 passphrase: s.passphrase,
             });
         case "readonly-descriptor":
-            return ReadonlyDescriptorIdentity.fromDescriptor(
-                toTemplate(s.descriptor)
-            );
+            return ReadonlyDescriptorIdentity.fromDescriptor(s.descriptor);
         default:
             // Belt-and-suspenders: `normalizeSerializedIdentity` already
             // rejects unknown `type` values at the wire boundary. Without

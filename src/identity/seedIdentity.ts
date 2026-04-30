@@ -621,7 +621,7 @@ export function serializeSeedOwnedSigningIdentity(
         const envelope: SerializedSigningIdentity = {
             type: "mnemonic",
             mnemonic: meta.mnemonic,
-            descriptor: identity.descriptor,
+            descriptor: identity.getAccountDescriptor(),
         };
         if (meta.passphrase !== undefined) {
             envelope.passphrase = meta.passphrase;
@@ -637,7 +637,7 @@ export function serializeSeedOwnedSigningIdentity(
     return {
         type: "seed",
         seed: hex.encode(seed),
-        descriptor: identity.descriptor,
+        descriptor: identity.getAccountDescriptor(),
     };
 }
 
@@ -655,5 +655,8 @@ export function serializeSeedOwnedSigningIdentity(
 export function serializeSeedOwnedReadonlyIdentity(
     identity: SeedIdentity | ReadonlyDescriptorIdentity
 ): SerializedReadonlyIdentity {
-    return { type: "readonly-descriptor", descriptor: identity.descriptor };
+    return {
+        type: "readonly-descriptor",
+        descriptor: identity.getAccountDescriptor(),
+    };
 }

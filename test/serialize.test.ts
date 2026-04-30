@@ -44,7 +44,7 @@ describe("serializeSigningIdentity", () => {
         expect(envelope.type).toBe("seed");
         if (envelope.type !== "seed") throw new Error("unreachable");
         expect(envelope.seed).toBe(hex.encode(seed));
-        expect(envelope.descriptor).toBe(identity.descriptor);
+        expect(envelope.descriptor).toBe(identity.getAccountDescriptor());
     });
 
     it("produces a mnemonic envelope for MnemonicIdentity", () => {
@@ -55,7 +55,7 @@ describe("serializeSigningIdentity", () => {
         expect(envelope.type).toBe("mnemonic");
         if (envelope.type !== "mnemonic") throw new Error("unreachable");
         expect(envelope.mnemonic).toBe(TEST_MNEMONIC);
-        expect(envelope.descriptor).toBe(identity.descriptor);
+        expect(envelope.descriptor).toBe(identity.getAccountDescriptor());
         expect(envelope.passphrase).toBeUndefined();
     });
 
@@ -139,7 +139,7 @@ describe("serializeReadonlyIdentity", () => {
         const envelope = await serializeReadonlyIdentity(identity);
         expect(envelope).toEqual({
             type: "readonly-descriptor",
-            descriptor: identity.descriptor,
+            descriptor: identity.getAccountDescriptor(),
         });
         expect(JSON.stringify(envelope)).not.toContain(hex.encode(seed));
     });
@@ -152,7 +152,7 @@ describe("serializeReadonlyIdentity", () => {
         const envelope = await serializeReadonlyIdentity(identity);
         expect(envelope).toEqual({
             type: "readonly-descriptor",
-            descriptor: identity.descriptor,
+            descriptor: identity.getAccountDescriptor(),
         });
         const serialized = JSON.stringify(envelope);
         expect(serialized).not.toContain("abandon");
@@ -169,7 +169,7 @@ describe("serializeReadonlyIdentity", () => {
         const envelope = await serializeReadonlyIdentity(readonly);
         expect(envelope).toEqual({
             type: "readonly-descriptor",
-            descriptor: mnemonic.descriptor,
+            descriptor: mnemonic.getAccountDescriptor(),
         });
     });
 });
@@ -241,7 +241,7 @@ describe("hydrateIdentity round-trip", () => {
         expect(serializeSigningIdentity(rehydrated)).toEqual({
             type: "mnemonic",
             mnemonic: TEST_MNEMONIC,
-            descriptor: original.descriptor,
+            descriptor: original.getAccountDescriptor(),
         });
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
             Array.from(await original.xOnlyPublicKey())
@@ -260,7 +260,7 @@ describe("hydrateIdentity round-trip", () => {
         expect(serializeSigningIdentity(rehydrated)).toEqual({
             type: "mnemonic",
             mnemonic: TEST_MNEMONIC,
-            descriptor: original.descriptor,
+            descriptor: original.getAccountDescriptor(),
             passphrase,
         });
         expect(Array.from(await rehydrated.xOnlyPublicKey())).toEqual(
