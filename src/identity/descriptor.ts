@@ -1,18 +1,33 @@
-import {
-    expand,
-    networks,
-    type Network,
-} from "@bitcoinerlab/descriptors-scure";
+import { expand, networks } from "@bitcoinerlab/descriptors-scure";
 import { hex } from "@scure/base";
 
 /**
- * Pick the BIP32 network from a descriptor by inspecting its key prefix.
- * `tpub` → testnet, anything else → mainnet. Cheaper and more permissive
- * than fully expanding the descriptor; safe because it's only used to
- * tell {@link expand} which network constants to apply.
+ * True iff `descriptor` is a Bitcoin mainnet descriptor (xpub-prefixed
+ * BIP32 key).
+ *
+ * Note: testnet, signet, regtest, mutinynet, and other non-mainnet
+ * networks all share the same `tpub` BIP32 version bytes — they cannot
+ * be distinguished from one another at the descriptor level. Callers
+ * that need to pick a `Network` constants object for `expand()`
+ * convert via `bip32NetworkOf` below; callers that need the *actual*
+ * network the wallet is on must track that out-of-band.
  */
-export function detectNetwork(descriptor: string): Network {
-    return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
+export function isMainnetDescriptor(descriptor: string): boolean {
+    return !descriptor.includes("tpub");
+}
+
+/**
+ * Pick the `Network` constants the descriptors library needs to parse
+ * `descriptor` — `networks.bitcoin` for mainnet, otherwise
+ * `networks.testnet`. The latter is shared across all non-mainnet
+ * networks because they have identical BIP32 version bytes; this
+ * function does not (and cannot) tell signet from regtest from
+ * testnet. See {@link isMainnetDescriptor}.
+ */
+function bip32NetworkOf(descriptor: string) {
+    return isMainnetDescriptor(descriptor)
+        ? networks.bitcoin
+        : networks.testnet;
 }
 
 /**
@@ -25,7 +40,7 @@ export function detectNetwork(descriptor: string): Network {
  */
 export function isWildcardTemplate(descriptor: string): boolean {
     try {
-        return expand({ descriptor, network: detectNetwork(descriptor) })
+        return expand({ descriptor, network: bip32NetworkOf(descriptor) })
             .isRanged;
     } catch {
         return false;
@@ -51,37 +66,41 @@ export function materializeAtIndex(template: string, index: number): string {
     }
     return expand({
         descriptor: template,
-        network: detectNetwork(template),
+        network: bip32NetworkOf(template),
         index,
     }).canonicalExpression;
 }
 
 /**
- * Returns the wildcard-template form of `descriptor`. If already a
- * template, returns it unchanged. If concrete (`.../N)`), chops the
- * trailing numeric index and replaces it with `*`. Throws otherwise.
+ * Returns the wildcard-template form of `descriptor`. If `descriptor`
+ * is already a template, returns its canonical form (checksum
+ * stripped). If concrete (`.../N)`), canonicalizes via the library and
+ * chops the trailing numeric index, replacing it with `*`.
+ *
+ * Going from concrete → template has no library equivalent, but
+ * leaning on `Expansion.canonicalExpression` first lets us accept
+ * everything `expand()` does (including checksum-suffixed forms) and
+ * operate on a known-clean string when chopping. Throws via the
+ * library on any input it can't parse.
  */
 export function templateOf(descriptor: string): string {
-    if (isWildcardTemplate(descriptor)) return descriptor;
-    if (!descriptor.endsWith(")")) {
-        throw new Error(
-            "Cannot derive account descriptor template: descriptor must end with ')'"
-        );
-    }
-    const lastSlash = descriptor.lastIndexOf("/");
+    const expansion = expand({
+        descriptor,
+        network: bip32NetworkOf(descriptor),
+    });
+    if (expansion.isRanged) return expansion.canonicalExpression;
+
+    // canonicalExpression always ends in `)` and reflects the
+    // descriptor's structure with no checksum, so chopping the
+    // trailing /N) is unambiguous.
+    const canonical = expansion.canonicalExpression;
+    const lastSlash = canonical.lastIndexOf("/");
     if (lastSlash === -1) {
         throw new Error(
-            "Cannot derive account descriptor template: descriptor has no path"
+            `Cannot derive account descriptor template: "${canonical}" has no derivation path`
         );
     }
-    const trailing = descriptor.slice(lastSlash + 1, -1);
-    const idx = Number(trailing);
-    if (!Number.isInteger(idx) || idx < 0 || trailing !== String(idx)) {
-        throw new Error(
-            "Cannot derive account descriptor template: trailing path segment is not a non-negative integer"
-        );
-    }
-    return `${descriptor.slice(0, lastSlash + 1)}*)`;
+    return `${canonical.slice(0, lastSlash + 1)}*)`;
 }
 
 /**
@@ -106,7 +125,7 @@ export function descriptorIsOurs(
 ): boolean {
     if (!isDescriptor(descriptor)) return false;
     try {
-        const network = detectNetwork(descriptor);
+        const network = bip32NetworkOf(descriptor);
         const expansion = expand({
             descriptor,
             network,
@@ -172,7 +191,7 @@ export function extractPubKey(descriptor: string): string {
         return descriptor;
     }
 
-    const network = detectNetwork(descriptor);
+    const network = bip32NetworkOf(descriptor);
     const expansion = expand({ descriptor, network });
 
     if (!expansion.expansionMap) {
@@ -220,7 +239,7 @@ export function parseHDDescriptor(
 
     let expansion;
     try {
-        const network = detectNetwork(descriptor);
+        const network = bip32NetworkOf(descriptor);
         expansion = expand({ descriptor, network });
     } catch {
         return null;

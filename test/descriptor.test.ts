@@ -11,7 +11,7 @@ import {
     normalizeToDescriptor,
     extractPubKey,
     parseHDDescriptor,
-    detectNetwork,
+    isMainnetDescriptor,
     isWildcardTemplate,
     materializeAtIndex,
     templateOf,
@@ -161,15 +161,17 @@ describe("parseHDDescriptor", () => {
     });
 });
 
-describe("detectNetwork", () => {
-    it("returns testnet for tpub-prefixed descriptors", () => {
-        expect(detectNetwork(makeDescriptor({ isMainnet: false }))).toBe(
-            networks.testnet
+describe("isMainnetDescriptor", () => {
+    it("returns false for tpub-prefixed descriptors", () => {
+        // tpub is shared across testnet/signet/regtest/mutinynet — we
+        // can only tell mainnet vs not, never which non-mainnet.
+        expect(isMainnetDescriptor(makeDescriptor({ isMainnet: false }))).toBe(
+            false
         );
     });
 
-    it("returns mainnet for xpub-prefixed descriptors", () => {
-        expect(detectNetwork(makeDescriptor({}))).toBe(networks.bitcoin);
+    it("returns true for xpub-prefixed descriptors", () => {
+        expect(isMainnetDescriptor(makeDescriptor({}))).toBe(true);
     });
 });
 

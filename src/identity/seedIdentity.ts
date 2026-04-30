@@ -23,7 +23,7 @@ import {
 } from "./hdCapableIdentity";
 import {
     descriptorIsOurs,
-    detectNetwork,
+    isMainnetDescriptor,
     isWildcardTemplate,
     materializeAtIndex,
 } from "./descriptor";
@@ -186,8 +186,8 @@ export class SeedIdentity implements HDCapableIdentity {
         this.template = template;
         this.descriptor = materializeAtIndex(template, 0);
 
-        const network = detectNetwork(template);
-        this.isMainnet = network === networks.bitcoin;
+        this.isMainnet = isMainnetDescriptor(template);
+        const network = this.isMainnet ? networks.bitcoin : networks.testnet;
 
         // Parse and validate the template using the library — pass
         // `index: 0` so `expand()` substitutes the wildcard for us.
@@ -343,7 +343,9 @@ export class SeedIdentity implements HDCapableIdentity {
                 "Cannot sign with a wildcard descriptor; derive a concrete index first"
             );
         }
-        const network = detectNetwork(descriptor);
+        const network = isMainnetDescriptor(descriptor)
+            ? networks.bitcoin
+            : networks.testnet;
         const expansion = expand({ descriptor, network });
         const keyInfo = expansion.expansionMap?.["@0"];
         if (!keyInfo?.path) {
@@ -507,7 +509,9 @@ export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
 
         // Let the library substitute the wildcard via its `index`
         // parameter rather than re-doing it ourselves.
-        const network = detectNetwork(template);
+        const network = isMainnetDescriptor(template)
+            ? networks.bitcoin
+            : networks.testnet;
         const expansion = expand({ descriptor: template, network, index: 0 });
         const keyInfo = expansion.expansionMap?.["@0"];
 
