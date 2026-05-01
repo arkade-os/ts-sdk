@@ -1733,7 +1733,7 @@ describe("Asset integration tests", () => {
             allAssets,
             secondIssueResult.assetId
         );
-        expect(totalAssetAmount).toBe(500 + reissueAmount);
+        expect(totalAssetAmount).toBe(500n + reissueAmount);
 
         // control asset should still exist
         const controlAsset = allAssets.find(
@@ -2030,8 +2030,8 @@ describe("Asset integration tests", () => {
                 address: bobAddress,
                 amount: sendAmount,
                 assets: [
-                    { assetId: issueResult1.assetId, amount: 50 },
-                    { assetId: issueResult2.assetId, amount: 100 },
+                    { assetId: issueResult1.assetId, amount: 50n },
+                    { assetId: issueResult2.assetId, amount: 100n },
                 ],
             });
             expect(txid2).toBeDefined();
@@ -2097,7 +2097,7 @@ describe("Asset integration tests", () => {
             const txid3 = await wallet3.send({
                 address: bobAddress,
                 amount: sendAmount3,
-                assets: [{ assetId: issueResult3.assetId, amount: 150 }],
+                assets: [{ assetId: issueResult3.assetId, amount: 150n }],
             });
             expect(txid3).toBeDefined();
             await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -2183,7 +2183,7 @@ describe("Asset integration tests", () => {
             const txid = await wallet2.send({
                 address: bobAddress,
                 amount: sendAmount,
-                assets: [{ assetId: issueResult.assetId, amount: 200 }],
+                assets: [{ assetId: issueResult.assetId, amount: 200n }],
             });
             expect(txid).toBeDefined();
             await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -2293,7 +2293,7 @@ describe("Asset integration tests", () => {
             const txid = await wallet2.send({
                 address: bobAddress,
                 amount: sendAmount,
-                assets: [{ assetId: issueResult.assetId, amount: 200 }],
+                assets: [{ assetId: issueResult.assetId, amount: 200n }],
             });
             expect(txid).toBeDefined();
             await new Promise((resolve) => setTimeout(resolve, 1000));

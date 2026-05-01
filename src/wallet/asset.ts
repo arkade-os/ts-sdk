@@ -29,7 +29,7 @@ export function createAssetPacket(
             const existing = inputsByAssetId.get(asset.assetId);
             inputsByAssetId.set(asset.assetId, [
                 ...(existing ?? []),
-                AssetInput.create(inputIndex, BigInt(asset.amount)),
+                AssetInput.create(inputIndex, asset.amount),
             ]);
         }
     }
@@ -46,7 +46,7 @@ export function createAssetPacket(
                 const existing = outputsByAssetId.get(asset.assetId);
                 outputsByAssetId.set(asset.assetId, [
                     ...(existing ?? []),
-                    AssetOutput.create(outputIndex, BigInt(asset.amount)),
+                    AssetOutput.create(outputIndex, asset.amount),
                 ]);
             }
         }
@@ -59,7 +59,7 @@ export function createAssetPacket(
             const existing = outputsByAssetId.get(asset.assetId);
             outputsByAssetId.set(asset.assetId, [
                 ...(existing ?? []),
-                AssetOutput.create(outputIndex, BigInt(asset.amount)),
+                AssetOutput.create(outputIndex, asset.amount),
             ]);
         }
     }

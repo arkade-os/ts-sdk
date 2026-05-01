@@ -8,6 +8,12 @@ import {
     ExtendedVirtualCoin,
 } from "../../wallet";
 import { TapLeafScript } from "../../script/base";
+import {
+    serializeAssets,
+    deserializeAssets,
+    serializeTransaction,
+    deserializeTransaction,
+} from "../serialization";
 
 const getVtxosStorageKey = (address: string) => `vtxos:${address}`;
 const getUtxosStorageKey = (address: string) => `utxos:${address}`;
@@ -21,6 +27,7 @@ const serializeVtxo = (v: ExtendedVirtualCoin) => ({
     forfeitTapLeafScript: serializeTapLeaf(v.forfeitTapLeafScript),
     intentTapLeafScript: serializeTapLeaf(v.intentTapLeafScript),
     extraWitness: v.extraWitness?.map(hex.encode),
+    assets: serializeAssets(v.assets),
 });
 
 const serializeUtxo = (u: ExtendedCoin) => ({
@@ -38,6 +45,7 @@ const deserializeVtxo = (o: any): ExtendedVirtualCoin => ({
     forfeitTapLeafScript: deserializeTapLeaf(o.forfeitTapLeafScript),
     intentTapLeafScript: deserializeTapLeaf(o.intentTapLeafScript),
     extraWitness: o.extraWitness?.map(hex.decode),
+    assets: deserializeAssets(o.assets),
 });
 
 const deserializeUtxo = (o: any): ExtendedCoin => ({
@@ -164,7 +172,10 @@ export class WalletRepositoryImpl implements WalletRepository {
         if (!stored) return [];
 
         try {
-            return JSON.parse(stored) as ArkTransaction[];
+            const parsed = JSON.parse(stored) as Array<
+                ReturnType<typeof serializeTransaction>
+            >;
+            return parsed.map(deserializeTransaction);
         } catch (error) {
             console.error(
                 `Failed to parse transactions for address ${address}:`,
@@ -194,7 +205,7 @@ export class WalletRepositoryImpl implements WalletRepository {
         }
         await this.storage.setItem(
             getTransactionsStorageKey(address),
-            JSON.stringify(storedTransactions)
+            JSON.stringify(storedTransactions.map(serializeTransaction))
         );
     }
 

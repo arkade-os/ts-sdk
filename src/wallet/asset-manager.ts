@@ -93,7 +93,7 @@ export class AssetManager
             if (!coin.assets) continue;
             for (const { assetId, amount } of coin.assets) {
                 const existing = assetChanges.get(assetId) ?? 0n;
-                assetChanges.set(assetId, existing + BigInt(amount));
+                assetChanges.set(assetId, existing + amount);
             }
         }
 
@@ -124,7 +124,7 @@ export class AssetManager
                     for (const asset of assets) {
                         if (asset.assetId !== assetId) continue;
                         changeInputs.push(
-                            AssetInput.create(inputIndex, BigInt(asset.amount))
+                            AssetInput.create(inputIndex, asset.amount)
                         );
                     }
                 }
@@ -213,11 +213,11 @@ export class AssetManager
             if (!coin.assets) continue;
             for (const { assetId, amount } of coin.assets) {
                 if (assetId === params.assetId) {
-                    assetToReissueAmount += BigInt(amount);
+                    assetToReissueAmount += amount;
                     continue;
                 }
                 const existing = assetChanges.get(assetId) ?? 0n;
-                assetChanges.set(assetId, existing + BigInt(amount));
+                assetChanges.set(assetId, existing + amount);
             }
         }
 
@@ -244,11 +244,11 @@ export class AssetManager
                 if (!coin.assets) continue;
                 for (const { assetId, amount } of coin.assets) {
                     if (assetId === params.assetId) {
-                        assetToReissueAmount += BigInt(amount);
+                        assetToReissueAmount += amount;
                         continue;
                     }
                     const existing = assetChanges.get(assetId) ?? 0n;
-                    assetChanges.set(assetId, existing + BigInt(amount));
+                    assetChanges.set(assetId, existing + amount);
                 }
             }
             selectedCoins = [...selectedCoins, ...additional.inputs];
@@ -265,9 +265,7 @@ export class AssetManager
         for (const [inputIndex, assets] of assetInputs) {
             for (const asset of assets) {
                 if (asset.assetId !== params.assetId) continue;
-                reissueInputs.push(
-                    AssetInput.create(inputIndex, BigInt(asset.amount))
-                );
+                reissueInputs.push(AssetInput.create(inputIndex, asset.amount));
             }
         }
 
@@ -293,7 +291,7 @@ export class AssetManager
                 for (const asset of assets) {
                     if (asset.assetId !== assetId) continue;
                     changeInputs.push(
-                        AssetInput.create(inputIndex, BigInt(asset.amount))
+                        AssetInput.create(inputIndex, asset.amount)
                     );
                 }
             }
@@ -370,7 +368,7 @@ export class AssetManager
             if (!coin.assets) continue;
             for (const { assetId, amount } of coin.assets) {
                 const existing = assetChanges.get(assetId) ?? 0n;
-                assetChanges.set(assetId, existing + BigInt(amount));
+                assetChanges.set(assetId, existing + amount);
             }
         }
         // subtract the amount to burn from the asset change
@@ -401,7 +399,7 @@ export class AssetManager
                 if (!coin.assets) continue;
                 for (const { assetId, amount } of coin.assets) {
                     const existing = assetChanges.get(assetId) ?? 0n;
-                    assetChanges.set(assetId, existing + BigInt(amount));
+                    assetChanges.set(assetId, existing + amount);
                 }
             }
 
@@ -418,7 +416,7 @@ export class AssetManager
                 for (const asset of assets) {
                     if (asset.assetId !== assetId) continue;
                     changeInputs.push(
-                        AssetInput.create(inputIndex, BigInt(asset.amount))
+                        AssetInput.create(inputIndex, asset.amount)
                     );
                 }
             }

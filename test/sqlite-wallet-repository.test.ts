@@ -400,7 +400,7 @@ function createMockVtxoWithExtras(
         intentTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(5),
         extraWitness: [new Uint8Array([0xab, 0xcd]), new Uint8Array([0xef])],
-        assets: [{ assetId: "asset-1", amount: 500 }],
+        assets: [{ assetId: "asset-1", amount: 500n }],
         script: "5120deadbeef",
     };
 }
@@ -533,7 +533,7 @@ describe("SQLiteWalletRepository", () => {
             ]);
             expect(retrieved.virtualStatus.batchExpiry).toBe(1700100000);
             expect(retrieved.assets).toEqual([
-                { assetId: "asset-1", amount: 500 },
+                { assetId: "asset-1", amount: 500n },
             ]);
             // extraWitness round-trip (Uint8Array)
             expect(retrieved.extraWitness).toBeDefined();
@@ -858,8 +858,8 @@ describe("SQLiteWalletRepository", () => {
                 settled: true,
                 createdAt: 5000,
                 assets: [
-                    { assetId: "asset-a", amount: 100 },
-                    { assetId: "asset-b", amount: 200 },
+                    { assetId: "asset-a", amount: 100n },
+                    { assetId: "asset-b", amount: 200n },
                 ],
             };
 
@@ -869,8 +869,8 @@ describe("SQLiteWalletRepository", () => {
 
             expect(retrieved.settled).toBe(true);
             expect(retrieved.assets).toEqual([
-                { assetId: "asset-a", amount: 100 },
-                { assetId: "asset-b", amount: 200 },
+                { assetId: "asset-a", amount: 100n },
+                { assetId: "asset-b", amount: 200n },
             ]);
         });
 
