@@ -136,6 +136,7 @@ import {
     MESSAGE_BUS_NOT_INITIALIZED,
     ServiceWorkerTimeoutError,
 } from "../../worker/errors";
+import { getArkadeServerUrl } from "../wallet";
 
 // Check by error message content instead of instanceof because postMessage uses the
 // structured clone algorithm which strips the prototype chain — the page
@@ -532,7 +533,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
             .then(hex.encode);
         const initWalletPayload = {
             key: { publicKey },
-            arkServerUrl: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
+            arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
@@ -549,7 +550,7 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
             arkServer: {
-                url: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
+                url: getArkadeServerUrl(options),
                 publicKey: options.arkServerPublicKey,
             },
             delegatorUrl: options.delegatorUrl,
@@ -1389,7 +1390,7 @@ export class ServiceWorkerWallet
                 : null;
         const initWalletPayload = {
             key: legacyPrivateKey ? { privateKey: legacyPrivateKey } : {},
-            arkServerUrl: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
+            arkServerUrl: getArkadeServerUrl(options),
             arkServerPublicKey: options.arkServerPublicKey,
             delegatorUrl: options.delegatorUrl,
         };
@@ -1406,7 +1407,7 @@ export class ServiceWorkerWallet
         const busInitConfig: MessageBusInitConfig = {
             wallet: serializedWallet,
             arkServer: {
-                url: options.arkServerUrl || DEFAULT_ARKADE_SERVER_URL,
+                url: getArkadeServerUrl(options),
                 publicKey: options.arkServerPublicKey,
             },
             delegatorUrl: options.delegatorUrl,

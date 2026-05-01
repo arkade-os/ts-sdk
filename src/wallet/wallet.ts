@@ -102,6 +102,12 @@ import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../contracts/handlers/helpers";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 
+export const getArkadeServerUrl = ({
+    arkServerUrl,
+}: {
+    arkServerUrl?: string;
+}) => arkServerUrl || DEFAULT_ARKADE_SERVER_URL;
+
 // Historical unilateral exit delay for mainnet (~7 days in seconds).
 // Kept so existing wallets can still discover and spend VTXOs sent to the
 // legacy address after arkd starts advertising a different delay.
@@ -231,9 +237,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const arkProvider =
             config.arkProvider ||
             (() => {
-                return new RestArkProvider(
-                    config.arkServerUrl || DEFAULT_ARKADE_SERVER_URL
-                );
+                return new RestArkProvider(getArkadeServerUrl(config));
             })();
 
         // Extract arkServerUrl from provider if not explicitly provided
