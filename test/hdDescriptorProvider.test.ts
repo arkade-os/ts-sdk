@@ -41,7 +41,6 @@ describe("HDDescriptorProvider", () => {
             const state = await walletRepo.getWalletState();
             expect(state?.settings?.hd).toMatchObject({
                 template: expect.stringMatching(/\/0\/\*\)$/),
-                nextIndex: 1,
                 currentReceiveIndex: 0,
             });
         });
@@ -88,75 +87,6 @@ describe("HDDescriptorProvider", () => {
         });
     });
 
-    describe("peekNextIndex", () => {
-        it("returns the value that will be used by the next consume", async () => {
-            const { provider } = await makeProvider();
-            const peeked = await provider.peekNextIndex();
-            const { index } = await provider.consumeNextIndex();
-            expect(index).toBe(peeked);
-        });
-
-        it("does not mutate state", async () => {
-            const { provider, walletRepo } = await makeProvider();
-            const before = (await walletRepo.getWalletState())?.settings?.hd
-                .nextIndex;
-            await provider.peekNextIndex();
-            const after = (await walletRepo.getWalletState())?.settings?.hd
-                .nextIndex;
-            expect(after).toBe(before);
-        });
-    });
-
-    describe("consumeNextIndex", () => {
-        it("returns sequential indexes 1, 2, 3... (0 was taken by init)", async () => {
-            const { provider } = await makeProvider();
-            const a = await provider.consumeNextIndex();
-            const b = await provider.consumeNextIndex();
-            const c = await provider.consumeNextIndex();
-            expect([a.index, b.index, c.index]).toEqual([1, 2, 3]);
-        });
-
-        it("returns a descriptor matching the substituted template at that index", async () => {
-            const { provider, identity } = await makeProvider();
-            const { index, descriptor } = await provider.consumeNextIndex();
-            const expected = identity.descriptor.replace("/*)", `/${index})`);
-            expect(descriptor).toBe(expected);
-        });
-
-        it("does not change the active receive descriptor", async () => {
-            const { provider } = await makeProvider();
-            const beforeDesc = provider.getSigningDescriptor();
-            const beforeIdx = provider.getCurrentReceiveIndex();
-            await provider.consumeNextIndex();
-            expect(provider.getSigningDescriptor()).toBe(beforeDesc);
-            expect(provider.getCurrentReceiveIndex()).toBe(beforeIdx);
-        });
-
-        it("serialises concurrent callers so indexes never collide", async () => {
-            const { provider } = await makeProvider();
-            const results = await Promise.all(
-                Array.from({ length: 10 }, () => provider.consumeNextIndex())
-            );
-            const indexes = results.map((r) => r.index);
-            expect(new Set(indexes).size).toBe(indexes.length);
-            // monotonic and contiguous (1..10 — 0 was claimed by init)
-            expect([...indexes].sort((a, b) => a - b)).toEqual([
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-            ]);
-        });
-
-        it("persists each bump so a restart continues the sequence", async () => {
-            const repo = new InMemoryWalletRepository();
-            const { provider: first } = await makeProvider(repo);
-            await first.consumeNextIndex(); // 1
-            await first.consumeNextIndex(); // 2
-
-            const { provider: second } = await makeProvider(repo);
-            const next = await second.consumeNextIndex();
-            expect(next.index).toBe(3);
-        });
-    });
-
     describe("rotateReceive", () => {
         it("moves the active receive descriptor to the next index", async () => {
             const { provider } = await makeProvider();
@@ -167,30 +97,60 @@ describe("HDDescriptorProvider", () => {
             expect(provider.getSigningDescriptor()).toBe(rotated.descriptor);
         });
 
-        it("bumps past previously consumed indexes", async () => {
+        it("returns sequential indexes 1, 2, 3...", async () => {
             const { provider } = await makeProvider();
-            await provider.consumeNextIndex(); // 1
-            await provider.consumeNextIndex(); // 2
-            const rotated = await provider.rotateReceive();
-            expect(rotated.index).toBe(3);
+            const a = await provider.rotateReceive();
+            const b = await provider.rotateReceive();
+            const c = await provider.rotateReceive();
+            expect([a.index, b.index, c.index]).toEqual([1, 2, 3]);
         });
 
-        it("persists the new currentReceiveIndex", async () => {
-            const { provider, walletRepo } = await makeProvider();
-            const rotated = await provider.rotateReceive();
-            const state = await walletRepo.getWalletState();
-            expect(state?.settings?.hd.currentReceiveIndex).toBe(rotated.index);
+        it("returns a descriptor matching the substituted template at that index", async () => {
+            const { provider, identity } = await makeProvider();
+            const { index, descriptor } = await provider.rotateReceive();
+            const expected = identity.descriptor.replace("/*)", `/${index})`);
+            expect(descriptor).toBe(expected);
         });
 
-        it("serialises against concurrent consumeNextIndex", async () => {
+        it("persists each bump so a restart continues the sequence", async () => {
+            const repo = new InMemoryWalletRepository();
+            const { provider: first } = await makeProvider(repo);
+            await first.rotateReceive(); // 1
+            await first.rotateReceive(); // 2
+
+            const { provider: second } = await makeProvider(repo);
+            const next = await second.rotateReceive();
+            expect(next.index).toBe(3);
+        });
+
+        it("serialises concurrent callers so indexes never collide", async () => {
             const { provider } = await makeProvider();
-            const ops = [
-                provider.consumeNextIndex(),
-                provider.rotateReceive(),
-                provider.consumeNextIndex(),
-                provider.rotateReceive(),
-            ];
-            const results = await Promise.all(ops);
+            const results = await Promise.all(
+                Array.from({ length: 10 }, () => provider.rotateReceive())
+            );
+            const indexes = results.map((r) => r.index);
+            expect(new Set(indexes).size).toBe(indexes.length);
+            // monotonic and contiguous (1..10 — 0 was claimed by init)
+            expect([...indexes].sort((a, b) => a - b)).toEqual([
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+            ]);
+        });
+
+        it("serialises rotations across two providers on the same repo", async () => {
+            // The shared per-repo updateWalletState mutex must serialise
+            // R-M-W across distinct provider instances. Without doing the
+            // read inside the lock, both providers would see the same
+            // currentReceiveIndex and emit a duplicate.
+            const repo = new InMemoryWalletRepository();
+            const { provider: a } = await makeProvider(repo);
+            const { provider: b } = await makeProvider(repo);
+
+            const results = await Promise.all([
+                a.rotateReceive(),
+                b.rotateReceive(),
+                a.rotateReceive(),
+                b.rotateReceive(),
+            ]);
             const indexes = results.map((r) => r.index);
             expect(new Set(indexes).size).toBe(indexes.length);
         });
@@ -199,7 +159,7 @@ describe("HDDescriptorProvider", () => {
     describe("DescriptorProvider interface", () => {
         it("isOurs returns true for a descriptor derived by this wallet", async () => {
             const { provider } = await makeProvider();
-            const { descriptor } = await provider.consumeNextIndex();
+            const { descriptor } = await provider.rotateReceive();
             expect(provider.isOurs(descriptor)).toBe(true);
         });
 
@@ -216,7 +176,7 @@ describe("HDDescriptorProvider", () => {
 
         it("signMessageWithDescriptor signs with the index-derived key", async () => {
             const { provider } = await makeProvider();
-            const { index, descriptor } = await provider.consumeNextIndex();
+            const { index, descriptor } = await provider.rotateReceive();
             const message = new Uint8Array(32).fill(7);
 
             const sig = await provider.signMessageWithDescriptor(
@@ -258,53 +218,10 @@ describe("HDDescriptorProvider", () => {
     });
 
     describe("error paths", () => {
-        it("descriptor from consumeNextIndex never includes wildcard", async () => {
+        it("descriptor from rotateReceive never includes wildcard", async () => {
             const { provider } = await makeProvider();
-            const { descriptor } = await provider.consumeNextIndex();
+            const { descriptor } = await provider.rotateReceive();
             expect(descriptor).not.toMatch(/\/\*\)$/);
-        });
-
-        it("throws a descriptive error when nextIndex hits the non-hardened cap", async () => {
-            const repo = new InMemoryWalletRepository();
-            // Prime storage one step below the cap so the next consume bumps
-            // from 2^31-1 → 2^31, tripping the guard on the call after.
-            const identity = makeIdentity();
-            await repo.saveWalletState({
-                settings: {
-                    hd: {
-                        template: identity.descriptor,
-                        nextIndex: 0x7fffffff,
-                        currentReceiveIndex: 0,
-                    },
-                },
-            });
-            const provider = await HDDescriptorProvider.create(identity, repo);
-            // First call consumes 0x7fffffff (legal), bumping nextIndex to 0x80000000.
-            await provider.consumeNextIndex();
-            // Second call should trip the guard with a human-readable message.
-            await expect(provider.consumeNextIndex()).rejects.toThrow(
-                /HD wallet exhausted/i
-            );
-            await expect(provider.rotateReceive()).rejects.toThrow(
-                /HD wallet exhausted/i
-            );
-        });
-
-        it("throws when stored nextIndex is not a non-negative integer", async () => {
-            const repo = new InMemoryWalletRepository();
-            const identity = makeIdentity();
-            await repo.saveWalletState({
-                settings: {
-                    hd: {
-                        template: identity.descriptor,
-                        // corrupted — simulates partial migration or bad write
-                        nextIndex: "oops" as unknown as number,
-                    },
-                },
-            });
-            await expect(
-                HDDescriptorProvider.create(identity, repo)
-            ).rejects.toThrow(/corrupt hd settings.*nextindex/i);
         });
 
         it("throws when stored currentReceiveIndex is not a non-negative integer", async () => {
@@ -314,7 +231,6 @@ describe("HDDescriptorProvider", () => {
                 settings: {
                     hd: {
                         template: identity.descriptor,
-                        nextIndex: 2,
                         currentReceiveIndex: -1,
                     },
                 },
@@ -351,9 +267,8 @@ describe("HDDescriptorProvider", () => {
             // Sync cursor landed at the higher of the two advances.
             expect(state?.lastSyncTime).toBe(2_000_000);
             // All three rotations are visible — currentReceiveIndex is 3
-            // (started at 0, rotated three times → 1, 2, 3), nextIndex is 4.
+            // (started at 0, rotated three times → 1, 2, 3).
             expect(state?.settings?.hd.currentReceiveIndex).toBe(3);
-            expect(state?.settings?.hd.nextIndex).toBe(4);
             // The migration marker written by advanceSyncCursor is preserved.
             expect(state?.settings?.vtxoCursorMigrated).toBe(true);
         });
@@ -378,7 +293,6 @@ describe("HDDescriptorProvider", () => {
             expect(state?.settings?.vtxoCursorMigrated).toBeUndefined();
             // HD rotations survived.
             expect(state?.settings?.hd.currentReceiveIndex).toBe(2);
-            expect(state?.settings?.hd.nextIndex).toBe(3);
         });
     });
 });

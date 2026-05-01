@@ -3,18 +3,12 @@ import {
     DescriptorSigningRequest,
 } from "../identity/descriptorProvider";
 import { SeedIdentity } from "../identity/seedIdentity";
-import { WalletRepository } from "../repositories/walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+} from "../repositories/walletRepository";
 import { Transaction } from "../utils/transaction";
 import { updateWalletState } from "../utils/syncCursors";
-
-/**
- * Upper bound for non-hardened derivation indices (BIP-32). An HD wallet that
- * hits this has either been bugged into monotonic advancement without spend
- * or has been in use for generations; either way we refuse to silently
- * wrap into the hardened range (which would throw deep inside the signing
- * primitives with an error message that wouldn't help diagnose the cause).
- */
-const MAX_NON_HARDENED_INDEX = 0x80000000;
 
 /**
  * Persisted HD wallet state stored under {@link WalletState.settings}`.hd`.
@@ -29,15 +23,9 @@ interface HDWalletSettings {
     template: string;
 
     /**
-     * Next unused child index. Monotonic — never rewound.
-     * Follows the NArk pattern of a single global counter rather than
-     * separate receive/change ranges.
-     */
-    nextIndex: number;
-
-    /**
-     * Currently-active receive index. Rotated on `vtxo_received` by the
-     * wallet; the provider exposes it via {@link HDDescriptorProvider.getSigningDescriptor}.
+     * Active receive index. Monotonic — each `rotateReceive` bumps by one.
+     * `undefined` means the wallet has never derived an address; the next
+     * rotation will assign index 0.
      */
     currentReceiveIndex?: number;
 }
@@ -56,8 +44,8 @@ interface CurrentReceive {
 }
 
 /**
- * HD-wallet {@link DescriptorProvider} that owns a single global derivation
- * counter and rotates receive addresses on demand.
+ * HD-wallet {@link DescriptorProvider} that owns a single monotonic receive
+ * index and rotates the active receive descriptor on demand.
  *
  * State is persisted under `WalletRepository.getWalletState().settings.hd` so
  * that no storage-schema migration is required when switching a wallet from
@@ -65,21 +53,19 @@ interface CurrentReceive {
  * both carries the seed (for signing) and exposes the account descriptor
  * template (for derivation).
  *
- * Concurrent calls to `consumeNextIndex` / `rotateReceive` are serialised
- * through an internal promise-chain mutex so that two callers can never
- * receive the same index.
+ * Read-modify-write of the persisted index runs inside the shared per-repo
+ * `updateWalletState` mutex, so two `rotateReceive` callers — including those
+ * driving separate `HDDescriptorProvider` instances on the same repo — can
+ * never observe the same index.
  *
  * @example
  * ```ts
  * const provider = await HDDescriptorProvider.create(identity, walletRepo);
- * const { index, descriptor } = await provider.consumeNextIndex();
- * // index 0, descriptor tr([fp/86'/0'/0']xpub/0/0)
+ * const { index, descriptor } = await provider.rotateReceive();
+ * // index 1, descriptor tr([fp/86'/0'/0']xpub/0/1)
  * ```
  */
 export class HDDescriptorProvider implements DescriptorProvider {
-    /** Chain that serialises critical-section mutations. */
-    private chain: Promise<unknown> = Promise.resolve();
-
     /**
      * Cached current receive slot. Populated by {@link HDDescriptorProvider.create}
      * and updated on every rotation.
@@ -94,7 +80,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
     /**
      * Construct and initialize an HDDescriptorProvider.
      *
-     * On first run for a fresh wallet, this consumes index 0 as the initial
+     * On first run for a fresh wallet, this assigns index 0 as the initial
      * receive descriptor and persists it. Subsequent runs reuse the stored
      * `currentReceiveIndex`.
      *
@@ -120,51 +106,22 @@ export class HDDescriptorProvider implements DescriptorProvider {
     }
 
     /**
-     * Reads `nextIndex` without consuming it. Advisory only — the value may
-     * change between calls if another consumer races this read.
-     */
-    async peekNextIndex(): Promise<number> {
-        const settings = await this.loadOrInit();
-        return settings.nextIndex;
-    }
-
-    /**
-     * Atomically consume the next index, persist the bump, and return the
-     * materialized descriptor. Does not change the active receive descriptor.
-     *
-     * Use this when you need a fresh address for a non-receive purpose
-     * (e.g. internal change, boarding, self-spend) without touching the
-     * user-visible receive slot.
-     */
-    async consumeNextIndex(): Promise<CurrentReceive> {
-        return this.mutate(async (settings) => {
-            const index = this.takeNextIndex(settings);
-            await this.saveSettings(settings);
-            return {
-                index,
-                descriptor: this.materializeAt(index),
-            };
-        });
-    }
-
-    /**
-     * Rotate the active receive descriptor to the next unused index.
+     * Rotate the active receive descriptor to the next index.
      *
      * Updates both the persisted state and the in-memory `current` so that
      * subsequent {@link getSigningDescriptor} calls observe the rotation.
      */
     async rotateReceive(): Promise<CurrentReceive> {
-        return this.mutate(async (settings) => {
-            const index = this.takeNextIndex(settings);
+        const next = await this.mutate((settings) => {
+            const index =
+                settings.currentReceiveIndex === undefined
+                    ? 0
+                    : settings.currentReceiveIndex + 1;
             settings.currentReceiveIndex = index;
-            await this.saveSettings(settings);
-            const next: CurrentReceive = {
-                index,
-                descriptor: this.materializeAt(index),
-            };
-            this.current = next;
-            return next;
+            return { index, descriptor: this.materializeAt(index) };
         });
+        this.current = next;
+        return next;
     }
 
     /**
@@ -203,22 +160,12 @@ export class HDDescriptorProvider implements DescriptorProvider {
     // ── internals ────────────────────────────────────────────────────
 
     private async initialize(): Promise<void> {
-        this.current = await this.mutate(async (settings) => {
-            if (settings.currentReceiveIndex !== undefined) {
-                return {
-                    index: settings.currentReceiveIndex,
-                    descriptor: this.materializeAt(
-                        settings.currentReceiveIndex
-                    ),
-                };
+        this.current = await this.mutate((settings) => {
+            if (settings.currentReceiveIndex === undefined) {
+                settings.currentReceiveIndex = 0;
             }
-            const index = this.takeNextIndex(settings);
-            settings.currentReceiveIndex = index;
-            await this.saveSettings(settings);
-            return {
-                index,
-                descriptor: this.materializeAt(index),
-            };
+            const index = settings.currentReceiveIndex;
+            return { index, descriptor: this.materializeAt(index) };
         });
     }
 
@@ -229,32 +176,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
      * provider.
      */
     private materializeAt(index: number): string {
-        if (
-            !Number.isInteger(index) ||
-            index < 0 ||
-            index >= MAX_NON_HARDENED_INDEX
-        ) {
-            throw new Error("Derivation index must be an integer in [0, 2^31)");
-        }
         return this.identity.descriptor.replace("/*)", `/${index})`);
-    }
-
-    /**
-     * Consume the next index from `settings`, bumping `nextIndex` and
-     * returning the pre-bump value. Throws a descriptive error when the
-     * wallet has exhausted the non-hardened derivation range rather than
-     * silently bouncing off the signing primitive's opaque "index must be
-     * in [0, 2^31)" error.
-     */
-    private takeNextIndex(settings: HDWalletSettings): number {
-        if (settings.nextIndex >= MAX_NON_HARDENED_INDEX) {
-            throw new Error(
-                `HD wallet exhausted: nextIndex ${settings.nextIndex} reached the non-hardened derivation cap (${MAX_NON_HARDENED_INDEX}).`
-            );
-        }
-        const index = settings.nextIndex;
-        settings.nextIndex = index + 1;
-        return index;
     }
 
     private requireCurrent(): CurrentReceive {
@@ -267,46 +189,53 @@ export class HDDescriptorProvider implements DescriptorProvider {
     }
 
     /**
-     * Serialise `fn` against other critical-section callers and hand it a
-     * freshly-loaded settings snapshot to mutate.
+     * Run the read-modify-write of HD settings inside the shared per-repo
+     * wallet-state mutex. The closure receives a freshly-validated settings
+     * snapshot, mutates it, and returns the {@link CurrentReceive} the caller
+     * wants to surface; the mutated settings are then persisted as part of
+     * the same atomic update.
+     *
+     * Doing the read inside the lock is what prevents two providers (or two
+     * concurrent callers on the same provider) from racing on a stale index.
      */
-    private mutate<T>(
-        fn: (settings: HDWalletSettings) => Promise<T>
-    ): Promise<T> {
-        const run = this.chain.then(
-            () => this.loadOrInit().then(fn),
-            () => this.loadOrInit().then(fn)
-        );
-        this.chain = run.catch(() => undefined);
-        return run;
+    private async mutate(
+        fn: (settings: HDWalletSettings) => CurrentReceive
+    ): Promise<CurrentReceive> {
+        let result: CurrentReceive | undefined;
+        await updateWalletState(this.walletRepository, (state) => {
+            const settings = this.parseSettings(state);
+            result = fn(settings);
+            return {
+                ...state,
+                settings: {
+                    ...(state.settings ?? {}),
+                    [HD_SETTINGS_KEY]: settings,
+                },
+            };
+        });
+        return result!;
     }
 
-    private async loadOrInit(): Promise<HDWalletSettings> {
-        const state = await this.walletRepository.getWalletState();
-        const stored = state?.settings?.[HD_SETTINGS_KEY] as
+    /**
+     * Validate the persisted HD settings (or initialize a fresh record when
+     * absent) and return a clone safe for the caller to mutate.
+     *
+     * The cast to `HDWalletSettings` trusts storage; a corrupted or
+     * partially-migrated repo could otherwise produce `NaN` descriptors.
+     * Fail loud rather than silently derive garbage.
+     */
+    private parseSettings(state: WalletState): HDWalletSettings {
+        const stored = state.settings?.[HD_SETTINGS_KEY] as
             | HDWalletSettings
             | undefined;
         const expectedTemplate = this.identity.descriptor;
         if (!stored) {
-            return { template: expectedTemplate, nextIndex: 0 };
+            return { template: expectedTemplate };
         }
         if (stored.template !== expectedTemplate) {
             throw new Error(
                 `HD template mismatch: stored "${stored.template}", expected "${expectedTemplate}". ` +
                     `Refusing to reuse HD state from a different identity.`
-            );
-        }
-        // Validate the shape of persisted fields — the `as HDWalletSettings`
-        // cast above trusts storage, and a corrupted or partially-migrated
-        // repo could otherwise produce `NaN` descriptors or skip the index
-        // guard entirely. Fail loud rather than silently derive garbage.
-        if (
-            typeof stored.nextIndex !== "number" ||
-            !Number.isInteger(stored.nextIndex) ||
-            stored.nextIndex < 0
-        ) {
-            throw new Error(
-                `Corrupt HD settings: nextIndex is not a non-negative integer (got ${String(stored.nextIndex)}).`
             );
         }
         if (
@@ -319,26 +248,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
                 `Corrupt HD settings: currentReceiveIndex is not a non-negative integer (got ${String(stored.currentReceiveIndex)}).`
             );
         }
-        // Shallow clone so callers may mutate without aliasing the repo's copy.
+        // Shallow clone so the closure may mutate without aliasing the repo's copy.
         return { ...stored };
-    }
-
-    /**
-     * Persist HD settings through the shared per-repo wallet-state mutex
-     * so that a concurrent writer (e.g. VTXO sync cursor advance) cannot
-     * silently clobber our update — and vice versa. Without this guard
-     * an interleave like `sync reads state → HD reads state → HD writes
-     * (drops sync's later field) → sync writes (drops HD's index bump)`
-     * would lose the index rotation, causing the next wallet boot to
-     * reuse an address that already has a VTXO credited to it.
-     */
-    private async saveSettings(hd: HDWalletSettings): Promise<void> {
-        await updateWalletState(this.walletRepository, (state) => ({
-            ...state,
-            settings: {
-                ...(state.settings ?? {}),
-                [HD_SETTINGS_KEY]: hd,
-            },
-        }));
     }
 }
