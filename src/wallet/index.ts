@@ -281,26 +281,6 @@ export interface Asset {
 }
 
 /**
- * Sum the `amount` of every asset in `assets` that matches `assetId`.
- * Convenience wrapper for the common `assets.reduce(...,
- * 0n).filter(...)` pattern; if `assetId` is omitted, sums every asset
- * regardless of id.
- */
-export function sumAssetAmounts(
-    assets: Asset[] | undefined,
-    assetId?: string
-): bigint {
-    if (!assets) return 0n;
-    let total = 0n;
-    for (const a of assets) {
-        if (assetId === undefined || a.assetId === assetId) {
-            total += a.amount;
-        }
-    }
-    return total;
-}
-
-/**
  * Recipient accepted by `IWallet.send`.
  *
  * @see IWallet.send
