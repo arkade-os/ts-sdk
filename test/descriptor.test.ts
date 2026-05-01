@@ -11,7 +11,10 @@ import {
     normalizeToDescriptor,
     extractPubKey,
     parseHDDescriptor,
+    isMainnetDescriptor,
+    descriptorIsOurs,
 } from "../src/identity/descriptor";
+import { SeedIdentity } from "../src/identity/seedIdentity";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -152,5 +155,66 @@ describe("parseHDDescriptor", () => {
         expect(result!.xpub).toBe(
             "xpub6BgBgsespWvERF3LHQu6CnqdvfEvtMcQjYrcRzx53QJjSxarj2afYWcLteoGVky7D3UKDP9QyrLprQ3VCECoY49yfdDEHGCtMMj92pReUsQ"
         );
+    });
+});
+
+describe("isMainnetDescriptor", () => {
+    it("returns false for tpub-prefixed descriptors", () => {
+        // tpub is shared across testnet/signet/regtest/mutinynet — we
+        // can only tell mainnet vs not, never which non-mainnet.
+        expect(isMainnetDescriptor(makeDescriptor({ isMainnet: false }))).toBe(
+            false
+        );
+    });
+
+    it("returns true for xpub-prefixed descriptors", () => {
+        expect(isMainnetDescriptor(makeDescriptor({}))).toBe(true);
+    });
+});
+
+describe("descriptorIsOurs", () => {
+    const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+    const us = SeedIdentity.fromSeed(seed, { isMainnet: true });
+    const otherSeed = mnemonicToSeedSync(
+        "legal winner thank year wave sausage worth useful legal winner thank yellow"
+    );
+    const other = SeedIdentity.fromSeed(otherSeed, { isMainnet: true });
+
+    it("matches descriptors at any index from the same xpub", () => {
+        // SeedIdentity.isOurs delegates to descriptorIsOurs; using it as
+        // the entry point keeps us from having to expose the private
+        // accountXpub field just to test the helper.
+        const template = us.descriptor;
+        for (const index of [0, 1, 7, 1024]) {
+            const concrete = template.replace("/*)", `/${index})`);
+            expect(us.isOurs(concrete)).toBe(true);
+        }
+        expect(us.isOurs(template)).toBe(true);
+    });
+
+    it("rejects descriptors derived from a different seed", () => {
+        expect(us.isOurs(other.descriptor)).toBe(false);
+    });
+
+    it("matches a bare tr(pubkey) candidate against the cached x-only pubkey", () => {
+        const pubkey = hex.decode(getXOnlyPubKey());
+        // ourDescriptor isn't actually consulted in the bare-pubkey
+        // branch; pass a placeholder template just to satisfy the
+        // signature.
+        const placeholderTemplate = us.descriptor;
+        expect(
+            descriptorIsOurs(
+                `tr(${getXOnlyPubKey()})`,
+                placeholderTemplate,
+                pubkey
+            )
+        ).toBe(true);
+    });
+
+    it("returns false for non-descriptor strings", () => {
+        const pubkey = hex.decode(getXOnlyPubKey());
+        expect(
+            descriptorIsOurs("not a descriptor", us.descriptor, pubkey)
+        ).toBe(false);
     });
 });

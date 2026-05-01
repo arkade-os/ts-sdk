@@ -146,19 +146,19 @@ import { mnemonicToSeedSync } from '@scure/bip39'
 const seed = mnemonicToSeedSync(mnemonic)
 const identity = SeedIdentity.fromSeed(seed)
 
-// Or with a custom output descriptor
-const identityWithDescriptor = SeedIdentity.fromSeed(seed, { descriptor })
+// Or with a custom account-descriptor template (must end in "/*)")
+const identityWithDescriptor = SeedIdentity.fromSeed(seed, { descriptor: template })
 
-// Or with a custom descriptor and passphrase (MnemonicIdentity)
+// Or with a custom template and passphrase (MnemonicIdentity)
 const identityWithDescriptorAndPassphrase = MnemonicIdentity.fromMnemonic(mnemonic, {
-  descriptor,
+  descriptor: template,
   passphrase: 'my secret passphrase'
 })
 ```
 
 #### Watch-Only with ReadonlyDescriptorIdentity
 
-Create watch-only wallets from an output descriptor:
+Create watch-only wallets from an account-descriptor template:
 
 ```typescript
 import { MnemonicIdentity, ReadonlyDescriptorIdentity, ReadonlyWallet } from '@arkade-os/sdk'
@@ -170,9 +170,9 @@ const mnemonic = generateMnemonic(wordlist)
 const identity = MnemonicIdentity.fromMnemonic(mnemonic)
 const readonly = await identity.toReadonly()
 
-// Or directly from a descriptor (e.g., from another wallet)
-const descriptor = "tr([12345678/86'/0'/0']xpub.../0/0)"
-const readonlyFromDescriptor = ReadonlyDescriptorIdentity.fromDescriptor(descriptor)
+// Or directly from a wildcard template (e.g., exported from another wallet)
+const template = "tr([12345678/86'/0'/0']xpub.../0/*)"
+const readonlyFromTemplate = ReadonlyDescriptorIdentity.fromDescriptor(template)
 
 // Use in a watch-only wallet
 const readonlyWallet = await ReadonlyWallet.create({
@@ -184,12 +184,10 @@ const readonlyWallet = await ReadonlyWallet.create({
 const balance = await readonlyWallet.getBalance()
 ```
 
-**Derivation Path:** `m/86'/{coinType}'/0'/0/0`
+**Derivation Path:** `m/86'/{coinType}'/0'/0/*`
 - BIP86 (Taproot) purpose
 - Coin type 0 for mainnet, 1 for testnet
-- Account 0, external chain, first address
-
-The descriptor format (`tr([fingerprint/path']xpub.../0/0)`) is HD-ready — future versions will support deriving multiple addresses and change outputs from the same seed.
+- Account 0, external chain, wildcard index — `identity.descriptor` is the wildcard template that drives HD rotation; consumers materialize a concrete descriptor at a specific index when they need one.
 
 ### Batch Signing for Browser Wallets
 

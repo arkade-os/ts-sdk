@@ -3,7 +3,6 @@ import { wordlist } from "@scure/bip39/wordlists/english.js";
 import { pubECDSA, pubSchnorr } from "@scure/btc-signer/utils.js";
 import { SigHash } from "@scure/btc-signer";
 import { hex } from "@scure/base";
-import { Identity, ReadonlyIdentity } from ".";
 import { Transaction } from "../utils/transaction";
 import { SignerSession, TreeSignerSession } from "../tree/signingSession";
 import { schnorr, signAsync } from "@noble/secp256k1";
@@ -12,12 +11,18 @@ import {
     expand,
     networks,
     scriptExpressions,
-    type Network,
+    type KeyInfo,
 } from "@bitcoinerlab/descriptors-scure";
 import type {
     SerializedSigningIdentity,
     SerializedReadonlyIdentity,
 } from "./serialize";
+import { DescriptorSigningRequest } from "./descriptorProvider";
+import {
+    HDCapableIdentity,
+    ReadonlyHDCapableIdentity,
+} from "./hdCapableIdentity";
+import { descriptorIsOurs, isMainnetDescriptor } from "./descriptor";
 
 const ALL_SIGHASH = Object.values(SigHash).filter((x) => typeof x === "number");
 
@@ -47,13 +52,17 @@ export interface NetworkOptions {
     isMainnet?: boolean;
 }
 
-/** Used for custom output descriptor derivation. */
+/** Used for a caller-supplied account-descriptor template. */
 export interface DescriptorOptions {
-    /** Custom output descriptor that determines the derivation path. */
+    /**
+     * Account-descriptor *template* — must end with the BIP-32 wildcard
+     * suffix `/*)`. Stored as-is on {@link SeedIdentity.descriptor} and
+     * read by HD providers to rotate through derivation indices.
+     */
     descriptor: string;
 }
 
-/** Either default BIP86 derivation (with optional network selection) or a custom descriptor. */
+/** Either default BIP86 derivation (with optional network selection) or a caller-supplied template. */
 export type SeedIdentityOptions = NetworkOptions | DescriptorOptions;
 
 /** Used for deriving an identity from a BIP39 mnemonic. */
@@ -62,74 +71,110 @@ export type MnemonicOptions = SeedIdentityOptions & {
     passphrase?: string;
 };
 
-// ── Helpers ──────────────────────────────────────────────────────
-
 /**
- * Detects the network from a descriptor string by checking for tpub (testnet)
- * vs xpub (mainnet) key prefix.
- * @internal
- */
-function detectNetwork(descriptor: string): Network {
-    return descriptor.includes("tpub") ? networks.testnet : networks.bitcoin;
-}
-
-function hasDescriptor(
-    opts: SeedIdentityOptions = {}
-): opts is DescriptorOptions {
-    return "descriptor" in opts && typeof opts.descriptor === "string";
-}
-
-/**
- * Builds a BIP86 Taproot output descriptor from a seed and network flag.
- * @internal
- */
-function buildDescriptor(seed: Uint8Array, isMainnet: boolean): string {
-    const network = isMainnet ? networks.bitcoin : networks.testnet;
-    const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
-    return scriptExpressions.trBIP32({
-        masterNode,
-        network,
-        account: 0,
-        change: 0,
-        index: 0,
-    });
-}
-
-/**
- * Seed-based identity derived from a raw seed and an output descriptor.
+ * Seed-based identity derived from a raw seed and an account descriptor
+ * *template*.
  *
  * This is the recommended identity type for most applications. It uses
- * standard BIP86 (Taproot) derivation by default and stores an output
- * descriptor for interoperability with other wallets.
+ * standard BIP86 (Taproot) derivation by default; callers that need a
+ * different path supply the wildcard template directly.
  *
  * Prefer this (or @see MnemonicIdentity) over `SingleKey` for new
  * integrations — `SingleKey` exists for backward compatibility with
  * raw nsec-style keys.
  *
- * For descriptor-based signing, wrap with {@link StaticDescriptorProvider}.
+ * The identity holds the wildcard *template* (e.g.
+ * `tr([fp/86'/0'/0']xpub/0/*)`) on its public {@link descriptor}
+ * field. HD rotation reads it directly; consumers that need a
+ * concrete descriptor at a specific index materialize it themselves
+ * (see `HDDescriptorProvider` in the wallet layer).
+ *
+ * Exposes seed-level primitives (signing, derivation, the template)
+ * but is deliberately NOT a `DescriptorProvider`. Wrap it explicitly
+ * to get one:
+ *  - `HDDescriptorProvider` for rotating receive addresses.
+ *  - {@link StaticDescriptorProvider} for legacy, single-key behaviour.
+ *
+ * The split prevents a SeedIdentity from being silently used as a
+ * concrete descriptor source, which would defeat HD rotation without
+ * any compile-time signal that something was wrong.
  *
  * @example
  * ```typescript
  * const seed = mnemonicToSeedSync(mnemonic);
  *
- * // Testnet (BIP86 path m/86'/1'/0'/0/0)
+ * // Testnet (BIP86 wildcard descriptor m/86'/1'/0'/0/*)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: false });
  *
- * // Mainnet (BIP86 path m/86'/0'/0'/0/0)
+ * // Mainnet (BIP86 wildcard descriptor m/86'/0'/0'/0/*)
  * const identity = SeedIdentity.fromSeed(seed, { isMainnet: true });
  *
- * // Custom descriptor
+ * // Caller-supplied wildcard descriptor (must end in `/*)`).
  * const identity = SeedIdentity.fromSeed(seed, { descriptor });
  * ```
  */
-export class SeedIdentity implements Identity {
+export class SeedIdentity implements HDCapableIdentity {
     private readonly derivedKey: Uint8Array;
+    /**
+     * Wildcard account-descriptor template (e.g.
+     * `tr([fp/86'/0'/0']xpub/0/*)`). The canonical thing to pass
+     * through the system; consumers materialize a concrete descriptor
+     * at a specific index themselves (see `HDDescriptorProvider` in
+     * the wallet layer for the rotating-counter use case).
+     */
     readonly descriptor: string;
 
-    constructor(seed: Uint8Array, descriptor: string) {
+    /**
+     * Constructs a SeedIdentity from a 64-byte seed and either a
+     * caller-supplied wildcard descriptor (`{ descriptor }`) or the
+     * default BIP86 path at the requested network (`{ isMainnet }`).
+     * Prefer the {@link fromSeed} factory for symmetry with
+     * {@link MnemonicIdentity.fromMnemonic}.
+     *
+     * Throws on a non-wildcard descriptor, an xpub mismatch with the
+     * seed, or a missing derivation path.
+     */
+    constructor(seed: Uint8Array, opts: SeedIdentityOptions = {}) {
         if (seed.length !== 64) {
             throw new Error("Seed must be 64 bytes");
         }
+
+        // Resolve the descriptor: caller-supplied wins; otherwise build
+        // the BIP86 default at the requested network via the library.
+        let descriptor: string;
+        let network: typeof networks.bitcoin;
+        if ("descriptor" in opts && typeof opts.descriptor === "string") {
+            descriptor = opts.descriptor;
+            network = isMainnetDescriptor(descriptor)
+                ? networks.bitcoin
+                : networks.testnet;
+        } else {
+            network =
+                ((opts as NetworkOptions).isMainnet ?? true)
+                    ? networks.bitcoin
+                    : networks.testnet;
+            descriptor = scriptExpressions.trBIP32({
+                masterNode: HDKey.fromMasterSeed(seed, network.bip32),
+                network,
+                account: 0,
+                change: 0,
+                index: "*",
+            });
+        }
+
+        // Parse the descriptor, substituting the wildcard at index 0.
+        // The library raises "index passed for non-ranged descriptor"
+        // if the input isn't a wildcard template, which we re-wrap so
+        // the caller sees what they actually got wrong.
+        let expansion;
+        try {
+            expansion = expand({ descriptor, network, index: 0 });
+        } catch (e) {
+            throw new Error(
+                `SeedIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
+            );
+        }
+        const keyInfo = expansion.expansionMap?.["@0"];
 
         // Defensive copy: `derivedKey` and `descriptor` are computed eagerly
         // from the bytes we're about to stash, so a later mutation of the
@@ -138,17 +183,14 @@ export class SeedIdentity implements Identity {
         seedBytes.set(this, new Uint8Array(seed));
         this.descriptor = descriptor;
 
-        const network = detectNetwork(descriptor);
-
-        // Parse and validate the descriptor using the library
-        const expansion = expand({ descriptor, network });
-        const keyInfo = expansion.expansionMap?.["@0"];
-
         if (!keyInfo?.originPath) {
             throw new Error("Descriptor must include a key origin path");
         }
 
-        // Verify the xpub in the descriptor matches our seed
+        // Verify the xpub in the descriptor matches our seed (validates
+        // that the descriptor was generated from this seed; we don't
+        // need to keep the xpub around afterwards — `isOurs` re-derives
+        // it from `this.descriptor` on demand).
         const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
         const accountNode = masterNode.derive(`m${keyInfo.originPath}`);
         if (accountNode.publicExtendedKey !== keyInfo.bip32?.toBase58()) {
@@ -157,7 +199,7 @@ export class SeedIdentity implements Identity {
             );
         }
 
-        // Derive the private key using the full path from the descriptor
+        // Derive the private key for index 0 using the full path
         if (!keyInfo.path) {
             throw new Error("Descriptor must specify a full derivation path");
         }
@@ -172,19 +214,17 @@ export class SeedIdentity implements Identity {
      * Creates a SeedIdentity from a raw 64-byte seed.
      *
      * Pass `{ isMainnet }` for default BIP86 derivation, or
-     * `{ descriptor }` for a custom derivation path.
+     * `{ descriptor }` for a caller-supplied account-descriptor
+     * template (the option's value must end with `/*)`).
      *
      * @param seed - 64-byte seed (typically from mnemonicToSeedSync)
-     * @param opts - Network selection or custom descriptor.
+     * @param opts - Network selection or descriptor template.
      */
     static fromSeed(
         seed: Uint8Array,
         opts: SeedIdentityOptions = {}
     ): SeedIdentity {
-        const descriptor = hasDescriptor(opts)
-            ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new SeedIdentity(seed, descriptor);
+        return new SeedIdentity(seed, opts);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
@@ -196,11 +236,117 @@ export class SeedIdentity implements Identity {
     }
 
     async sign(tx: Transaction, inputIndexes?: number[]): Promise<Transaction> {
+        return this.signTxWithKey(tx, this.derivedKey, inputIndexes);
+    }
+
+    async signMessage(
+        message: Uint8Array,
+        signatureType: "schnorr" | "ecdsa" = "schnorr"
+    ): Promise<Uint8Array> {
+        return this.signMessageWithKey(this.derivedKey, message, signatureType);
+    }
+
+    signerSession(): SignerSession {
+        return TreeSignerSession.random();
+    }
+
+    /**
+     * Converts to a watch-only identity that cannot sign. Carries the
+     * template forward, so the readonly side stays HD-capable (can
+     * derive descriptors at any index without seed access).
+     */
+    async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
+        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
+    }
+
+    /**
+     * Returns true when `descriptor` is derived from this identity's seed.
+     * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
+     * match by raw pubkey. See {@link descriptorIsOurs}.
+     */
+    isOurs(descriptor: string): boolean {
+        return descriptorIsOurs(
+            descriptor,
+            this.descriptor,
+            pubSchnorr(this.derivedKey)
+        );
+    }
+
+    /**
+     * Signs each request with the key derived from its descriptor.
+     * Each descriptor must share this identity's seed ({@link isOurs}).
+     */
+    async signWithDescriptor(
+        requests: DescriptorSigningRequest[]
+    ): Promise<Transaction[]> {
+        return requests.map((request) => {
+            if (!this.isOurs(request.descriptor)) {
+                throw new Error(
+                    `Descriptor ${request.descriptor} does not belong to this identity`
+                );
+            }
+            const key = this.derivePrivateKeyForDescriptor(request.descriptor);
+            return this.signTxWithKey(request.tx, key, request.inputIndexes);
+        });
+    }
+
+    /**
+     * Signs a message with the key derived from `descriptor`.
+     */
+    async signMessageWithDescriptor(
+        descriptor: string,
+        message: Uint8Array,
+        signatureType: "schnorr" | "ecdsa" = "schnorr"
+    ): Promise<Uint8Array> {
+        if (!this.isOurs(descriptor)) {
+            throw new Error(
+                `Descriptor ${descriptor} does not belong to this identity`
+            );
+        }
+        const key = this.derivePrivateKeyForDescriptor(descriptor);
+        return this.signMessageWithKey(key, message, signatureType);
+    }
+
+    // ── internal helpers ─────────────────────────────────────────────
+
+    private derivePrivateKeyForDescriptor(descriptor: string): Uint8Array {
+        const network = isMainnetDescriptor(descriptor)
+            ? networks.bitcoin
+            : networks.testnet;
+        const expansion = expand({ descriptor, network });
+        if (expansion.isRanged) {
+            throw new Error(
+                "Cannot sign with a wildcard descriptor; derive a concrete index first"
+            );
+        }
+        const keyInfo = expansion.expansionMap?.["@0"];
+        if (!keyInfo?.path) {
+            throw new Error(
+                "Descriptor must specify a full derivation path for signing"
+            );
+        }
+        const seed = seedBytes.get(this);
+        if (!seed) {
+            throw new Error("Seed bytes not available for descriptor signing");
+        }
+        const masterNode = HDKey.fromMasterSeed(seed, network.bip32);
+        const node = masterNode.derive(keyInfo.path);
+        if (!node.privateKey) {
+            throw new Error("Failed to derive private key for descriptor");
+        }
+        return node.privateKey;
+    }
+
+    private signTxWithKey(
+        tx: Transaction,
+        key: Uint8Array,
+        inputIndexes?: number[]
+    ): Transaction {
         const txCpy = tx.clone();
 
         if (!inputIndexes) {
             try {
-                if (!txCpy.sign(this.derivedKey, ALL_SIGHASH)) {
+                if (!txCpy.sign(key, ALL_SIGHASH)) {
                     throw new Error("Failed to sign transaction");
                 }
             } catch (e) {
@@ -213,37 +359,25 @@ export class SeedIdentity implements Identity {
                     throw e;
                 }
             }
-            return txCpy;
-        }
-
-        for (const inputIndex of inputIndexes) {
-            if (!txCpy.signIdx(this.derivedKey, inputIndex, ALL_SIGHASH)) {
-                throw new Error(`Failed to sign input #${inputIndex}`);
+        } else {
+            for (const idx of inputIndexes) {
+                if (!txCpy.signIdx(key, idx, ALL_SIGHASH)) {
+                    throw new Error(`Failed to sign input #${idx}`);
+                }
             }
         }
 
         return txCpy;
     }
 
-    async signMessage(
+    private signMessageWithKey(
+        key: Uint8Array,
         message: Uint8Array,
-        signatureType: "schnorr" | "ecdsa" = "schnorr"
+        signatureType: "schnorr" | "ecdsa"
     ): Promise<Uint8Array> {
-        if (signatureType === "ecdsa") {
-            return signAsync(message, this.derivedKey, { prehash: false });
-        }
-        return schnorr.signAsync(message, this.derivedKey);
-    }
-
-    signerSession(): SignerSession {
-        return TreeSignerSession.random();
-    }
-
-    /**
-     * Converts to a watch-only identity that cannot sign.
-     */
-    async toReadonly(): Promise<ReadonlyDescriptorIdentity> {
-        return ReadonlyDescriptorIdentity.fromDescriptor(this.descriptor);
+        if (signatureType === "ecdsa")
+            return signAsync(message, key, { prehash: false });
+        return schnorr.signAsync(message, key);
     }
 }
 
@@ -264,24 +398,21 @@ export class SeedIdentity implements Identity {
  * ```
  */
 export class MnemonicIdentity extends SeedIdentity {
-    private constructor(
-        seed: Uint8Array,
-        descriptor: string,
-        mnemonic: string,
-        passphrase: string | undefined
-    ) {
-        super(seed, descriptor);
-        mnemonicMeta.set(this, { mnemonic, passphrase });
+    private constructor(phrase: string, opts: MnemonicOptions) {
+        const { passphrase } = opts;
+        super(mnemonicToSeedSync(phrase, passphrase), opts);
+        mnemonicMeta.set(this, { mnemonic: phrase, passphrase });
     }
 
     /**
      * Creates a MnemonicIdentity from a BIP39 mnemonic phrase.
      *
      * Pass `{ isMainnet }` for default BIP86 derivation, or
-     * `{ descriptor }` for a custom derivation path.
+     * `{ descriptor }` for a caller-supplied account-descriptor
+     * template (the option's value must end with `/*)`).
      *
      * @param phrase - BIP39 mnemonic phrase (12 or 24 words)
-     * @param opts - Network selection or custom descriptor, plus optional passphrase
+     * @param opts - Network selection or descriptor template, plus optional passphrase
      */
     static fromMnemonic(
         phrase: string,
@@ -290,74 +421,116 @@ export class MnemonicIdentity extends SeedIdentity {
         if (!validateMnemonic(phrase, wordlist)) {
             throw new Error("Invalid mnemonic");
         }
-        const passphrase = opts.passphrase;
-        const seed = mnemonicToSeedSync(phrase, passphrase);
-        const descriptor = hasDescriptor(opts)
-            ? opts.descriptor
-            : buildDescriptor(seed, (opts as NetworkOptions).isMainnet ?? true);
-        return new MnemonicIdentity(seed, descriptor, phrase, passphrase);
+        return new MnemonicIdentity(phrase, opts);
     }
 }
 
 /**
- * Watch-only identity from an output descriptor.
+ * Watch-only HD identity from a descriptor *template*.
  *
  * Can derive public keys but cannot sign transactions. Use this for
- * watch-only wallets or when sharing identity information without
- * exposing private keys.
+ * watch-only wallets — given just an xpub-based template, the readonly
+ * side still rotates through HD indices.
+ *
+ * Constructed from a wildcard template (e.g.
+ * `tr([fp/86'/0'/0']xpub.../0/*)`); the {@link descriptor} field
+ * holds it for HD providers to consume.
  *
  * @example
  * ```typescript
- * const descriptor = "tr([fingerprint/86'/0'/0']xpub.../0/0)";
- * const readonly = ReadonlyDescriptorIdentity.fromDescriptor(descriptor);
- * const pubKey = await readonly.xOnlyPublicKey();
+ * const ro = ReadonlyDescriptorIdentity.fromDescriptor(
+ *   "tr([fp/86'/0'/0']xpub.../0/*)"
+ * );
+ * ro.descriptor;
+ * // => "tr([fp/86'/0'/0']xpub.../0/*)" — the template
  * ```
  */
-export class ReadonlyDescriptorIdentity implements ReadonlyIdentity {
-    private readonly xOnlyPubKey: Uint8Array;
-    private readonly compressedPubKey: Uint8Array;
+export class ReadonlyDescriptorIdentity implements ReadonlyHDCapableIdentity {
+    /**
+     * Index-0 expansion of {@link descriptor}. Both the x-only pubkey
+     * (taproot, returned by the library as 32 bytes) and the compressed
+     * pubkey (derived through the bip32 node when needed) are read off
+     * this on demand — no separate caches.
+     */
+    private readonly indexZero: KeyInfo;
+    /**
+     * Wildcard account-descriptor template (e.g.
+     * `tr([fp/86'/0'/0']xpub/0/*)`). HD rotation consumers materialize
+     * a concrete descriptor at a specific index themselves.
+     */
+    readonly descriptor: string;
 
-    private constructor(readonly descriptor: string) {
-        const network = detectNetwork(descriptor);
-        const expansion = expand({ descriptor, network });
+    private constructor(descriptor: string) {
+        const network = isMainnetDescriptor(descriptor)
+            ? networks.bitcoin
+            : networks.testnet;
+        // Library substitutes the wildcard at index 0 and raises
+        // "index passed for non-ranged descriptor" if `descriptor` isn't
+        // actually a wildcard template — re-wrap so the caller sees
+        // the higher-level invariant they violated.
+        let expansion;
+        try {
+            expansion = expand({ descriptor, network, index: 0 });
+        } catch (e) {
+            throw new Error(
+                `ReadonlyDescriptorIdentity requires a wildcard descriptor template (must end in "/*)"); ${e instanceof Error ? e.message : String(e)}`
+            );
+        }
         const keyInfo = expansion.expansionMap?.["@0"];
 
         if (!keyInfo?.pubkey) {
             throw new Error("Failed to derive public key from descriptor");
         }
-
-        // For taproot, the library returns 32-byte x-only pubkey
-        this.xOnlyPubKey = keyInfo.pubkey;
-
-        // Get 33-byte compressed key with correct parity from the bip32 node
-        if (keyInfo.bip32 && keyInfo.keyPath) {
-            // Strip leading "/" — the library's derivePath prepends "m/" itself
-            const relPath = keyInfo.keyPath.replace(/^\//, "");
-            this.compressedPubKey = keyInfo.bip32.derivePath(relPath).publicKey;
-        } else if (keyInfo.bip32) {
-            this.compressedPubKey = keyInfo.bip32.publicKey;
-        } else {
+        if (!keyInfo.bip32) {
             throw new Error(
                 "Cannot determine compressed public key parity from descriptor"
             );
         }
+
+        this.descriptor = descriptor;
+        this.indexZero = keyInfo;
     }
 
     /**
-     * Creates a ReadonlyDescriptorIdentity from an output descriptor.
+     * Creates a ReadonlyDescriptorIdentity from an account-descriptor
+     * *template* (must end with the BIP-32 wildcard suffix `/*)`).
      *
-     * @param descriptor - Taproot descriptor: tr([fingerprint/path']xpub.../child/path)
+     * @param descriptor - Wildcard-suffixed Taproot template
+     *   (`tr([fp/path']xpub.../child/*)`).
      */
     static fromDescriptor(descriptor: string): ReadonlyDescriptorIdentity {
         return new ReadonlyDescriptorIdentity(descriptor);
     }
 
     async xOnlyPublicKey(): Promise<Uint8Array> {
-        return this.xOnlyPubKey;
+        // Validated non-null in the constructor.
+        return this.indexZero.pubkey!;
     }
 
     async compressedPublicKey(): Promise<Uint8Array> {
-        return this.compressedPubKey;
+        const { bip32, keyPath } = this.indexZero;
+        // bip32 validated non-null in the constructor; derivePath
+        // returns a fresh node so this is a read of the index-0
+        // compressed pubkey, not a mutation of the stored one.
+        if (keyPath) {
+            // Strip leading "/" — the library's derivePath prepends "m/" itself
+            return bip32!.derivePath(keyPath.replace(/^\//, "")).publicKey;
+        }
+        return bip32!.publicKey;
+    }
+
+    /**
+     * Returns true when `descriptor` derives from this identity's xpub.
+     * HD descriptors match by account xpub; bare `tr(pubkey)` descriptors
+     * fall back to comparing against the index-0 x-only pubkey. See
+     * {@link descriptorIsOurs}.
+     */
+    isOurs(descriptor: string): boolean {
+        return descriptorIsOurs(
+            descriptor,
+            this.descriptor,
+            this.indexZero.pubkey!
+        );
     }
 }
 
@@ -432,5 +605,8 @@ export function serializeSeedOwnedSigningIdentity(
 export function serializeSeedOwnedReadonlyIdentity(
     identity: SeedIdentity | ReadonlyDescriptorIdentity
 ): SerializedReadonlyIdentity {
-    return { type: "readonly-descriptor", descriptor: identity.descriptor };
+    return {
+        type: "readonly-descriptor",
+        descriptor: identity.descriptor,
+    };
 }
