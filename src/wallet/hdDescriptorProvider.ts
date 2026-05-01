@@ -27,7 +27,7 @@ interface HDWalletSettings {
      * `undefined` means the wallet has never derived an address; the next
      * rotation will assign index 0.
      */
-    currentReceiveIndex?: number;
+    lastIndexUsed?: number;
 }
 
 /** Settings key under {@link WalletState.settings} where HD state lives. */
@@ -82,7 +82,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
      *
      * On first run for a fresh wallet, this assigns index 0 as the initial
      * receive descriptor and persists it. Subsequent runs reuse the stored
-     * `currentReceiveIndex`.
+     * `lastIndexUsed`.
      *
      * @throws if persisted state was written by a different identity (template mismatch).
      */
@@ -101,7 +101,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
     }
 
     /** Returns the currently-active receive index. */
-    getCurrentReceiveIndex(): number {
+    getLastIndexUsed(): number {
         return this.requireCurrent().index;
     }
 
@@ -114,10 +114,10 @@ export class HDDescriptorProvider implements DescriptorProvider {
     async rotateReceive(): Promise<CurrentReceive> {
         const next = await this.mutate((settings) => {
             const index =
-                settings.currentReceiveIndex === undefined
+                settings.lastIndexUsed === undefined
                     ? 0
-                    : settings.currentReceiveIndex + 1;
-            settings.currentReceiveIndex = index;
+                    : settings.lastIndexUsed + 1;
+            settings.lastIndexUsed = index;
             return { index, descriptor: this.materializeAt(index) };
         });
         this.current = next;
@@ -161,10 +161,10 @@ export class HDDescriptorProvider implements DescriptorProvider {
 
     private async initialize(): Promise<void> {
         this.current = await this.mutate((settings) => {
-            if (settings.currentReceiveIndex === undefined) {
-                settings.currentReceiveIndex = 0;
+            if (settings.lastIndexUsed === undefined) {
+                settings.lastIndexUsed = 0;
             }
-            const index = settings.currentReceiveIndex;
+            const index = settings.lastIndexUsed;
             return { index, descriptor: this.materializeAt(index) };
         });
     }
@@ -239,13 +239,13 @@ export class HDDescriptorProvider implements DescriptorProvider {
             );
         }
         if (
-            stored.currentReceiveIndex !== undefined &&
-            (typeof stored.currentReceiveIndex !== "number" ||
-                !Number.isInteger(stored.currentReceiveIndex) ||
-                stored.currentReceiveIndex < 0)
+            stored.lastIndexUsed !== undefined &&
+            (typeof stored.lastIndexUsed !== "number" ||
+                !Number.isInteger(stored.lastIndexUsed) ||
+                stored.lastIndexUsed < 0)
         ) {
             throw new Error(
-                `Corrupt HD settings: currentReceiveIndex is not a non-negative integer (got ${String(stored.currentReceiveIndex)}).`
+                `Corrupt HD settings: lastIndexUsed is not a non-negative integer (got ${String(stored.lastIndexUsed)}).`
             );
         }
         // Shallow clone so the closure may mutate without aliasing the repo's copy.

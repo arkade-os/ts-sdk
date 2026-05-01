@@ -32,7 +32,7 @@ describe("HDDescriptorProvider", () => {
     describe("create / initialization", () => {
         it("materializes receive index 0 on a fresh wallet", async () => {
             const { provider } = await makeProvider();
-            expect(provider.getCurrentReceiveIndex()).toBe(0);
+            expect(provider.getLastIndexUsed()).toBe(0);
             expect(provider.getSigningDescriptor()).toMatch(/\/0\/0\)$/);
         });
 
@@ -41,18 +41,18 @@ describe("HDDescriptorProvider", () => {
             const state = await walletRepo.getWalletState();
             expect(state?.settings?.hd).toMatchObject({
                 template: expect.stringMatching(/\/0\/\*\)$/),
-                currentReceiveIndex: 0,
+                lastIndexUsed: 0,
             });
         });
 
-        it("reuses stored currentReceiveIndex across instances", async () => {
+        it("reuses stored lastIndexUsed across instances", async () => {
             const repo = new InMemoryWalletRepository();
             const { provider: first } = await makeProvider(repo);
             await first.rotateReceive(); // bumps to index 1
             await first.rotateReceive(); // bumps to index 2
 
             const { provider: second } = await makeProvider(repo);
-            expect(second.getCurrentReceiveIndex()).toBe(2);
+            expect(second.getLastIndexUsed()).toBe(2);
             expect(second.getSigningDescriptor()).toBe(
                 first.getSigningDescriptor()
             );
@@ -90,10 +90,10 @@ describe("HDDescriptorProvider", () => {
     describe("rotateReceive", () => {
         it("moves the active receive descriptor to the next index", async () => {
             const { provider } = await makeProvider();
-            expect(provider.getCurrentReceiveIndex()).toBe(0);
+            expect(provider.getLastIndexUsed()).toBe(0);
             const rotated = await provider.rotateReceive();
             expect(rotated.index).toBe(1);
-            expect(provider.getCurrentReceiveIndex()).toBe(1);
+            expect(provider.getLastIndexUsed()).toBe(1);
             expect(provider.getSigningDescriptor()).toBe(rotated.descriptor);
         });
 
@@ -140,7 +140,7 @@ describe("HDDescriptorProvider", () => {
             // The shared per-repo updateWalletState mutex must serialise
             // R-M-W across distinct provider instances. Without doing the
             // read inside the lock, both providers would see the same
-            // currentReceiveIndex and emit a duplicate.
+            // lastIndexUsed and emit a duplicate.
             const repo = new InMemoryWalletRepository();
             const { provider: a } = await makeProvider(repo);
             const { provider: b } = await makeProvider(repo);
@@ -224,20 +224,20 @@ describe("HDDescriptorProvider", () => {
             expect(descriptor).not.toMatch(/\/\*\)$/);
         });
 
-        it("throws when stored currentReceiveIndex is not a non-negative integer", async () => {
+        it("throws when stored lastIndexUsed is not a non-negative integer", async () => {
             const repo = new InMemoryWalletRepository();
             const identity = makeIdentity();
             await repo.saveWalletState({
                 settings: {
                     hd: {
                         template: identity.descriptor,
-                        currentReceiveIndex: -1,
+                        lastIndexUsed: -1,
                     },
                 },
             });
             await expect(
                 HDDescriptorProvider.create(identity, repo)
-            ).rejects.toThrow(/corrupt hd settings.*currentreceiveindex/i);
+            ).rejects.toThrow(/corrupt hd settings.*lastindexused/i);
         });
     });
 
@@ -266,9 +266,9 @@ describe("HDDescriptorProvider", () => {
             const state = await repo.getWalletState();
             // Sync cursor landed at the higher of the two advances.
             expect(state?.lastSyncTime).toBe(2_000_000);
-            // All three rotations are visible — currentReceiveIndex is 3
+            // All three rotations are visible — lastIndexUsed is 3
             // (started at 0, rotated three times → 1, 2, 3).
-            expect(state?.settings?.hd.currentReceiveIndex).toBe(3);
+            expect(state?.settings?.hd.lastIndexUsed).toBe(3);
             // The migration marker written by advanceSyncCursor is preserved.
             expect(state?.settings?.vtxoCursorMigrated).toBe(true);
         });
@@ -292,7 +292,7 @@ describe("HDDescriptorProvider", () => {
             expect(state?.lastSyncTime).toBeUndefined();
             expect(state?.settings?.vtxoCursorMigrated).toBeUndefined();
             // HD rotations survived.
-            expect(state?.settings?.hd.currentReceiveIndex).toBe(2);
+            expect(state?.settings?.hd.lastIndexUsed).toBe(2);
         });
     });
 });
