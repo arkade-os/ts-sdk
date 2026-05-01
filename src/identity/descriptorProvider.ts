@@ -15,12 +15,19 @@ export interface DescriptorSigningRequest {
  *
  * Implementations include:
  * - {@link StaticDescriptorProvider}: wraps a legacy {@link Identity} with a single key.
- * - HD-wallet provider: signs with keys derived from an xpub-based descriptor
- *   (planned — tracked separately from this interface).
+ * - {@link HDDescriptorProvider}: rotates through HD-derived descriptors.
+ *
+ * The provider has no read accessor for "current" — it is a pure descriptor
+ * allocator. "What addresses am I currently bound to?" is a question the
+ * contract repository answers, not the provider.
  */
 export interface DescriptorProvider {
-    /** Returns the current signing descriptor. */
-    getSigningDescriptor(): string;
+    /**
+     * Allocate a new signing descriptor. For HD providers each call advances
+     * the internal index and returns a fresh descriptor; for single-key
+     * providers each call returns the same descriptor.
+     */
+    getNextSigningDescriptor(): Promise<string>;
 
     /** Checks if a descriptor belongs to this provider. */
     isOurs(descriptor: string): boolean;

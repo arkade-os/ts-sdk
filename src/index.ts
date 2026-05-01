@@ -87,6 +87,7 @@ import {
     TreePartialSigs,
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
+import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
 import {
@@ -284,6 +285,7 @@ export {
     OnchainWallet,
     Ramps,
     VtxoManager,
+    HDDescriptorProvider,
     DelegatorManagerImpl,
     RestDelegatorProvider,
 
