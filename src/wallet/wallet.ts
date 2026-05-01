@@ -105,6 +105,10 @@ import {
     validateVtxosForScript,
     saveVtxosForContract,
 } from "../contracts/vtxoOwnership";
+import { HDDescriptorProvider } from "./hdDescriptorProvider";
+import { SeedIdentity } from "../identity/seedIdentity";
+import { expand, networks } from "@bitcoinerlab/descriptors-scure";
+import { isMainnetDescriptor } from "../identity/descriptor";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -178,6 +182,97 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
     );
 }
 
+/**
+ * Returns `true` when `identity`'s account descriptor is a vanilla BIP-86
+ * template (the form `tr(...path/0/*)`), suggesting it can be safely
+ * rotated. User-pinned descriptors with non-zero starting indexes or non-
+ * BIP86 paths are returned as-is from this check (false), keeping them on
+ * the static path so the SDK doesn't silently reset the user's choice.
+ */
+function looksLikeVanillaHDDescriptor(identity: SeedIdentity): boolean {
+    return identity.descriptor.endsWith("/0/*)");
+}
+
+/** Constant-time-free byte equality — fine for pubkey reconciliation. */
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
+}
+
+/**
+ * Extracts the x-only (32-byte) pubkey from a materialized HD descriptor.
+ *
+ * `expand()` populates `@0.pubkey` for non-ranged descriptors (including HD
+ * ones where a concrete child index is already substituted for the
+ * wildcard). This sidesteps {@link extractPubKey}, which intentionally
+ * rejects any descriptor carrying a `bip32` key because it was designed
+ * for static `tr(pubkey)` inputs.
+ */
+function deriveLeafPubkey(descriptor: string): Uint8Array {
+    const network = isMainnetDescriptor(descriptor)
+        ? networks.bitcoin
+        : networks.testnet;
+    const expansion = expand({ descriptor, network });
+    const key = expansion.expansionMap?.["@0"];
+    if (!key?.pubkey) {
+        throw new Error(
+            `Cannot derive leaf pubkey from descriptor "${descriptor}": ` +
+                `ensure the descriptor is materialized (no wildcard) and parsable.`
+        );
+    }
+    return key.pubkey;
+}
+
+/**
+ * Rebuild the given offchain tapscript with a different owner pubkey,
+ * preserving its {@link DelegateVtxo.Script} vs {@link DefaultVtxo.Script}
+ * shape and all other options.
+ */
+function rebuildTapscript(
+    current: DefaultVtxo.Script | DelegateVtxo.Script,
+    pubKey: Uint8Array
+): DefaultVtxo.Script | DelegateVtxo.Script {
+    if (current instanceof DelegateVtxo.Script) {
+        return new DelegateVtxo.Script({ ...current.options, pubKey });
+    }
+    return new DefaultVtxo.Script({ ...current.options, pubKey });
+}
+
+/**
+ * Look up the most-recently-created active "default" contract whose
+ * `serverPubKey` matches the wallet's current server, and return its owner
+ * pubkey. Returns `undefined` when no such contract exists — the caller
+ * should treat that as "fresh wallet" and allocate a new descriptor via
+ * the HD provider.
+ *
+ * Filters by `serverPubKey` so a contract repo seeded against a different
+ * server (mainnet vs. regtest, server rotation) doesn't accidentally
+ * resurrect an unrelated pubkey.
+ */
+async function pickActiveDefaultPubkey(
+    contractRepository: ContractRepository,
+    serverPubKey: Uint8Array
+): Promise<Uint8Array | undefined> {
+    const candidates = await contractRepository.getContracts({
+        type: "default",
+        state: "active",
+    });
+    const serverPubKeyHex = hex.encode(serverPubKey);
+    const matching = candidates
+        .filter((c) => c.params.serverPubKey === serverPubKeyHex)
+        .sort((a, b) => b.createdAt - a.createdAt);
+    const newest = matching[0];
+    if (!newest?.params.pubKey) return undefined;
+    try {
+        return hex.decode(newest.params.pubKey);
+    } catch {
+        return undefined;
+    }
+}
+
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
@@ -202,7 +297,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly onchainProvider: OnchainProvider,
         readonly indexerProvider: IndexerProvider,
         readonly arkServerPublicKey: Bytes,
-        readonly offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
+        /**
+         * Mutable so {@link Wallet} can swap the active receive tapscript
+         * after an HD rotation. External consumers should treat it as
+         * read-only — writes happen exclusively in
+         * {@link Wallet.rebuildOffchainTapscript} and the boot path.
+         */
+        public offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
@@ -1047,6 +1148,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private _walletAssetManager?: IAssetManager;
 
     /**
+     * HD provider installed when identity is a {@link SeedIdentity} with a
+     * vanilla BIP-86-style account descriptor. Absent for SingleKey wallets
+     * or for SeedIdentities whose descriptor isn't templatable.
+     */
+    private _hdProvider?: HDDescriptorProvider;
+
+    /**
+     * Unsubscribe function returned by {@link ContractManager.onContractEvent},
+     * used to tear down the rotation callback on {@link dispose}.
+     */
+    private _hdRotationUnsubscribe?: () => void;
+
+    /**
+     * Async mutex serialising rotation attempts so two rapid-fire
+     * `vtxo_received` events cannot overlap the
+     * `getNextSigningDescriptor → rebuild → createContract` sequence.
+     */
+    private _hdRotationChain: Promise<void> = Promise.resolve();
+
+    /**
      * Async mutex that serializes all operations submitting VTXOs to the Arkade
      * server (`settle`, `send`, `sendBitcoin`). This prevents VtxoManager's
      * background renewal from racing with user-initiated transactions for the
@@ -1191,6 +1312,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     override async dispose(): Promise<void> {
+        // Tear down the rotation subscription first so no late
+        // `vtxo_received` event can queue work on a disposing wallet.
+        if (this._hdRotationUnsubscribe) {
+            try {
+                this._hdRotationUnsubscribe();
+            } catch {
+                // best-effort teardown
+            } finally {
+                this._hdRotationUnsubscribe = undefined;
+            }
+        }
+        // Drain any in-flight rotation so its `createContract` call finishes
+        // before we dispose the contract manager underneath it. Optional-
+        // chained because tests sometimes instantiate a Wallet via
+        // `Object.create(Wallet.prototype)`, skipping field initializers.
+        await this._hdRotationChain?.catch(() => undefined);
+
         const manager =
             this._vtxoManager ??
             (this._vtxoManagerInitializing
@@ -1248,6 +1386,62 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         );
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
+        // HD wiring (boot path).
+        //
+        // We follow the dotnet-sdk's split of responsibilities: the provider
+        // is a pure rotating allocator; "what address am I currently bound
+        // to?" is answered by the contract repository, not the provider.
+        //
+        // - If an active default contract already exists, use its pubkey
+        //   for the offchain tapscript (continues from where a previous
+        //   session left off — no provider call, no extra index allocation).
+        // - If no active default contract exists, allocate the first index
+        //   via `getNextSigningDescriptor` so the provider's persisted
+        //   `lastIndexUsed` advances in lockstep with the contract we're
+        //   about to register.
+        // - Single-key identities and SeedIdentities with non-vanilla
+        //   descriptors stay on the static path unchanged.
+        let hdProvider: HDDescriptorProvider | undefined;
+        let offchainTapscript = setup.offchainTapscript;
+        if (
+            config.identity instanceof SeedIdentity &&
+            looksLikeVanillaHDDescriptor(config.identity)
+        ) {
+            try {
+                hdProvider = await HDDescriptorProvider.create(
+                    config.identity,
+                    setup.walletRepository
+                );
+
+                const activePubkey = await pickActiveDefaultPubkey(
+                    setup.contractRepository,
+                    setup.serverPubKey
+                );
+                let receivePubkey: Uint8Array;
+                if (activePubkey) {
+                    receivePubkey = activePubkey;
+                } else {
+                    // Fresh wallet (or contract repo wiped). Allocate the
+                    // first descriptor through the provider so storage and
+                    // the contract we'll register in a moment are in sync.
+                    const descriptor =
+                        await hdProvider.getNextSigningDescriptor();
+                    receivePubkey = deriveLeafPubkey(descriptor);
+                }
+                if (!bytesEqual(receivePubkey, pubkey)) {
+                    offchainTapscript = rebuildTapscript(
+                        offchainTapscript,
+                        receivePubkey
+                    );
+                }
+            } catch {
+                // Template not derivable, contract repo unavailable, or
+                // descriptor mismatch — fall back to the static path
+                // rather than fail wallet construction.
+                hdProvider = undefined;
+            }
+        }
+
         const wallet = new Wallet(
             config.identity,
             setup.network,
@@ -1255,7 +1449,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.arkProvider,
             setup.indexerProvider,
             setup.serverPubKey,
-            setup.offchainTapscript,
+            offchainTapscript,
             setup.boardingTapscript,
             serverUnrollScript,
             forfeitOutputScript,
@@ -1270,9 +1464,74 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.walletContractTimelocks
         );
 
+        if (hdProvider) {
+            wallet._hdProvider = hdProvider;
+        }
+
         await wallet.getVtxoManager();
 
+        // Subscribe to rotation AFTER the contract manager is ready so the
+        // initial `default` contract registration (inside
+        // `initializeContractManager`) happens first.
+        if (hdProvider) {
+            await wallet.installHdRotationHandler();
+        }
+
         return wallet;
+    }
+
+    /**
+     * Subscribe to `vtxo_received` events on the contract manager and
+     * trigger an HD rotation whenever the currently-active default contract
+     * fires. Old default contracts remain registered (and active) so
+     * earlier shared addresses keep crediting this wallet.
+     */
+    private async installHdRotationHandler(): Promise<void> {
+        const manager = await this.getContractManager();
+        this._hdRotationUnsubscribe = manager.onContractEvent((event) => {
+            if (event.type !== "vtxo_received") return;
+            if (event.contractScript !== this.defaultContractScript) return;
+            // Serialise rotations: two rapid `vtxo_received` events on the
+            // same contract must not interleave the rotate → rebuild →
+            // createContract sequence.
+            this._hdRotationChain = this._hdRotationChain
+                .catch(() => undefined)
+                .then(() => this.rotateAndRegister());
+        });
+    }
+
+    /**
+     * Allocate the next HD descriptor, swap it into the active offchain
+     * tapscript, and register the corresponding default contract via the
+     * contract manager. The previous default contract entry stays active
+     * so earlier addresses continue to credit the wallet.
+     */
+    private async rotateAndRegister(): Promise<void> {
+        if (!this._hdProvider) return;
+        const descriptor = await this._hdProvider.getNextSigningDescriptor();
+        const pubKey = deriveLeafPubkey(descriptor);
+        this.offchainTapscript = rebuildTapscript(
+            this.offchainTapscript,
+            pubKey
+        );
+
+        const manager = await this.getContractManager();
+        const csvTimelock =
+            this.offchainTapscript.options.csvTimelock ??
+            DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        await manager.createContract({
+            type: "default",
+            params: {
+                pubKey: hex.encode(pubKey),
+                serverPubKey: hex.encode(
+                    this.offchainTapscript.options.serverPubKey
+                ),
+                csvTimelock: timelockToSequence(csvTimelock).toString(),
+            },
+            script: this.defaultContractScript,
+            address: await this.getAddress(),
+            state: "active",
+        });
     }
 
     /**
