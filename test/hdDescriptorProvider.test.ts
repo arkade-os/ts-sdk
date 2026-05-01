@@ -119,9 +119,7 @@ describe("HDDescriptorProvider", () => {
         it("returns a descriptor matching the substituted template at that index", async () => {
             const { provider, identity } = await makeProvider();
             const { index, descriptor } = await provider.consumeNextIndex();
-            const expected = identity
-                .getAccountDescriptor()
-                .replace("/*)", `/${index})`);
+            const expected = identity.descriptor.replace("/*)", `/${index})`);
             expect(descriptor).toBe(expected);
         });
 
@@ -213,7 +211,7 @@ describe("HDDescriptorProvider", () => {
 
         it("isOurs returns true for the account template with wildcard", async () => {
             const { provider, identity } = await makeProvider();
-            expect(provider.isOurs(identity.getAccountDescriptor())).toBe(true);
+            expect(provider.isOurs(identity.descriptor)).toBe(true);
         });
 
         it("signMessageWithDescriptor signs with the index-derived key", async () => {
@@ -245,10 +243,13 @@ describe("HDDescriptorProvider", () => {
         it("signWithDescriptor rejects descriptors not belonging to this wallet", async () => {
             const { provider } = await makeProvider();
             const other = makeIdentity({ mnemonic: OTHER_MNEMONIC });
+            // Materialize the other identity's template at index 0 — a
+            // concrete-form descriptor is what signing expects.
+            const otherDescriptor = other.descriptor.replace("/*)", "/0)");
             await expect(
                 provider.signWithDescriptor([
                     {
-                        descriptor: other.getSigningDescriptor(),
+                        descriptor: otherDescriptor,
                         tx: {} as never,
                     },
                 ])
@@ -271,7 +272,7 @@ describe("HDDescriptorProvider", () => {
             await repo.saveWalletState({
                 settings: {
                     hd: {
-                        template: identity.getAccountDescriptor(),
+                        template: identity.descriptor,
                         nextIndex: 0x7fffffff,
                         currentReceiveIndex: 0,
                     },
@@ -295,7 +296,7 @@ describe("HDDescriptorProvider", () => {
             await repo.saveWalletState({
                 settings: {
                     hd: {
-                        template: identity.getAccountDescriptor(),
+                        template: identity.descriptor,
                         // corrupted — simulates partial migration or bad write
                         nextIndex: "oops" as unknown as number,
                     },
@@ -312,7 +313,7 @@ describe("HDDescriptorProvider", () => {
             await repo.saveWalletState({
                 settings: {
                     hd: {
-                        template: identity.getAccountDescriptor(),
+                        template: identity.descriptor,
                         nextIndex: 2,
                         currentReceiveIndex: -1,
                     },

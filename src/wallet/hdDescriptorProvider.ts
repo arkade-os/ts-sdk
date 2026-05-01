@@ -224,8 +224,9 @@ export class HDDescriptorProvider implements DescriptorProvider {
 
     /**
      * Substitute the wildcard in this provider's identity's account-descriptor
-     * template with a concrete index. SeedIdentity intentionally exposes only
-     * the template; the "current index" concept lives here in the provider.
+     * template with a concrete index. SeedIdentity exposes the template via
+     * its `descriptor` field; the "current index" concept lives here in the
+     * provider.
      */
     private materializeAt(index: number): string {
         if (
@@ -235,9 +236,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
         ) {
             throw new Error("Derivation index must be an integer in [0, 2^31)");
         }
-        return this.identity
-            .getAccountDescriptor()
-            .replace("/*)", `/${index})`);
+        return this.identity.descriptor.replace("/*)", `/${index})`);
     }
 
     /**
@@ -287,7 +286,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
         const stored = state?.settings?.[HD_SETTINGS_KEY] as
             | HDWalletSettings
             | undefined;
-        const expectedTemplate = this.identity.getAccountDescriptor();
+        const expectedTemplate = this.identity.descriptor;
         if (!stored) {
             return { template: expectedTemplate, nextIndex: 0 };
         }
