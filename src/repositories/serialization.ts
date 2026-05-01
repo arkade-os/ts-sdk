@@ -37,10 +37,17 @@ export const serializeAsset = (a: Asset): SerializedAsset => ({
 export const deserializeAsset = (a: {
     assetId: string;
     amount: string | number | bigint;
-}): Asset => ({
-    assetId: a.assetId,
-    amount: typeof a.amount === "bigint" ? a.amount : BigInt(a.amount),
-});
+}): Asset => {
+    if (typeof a.amount === "number" && !Number.isSafeInteger(a.amount)) {
+        throw new Error(
+            `Unsafe legacy asset amount for ${a.assetId}; re-sync from the original source`
+        );
+    }
+    return {
+        assetId: a.assetId,
+        amount: typeof a.amount === "bigint" ? a.amount : BigInt(a.amount),
+    };
+};
 
 export const serializeAssets = (
     assets: Asset[] | undefined
