@@ -26,14 +26,14 @@ describe("StaticDescriptorProvider", () => {
     });
 
     describe("getSigningDescriptor", () => {
-        it("should return tr(<pubkey>) format", () => {
-            const descriptor = provider.getSigningDescriptor();
+        it("should return tr(<pubkey>) format", async () => {
+            const descriptor = await provider.getSigningDescriptor();
             expect(descriptor).toBe(`tr(${pubKeyHex})`);
         });
 
-        it("should return consistent descriptor", () => {
-            expect(provider.getSigningDescriptor()).toBe(
-                provider.getSigningDescriptor()
+        it("should return consistent descriptor", async () => {
+            expect(await provider.getSigningDescriptor()).toBe(
+                await provider.getSigningDescriptor()
             );
         });
     });

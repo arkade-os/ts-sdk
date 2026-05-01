@@ -1,3 +1,5 @@
+import { expand, networks } from "@bitcoinerlab/descriptors-scure";
+import { isMainnetDescriptor } from "../identity/descriptor";
 import {
     DescriptorProvider,
     DescriptorSigningRequest,
@@ -23,9 +25,9 @@ interface HDWalletSettings {
     descriptor: string;
 
     /**
-     * Active receive index. Monotonic — each `rotateReceive` bumps by one.
-     * `undefined` means the wallet has never derived an address; the next
-     * rotation will assign index 0.
+     * The most recently rotated-to receive index. `undefined` means no
+     * rotation has occurred yet — the wallet is still on the implicit
+     * default index 0.
      */
     lastIndexUsed?: number;
 }
@@ -33,95 +35,75 @@ interface HDWalletSettings {
 /** Settings key under {@link WalletState.settings} where HD state lives. */
 const HD_SETTINGS_KEY = "hd";
 
-/** Return shape of {@link HDDescriptorProvider.rotateReceive}. */
-interface ReceiveSlot {
-    index: number;
-    descriptor: string;
-}
-
 /**
  * HD-wallet {@link DescriptorProvider} that owns a single monotonic receive
  * index and rotates the active receive descriptor on demand.
  *
  * State is persisted under `WalletRepository.getWalletState().settings.hd` so
  * that no storage-schema migration is required when switching a wallet from
- * single-key to HD. The provider is backed by a {@link HDCapableIdentity}, which
- * both carries the seed (for signing) and exposes the account descriptor
- * template (for derivation).
+ * single-key to HD. The provider is backed by an {@link HDCapableIdentity},
+ * which carries the wildcard account descriptor template (for derivation)
+ * and the signing primitives.
  *
- * Read-modify-write of the persisted index runs inside the shared per-repo
- * `updateWalletState` mutex, so two `rotateReceive` callers — including those
- * driving separate `HDDescriptorProvider` instances on the same repo — can
- * never observe the same index.
+ * Both `getSigningDescriptor` and `getNextSigningDescriptor` go through the
+ * shared per-repo `updateWalletState` flow — the index is never cached
+ * in-memory, so a concurrent rotation by another `HDDescriptorProvider`
+ * instance on the same repo can never be missed. Read-modify-write of the
+ * persisted index runs inside the same shared mutex, so two
+ * `getNextSigningDescriptor` callers can never observe the same index.
  *
  * @example
  * ```ts
  * const provider = await HDDescriptorProvider.create(identity, walletRepo);
- * const { index, descriptor } = await provider.rotateReceive();
- * // index 1, descriptor tr([fp/86'/0'/0']xpub/0/1)
+ * const descriptor = await provider.getNextSigningDescriptor();
+ * // descriptor: tr([fp/86'/0'/0']xpub/0/1)
  * ```
  */
 export class HDDescriptorProvider implements DescriptorProvider {
-    /**
-     * Cached active receive index. Populated by {@link HDDescriptorProvider.create}
-     * and updated on every rotation so that the synchronous
-     * `getSigningDescriptor` / `getLastIndexUsed` accessors don't need to hit
-     * disk. The descriptor itself is derived on demand from this index plus
-     * `identity.descriptor` — a single string substitution — so caching the
-     * materialized form alongside it would just bookkeep the same fact twice.
-     */
-    private lastIndex: number | null = null;
-
     private constructor(
         private readonly identity: HDCapableIdentity,
         private readonly walletRepository: WalletRepository
     ) {}
 
     /**
-     * Construct and initialize an HDDescriptorProvider.
-     *
-     * On first run for a fresh wallet, this assigns index 0 as the initial
-     * receive descriptor and persists it. Subsequent runs reuse the stored
-     * `lastIndexUsed`.
-     *
-     * @throws if persisted state was written by a different identity (descriptor mismatch).
+     * Construct an HDDescriptorProvider. No I/O is performed at this point;
+     * persisted state is read on first call to `getSigningDescriptor` or
+     * `getNextSigningDescriptor`. State is validated lazily so a
+     * descriptor-mismatch error surfaces on first use rather than at boot.
      */
     static async create(
         identity: HDCapableIdentity,
         walletRepository: WalletRepository
     ): Promise<HDDescriptorProvider> {
-        const provider = new HDDescriptorProvider(identity, walletRepository);
-        await provider.initialize();
-        return provider;
-    }
-
-    /** Returns the currently-active receive descriptor. */
-    getSigningDescriptor(): string {
-        return this.materializeAt(this.requireIndex());
-    }
-
-    /** Returns the currently-active receive index. */
-    getLastIndexUsed(): number {
-        return this.requireIndex();
+        return new HDDescriptorProvider(identity, walletRepository);
     }
 
     /**
-     * Rotate the active receive descriptor to the next index.
-     *
-     * Updates the persisted state and the in-memory `lastIndex` so that
-     * subsequent {@link getSigningDescriptor} calls observe the rotation.
+     * Returns the current signing descriptor. Always reads fresh state from
+     * the wallet repository so that rotations performed by another provider
+     * instance (or by another tab) are reflected immediately.
      */
-    async rotateReceive(): Promise<ReceiveSlot> {
-        const index = await this.mutate((settings) => {
+    async getSigningDescriptor(): Promise<string> {
+        const state = (await this.walletRepository.getWalletState()) ?? {};
+        const settings = this.parseSettings(state);
+        return this.materializeAt(settings.lastIndexUsed ?? 0);
+    }
+
+    /**
+     * Rotate to a new receive descriptor and return it. The first call on a
+     * fresh wallet returns descriptor at index 1 — index 0 is the implicit
+     * default surfaced by `getSigningDescriptor`, so rotating past it gives
+     * the consumer a genuinely new address rather than a no-op.
+     */
+    async getNextSigningDescriptor(): Promise<string> {
+        return this.mutate((settings) => {
             const next =
                 settings.lastIndexUsed === undefined
-                    ? 0
+                    ? 1
                     : settings.lastIndexUsed + 1;
             settings.lastIndexUsed = next;
-            return next;
+            return this.materializeAt(next);
         });
-        this.lastIndex = index;
-        return { index, descriptor: this.materializeAt(index) };
     }
 
     /**
@@ -159,32 +141,26 @@ export class HDDescriptorProvider implements DescriptorProvider {
 
     // ── internals ────────────────────────────────────────────────────
 
-    private async initialize(): Promise<void> {
-        this.lastIndex = await this.mutate((settings) => {
-            if (settings.lastIndexUsed === undefined) {
-                settings.lastIndexUsed = 0;
-            }
-            return settings.lastIndexUsed;
-        });
-    }
-
     /**
      * Substitute the wildcard in the identity's account-descriptor template
-     * with a concrete index. The identity exposes the template via its
-     * `descriptor` field; the "current index" concept lives here in the
-     * provider.
+     * with a concrete index, going through the descriptors-scure parser
+     * rather than ad-hoc string substitution. The parser's `expand({ index })`
+     * call validates that the input is a ranged template AND produces a
+     * canonical materialized key expression at the given index.
      */
     private materializeAt(index: number): string {
-        return this.identity.descriptor.replace("/*)", `/${index})`);
-    }
-
-    private requireIndex(): number {
-        if (this.lastIndex === null) {
+        const descriptor = this.identity.descriptor;
+        const network = isMainnetDescriptor(descriptor)
+            ? networks.bitcoin
+            : networks.testnet;
+        const expansion = expand({ descriptor, network, index });
+        const keyInfo = expansion.expansionMap?.["@0"];
+        if (!keyInfo?.keyExpression) {
             throw new Error(
-                "HDDescriptorProvider not initialized; use HDDescriptorProvider.create(...)"
+                `HDDescriptorProvider: cannot materialize descriptor at index ${index}`
             );
         }
-        return this.lastIndex;
+        return `tr(${keyInfo.keyExpression})`;
     }
 
     /**

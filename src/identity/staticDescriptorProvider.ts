@@ -27,7 +27,7 @@ export class StaticDescriptorProvider implements DescriptorProvider {
         return new StaticDescriptorProvider(identity, hex.encode(pubKey));
     }
 
-    getSigningDescriptor(): string {
+    async getSigningDescriptor(): Promise<string> {
         return this.descriptor;
     }
 

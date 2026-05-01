@@ -20,7 +20,7 @@ export interface DescriptorSigningRequest {
  */
 export interface DescriptorProvider {
     /** Returns the current signing descriptor. */
-    getSigningDescriptor(): string;
+    getSigningDescriptor(): Promise<string>;
 
     /** Checks if a descriptor belongs to this provider. */
     isOurs(descriptor: string): boolean;
