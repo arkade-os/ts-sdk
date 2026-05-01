@@ -474,12 +474,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const totalOffchain = settled + preconfirmed + recoverable;
 
         // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, number>();
+        const assetBalances = new Map<string, bigint>();
         for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0;
+                    const current = assetBalances.get(a.assetId) ?? 0n;
                     assetBalances.set(a.assetId, current + a.amount);
                 }
             }
@@ -1569,16 +1569,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             for (const [, assets] of assetInputs) {
                 for (const asset of assets) {
                     const existing = allAssets.get(asset.assetId) ?? 0n;
-                    allAssets.set(
-                        asset.assetId,
-                        existing + BigInt(asset.amount)
-                    );
+                    allAssets.set(asset.assetId, existing + asset.amount);
                 }
             }
 
             outputAssets = [];
             for (const [assetId, amount] of allAssets) {
-                outputAssets.push({ assetId, amount: Number(amount) });
+                outputAssets.push({ assetId, amount });
             }
         }
 
@@ -2407,7 +2404,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const changeAssets: Asset[] = [];
             for (const [assetId, amount] of assetChanges) {
                 if (amount > 0n) {
-                    changeAssets.push({ assetId, amount: Number(amount) });
+                    changeAssets.push({ assetId, amount });
                 }
             }
 

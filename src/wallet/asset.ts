@@ -109,10 +109,12 @@ export function selectCoinsWithAsset(
     // sort by asset amount (smallest first for better selection)
     coinsWithAsset.sort((a, b) => {
         const amountA =
-            a.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0;
+            a.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0n;
         const amountB =
-            b.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0;
-        return amountA - amountB;
+            b.assets?.find((asset) => asset.assetId === assetId)?.amount ?? 0n;
+        // Array.sort callback returns number; reduce the bigint diff to
+        // -1/0/1 (the only thing sort actually consults).
+        return amountA < amountB ? -1 : amountA > amountB ? 1 : 0;
     });
 
     const selected: ExtendedVirtualCoin[] = [];
@@ -123,8 +125,8 @@ export function selectCoinsWithAsset(
 
         selected.push(coin);
         const assetAmount =
-            coin.assets?.find((a) => a.assetId === assetId)?.amount ?? 0;
-        totalAssetAmount += BigInt(assetAmount);
+            coin.assets?.find((a) => a.assetId === assetId)?.amount ?? 0n;
+        totalAssetAmount += assetAmount;
     }
 
     if (totalAssetAmount < requiredAmount) {

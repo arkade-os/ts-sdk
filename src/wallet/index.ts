@@ -272,8 +272,12 @@ export interface Asset {
     /** Asset identifier. */
     assetId: string;
 
-    /** Asset amount in base units. */
-    amount: number;
+    /**
+     * Asset amount in base units. Typed as `bigint` because asset
+     * supplies routinely exceed `Number.MAX_SAFE_INTEGER` (2^53 - 1)
+     * and silently truncating in arithmetic would corrupt balances.
+     */
+    amount: bigint;
 }
 
 /**
@@ -334,8 +338,12 @@ export type AssetDetails = {
     /** Asset identifier. */
     assetId: string;
 
-    /** Total issued supply in base units. */
-    supply: number;
+    /**
+     * Total issued supply in base units. Typed as `bigint` for the
+     * same reason as {@link Asset.amount} — supplies often exceed
+     * `Number.MAX_SAFE_INTEGER`.
+     */
+    supply: bigint;
 
     /** Optional immutable metadata associated with the asset. */
     metadata?: AssetMetadata;

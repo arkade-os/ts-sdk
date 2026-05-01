@@ -721,7 +721,7 @@ export class RestIndexerProvider implements IndexerProvider {
             : undefined;
         return {
             assetId: data.assetId ?? assetId,
-            supply: Number(data.supply ?? 0),
+            supply: BigInt(data.supply ?? 0),
             metadata,
             controlAssetId: data.controlAsset || undefined,
         };
@@ -827,7 +827,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         script: vtxo.script,
         assets: vtxo.assets?.map((a) => ({
             assetId: a.assetId,
-            amount: Number(a.amount),
+            amount: BigInt(a.amount),
         })),
     };
 }

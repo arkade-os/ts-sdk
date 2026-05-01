@@ -428,13 +428,13 @@ async function makeSignedDelegateIntent(
         for (const [, assets] of assetInputs) {
             for (const asset of assets) {
                 const existing = allAssets.get(asset.assetId) ?? 0n;
-                allAssets.set(asset.assetId, existing + BigInt(asset.amount));
+                allAssets.set(asset.assetId, existing + asset.amount);
             }
         }
 
         outputAssets = [];
         for (const [assetId, amount] of allAssets) {
-            outputAssets.push({ assetId, amount: Number(amount) });
+            outputAssets.push({ assetId, amount });
         }
     }
 
