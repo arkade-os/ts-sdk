@@ -8,7 +8,7 @@ The Arkade SDK is a TypeScript library for building Bitcoin wallets using the Ar
 ## Installation
 
 ```bash
-npm install @arkade-os/sdk
+pnpm add @arkade-os/sdk
 ```
 
 ## Usage
@@ -947,7 +947,7 @@ const wallet = await Wallet.create({
 Node.js does not provide a global `EventSource` implementation. The SDK relies on `EventSource` for Server-Sent Events during settlement (onboarding/offboarding) and contract watching. You must polyfill it before using the SDK:
 
 ```bash
-npm install eventsource
+pnpm add eventsource
 ```
 
 ```typescript
@@ -1033,7 +1033,7 @@ const wallet = await Wallet.create({
 Install `expo-crypto` and polyfill `crypto.getRandomValues()` at the top of your app entry point:
 
 ```bash
-npx expo install expo-crypto
+pnpm dlx expo install expo-crypto
 ```
 
 ```typescript

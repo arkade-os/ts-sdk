@@ -7,7 +7,7 @@
  *
  * To run it:
  * ```
- * $ npx tsx examples/node/multiple-wallets.ts
+ * $ pnpm dlx tsx examples/node/multiple-wallets.ts
  * ```
  *
  * Requires `better-sqlite3` (included as a devDependency).

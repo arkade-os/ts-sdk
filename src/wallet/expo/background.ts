@@ -42,7 +42,7 @@ function requireTaskManager(): TaskManagerModule {
     } catch {
         throw new Error(
             "expo-task-manager is required for background tasks. " +
-                "Install it with: npx expo install expo-task-manager"
+                "Install it with: pnpm dlx expo install expo-task-manager"
         );
     }
 }
@@ -53,7 +53,7 @@ function requireBackgroundTask(): BackgroundTaskModule {
     } catch {
         throw new Error(
             "expo-background-task is required for background tasks. " +
-                "Install it with: npx expo install expo-background-task"
+                "Install it with: pnpm dlx expo install expo-background-task"
         );
     }
 }
