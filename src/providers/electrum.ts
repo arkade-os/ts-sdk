@@ -2,9 +2,55 @@ import { Address, OutScript, Transaction } from "@scure/btc-signer";
 import { sha256 } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import type { ElectrumWS } from "ws-electrumx-client";
-import type { Network } from "../networks";
+import type { Network, NetworkName } from "../networks";
 import type { Coin } from "../wallet";
 import type { ExplorerTransaction, OnchainProvider } from "./onchain";
+
+/**
+ * Default WebSocket Electrum endpoints. Mainnet, mutinynet, and signet
+ * point at Ark Labs–operated Fulcrum 2.1 deployments (which support
+ * `blockchain.transaction.broadcast_package` for atomic 1P1C TRUC
+ * relay; see `ElectrumOnchainProvider.broadcastTransaction`). Testnet
+ * defaults to Blockstream's public Fulcrum because Ark doesn't host
+ * it. Regtest assumes the `electrum-ws` websocat bridge from
+ * `vulpemventures/nigiri`.
+ *
+ * @example
+ * ```typescript
+ * import { ElectrumWS } from "ws-electrumx-client";
+ * import { ELECTRUM_WS_URL, ElectrumOnchainProvider, networks } from "@arkade-os/sdk";
+ *
+ * const ws = new ElectrumWS(ELECTRUM_WS_URL.bitcoin);
+ * const provider = new ElectrumOnchainProvider(ws, networks.bitcoin);
+ * ```
+ */
+export const ELECTRUM_WS_URL: Record<NetworkName, string> = {
+    bitcoin: "wss://electrum.arkade.sh",
+    testnet: "wss://electrum.blockstream.info:60004",
+    signet: "wss://electrum.signet.arkade.sh",
+    mutinynet: "wss://electrum.mutinynet.arkade.sh",
+    regtest: "ws://localhost:50003",
+};
+
+/**
+ * Hostnames for Electrum endpoints reachable over raw TCP. Provided as
+ * a reference for Node-side consumers — the SDK's
+ * {@link ElectrumOnchainProvider} only speaks WebSocket because it has
+ * to run in browsers, so this map is informational only and not
+ * consumed by any built-in provider.
+ *
+ * Public Ark Labs Fulcrum instances expose:
+ *   - port 50001 — plain TCP (Electrum protocol)
+ *   - port 50002 — TCP + TLS (Electrum protocol)
+ *   - port 50003 — WebSocket (Electrum-over-WS, see {@link ELECTRUM_WS_URL})
+ */
+export const ELECTRUM_TCP_HOST: Record<NetworkName, string | null> = {
+    bitcoin: "electrum.arkade.sh",
+    testnet: null,
+    signet: "electrum.signet.arkade.sh",
+    mutinynet: "electrum.mutinynet.arkade.sh",
+    regtest: "localhost",
+};
 
 // Electrum protocol method names
 const BroadcastTransaction = "blockchain.transaction.broadcast";
@@ -13,6 +59,7 @@ const EstimateFee = "blockchain.estimatefee";
 const GetBlockHeader = "blockchain.block.header";
 const GetHistoryMethod = "blockchain.scripthash.get_history";
 const GetTransactionMethod = "blockchain.transaction.get";
+const GetTransactionMerkleMethod = "blockchain.transaction.get_merkle";
 const SubscribeStatusMethod = "blockchain.scripthash";
 const SubscribeHeadersMethod = "blockchain.headers";
 const GetRelayFeeMethod = "blockchain.relayfee";
@@ -155,6 +202,43 @@ export class WsElectrumChainSource {
         private network: Network
     ) {}
 
+    /**
+     * Send N requests in parallel and aggregate the results, replacement
+     * for `ws.batchRequest`. The library's batchRequest is implemented as
+     * `Promise.all` over individual request promises — when one element
+     * rejects, the others remain pending. When their (often error)
+     * responses arrive later, the library rejects them too, and nobody is
+     * awaiting them: the rejections become unhandled and crash the test
+     * runner / pollute production logs.
+     *
+     * `safeBatchRequest` issues each request through `ws.request` (so each
+     * has its own request-promise lifecycle), waits for all of them via
+     * `Promise.allSettled` (every promise gets an explicit handler), and
+     * then surfaces the first error if any failed. Same wall-clock cost
+     * as the library's batch (parallel send), no orphan rejections.
+     *
+     * Use this in place of `ws.batchRequest` for any call where one or
+     * more elements may legitimately error (e.g. electrs index lag
+     * surfacing as `missingheight` for a subset of heights/txids).
+     */
+    async safeBatchRequest<T>(
+        requests: { method: string; params: unknown[] }[]
+    ): Promise<T[]> {
+        if (requests.length === 0) return [];
+        const settled = await Promise.allSettled(
+            requests.map((req) =>
+                this.ws.request<T>(
+                    req.method,
+                    ...(req.params as Parameters<typeof this.ws.request>[1][])
+                )
+            )
+        );
+        for (const r of settled) {
+            if (r.status === "rejected") throw r.reason;
+        }
+        return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
+    }
+
     async fetchTransactions(
         txids: string[]
     ): Promise<{ txID: string; hex: string }[]> {
@@ -164,9 +248,7 @@ export class WsElectrumChainSource {
         }));
         for (let i = 0; i < MAX_FETCH_TRANSACTIONS_ATTEMPTS; i++) {
             try {
-                const responses = await this.ws.batchRequest<string[]>(
-                    ...requests
-                );
+                const responses = await this.safeBatchRequest<string>(requests);
                 return responses.map((hexStr, i) => ({
                     txID: txids[i],
                     hex: hexStr,
@@ -200,7 +282,45 @@ export class WsElectrumChainSource {
             method: GetTransactionMethod,
             params: [txid, true],
         }));
-        return this.ws.batchRequest<VerboseTransaction[]>(...requests);
+        return this.safeBatchRequest<VerboseTransaction>(requests);
+    }
+
+    /**
+     * Look up the block height of a confirmed transaction without relying
+     * on the verbose-tx endpoint. `blockchain.transaction.get_merkle` is
+     * part of the standard SPV protocol and is supported by both Fulcrum
+     * and electrs (whereas `blockchain.transaction.get` with verbose=true
+     * is Fulcrum-only). Returns `null` when the tx is in the mempool —
+     * electrs in that case rejects with a "not yet in a block" error.
+     */
+    async fetchTxMerkle(txid: string): Promise<{ blockHeight: number } | null> {
+        let result: { block_height: number } | undefined;
+        try {
+            result = await this.ws.request<{ block_height: number }>(
+                GetTransactionMerkleMethod,
+                txid
+            );
+        } catch (err) {
+            // electrs/Fulcrum raise specific errors when the tx isn't yet in
+            // a block — either "not in a block" wording, or "missingheight"
+            // when get_merkle hits the same index-lag race that block.header
+            // hits (the tx is reportedly confirmed but the height isn't
+            // queryable yet). Map both to mempool/unknown; everything else
+            // (auth failure, network outage, malformed response) must surface
+            // so callers can fail rather than silently treat the tx as
+            // unconfirmed forever.
+            if (isTxNotInBlockError(err) || isMissingHeightError(err))
+                return null;
+            throw err;
+        }
+        if (
+            !result ||
+            typeof result.block_height !== "number" ||
+            result.block_height <= 0
+        ) {
+            return null;
+        }
+        return { blockHeight: result.block_height };
     }
 
     async unsubscribeScriptStatus(script: Uint8Array): Promise<void> {
@@ -229,13 +349,12 @@ export class WsElectrumChainSource {
         scripts: Uint8Array[]
     ): Promise<TransactionHistory[][]> {
         const scriptsHashes = scripts.map((s) => toScriptHash(s));
-        const responses = await this.ws.batchRequest<TransactionHistory[][]>(
-            ...scriptsHashes.map((s) => ({
+        return this.safeBatchRequest<TransactionHistory[]>(
+            scriptsHashes.map((s) => ({
                 method: GetHistoryMethod,
                 params: [s],
             }))
         );
-        return responses;
     }
 
     async fetchHistory(script: Uint8Array): Promise<TransactionHistory[]> {
@@ -247,8 +366,8 @@ export class WsElectrumChainSource {
     }
 
     async fetchBlockHeaders(heights: number[]): Promise<BlockHeader[]> {
-        const responses = await this.ws.batchRequest<string[]>(
-            ...heights.map((h) => ({ method: GetBlockHeader, params: [h] }))
+        const responses = await this.safeBatchRequest<string>(
+            heights.map((h) => ({ method: GetBlockHeader, params: [h] }))
         );
         return responses.map((hexStr, i) => ({
             height: heights[i],
@@ -427,19 +546,45 @@ export class WsElectrumChainSource {
 }
 
 /**
- * Electrum-based implementation of the OnchainProvider interface.
- * Replaces esplora polling with electrum subscriptions where possible.
+ * Electrum-based implementation of the {@link OnchainProvider} interface.
  *
- * @example
+ * Built around the subset of the Electrum protocol that both **Fulcrum**
+ * and **electrs** support — listunspent, get_history, transaction.get
+ * (non-verbose), transaction.get_merkle, block.header,
+ * headers.subscribe, scripthash.subscribe, estimatefee, relayfee, and
+ * broadcast. The verbose form of `transaction.get` is **not** used (it's
+ * Fulcrum-only and rejected by electrs); confirmation status is derived
+ * from `transaction.get_merkle` plus parsed block headers.
+ *
+ * Output amounts are derived from parsed raw transaction bytes (exact
+ * bigints), never the floating-point `value` fields some servers return.
+ *
+ * Atomic 1P1C package broadcast (TRUC / BIP 431) is supported via
+ * Fulcrum's `blockchain.transaction.broadcast_package`. There is **no
+ * fallback** to sequential parent-then-child broadcasts — TRUC packages
+ * with a zero-fee parent would silently fail, so the call surfaces an
+ * error against servers that don't support the method.
+ *
+ * @example Default URL via {@link ELECTRUM_WS_URL}
  * ```typescript
  * import { ElectrumWS } from "ws-electrumx-client";
- * import { ElectrumOnchainProvider } from "./providers/electrum";
- * import { networks } from "./networks";
+ * import {
+ *   ElectrumOnchainProvider,
+ *   ELECTRUM_WS_URL,
+ *   networks,
+ * } from "@arkade-os/sdk";
  *
- * const ws = new ElectrumWS("wss://electrum.blockstream.info:50004");
+ * const ws = new ElectrumWS(ELECTRUM_WS_URL.bitcoin);
  * const provider = new ElectrumOnchainProvider(ws, networks.bitcoin);
  *
  * const coins = await provider.getCoins("bc1q...");
+ * await provider.close();
+ * ```
+ *
+ * @example Custom server
+ * ```typescript
+ * const ws = new ElectrumWS("wss://my-fulcrum.example:50004");
+ * const provider = new ElectrumOnchainProvider(ws, networks.bitcoin);
  * ```
  */
 export class ElectrumOnchainProvider implements OnchainProvider {
@@ -543,8 +688,10 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         // Step 2: batch listunspent for all output scripthashes (1 round trip)
         // This tells us exactly which txid:vout pairs are still unspent.
-        const unspentBatch = await this.ws.batchRequest<UnspentElectrum[][]>(
-            ...validScriptHashes.map((sh) => ({
+        const unspentBatch = await this.chain.safeBatchRequest<
+            UnspentElectrum[]
+        >(
+            validScriptHashes.map((sh) => ({
                 method: ListUnspentMethod,
                 params: [sh],
             }))
@@ -574,8 +721,10 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
         if (spentIndices.length === 0) return results;
 
-        const histories = await this.ws.batchRequest<TransactionHistory[][]>(
-            ...spentScriptHashes.map((sh) => ({
+        const histories = await this.chain.safeBatchRequest<
+            TransactionHistory[]
+        >(
+            spentScriptHashes.map((sh) => ({
                 method: GetHistoryMethod,
                 params: [sh],
             }))
@@ -643,41 +792,117 @@ export class ElectrumOnchainProvider implements OnchainProvider {
     async getTransactions(address: string): Promise<ExplorerTransaction[]> {
         const script = this.encodeAddress(address);
         const history = await this.chain.fetchHistory(script);
-
         if (history.length === 0) return [];
-
-        const txids = history.map((h) => h.tx_hash);
-        const verboseTxs = await this.chain.fetchVerboseTransactions(txids);
-
-        return verboseTxs.map((vtx) => this.verboseToExplorer(vtx));
+        return this.historyToExplorerTxs(history);
     }
 
     /**
-     * Map an electrum verbose transaction to the ExplorerTransaction shape.
-     *
-     * Output values are derived from the raw transaction hex when available,
-     * never from the floating-point `value` field returned by the daemon.
-     * That field has 8 decimal places and `Math.round(value * 1e8)` is safe
-     * in the common case but a footgun for protocol-level money handling —
-     * the raw bytes are exact.
+     * Resolve a list of `{tx_hash, height}` entries (as returned by the
+     * scripthash history endpoint) into ExplorerTransaction shape **without
+     * using the verbose-tx endpoint**, which only Fulcrum implements. We
+     * reconstruct everything the verbose response would have given us:
+     *   - vouts ← parse the raw tx (exact sat amounts, no float precision risk)
+     *   - block_time ← batch-fetch the block headers for the heights present
+     *   - addresses ← decode each output's scriptPubKey via @scure/btc-signer
      */
-    private verboseToExplorer(vtx: VerboseTransaction): ExplorerTransaction {
-        const exactValuesByVout = parseExactSats(vtx);
+    private async historyToExplorerTxs(
+        history: TransactionHistory[]
+    ): Promise<ExplorerTransaction[]> {
+        const txids = history.map((h) => h.tx_hash);
+        const rawTxs = await this.chain.fetchTransactions(txids);
+        const rawHexByTxid = new Map(rawTxs.map((t) => [t.txID, t.hex]));
+
+        // De-duplicated batch lookup of block headers (now safe — see
+        // safeBatchRequest above). Heights whose headers fail to resolve
+        // surface via the wrapper's first-error throw; we tolerate that
+        // here by falling back to per-height calls under Promise.allSettled
+        // so one missing header doesn't poison the whole history mapping.
+        // The old verbose-tx code had the same tolerance via
+        // `vtx.blocktime || vtx.time || 0`.
+        const confirmedHeights = [
+            ...new Set(history.map((h) => h.height).filter((h) => h > 0)),
+        ];
+        const blockTimeByHeight = new Map<number, number>();
+        if (confirmedHeights.length > 0) {
+            try {
+                const headers =
+                    await this.chain.fetchBlockHeaders(confirmedHeights);
+                for (const header of headers) {
+                    blockTimeByHeight.set(
+                        header.height,
+                        parseBlockHeader(header.hex).timestamp
+                    );
+                }
+            } catch {
+                const settled = await Promise.allSettled(
+                    confirmedHeights.map((h) => this.chain.fetchBlockHeader(h))
+                );
+                settled.forEach((res) => {
+                    if (res.status === "fulfilled") {
+                        blockTimeByHeight.set(
+                            res.value.height,
+                            parseBlockHeader(res.value.hex).timestamp
+                        );
+                    }
+                    // Rejections leave the height absent → block_time = 0.
+                });
+            }
+        }
+
+        return history.map((entry) =>
+            this.buildExplorerTx(
+                entry,
+                rawHexByTxid.get(entry.tx_hash),
+                blockTimeByHeight
+            )
+        );
+    }
+
+    /**
+     * Build an ExplorerTransaction from a history entry plus the raw tx hex
+     * (when known) and a height→block_time map. Parse errors propagate —
+     * silently returning an empty vout would hide real outputs (e.g. a
+     * deposit) and is far worse for protocol-level money handling than
+     * failing the whole batch.
+     */
+    private buildExplorerTx(
+        entry: TransactionHistory,
+        rawHex: string | undefined,
+        blockTimeByHeight: Map<number, number>
+    ): ExplorerTransaction {
+        const vout: ExplorerTransaction["vout"] = [];
+        if (rawHex) {
+            let tx: Transaction;
+            try {
+                tx = Transaction.fromRaw(hex.decode(rawHex), {
+                    allowUnknownOutputs: true,
+                    allowUnknownInputs: true,
+                });
+            } catch (err) {
+                throw new Error(
+                    `Failed to parse raw tx for ${entry.tx_hash}: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+            for (let i = 0; i < tx.outputsLength; i++) {
+                const output = tx.getOutput(i);
+                const scriptHex = output.script
+                    ? hex.encode(output.script)
+                    : "";
+                vout.push({
+                    scriptpubkey_address: scriptHex
+                        ? (this.chain.addressForScript(scriptHex) ?? "")
+                        : "",
+                    value: (output.amount ?? 0n).toString(),
+                });
+            }
+        }
+
         return {
-            txid: vtx.txid,
-            vout: vtx.vout.map((v) => ({
-                scriptpubkey_address:
-                    v.scriptPubKey.address ||
-                    v.scriptPubKey.addresses?.[0] ||
-                    this.chain.addressForScript(v.scriptPubKey.hex) ||
-                    "",
-                value:
-                    exactValuesByVout?.get(v.n) ??
-                    String(Math.round(v.value * 1e8)),
-            })),
+            txid: entry.tx_hash,
+            vout,
             status: {
-                confirmed: vtx.confirmations > 0,
-                block_time: vtx.blocktime || vtx.time || 0,
+                confirmed: entry.height > 0,
+                block_time: blockTimeByHeight.get(entry.height) ?? 0,
             },
         };
     }
@@ -702,21 +927,31 @@ export class ElectrumOnchainProvider implements OnchainProvider {
         | { confirmed: false }
         | { confirmed: true; blockTime: number; blockHeight: number }
     > {
-        const vtx = await this.chain.fetchVerboseTransaction(txid);
-        if (vtx.confirmations <= 0) {
-            return { confirmed: false };
+        // Use `transaction.get_merkle` rather than the verbose `transaction.get`
+        // because electrs (used by mempool.space, blockstream.info, and the
+        // nigiri regtest) doesn't implement verbose. get_merkle is part of the
+        // standard SPV protocol and supported by every Electrum server.
+        const merkle = await this.chain.fetchTxMerkle(txid);
+        if (!merkle) return { confirmed: false };
+
+        // Header lookup can transiently race with electrs's index right
+        // after a fresh block — listunspent/get_merkle expose the new
+        // height before block.header(N) is queryable. Tolerate that the
+        // same way historyToExplorerTxs does: confirmation status and
+        // height are still authoritative; only block_time degrades.
+        let blockTime = 0;
+        try {
+            const header = await this.chain.fetchBlockHeader(
+                merkle.blockHeight
+            );
+            blockTime = parseBlockHeader(header.hex).timestamp;
+        } catch (err) {
+            if (!isMissingHeightError(err)) throw err;
         }
-
-        // Get block height from the verbose tx's blockhash
-        // We need the height, which is confirmations-based:
-        // height = tipHeight - confirmations + 1
-        const tip = await this.chain.subscribeHeaders();
-        const blockHeight = tip.height - vtx.confirmations + 1;
-
         return {
             confirmed: true,
-            blockTime: vtx.blocktime || vtx.time || 0,
-            blockHeight,
+            blockHeight: merkle.blockHeight,
+            blockTime,
         };
     }
 
@@ -777,18 +1012,23 @@ export class ElectrumOnchainProvider implements OnchainProvider {
 
             const history = await this.chain.fetchHistory(script);
             const known = knownTxids.get(scripthash) ?? new Set<string>();
-            const newTxids = history
-                .map((h) => h.tx_hash)
-                .filter((txid) => !known.has(txid));
+            const newEntries = history.filter(
+                (entry) => !known.has(entry.tx_hash)
+            );
 
-            if (newTxids.length === 0) return;
+            if (newEntries.length === 0) return;
 
-            for (const txid of newTxids) known.add(txid);
+            // Map the new history entries through the same non-verbose
+            // pipeline getTransactions uses, so subscribe-driven and
+            // poll-driven callers see ExplorerTransactions of identical shape.
+            // The dedupe set is updated ONLY after delivery succeeds —
+            // otherwise a failed fetch or callback would permanently mark
+            // these txids as seen and the next notification wouldn't
+            // re-deliver them.
+            const explorerTxs = await this.historyToExplorerTxs(newEntries);
+            eventCallback(explorerTxs);
+            for (const entry of newEntries) known.add(entry.tx_hash);
             knownTxids.set(scripthash, known);
-
-            const verboseTxs =
-                await this.chain.fetchVerboseTransactions(newTxids);
-            eventCallback(verboseTxs.map((vtx) => this.verboseToExplorer(vtx)));
         };
 
         const handleStatusChange = (scripthash: string): Promise<void> => {
@@ -853,6 +1093,39 @@ function isHeaderSubscribeResult(v: unknown): v is HeaderSubscribeResult {
 }
 
 /**
+ * Recognise the "block header not yet indexable" failure shape returned by
+ * electrum servers (electrs in particular) when `block.header(N)` runs
+ * against a height that's already in `listunspent`/`get_merkle` but hasn't
+ * been indexed yet. Surfaced as `missingheight`. Tolerated by callers so
+ * the index-lag race doesn't poison confirmed-status reads; genuine
+ * failures (auth/network) propagate.
+ */
+function isMissingHeightError(err: unknown): boolean {
+    const msg =
+        err instanceof Error ? err.message : typeof err === "string" ? err : "";
+    return msg.toLowerCase().includes("missingheight");
+}
+
+/**
+ * Recognise the "transaction not in a block yet" failure shape returned by
+ * electrum servers when `blockchain.transaction.get_merkle` is asked about a
+ * mempool tx. electrs surfaces this as the strings below; Fulcrum mirrors
+ * the wording. We match conservatively so genuine errors (auth, network,
+ * malformed response) still propagate.
+ */
+function isTxNotInBlockError(err: unknown): boolean {
+    const msg =
+        err instanceof Error ? err.message : typeof err === "string" ? err : "";
+    const normalized = msg.toLowerCase();
+    return (
+        normalized.includes("not yet in a block") ||
+        normalized.includes("not in a block") ||
+        normalized.includes("not in block") ||
+        normalized.includes("no confirmed transaction")
+    );
+}
+
+/**
  * Compute the txid of a serialized transaction. For segwit transactions
  * (every Ark transaction), the broadcast hex includes witness data, but
  * the txid is the double-SHA256 of the legacy (witness-stripped)
@@ -869,28 +1142,4 @@ function childTxidFromHex(txHex: string): string {
         allowUnknownInputs: true,
     });
     return tx.id;
-}
-
-/**
- * Decode `vtx.hex` (when the daemon includes it) and return a map of
- * vout-index → exact sat amount as a base-10 string. Returns `null` if
- * the hex is missing or unparseable; callers should fall back to the
- * float-derived value in that case.
- */
-function parseExactSats(vtx: VerboseTransaction): Map<number, string> | null {
-    if (!vtx.hex) return null;
-    try {
-        const tx = Transaction.fromRaw(hex.decode(vtx.hex), {
-            allowUnknownOutputs: true,
-        });
-        const result = new Map<number, string>();
-        for (let i = 0; i < tx.outputsLength; i++) {
-            const output = tx.getOutput(i);
-            if (output.amount === undefined) continue;
-            result.set(i, output.amount.toString());
-        }
-        return result;
-    } catch {
-        return null;
-    }
 }

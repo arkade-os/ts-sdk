@@ -225,6 +225,91 @@ await wallet.send({ address: 'ark1q...', amount: 1000 })
 
 Identities without `signMultiple` continue to work unchanged — each checkpoint is signed individually via `sign()`.
 
+### Onchain Providers
+
+Wallets read onchain state (UTXOs, transactions, fee rates, chain tip) through an `OnchainProvider`. The SDK ships with two implementations and a single transport-agnostic interface so you can swap them without touching wallet code.
+
+| Provider | Transport | When to use |
+|---|---|---|
+| `EsploraProvider` | REST/HTTP (mempool.space-compatible) | Default for browser wallets, public mempool deployments, simple integrations. Both atomic 1P1C package broadcast and outspends are first-class. |
+| `ElectrumOnchainProvider` | WebSocket (Electrum protocol) | Self-hosted nodes (Fulcrum, electrs), low-latency subscriptions, environments where you control the backend. Required if you need to talk to an Electrum server directly. |
+
+If you don't pass a provider explicitly, `OnchainWallet` and `Wallet.create({ ... })` both default to `EsploraProvider` pointing at the URL in `ESPLORA_URL[networkName]`.
+
+#### Default URLs
+
+The SDK ships with reachable defaults for each network — bitcoin, signet, and mutinynet point at Ark Labs–operated deployments; testnet falls back to mempool.space; regtest assumes a local nigiri stack.
+
+```typescript
+import {
+  ESPLORA_URL,        // Record<NetworkName, string>
+  ELECTRUM_WS_URL,    // Record<NetworkName, string>
+  ELECTRUM_TCP_HOST,  // Record<NetworkName, string | null> — informational
+} from '@arkade-os/sdk'
+
+ESPLORA_URL.bitcoin       // "https://mempool.arkade.sh/api"
+ESPLORA_URL.signet        // "https://mempool.signet.arkade.sh/api"
+ESPLORA_URL.mutinynet     // "https://mempool.mutinynet.arkade.sh/api"
+
+ELECTRUM_WS_URL.bitcoin   // "wss://electrum.arkade.sh"
+ELECTRUM_WS_URL.signet    // "wss://electrum.signet.arkade.sh"
+ELECTRUM_WS_URL.mutinynet // "wss://electrum.mutinynet.arkade.sh"
+```
+
+#### Using Esplora (default)
+
+```typescript
+import { EsploraProvider, ESPLORA_URL, OnchainWallet } from '@arkade-os/sdk'
+
+// Use the default URL for the network
+const provider = new EsploraProvider(ESPLORA_URL.bitcoin)
+
+// Or pass nothing — OnchainWallet picks the default for you
+const wallet = await OnchainWallet.create(identity, 'bitcoin')
+
+// Or override with your own mempool/esplora instance
+const customProvider = new EsploraProvider('https://my-esplora.example/api')
+```
+
+#### Using Electrum (WebSocket)
+
+```typescript
+import { ElectrumWS } from 'ws-electrumx-client'
+import {
+  ElectrumOnchainProvider,
+  ELECTRUM_WS_URL,
+  OnchainWallet,
+  networks,
+} from '@arkade-os/sdk'
+
+const ws = new ElectrumWS(ELECTRUM_WS_URL.bitcoin)
+const provider = new ElectrumOnchainProvider(ws, networks.bitcoin)
+
+const wallet = await OnchainWallet.create(identity, 'bitcoin', provider)
+
+// Remember to close the connection when you're done
+await provider.close()
+```
+
+#### Atomic 1P1C package broadcast (TRUC / BIP 431)
+
+Both providers expose `broadcastTransaction(...txs)` that accepts either a single tx or a 1P1C package (parent first, child last). The package path is **atomic** — the parent doesn't have to independently meet mempool minfee, which is the point of TRUC relay.
+
+The Electrum provider implements this via `blockchain.transaction.broadcast_package` (Fulcrum ≥ 1.10 backed by bitcoind ≥ v28). **There is no fallback to sequential broadcast**: if the server doesn't support `broadcast_package`, the call surfaces a clear error so you can route through a different provider rather than have TRUC packages silently fail at the parent step. Ark Labs Fulcrum deployments at `electrum.arkade.sh` (and the `*.signet` / `*.mutinynet` variants) all support it.
+
+#### Server compatibility notes
+
+`ElectrumOnchainProvider` is built around methods supported by both **Fulcrum** and **electrs** (the two main Electrum server implementations):
+
+- ✅ `blockchain.scripthash.{listunspent, get_history, subscribe}`
+- ✅ `blockchain.transaction.{get, get_merkle, broadcast}`
+- ✅ `blockchain.block.header`, `blockchain.headers.subscribe`
+- ✅ `blockchain.estimatefee`, `blockchain.relayfee`
+- ⚠️ `blockchain.transaction.broadcast_package` — **Fulcrum-only**. Required for atomic 1P1C; the provider throws a descriptive error against electrs.
+- ❌ The provider does **not** call `blockchain.transaction.get` with `verbose=true` (Fulcrum-only and rejected by electrs); confirmation status is derived from `transaction.get_merkle` + raw block headers instead.
+
+Output amounts are derived from parsed raw transaction bytes (exact bigints), never from floating-point `value` fields — protocol-level money handling shouldn't depend on `Math.round(value * 1e8)`.
+
 ### Receiving Bitcoin
 
 ```typescript
