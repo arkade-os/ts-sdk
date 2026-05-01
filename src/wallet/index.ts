@@ -281,6 +281,26 @@ export interface Asset {
 }
 
 /**
+ * Sum the `amount` of every asset in `assets` that matches `assetId`.
+ * Convenience wrapper for the common `assets.reduce(...,
+ * 0n).filter(...)` pattern; if `assetId` is omitted, sums every asset
+ * regardless of id.
+ */
+export function sumAssetAmounts(
+    assets: Asset[] | undefined,
+    assetId?: string
+): bigint {
+    if (!assets) return 0n;
+    let total = 0n;
+    for (const a of assets) {
+        if (assetId === undefined || a.assetId === assetId) {
+            total += a.amount;
+        }
+    }
+    return total;
+}
+
+/**
  * Recipient accepted by `IWallet.send`.
  *
  * @see IWallet.send
@@ -360,7 +380,7 @@ export type AssetDetails = {
  */
 export interface IssuanceParams {
     /** Initial amount of asset to issue */
-    amount: number;
+    amount: bigint;
     /** Optional control asset ID that can be used for future reissuance */
     controlAssetId?: string;
     /** Immutable asset metadata including `ticker`, `decimals`, `icon` */
@@ -389,7 +409,7 @@ export interface ReissuanceParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to issue */
-    amount: number;
+    amount: bigint;
 }
 
 /**
@@ -401,7 +421,7 @@ export interface BurnParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to burn */
-    amount: number;
+    amount: bigint;
 }
 
 /**

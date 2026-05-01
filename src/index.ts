@@ -62,6 +62,7 @@ import {
     isSubdust,
     isRecoverable,
     isExpired,
+    sumAssetAmounts,
     // Asset types
     Asset,
     Recipient,
@@ -403,6 +404,7 @@ export {
     isSubdust,
     isExpired,
     getSequence,
+    sumAssetAmounts,
 
     // Contracts
     ContractManager,
