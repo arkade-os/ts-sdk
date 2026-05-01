@@ -25,9 +25,9 @@ interface HDWalletSettings {
     descriptor: string;
 
     /**
-     * The most recently rotated-to receive index. `undefined` means no
-     * rotation has occurred yet — the wallet is still on the implicit
-     * default index 0.
+     * The most recently allocated descriptor index. `undefined` means no
+     * descriptor has ever been allocated; the next allocation will return
+     * index 0.
      */
     lastIndexUsed?: number;
 }
@@ -36,8 +36,11 @@ interface HDWalletSettings {
 const HD_SETTINGS_KEY = "hd";
 
 /**
- * HD-wallet {@link DescriptorProvider} that owns a single monotonic receive
- * index and rotates the active receive descriptor on demand.
+ * HD-wallet {@link DescriptorProvider} that allocates a fresh signing
+ * descriptor on every call. The provider holds no notion of "current" — it
+ * is a pure rotating allocator. The question of "which descriptor is the
+ * wallet currently bound to?" is answered by querying the contract
+ * repository for active contracts, not by asking this provider.
  *
  * State is persisted under `WalletRepository.getWalletState().settings.hd` so
  * that no storage-schema migration is required when switching a wallet from
@@ -45,18 +48,18 @@ const HD_SETTINGS_KEY = "hd";
  * which carries the wildcard account descriptor template (for derivation)
  * and the signing primitives.
  *
- * Both `getSigningDescriptor` and `getNextSigningDescriptor` go through the
- * shared per-repo `updateWalletState` flow — the index is never cached
- * in-memory, so a concurrent rotation by another `HDDescriptorProvider`
- * instance on the same repo can never be missed. Read-modify-write of the
- * persisted index runs inside the same shared mutex, so two
- * `getNextSigningDescriptor` callers can never observe the same index.
+ * The read-modify-write of the persisted index runs inside the shared per-
+ * repo `updateWalletState` mutex, so two `getNextSigningDescriptor` callers
+ * — including those driving separate `HDDescriptorProvider` instances on
+ * the same repo — can never observe the same index.
  *
  * @example
  * ```ts
  * const provider = await HDDescriptorProvider.create(identity, walletRepo);
  * const descriptor = await provider.getNextSigningDescriptor();
- * // descriptor: tr([fp/86'/0'/0']xpub/0/1)
+ * // descriptor: tr([fp/86'/0'/0']xpub/0/0)
+ * const next = await provider.getNextSigningDescriptor();
+ * // next: tr([fp/86'/0'/0']xpub/0/1)
  * ```
  */
 export class HDDescriptorProvider implements DescriptorProvider {
@@ -66,10 +69,10 @@ export class HDDescriptorProvider implements DescriptorProvider {
     ) {}
 
     /**
-     * Construct an HDDescriptorProvider. No I/O is performed at this point;
-     * persisted state is read on first call to `getSigningDescriptor` or
-     * `getNextSigningDescriptor`. State is validated lazily so a
-     * descriptor-mismatch error surfaces on first use rather than at boot.
+     * Construct an HDDescriptorProvider. No I/O is performed here;
+     * persisted state is read lazily on the first call to
+     * `getNextSigningDescriptor`. A descriptor-mismatch error surfaces on
+     * first use rather than at boot.
      */
     static async create(
         identity: HDCapableIdentity,
@@ -79,27 +82,17 @@ export class HDDescriptorProvider implements DescriptorProvider {
     }
 
     /**
-     * Returns the current signing descriptor. Always reads fresh state from
-     * the wallet repository so that rotations performed by another provider
-     * instance (or by another tab) are reflected immediately.
-     */
-    async getSigningDescriptor(): Promise<string> {
-        const state = (await this.walletRepository.getWalletState()) ?? {};
-        const settings = this.parseSettings(state);
-        return this.materializeAt(settings.lastIndexUsed ?? 0);
-    }
-
-    /**
-     * Rotate to a new receive descriptor and return it. The first call on a
-     * fresh wallet returns descriptor at index 1 — index 0 is the implicit
-     * default surfaced by `getSigningDescriptor`, so rotating past it gives
-     * the consumer a genuinely new address rather than a no-op.
+     * Allocate the next descriptor and return it. The first call on a fresh
+     * wallet returns descriptor at index 0; subsequent calls return 1, 2, 3,
+     * ... in order. Each call is atomic with respect to other rotations on
+     * the same repo: two concurrent callers can never observe the same
+     * index.
      */
     async getNextSigningDescriptor(): Promise<string> {
         return this.mutate((settings) => {
             const next =
                 settings.lastIndexUsed === undefined
-                    ? 1
+                    ? 0
                     : settings.lastIndexUsed + 1;
             settings.lastIndexUsed = next;
             return this.materializeAt(next);

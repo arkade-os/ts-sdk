@@ -29,29 +29,14 @@ async function makeProvider(
 }
 
 describe("HDDescriptorProvider", () => {
-    describe("create / getSigningDescriptor", () => {
-        it("materializes receive index 0 on a fresh wallet without persisting", async () => {
-            const { provider, walletRepo } = await makeProvider();
-            expect(await provider.getSigningDescriptor()).toMatch(/\/0\/0\)$/);
-            // No HD settings written yet — `getSigningDescriptor` is a pure
-            // read; only a rotation should persist.
+    describe("create", () => {
+        it("does not perform I/O at construction time", async () => {
+            const { walletRepo } = await makeProvider();
             const state = await walletRepo.getWalletState();
             expect(state?.settings?.hd).toBeUndefined();
         });
 
-        it("reuses stored lastIndexUsed across instances", async () => {
-            const repo = new InMemoryWalletRepository();
-            const { provider: first } = await makeProvider(repo);
-            await first.getNextSigningDescriptor(); // rotates to index 1
-            await first.getNextSigningDescriptor(); // rotates to index 2
-
-            const { provider: second } = await makeProvider(repo);
-            expect(await second.getSigningDescriptor()).toBe(
-                await first.getSigningDescriptor()
-            );
-        });
-
-        it("does not overwrite unrelated settings keys", async () => {
+        it("does not overwrite unrelated settings keys when later rotated", async () => {
             const repo = new InMemoryWalletRepository();
             await repo.saveWalletState({ settings: { other: "preserved" } });
             const { provider } = await makeProvider(repo);
@@ -62,7 +47,7 @@ describe("HDDescriptorProvider", () => {
             expect(state?.settings?.hd).toBeDefined();
         });
 
-        it("preserves unrelated walletState fields (e.g. lastSyncTime)", async () => {
+        it("preserves unrelated walletState fields (e.g. lastSyncTime) on rotation", async () => {
             const repo = new InMemoryWalletRepository();
             await repo.saveWalletState({ lastSyncTime: 12345 });
             const { provider } = await makeProvider(repo);
@@ -72,7 +57,7 @@ describe("HDDescriptorProvider", () => {
             expect(state?.lastSyncTime).toBe(12345);
         });
 
-        it("throws on read when stored state belongs to a different identity", async () => {
+        it("throws on rotate when stored state belongs to a different identity", async () => {
             const repo = new InMemoryWalletRepository();
             const { provider: first } = await makeProvider(repo);
             await first.getNextSigningDescriptor(); // seed state
@@ -80,43 +65,36 @@ describe("HDDescriptorProvider", () => {
             const { provider: second } = await makeProvider(repo, {
                 mnemonic: OTHER_MNEMONIC,
             });
-            await expect(second.getSigningDescriptor()).rejects.toThrow(
+            await expect(second.getNextSigningDescriptor()).rejects.toThrow(
                 /descriptor mismatch/i
             );
         });
     });
 
     describe("getNextSigningDescriptor", () => {
-        it("rotates past the implicit default (0) on the first call", async () => {
+        it("returns descriptor at index 0 on the first call", async () => {
             const { provider } = await makeProvider();
-            // Fresh wallet: getSigningDescriptor returns descriptor-at-0
-            // implicitly; rotating must move past it.
-            const before = await provider.getSigningDescriptor();
-            const rotated = await provider.getNextSigningDescriptor();
-            expect(rotated).not.toBe(before);
-            expect(rotated).toMatch(/\/0\/1\)$/);
-            expect(await provider.getSigningDescriptor()).toBe(rotated);
+            const first = await provider.getNextSigningDescriptor();
+            expect(first).toMatch(/\/0\/0\)$/);
         });
 
-        it("returns sequential indexes 1, 2, 3...", async () => {
+        it("returns sequential indexes 0, 1, 2...", async () => {
             const { provider } = await makeProvider();
             const a = await provider.getNextSigningDescriptor();
             const b = await provider.getNextSigningDescriptor();
             const c = await provider.getNextSigningDescriptor();
-            expect(a).toMatch(/\/0\/1\)$/);
-            expect(b).toMatch(/\/0\/2\)$/);
-            expect(c).toMatch(/\/0\/3\)$/);
+            expect(a).toMatch(/\/0\/0\)$/);
+            expect(b).toMatch(/\/0\/1\)$/);
+            expect(c).toMatch(/\/0\/2\)$/);
         });
 
         it("returns a descriptor parsable via descriptors-scure", async () => {
             const { provider } = await makeProvider();
             const descriptor = await provider.getNextSigningDescriptor();
-            // The returned descriptor must be a fully-materialized
-            // (non-wildcard) tr() expression.
+            // Fully materialized (non-wildcard) tr() expression.
             expect(descriptor).toMatch(/^tr\(/);
             expect(descriptor).not.toContain("*");
-            // Round-trip parse it without an `index` arg — it should already
-            // be a non-ranged descriptor.
+            // Round-trip parse without an `index` arg — already concrete.
             expect(() =>
                 expand({ descriptor, network: networks.bitcoin })
             ).not.toThrow();
@@ -125,12 +103,12 @@ describe("HDDescriptorProvider", () => {
         it("persists each bump so a restart continues the sequence", async () => {
             const repo = new InMemoryWalletRepository();
             const { provider: first } = await makeProvider(repo);
+            await first.getNextSigningDescriptor(); // 0
             await first.getNextSigningDescriptor(); // 1
-            await first.getNextSigningDescriptor(); // 2
 
             const { provider: second } = await makeProvider(repo);
             const next = await second.getNextSigningDescriptor();
-            expect(next).toMatch(/\/0\/3\)$/);
+            expect(next).toMatch(/\/0\/2\)$/);
         });
 
         it("serialises concurrent callers so indexes never collide", async () => {
@@ -140,12 +118,12 @@ describe("HDDescriptorProvider", () => {
                     provider.getNextSigningDescriptor()
                 )
             );
-            // Indexes 1..10, no duplicates, contiguous when sorted.
+            // All 10 are unique and contiguous 0..9 when sorted.
             expect(new Set(results).size).toBe(results.length);
             const indexes = results
                 .map((d) => Number(d.match(/\/0\/(\d+)\)$/)?.[1]))
                 .sort((a, b) => a - b);
-            expect(indexes).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+            expect(indexes).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
         });
 
         it("serialises rotations across two providers on the same repo", async () => {
@@ -195,8 +173,8 @@ describe("HDDescriptorProvider", () => {
                 message
             );
 
-            // Derive the expected x-only pubkey at the same index
-            // directly from the seed and verify the signature against it.
+            // Derive the expected x-only pubkey at the same index directly
+            // from the seed and verify the signature against it.
             const seed = mnemonicToSeedSync(MNEMONIC);
             const master = HDKey.fromMasterSeed(seed, networks.bitcoin.bip32);
             const probe = expand({
@@ -208,8 +186,8 @@ describe("HDDescriptorProvider", () => {
             const pubkey = master.derive(path!).publicKey!.slice(1);
 
             expect(await schnorr.verifyAsync(sig, message, pubkey)).toBe(true);
-            // First rotate gives index 1.
-            expect(descriptor).toMatch(/\/0\/1\)$/);
+            // First rotate gives index 0.
+            expect(descriptor).toMatch(/\/0\/0\)$/);
         });
 
         it("signWithDescriptor rejects descriptors not belonging to this wallet", async () => {
@@ -230,7 +208,7 @@ describe("HDDescriptorProvider", () => {
     });
 
     describe("error paths", () => {
-        it("throws on read when stored lastIndexUsed is not a non-negative integer", async () => {
+        it("throws on rotate when stored lastIndexUsed is not a non-negative integer", async () => {
             const repo = new InMemoryWalletRepository();
             const identity = makeIdentity();
             await repo.saveWalletState({
@@ -242,7 +220,7 @@ describe("HDDescriptorProvider", () => {
                 },
             });
             const provider = await HDDescriptorProvider.create(identity, repo);
-            await expect(provider.getSigningDescriptor()).rejects.toThrow(
+            await expect(provider.getNextSigningDescriptor()).rejects.toThrow(
                 /corrupt hd settings.*lastindexused/i
             );
         });
@@ -271,8 +249,9 @@ describe("HDDescriptorProvider", () => {
             const state = await repo.getWalletState();
             // Sync cursor landed at the higher of the two advances.
             expect(state?.lastSyncTime).toBe(2_000_000);
-            // All three rotations are visible — lastIndexUsed is 3.
-            expect(state?.settings?.hd.lastIndexUsed).toBe(3);
+            // Three rotations from a fresh wallet → indexes 0, 1, 2 →
+            // lastIndexUsed is 2.
+            expect(state?.settings?.hd.lastIndexUsed).toBe(2);
             // The migration marker written by advanceSyncCursor is preserved.
             expect(state?.settings?.vtxoCursorMigrated).toBe(true);
         });
@@ -295,8 +274,8 @@ describe("HDDescriptorProvider", () => {
             // Cursor was cleared.
             expect(state?.lastSyncTime).toBeUndefined();
             expect(state?.settings?.vtxoCursorMigrated).toBeUndefined();
-            // HD rotations survived — both bumps landed.
-            expect(state?.settings?.hd.lastIndexUsed).toBe(2);
+            // HD rotations survived: indexes 0 and 1 → lastIndexUsed is 1.
+            expect(state?.settings?.hd.lastIndexUsed).toBe(1);
         });
     });
 });
