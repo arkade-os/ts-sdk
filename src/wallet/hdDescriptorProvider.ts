@@ -16,11 +16,11 @@ import { updateWalletState } from "../utils/syncCursors";
  */
 interface HDWalletSettings {
     /**
-     * Account descriptor template (ends in `/*)`). Used as a strong
-     * identity guard: a repo populated by a different seed will have a
-     * different template and must not be reused.
+     * Account descriptor (ends in `/*)`). Used as a strong identity guard:
+     * a repo populated by a different seed will have a different descriptor
+     * and must not be reused.
      */
-    template: string;
+    descriptor: string;
 
     /**
      * Active receive index. Monotonic — each `rotateReceive` bumps by one.
@@ -228,13 +228,13 @@ export class HDDescriptorProvider implements DescriptorProvider {
         const stored = state.settings?.[HD_SETTINGS_KEY] as
             | HDWalletSettings
             | undefined;
-        const expectedTemplate = this.identity.descriptor;
+        const expected = this.identity.descriptor;
         if (!stored) {
-            return { template: expectedTemplate };
+            return { descriptor: expected };
         }
-        if (stored.template !== expectedTemplate) {
+        if (stored.descriptor !== expected) {
             throw new Error(
-                `HD template mismatch: stored "${stored.template}", expected "${expectedTemplate}". ` +
+                `HD descriptor mismatch: stored "${stored.descriptor}", expected "${expected}". ` +
                     `Refusing to reuse HD state from a different identity.`
             );
         }

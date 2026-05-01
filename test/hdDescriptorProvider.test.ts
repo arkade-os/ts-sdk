@@ -40,7 +40,7 @@ describe("HDDescriptorProvider", () => {
             const { walletRepo } = await makeProvider();
             const state = await walletRepo.getWalletState();
             expect(state?.settings?.hd).toMatchObject({
-                template: expect.stringMatching(/\/0\/\*\)$/),
+                descriptor: expect.stringMatching(/\/0\/\*\)$/),
                 lastIndexUsed: 0,
             });
         });
@@ -83,7 +83,7 @@ describe("HDDescriptorProvider", () => {
 
             await expect(
                 makeProvider(repo, { mnemonic: OTHER_MNEMONIC })
-            ).rejects.toThrow(/template mismatch/i);
+            ).rejects.toThrow(/descriptor mismatch/i);
         });
     });
 
@@ -230,7 +230,7 @@ describe("HDDescriptorProvider", () => {
             await repo.saveWalletState({
                 settings: {
                     hd: {
-                        template: identity.descriptor,
+                        descriptor: identity.descriptor,
                         lastIndexUsed: -1,
                     },
                 },
