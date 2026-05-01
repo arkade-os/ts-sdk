@@ -2,7 +2,7 @@ import {
     DescriptorProvider,
     DescriptorSigningRequest,
 } from "../identity/descriptorProvider";
-import { SeedIdentity } from "../identity/seedIdentity";
+import { HDCapableIdentity } from "../identity/hdCapableIdentity";
 import {
     WalletRepository,
     WalletState,
@@ -33,12 +33,8 @@ interface HDWalletSettings {
 /** Settings key under {@link WalletState.settings} where HD state lives. */
 const HD_SETTINGS_KEY = "hd";
 
-/**
- * Materialized view of the current receive slot held in memory so that
- * `getSigningDescriptor()` can satisfy the synchronous
- * {@link DescriptorProvider} contract.
- */
-interface CurrentReceive {
+/** Return shape of {@link HDDescriptorProvider.rotateReceive}. */
+interface ReceiveSlot {
     index: number;
     descriptor: string;
 }
@@ -49,7 +45,7 @@ interface CurrentReceive {
  *
  * State is persisted under `WalletRepository.getWalletState().settings.hd` so
  * that no storage-schema migration is required when switching a wallet from
- * single-key to HD. The provider is backed by a {@link SeedIdentity}, which
+ * single-key to HD. The provider is backed by a {@link HDCapableIdentity}, which
  * both carries the seed (for signing) and exposes the account descriptor
  * template (for derivation).
  *
@@ -67,13 +63,17 @@ interface CurrentReceive {
  */
 export class HDDescriptorProvider implements DescriptorProvider {
     /**
-     * Cached current receive slot. Populated by {@link HDDescriptorProvider.create}
-     * and updated on every rotation.
+     * Cached active receive index. Populated by {@link HDDescriptorProvider.create}
+     * and updated on every rotation so that the synchronous
+     * `getSigningDescriptor` / `getLastIndexUsed` accessors don't need to hit
+     * disk. The descriptor itself is derived on demand from this index plus
+     * `identity.descriptor` — a single string substitution — so caching the
+     * materialized form alongside it would just bookkeep the same fact twice.
      */
-    private current: CurrentReceive | null = null;
+    private lastIndex: number | null = null;
 
     private constructor(
-        private readonly identity: SeedIdentity,
+        private readonly identity: HDCapableIdentity,
         private readonly walletRepository: WalletRepository
     ) {}
 
@@ -84,10 +84,10 @@ export class HDDescriptorProvider implements DescriptorProvider {
      * receive descriptor and persists it. Subsequent runs reuse the stored
      * `lastIndexUsed`.
      *
-     * @throws if persisted state was written by a different identity (template mismatch).
+     * @throws if persisted state was written by a different identity (descriptor mismatch).
      */
     static async create(
-        identity: SeedIdentity,
+        identity: HDCapableIdentity,
         walletRepository: WalletRepository
     ): Promise<HDDescriptorProvider> {
         const provider = new HDDescriptorProvider(identity, walletRepository);
@@ -97,31 +97,31 @@ export class HDDescriptorProvider implements DescriptorProvider {
 
     /** Returns the currently-active receive descriptor. */
     getSigningDescriptor(): string {
-        return this.requireCurrent().descriptor;
+        return this.materializeAt(this.requireIndex());
     }
 
     /** Returns the currently-active receive index. */
     getLastIndexUsed(): number {
-        return this.requireCurrent().index;
+        return this.requireIndex();
     }
 
     /**
      * Rotate the active receive descriptor to the next index.
      *
-     * Updates both the persisted state and the in-memory `current` so that
+     * Updates the persisted state and the in-memory `lastIndex` so that
      * subsequent {@link getSigningDescriptor} calls observe the rotation.
      */
-    async rotateReceive(): Promise<CurrentReceive> {
-        const next = await this.mutate((settings) => {
-            const index =
+    async rotateReceive(): Promise<ReceiveSlot> {
+        const index = await this.mutate((settings) => {
+            const next =
                 settings.lastIndexUsed === undefined
                     ? 0
                     : settings.lastIndexUsed + 1;
-            settings.lastIndexUsed = index;
-            return { index, descriptor: this.materializeAt(index) };
+            settings.lastIndexUsed = next;
+            return next;
         });
-        this.current = next;
-        return next;
+        this.lastIndex = index;
+        return { index, descriptor: this.materializeAt(index) };
     }
 
     /**
@@ -160,48 +160,45 @@ export class HDDescriptorProvider implements DescriptorProvider {
     // ── internals ────────────────────────────────────────────────────
 
     private async initialize(): Promise<void> {
-        this.current = await this.mutate((settings) => {
+        this.lastIndex = await this.mutate((settings) => {
             if (settings.lastIndexUsed === undefined) {
                 settings.lastIndexUsed = 0;
             }
-            const index = settings.lastIndexUsed;
-            return { index, descriptor: this.materializeAt(index) };
+            return settings.lastIndexUsed;
         });
     }
 
     /**
-     * Substitute the wildcard in this provider's identity's account-descriptor
-     * template with a concrete index. SeedIdentity exposes the template via
-     * its `descriptor` field; the "current index" concept lives here in the
+     * Substitute the wildcard in the identity's account-descriptor template
+     * with a concrete index. The identity exposes the template via its
+     * `descriptor` field; the "current index" concept lives here in the
      * provider.
      */
     private materializeAt(index: number): string {
         return this.identity.descriptor.replace("/*)", `/${index})`);
     }
 
-    private requireCurrent(): CurrentReceive {
-        if (!this.current) {
+    private requireIndex(): number {
+        if (this.lastIndex === null) {
             throw new Error(
                 "HDDescriptorProvider not initialized; use HDDescriptorProvider.create(...)"
             );
         }
-        return this.current;
+        return this.lastIndex;
     }
 
     /**
      * Run the read-modify-write of HD settings inside the shared per-repo
      * wallet-state mutex. The closure receives a freshly-validated settings
-     * snapshot, mutates it, and returns the {@link CurrentReceive} the caller
-     * wants to surface; the mutated settings are then persisted as part of
-     * the same atomic update.
+     * snapshot, mutates it, and returns whatever value the caller wants to
+     * surface; the mutated settings are then persisted as part of the same
+     * atomic update.
      *
      * Doing the read inside the lock is what prevents two providers (or two
      * concurrent callers on the same provider) from racing on a stale index.
      */
-    private async mutate(
-        fn: (settings: HDWalletSettings) => CurrentReceive
-    ): Promise<CurrentReceive> {
-        let result: CurrentReceive | undefined;
+    private async mutate<T>(fn: (settings: HDWalletSettings) => T): Promise<T> {
+        let result!: T;
         await updateWalletState(this.walletRepository, (state) => {
             const settings = this.parseSettings(state);
             result = fn(settings);
@@ -213,7 +210,7 @@ export class HDDescriptorProvider implements DescriptorProvider {
                 },
             };
         });
-        return result!;
+        return result;
     }
 
     /**
