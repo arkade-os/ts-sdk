@@ -242,27 +242,52 @@ function rebuildTapscript(
 }
 
 /**
- * Look up the most-recently-created active "default" contract whose
- * `serverPubKey` matches the wallet's current server, and return its owner
- * pubkey. Returns `undefined` when no such contract exists — the caller
+ * Sentinel value stored in `contract.metadata.source` to identify the
+ * wallet's current display contract. Borrowed from btcpay-arkade's
+ * source-tagging pattern — every contract records "where and why it was
+ * generated", and the wallet only cares about the ones it generated for
+ * its own receive address.
+ *
+ * Tagging makes the boot lookup unambiguous: `pickActiveReceivePubkey`
+ * filters on `metadata.source === WALLET_RECEIVE_SOURCE` rather than on
+ * "any active default contract", so a contract repo that also holds
+ * default contracts created for other reasons (legacy timelock variants,
+ * external integrations) doesn't confuse the wallet's display state.
+ */
+const WALLET_RECEIVE_SOURCE = "wallet-receive";
+
+/**
+ * Look up the most-recently-created active default contract that this
+ * wallet itself generated for its display address. Returns its owner
+ * pubkey, or `undefined` when no such contract exists — the caller
  * should treat that as "fresh wallet" and allocate a new descriptor via
  * the HD provider.
  *
  * Filters by `serverPubKey` so a contract repo seeded against a different
- * server (mainnet vs. regtest, server rotation) doesn't accidentally
- * resurrect an unrelated pubkey.
+ * server doesn't accidentally resurrect an unrelated pubkey, and by the
+ * `metadata.source` sentinel so contracts created by other code paths
+ * (legacy timelock registrations, external integrations) are not
+ * mistaken for the wallet's own display address.
  */
-async function pickActiveDefaultPubkey(
+async function pickActiveReceivePubkey(
     contractRepository: ContractRepository,
     serverPubKey: Uint8Array
 ): Promise<Uint8Array | undefined> {
+    // Both `default` and `delegate` contract types can be the wallet's
+    // display address (delegate wallets use the delegate variant). The
+    // `metadata.source` tag is the discriminator that says "this is the
+    // one I generated for myself."
     const candidates = await contractRepository.getContracts({
-        type: "default",
+        type: ["default", "delegate"],
         state: "active",
     });
     const serverPubKeyHex = hex.encode(serverPubKey);
     const matching = candidates
-        .filter((c) => c.params.serverPubKey === serverPubKeyHex)
+        .filter(
+            (c) =>
+                c.params.serverPubKey === serverPubKeyHex &&
+                c.metadata?.source === WALLET_RECEIVE_SOURCE
+        )
         .sort((a, b) => b.createdAt - a.createdAt);
     const newest = matching[0];
     if (!newest?.params.pubKey) return undefined;
@@ -1028,6 +1053,19 @@ export class ReadonlyWallet implements IReadonlyWallet {
             watcherConfig: this.watcherConfig,
         });
 
+        // Tag the contract whose script matches the wallet's current
+        // display address with `metadata.source = WALLET_RECEIVE_SOURCE`.
+        // That's the one a future boot will look up via
+        // `pickActiveReceivePubkey` to recover the rotated state. Other
+        // variants in this loop (past timelocks, the non-delegate
+        // companion of a delegate wallet) are backwards-compat
+        // registrations and stay untagged.
+        const displayScript = this.defaultContractScript;
+        const tagIfDisplay = (script: string) =>
+            script === displayScript
+                ? { metadata: { source: WALLET_RECEIVE_SOURCE } }
+                : {};
+
         for (const csvTimelock of this.walletContractTimelocks) {
             const csvTimelockStr = timelockToSequence(csvTimelock).toString();
             const defaultScript = new DefaultVtxo.Script({
@@ -1035,6 +1073,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 serverPubKey: this.offchainTapscript.options.serverPubKey,
                 csvTimelock,
             });
+            const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
             await manager.createContract({
                 type: "default",
@@ -1045,11 +1084,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     ),
                     csvTimelock: csvTimelockStr,
                 },
-                script: hex.encode(defaultScript.pkScript),
+                script: defaultScriptHex,
                 address: defaultScript
                     .address(this.network.hrp, this.arkServerPublicKey)
                     .encode(),
                 state: "active",
+                ...tagIfDisplay(defaultScriptHex),
             });
 
             if (this.offchainTapscript instanceof DelegateVtxo.Script) {
@@ -1060,6 +1100,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         this.offchainTapscript.options.delegatePubKey,
                     csvTimelock,
                 });
+                const delegateScriptHex = hex.encode(delegateScript.pkScript);
 
                 await manager.createContract({
                     type: "delegate",
@@ -1073,11 +1114,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         ),
                         csvTimelock: csvTimelockStr,
                     },
-                    script: hex.encode(delegateScript.pkScript),
+                    script: delegateScriptHex,
                     address: delegateScript
                         .address(this.network.hrp, this.arkServerPublicKey)
                         .encode(),
                     state: "active",
+                    ...tagIfDisplay(delegateScriptHex),
                 });
             }
         }
@@ -1413,7 +1455,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     setup.walletRepository
                 );
 
-                const activePubkey = await pickActiveDefaultPubkey(
+                const activePubkey = await pickActiveReceivePubkey(
                     setup.contractRepository,
                     setup.serverPubKey
                 );
@@ -1502,9 +1544,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
     /**
      * Allocate the next HD descriptor, swap it into the active offchain
-     * tapscript, and register the corresponding default contract via the
-     * contract manager. The previous default contract entry stays active
-     * so earlier addresses continue to credit the wallet.
+     * tapscript, and register the corresponding contract via the
+     * contract manager. The new contract is tagged with
+     * `metadata.source = WALLET_RECEIVE_SOURCE` so the next boot can find
+     * it via {@link pickActiveReceivePubkey}. The previous receive
+     * contract stays active in the repo so earlier addresses continue to
+     * credit the wallet.
+     *
+     * Contract type matches the wallet's tapscript shape: a default
+     * wallet rotates to a new `default` contract, a delegate wallet to a
+     * new `delegate` contract.
      */
     private async rotateAndRegister(): Promise<void> {
         if (!this._hdProvider) return;
@@ -1519,19 +1568,41 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const csvTimelock =
             this.offchainTapscript.options.csvTimelock ??
             DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        await manager.createContract({
-            type: "default",
-            params: {
-                pubKey: hex.encode(pubKey),
-                serverPubKey: hex.encode(
-                    this.offchainTapscript.options.serverPubKey
-                ),
-                csvTimelock: timelockToSequence(csvTimelock).toString(),
-            },
+        const csvTimelockStr = timelockToSequence(csvTimelock).toString();
+        const serverPubKeyHex = hex.encode(
+            this.offchainTapscript.options.serverPubKey
+        );
+        const baseParams = {
             script: this.defaultContractScript,
             address: await this.getAddress(),
-            state: "active",
-        });
+            state: "active" as const,
+            metadata: { source: WALLET_RECEIVE_SOURCE },
+        };
+
+        if (this.offchainTapscript instanceof DelegateVtxo.Script) {
+            await manager.createContract({
+                ...baseParams,
+                type: "delegate",
+                params: {
+                    pubKey: hex.encode(pubKey),
+                    serverPubKey: serverPubKeyHex,
+                    delegatePubKey: hex.encode(
+                        this.offchainTapscript.options.delegatePubKey
+                    ),
+                    csvTimelock: csvTimelockStr,
+                },
+            });
+        } else {
+            await manager.createContract({
+                ...baseParams,
+                type: "default",
+                params: {
+                    pubKey: hex.encode(pubKey),
+                    serverPubKey: serverPubKeyHex,
+                    csvTimelock: csvTimelockStr,
+                },
+            });
+        }
     }
 
     /**
