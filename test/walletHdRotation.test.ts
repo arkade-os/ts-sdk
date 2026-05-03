@@ -123,6 +123,26 @@ describe("Wallet HD rotation", () => {
             await wallet.dispose();
         });
 
+        it("tags the wallet's display contract with source=wallet-receive", async () => {
+            // The boot lookup uses `metadata.source === 'wallet-receive'`
+            // to recover the rotated state on the next session — so the
+            // initial registration MUST set this tag. Other contracts
+            // registered by `initializeContractManager` (legacy timelocks,
+            // companion variants) intentionally stay untagged.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            const all = await contractRepo.getContracts({});
+            const tagged = all.filter(
+                (c) => c.metadata?.source === "wallet-receive"
+            );
+            expect(tagged).toHaveLength(1);
+            expect(tagged[0].script).toBe(wallet.defaultContractScript);
+
+            await wallet.dispose();
+        });
+
         it("does NOT install HD provider for SingleKey identities", async () => {
             const repo = new InMemoryWalletRepository();
             const wallet = await Wallet.create({
@@ -299,13 +319,46 @@ describe("Wallet HD rotation", () => {
             expect(addrV1).not.toBe(addrV0);
             await first.dispose();
 
-            // Restart on the same repos — boot should land on the rotated
-            // address by querying the contract repo for active default
-            // contracts and picking the most recent.
+            // Restart on the same repos — boot looks up the
+            // most-recent active contract whose
+            // `metadata.source === 'wallet-receive'` and uses its
+            // pubkey for the new offchain tapscript.
             const second = await makeHdWallet(walletRepo, contractRepo);
             const restoredAddr = await second.getAddress();
             expect(restoredAddr).toBe(addrV1);
             await second.dispose();
+        });
+
+        it("second wallet ignores active default contracts without the source tag", async () => {
+            // Defensive: make sure the boot path is keyed off the
+            // source tag, not "any active default contract". An
+            // unrelated active default contract (e.g. one created by
+            // an external integration that reused this repo) must NOT
+            // be picked up as the wallet's display address.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+
+            // Pre-seed with a stranger's active default contract — it
+            // has the same serverPubKey shape but no source tag.
+            await contractRepo.saveContract({
+                type: "default",
+                params: {
+                    pubKey: "0000000000000000000000000000000000000000000000000000000000000000",
+                    serverPubKey:
+                        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+                    csvTimelock: "144",
+                },
+                script: "ff".repeat(34),
+                address: "intruder",
+                state: "active",
+                createdAt: Date.now(),
+            });
+
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+            // Boot allocated index 0 (no tagged contract was found).
+            const state = await walletRepo.getWalletState();
+            expect(state?.settings?.hd?.lastIndexUsed).toBe(0);
+            await wallet.dispose();
         });
     });
 
