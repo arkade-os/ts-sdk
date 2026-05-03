@@ -102,6 +102,7 @@ export type {
     HDCapableIdentity,
     ReadonlyHDCapableIdentity,
 } from "./hdCapableIdentity";
+export { isHDCapableIdentity } from "./hdCapableIdentity";
 
 // Static descriptor provider (wrapper for legacy Identity)
 export { StaticDescriptorProvider } from "./staticDescriptorProvider";

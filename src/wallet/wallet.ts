@@ -2,7 +2,7 @@ import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import { getNetwork, Network, NetworkName } from "../networks";
@@ -106,7 +106,7 @@ import {
     saveVtxosForContract,
 } from "../contracts/vtxoOwnership";
 import { HDDescriptorProvider } from "./hdDescriptorProvider";
-import { SeedIdentity } from "../identity/seedIdentity";
+import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import { expand, networks } from "@bitcoinerlab/descriptors-scure";
 import { isMainnetDescriptor } from "../identity/descriptor";
 
@@ -180,26 +180,6 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
         "toReadonly" in identity &&
         typeof (identity as any).toReadonly === "function"
     );
-}
-
-/**
- * Returns `true` when `identity`'s account descriptor is a vanilla BIP-86
- * template (the form `tr(...path/0/*)`), suggesting it can be safely
- * rotated. User-pinned descriptors with non-zero starting indexes or non-
- * BIP86 paths are returned as-is from this check (false), keeping them on
- * the static path so the SDK doesn't silently reset the user's choice.
- */
-function looksLikeVanillaHDDescriptor(identity: SeedIdentity): boolean {
-    return identity.descriptor.endsWith("/0/*)");
-}
-
-/** Constant-time-free byte equality — fine for pubkey reconciliation. */
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-    if (a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) {
-        if (a[i] !== b[i]) return false;
-    }
-    return true;
 }
 
 /**
@@ -1445,10 +1425,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         //   descriptors stay on the static path unchanged.
         let hdProvider: HDDescriptorProvider | undefined;
         let offchainTapscript = setup.offchainTapscript;
-        if (
-            config.identity instanceof SeedIdentity &&
-            looksLikeVanillaHDDescriptor(config.identity)
-        ) {
+        if (isHDCapableIdentity(config.identity)) {
             try {
                 hdProvider = await HDDescriptorProvider.create(
                     config.identity,
@@ -1466,18 +1443,21 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     // Fresh wallet (or contract repo wiped). Allocate the
                     // first descriptor through the provider so storage and
                     // the contract we'll register in a moment are in sync.
+                    // If the identity's descriptor isn't a ranged template
+                    // the call throws and we fall back to the static path
+                    // via the surrounding catch.
                     const descriptor =
                         await hdProvider.getNextSigningDescriptor();
                     receivePubkey = deriveLeafPubkey(descriptor);
                 }
-                if (!bytesEqual(receivePubkey, pubkey)) {
+                if (!equalBytes(receivePubkey, pubkey)) {
                     offchainTapscript = rebuildTapscript(
                         offchainTapscript,
                         receivePubkey
                     );
                 }
             } catch {
-                // Template not derivable, contract repo unavailable, or
+                // Descriptor not rangeable, contract repo unavailable, or
                 // descriptor mismatch — fall back to the static path
                 // rather than fail wallet construction.
                 hdProvider = undefined;
