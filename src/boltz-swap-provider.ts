@@ -1,5 +1,10 @@
 import { Transaction } from "@arkade-os/sdk";
-import { NetworkError, SchemaError, SwapError } from "./errors";
+import {
+    NetworkError,
+    SchemaError,
+    SwapError,
+    SwapNotFoundError,
+} from "./errors";
 import {
     Chain,
     ChainFeesResponse,
@@ -998,9 +1003,21 @@ export const isCreateSwapsRestoreResponse = (
 };
 
 const BASE_URLS: Partial<Record<Network, string>> = {
-    bitcoin: "https://api.ark.boltz.exchange",
+    bitcoin: "https://api.boltz.exchange",
     mutinynet: "https://api.boltz.mutinynet.arkade.sh",
     regtest: "http://localhost:9069",
+};
+
+// Boltz's body for an unknown swap looks like
+//   {"error":"could not find swap with id: <id>"}
+// Match defensively on either the parsed JSON field or the raw message so a
+// 404 from a renamed route or misconfigured proxy does NOT trip the safety net.
+const isSwapNotFoundBody = (error: NetworkError): boolean => {
+    const needle = "could not find swap";
+    const fromJson = error.errorData?.error;
+    if (typeof fromJson === "string" && fromJson.toLowerCase().includes(needle))
+        return true;
+    return error.message.toLowerCase().includes(needle);
 };
 
 /**
@@ -1111,12 +1128,31 @@ export class BoltzSwapProvider {
         return res;
     }
 
-    /** Queries the current status of a swap by ID. */
+    /**
+     * Queries the current status of a swap by ID.
+     *
+     * @throws {SwapNotFoundError} when Boltz responds with HTTP 404 and a body
+     * matching the "could not find swap" pattern. Distinct from a generic 404
+     * so callers (e.g. SwapManager polling) can drive a per-swap unknown-to-
+     * provider counter without tripping on transient route or proxy errors.
+     */
     async getSwapStatus(id: string): Promise<GetSwapStatusResponse> {
-        const response = await this.request<GetSwapStatusResponse>(
-            `/v2/swap/${id}`,
-            "GET"
-        );
+        let response: GetSwapStatusResponse;
+        try {
+            response = await this.request<GetSwapStatusResponse>(
+                `/v2/swap/${id}`,
+                "GET"
+            );
+        } catch (error) {
+            if (
+                error instanceof NetworkError &&
+                error.statusCode === 404 &&
+                isSwapNotFoundBody(error)
+            ) {
+                throw new SwapNotFoundError(id, error.errorData);
+            }
+            throw error;
+        }
         if (!isGetSwapStatusResponse(response))
             throw new SchemaError({
                 message: `error fetching status for swap: ${id}`,

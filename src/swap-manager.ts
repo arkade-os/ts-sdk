@@ -19,7 +19,7 @@ import {
     BoltzSubmarineSwap,
     BoltzSwap,
 } from "./types";
-import { NetworkError } from "./errors";
+import { NetworkError, SwapNotFoundError } from "./errors";
 import { logger } from "./logger";
 
 /**
@@ -165,6 +165,15 @@ export interface SwapManagerCallbacks {
  * for both reconnection and polling intervals.
  */
 export class SwapManager implements SwapManagerClient {
+    /**
+     * Number of consecutive Boltz 404s for a single swap ID before the
+     * polling loop gives up and transitions the swap to a terminal state.
+     * At the default 30s poll cadence this is roughly a 5-minute grace
+     * window — long enough to ride out a transient Boltz blip, short
+     * enough that a real "swap unknown to this provider" surfaces quickly.
+     */
+    private static readonly NOT_FOUND_THRESHOLD = 10;
+
     private readonly swapProvider: BoltzSwapProvider;
     private readonly config: SwapManagerConfig;
 
@@ -184,6 +193,13 @@ export class SwapManager implements SwapManagerClient {
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private initialPollTimer: ReturnType<typeof setTimeout> | null = null;
     private pollRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    // Per-swap counter of consecutive `SwapNotFoundError` responses from
+    // `getSwapStatus`. Reset on any successful poll. Once a swap reaches
+    // `NOT_FOUND_THRESHOLD` consecutive 404s the safety net trips and the
+    // swap is transitioned to `swap.expired` (terminal) and dropped from
+    // monitoring — typically the canonical failure mode after a Boltz
+    // endpoint switch, where old swap IDs are unknown to the new instance.
+    private notFoundCounts = new Map<string, number>();
     private isRunning = false;
     private currentReconnectDelay: number;
     private currentPollRetryDelay: number;
@@ -436,6 +452,7 @@ export class SwapManager implements SwapManagerClient {
             clearTimeout(timer);
         }
         this.pollRetryTimers.clear();
+        this.notFoundCounts.clear();
     }
 
     /**
@@ -509,6 +526,7 @@ export class SwapManager implements SwapManagerClient {
             clearTimeout(retryTimer);
             this.pollRetryTimers.delete(swapId);
         }
+        this.notFoundCounts.delete(swapId);
         logger.log(`Removed swap ${swapId} from monitoring`);
     }
 
@@ -871,6 +889,10 @@ export class SwapManager implements SwapManagerClient {
         swap: BoltzSwap,
         newStatus: BoltzSwapStatus
     ): Promise<void> {
+        // Any real status update (poll or WebSocket) means Boltz still
+        // recognises this swap — clear the unknown-to-provider counter.
+        this.notFoundCounts.delete(swap.id);
+
         const oldStatus = swap.status;
 
         // Skip if status hasn't changed
@@ -1249,61 +1271,140 @@ export class SwapManager implements SwapManagerClient {
         if (this.monitoredSwaps.size === 0) return;
 
         const pollPromises = Array.from(this.monitoredSwaps.values()).map(
-            async (swap) => {
-                try {
-                    const statusResponse =
-                        await this.swapProvider.getSwapStatus(swap.id);
-
-                    if (statusResponse.status !== swap.status) {
-                        await this.handleSwapStatusUpdate(
-                            swap,
-                            statusResponse.status
-                        );
-                    }
-                } catch (error) {
-                    // On 429 (rate-limited), schedule a single retry for this
-                    // swap rather than waiting the full poll interval. This
-                    // avoids a 30s gap in status tracking after a burst.
-                    if (
-                        error instanceof NetworkError &&
-                        error.statusCode === 429
-                    ) {
-                        logger.warn(
-                            `Rate-limited polling swap ${swap.id}, retrying in 2s`
-                        );
-                        const existing = this.pollRetryTimers.get(swap.id);
-                        if (existing) clearTimeout(existing);
-                        this.pollRetryTimers.set(
-                            swap.id,
-                            setTimeout(async () => {
-                                this.pollRetryTimers.delete(swap.id);
-                                try {
-                                    const retry =
-                                        await this.swapProvider.getSwapStatus(
-                                            swap.id
-                                        );
-                                    if (retry.status !== swap.status) {
-                                        await this.handleSwapStatusUpdate(
-                                            swap,
-                                            retry.status
-                                        );
-                                    }
-                                } catch (retryError) {
-                                    logger.error(
-                                        `Retry poll for swap ${swap.id} also failed:`,
-                                        retryError
-                                    );
-                                }
-                            }, 2000)
-                        );
-                    } else {
-                        logger.error(`Failed to poll swap ${swap.id}:`, error);
-                    }
-                }
-            }
+            (swap) => this.pollSingleSwap(swap)
         );
 
         await Promise.allSettled(pollPromises);
+    }
+
+    private async pollSingleSwap(swap: BoltzSwap): Promise<void> {
+        try {
+            const statusResponse = await this.swapProvider.getSwapStatus(
+                swap.id
+            );
+            // A successful response means Boltz still recognises this swap
+            // — clear the consecutive-not-found counter.
+            this.notFoundCounts.delete(swap.id);
+            if (statusResponse.status !== swap.status) {
+                await this.handleSwapStatusUpdate(swap, statusResponse.status);
+            }
+        } catch (error) {
+            if (error instanceof SwapNotFoundError) {
+                await this.handleSwapNotFound(swap);
+                return;
+            }
+            // On 429 (rate-limited), schedule a single retry for this
+            // swap rather than waiting the full poll interval. This
+            // avoids a 30s gap in status tracking after a burst.
+            if (
+                error instanceof NetworkError &&
+                error.statusCode === 429
+            ) {
+                logger.warn(
+                    `Rate-limited polling swap ${swap.id}, retrying in 2s`
+                );
+                const existing = this.pollRetryTimers.get(swap.id);
+                if (existing) clearTimeout(existing);
+                this.pollRetryTimers.set(
+                    swap.id,
+                    setTimeout(async () => {
+                        this.pollRetryTimers.delete(swap.id);
+                        try {
+                            const retry =
+                                await this.swapProvider.getSwapStatus(swap.id);
+                            this.notFoundCounts.delete(swap.id);
+                            if (retry.status !== swap.status) {
+                                await this.handleSwapStatusUpdate(
+                                    swap,
+                                    retry.status
+                                );
+                            }
+                        } catch (retryError) {
+                            if (retryError instanceof SwapNotFoundError) {
+                                await this.handleSwapNotFound(swap);
+                                return;
+                            }
+                            logger.error(
+                                `Retry poll for swap ${swap.id} also failed:`,
+                                retryError
+                            );
+                        }
+                    }, 2000)
+                );
+            } else {
+                logger.error(`Failed to poll swap ${swap.id}:`, error);
+            }
+        }
+    }
+
+    /**
+     * Increment the consecutive-not-found counter and, once the threshold is
+     * reached, transition the swap to a terminal state and stop polling it.
+     * Driven from {@link pollSingleSwap} when `getSwapStatus` throws
+     * {@link SwapNotFoundError}. The threshold rides out a transient blip
+     * but ensures we stop hammering Boltz with requests for swap IDs the
+     * server has no record of (e.g. after switching the configured
+     * Boltz endpoint).
+     */
+    private async handleSwapNotFound(swap: BoltzSwap): Promise<void> {
+        const count = (this.notFoundCounts.get(swap.id) ?? 0) + 1;
+        this.notFoundCounts.set(swap.id, count);
+        logger.warn(
+            `Swap ${swap.id}: unknown to Boltz (${count}/${SwapManager.NOT_FOUND_THRESHOLD} consecutive)`
+        );
+        if (count >= SwapManager.NOT_FOUND_THRESHOLD) {
+            await this.markSwapAsUnknownToProvider(swap);
+        }
+    }
+
+    /**
+     * Transition a swap to {@code swap.expired} (terminal for all swap types)
+     * after Boltz has consistently reported it unknown for
+     * {@link SwapManager.NOT_FOUND_THRESHOLD} consecutive polls. The swap is
+     * persisted, removed from monitoring, and reported via `onSwapFailed`.
+     * Bypasses {@link handleSwapStatusUpdate} on purpose: we don't want to
+     * trigger autonomous claim/refund actions against a Boltz instance that
+     * has no record of this swap — the requests would just generate more
+     * 404s without recovering anything.
+     */
+    private async markSwapAsUnknownToProvider(swap: BoltzSwap): Promise<void> {
+        // Idempotency: bail if a concurrent path already removed the swap.
+        if (!this.monitoredSwaps.has(swap.id)) {
+            this.notFoundCounts.delete(swap.id);
+            return;
+        }
+
+        // Remove from monitoring first so any in-flight poll/WS handler
+        // for this ID becomes a no-op.
+        this.monitoredSwaps.delete(swap.id);
+        this.swapSubscriptions.delete(swap.id);
+        const retryTimer = this.pollRetryTimers.get(swap.id);
+        if (retryTimer) {
+            clearTimeout(retryTimer);
+            this.pollRetryTimers.delete(swap.id);
+        }
+        this.notFoundCounts.delete(swap.id);
+
+        // `swap.expired` is final for submarine, reverse, and chain swaps
+        // (see is*FinalStatus helpers). On next start the swap is loaded
+        // with a final status and won't be re-added to monitoredSwaps.
+        swap.status = "swap.expired";
+
+        const error = new SwapNotFoundError(swap.id);
+        try {
+            await this.saveSwap(swap);
+        } catch (saveError) {
+            logger.error(
+                `Failed to persist unknown-to-provider state for swap ${swap.id}:`,
+                saveError
+            );
+        }
+
+        logger.warn(
+            `Swap ${swap.id}: marked failed after ${SwapManager.NOT_FOUND_THRESHOLD} consecutive Boltz 404s — swap is unknown to the configured Boltz instance`
+        );
+
+        this.swapFailedListeners.forEach((listener) => listener(swap, error));
     }
 
     /**
