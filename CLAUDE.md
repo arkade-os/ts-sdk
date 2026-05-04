@@ -48,7 +48,7 @@ captures the conventions an agent needs to do recurring repo work
 ### Example entry shape
 
 ```markdown
-## [0.4.23] - YYYY-MM-DD
+## [X.Y.Z] - YYYY-MM-DD
 
 ### Bug Fixes
 - **`ElectrumOnchainProvider.getTxStatus` returned "confirmed" for
