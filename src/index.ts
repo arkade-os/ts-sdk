@@ -197,6 +197,7 @@ import {
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
+import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
@@ -259,6 +260,10 @@ import type {
     VHTLCContractParams,
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
+import {
+    timelockToSequence,
+    sequenceToTimelock,
+} from "./contracts/handlers/helpers";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -390,6 +395,9 @@ export {
     P2A,
     Unroll,
     Transaction,
+    TxWeightEstimator,
+    timelockToSequence,
+    sequenceToTimelock,
 
     // Errors
     ArkError,
@@ -536,6 +544,7 @@ export type {
 
     // Anchor
     AnchorBumper,
+    VSize,
 
     // Storage
     StorageConfig,
