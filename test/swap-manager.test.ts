@@ -1229,4 +1229,193 @@ describe("SwapManager", () => {
             expect(stats2.websocketConnected).toBe(true);
         });
     });
+
+    /**
+     * Safety net for swaps that have become unknown to the configured Boltz
+     * instance — typically because the operator switched the API URL to a
+     * different Boltz instance. Without it, the polling loop would 404 on
+     * every interval forever, generating server load and log noise. After
+     * 10 consecutive `getSwapStatus` 404s the swap is transitioned to
+     * `swap.expired` (terminal) and dropped from monitoring.
+     */
+    describe("Unknown to Boltz (404 safety net)", () => {
+        const NOT_FOUND_THRESHOLD = 10;
+
+        function stubSwapNotFound() {
+            global.fetch = vi.fn(() =>
+                Promise.resolve({
+                    ok: false,
+                    status: 404,
+                    text: () =>
+                        Promise.resolve(
+                            JSON.stringify({
+                                error: "could not find swap with id: any",
+                            })
+                        ),
+                    headers: { get: () => null },
+                } as unknown as Response)
+            );
+        }
+
+        function stubSwapStatusOk(status = "swap.created") {
+            global.fetch = vi.fn(() =>
+                Promise.resolve({
+                    ok: true,
+                    json: () => Promise.resolve({ status }),
+                    headers: new Headers({ "content-length": "100" }),
+                } as Response)
+            );
+        }
+
+        beforeEach(() => {
+            swapManager = new SwapManager(swapProvider, {
+                ...swapManagerConfig,
+                enableAutoActions: false, // we don't want auto refund/claim noise here
+            });
+            swapManager.setCallbacks(makeCallbacks());
+        });
+
+        it("trips after threshold, persists swap.expired, removes from monitoring, fires onSwapFailed", async () => {
+            const onSwapFailed = vi.fn();
+            const saveSwap = vi.fn().mockResolvedValue(undefined);
+            swapManager.setCallbacks(makeCallbacks({ saveSwap }));
+            await swapManager.onSwapFailed(onSwapFailed);
+
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
+            await swapManager.start([swap]);
+
+            stubSwapNotFound();
+
+            // Drive `pollAllSwaps` exactly THRESHOLD times. Each call should
+            // increment the counter; the THRESHOLD-th call trips the safety
+            // net and removes the swap.
+            for (let i = 0; i < NOT_FOUND_THRESHOLD; i++) {
+                await (swapManager as any).pollAllSwaps();
+            }
+
+            const stats = await swapManager.getStats();
+            expect(stats.monitoredSwaps).toBe(0);
+
+            expect(saveSwap).toHaveBeenCalled();
+            const persisted = saveSwap.mock.calls.at(-1)![0];
+            expect(persisted.id).toBe(swap.id);
+            expect(persisted.status).toBe("swap.expired");
+
+            expect(onSwapFailed).toHaveBeenCalledTimes(1);
+            const [failedSwap, failedError] = onSwapFailed.mock.calls[0];
+            expect(failedSwap.id).toBe(swap.id);
+            expect(failedError.name).toBe("SwapNotFoundError");
+            expect(failedError.swapId).toBe(swap.id);
+        });
+
+        it("does not trip below threshold", async () => {
+            const onSwapFailed = vi.fn();
+            const saveSwap = vi.fn().mockResolvedValue(undefined);
+            swapManager.setCallbacks(makeCallbacks({ saveSwap }));
+            await swapManager.onSwapFailed(onSwapFailed);
+
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
+            await swapManager.start([swap]);
+
+            stubSwapNotFound();
+
+            for (let i = 0; i < NOT_FOUND_THRESHOLD - 1; i++) {
+                await (swapManager as any).pollAllSwaps();
+            }
+
+            const stats = await swapManager.getStats();
+            expect(stats.monitoredSwaps).toBe(1);
+            expect(saveSwap).not.toHaveBeenCalled();
+            expect(onSwapFailed).not.toHaveBeenCalled();
+        });
+
+        it("settles waitForSwapCompletion when the safety net trips", async () => {
+            // Regression: markSwapAsUnknownToProvider used to delete the
+            // per-swap subscriber set before emitting anything. Awaiters
+            // registered via subscribeToSwapUpdates (waitForSwapCompletion,
+            // waitAndClaim*, etc.) would hang forever after the trip.
+            const saveSwap = vi.fn().mockResolvedValue(undefined);
+            swapManager.setCallbacks(makeCallbacks({ saveSwap }));
+
+            const swap = {
+                ...mockSubmarineSwap,
+                status: "invoice.set" as const,
+            };
+            await swapManager.start([swap]);
+
+            const completion = swapManager.waitForSwapCompletion(swap.id);
+
+            stubSwapNotFound();
+            for (let i = 0; i < NOT_FOUND_THRESHOLD; i++) {
+                await (swapManager as any).pollAllSwaps();
+            }
+
+            await expect(completion).rejects.toThrow(/swap\.expired/);
+        });
+
+        it("notifies per-swap subscribers with the terminal status", async () => {
+            const saveSwap = vi.fn().mockResolvedValue(undefined);
+            swapManager.setCallbacks(makeCallbacks({ saveSwap }));
+
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
+            await swapManager.start([swap]);
+
+            const subscriber = vi.fn();
+            await swapManager.subscribeToSwapUpdates(swap.id, subscriber);
+
+            stubSwapNotFound();
+            for (let i = 0; i < NOT_FOUND_THRESHOLD; i++) {
+                await (swapManager as any).pollAllSwaps();
+            }
+
+            expect(subscriber).toHaveBeenCalledTimes(1);
+            const [updatedSwap, oldStatus] = subscriber.mock.calls[0];
+            expect(updatedSwap.id).toBe(swap.id);
+            expect(updatedSwap.status).toBe("swap.expired");
+            expect(oldStatus).toBe("swap.created");
+        });
+
+        it("resets counter on a successful poll", async () => {
+            const onSwapFailed = vi.fn();
+            const saveSwap = vi.fn().mockResolvedValue(undefined);
+            swapManager.setCallbacks(makeCallbacks({ saveSwap }));
+            await swapManager.onSwapFailed(onSwapFailed);
+
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
+            await swapManager.start([swap]);
+
+            // 9 consecutive 404s.
+            stubSwapNotFound();
+            for (let i = 0; i < NOT_FOUND_THRESHOLD - 1; i++) {
+                await (swapManager as any).pollAllSwaps();
+            }
+
+            // One successful poll should clear the counter — no status change
+            // here so the swap is not promoted, but the counter resets.
+            stubSwapStatusOk("swap.created");
+            await (swapManager as any).pollAllSwaps();
+
+            // Now back to 404. With the counter reset, a single 404 must NOT
+            // trip the safety net.
+            stubSwapNotFound();
+            await (swapManager as any).pollAllSwaps();
+
+            const stats = await swapManager.getStats();
+            expect(stats.monitoredSwaps).toBe(1);
+            expect(saveSwap).not.toHaveBeenCalled();
+            expect(onSwapFailed).not.toHaveBeenCalled();
+        });
+    });
 });

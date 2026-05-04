@@ -36,6 +36,7 @@ export {
     InsufficientFundsError,
     NetworkError,
     PreimageFetchError,
+    SwapNotFoundError,
     TransactionFailedError,
     BoltzRefundError,
 } from "./errors";
