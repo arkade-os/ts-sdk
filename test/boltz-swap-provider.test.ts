@@ -309,7 +309,9 @@ describe("BoltzSwapProvider", () => {
                         ok: false,
                         status: 404,
                         text: () =>
-                            Promise.resolve("<html><body>Not Found</body></html>"),
+                            Promise.resolve(
+                                "<html><body>Not Found</body></html>"
+                            ),
                         headers: { get: () => null },
                     })
                 )

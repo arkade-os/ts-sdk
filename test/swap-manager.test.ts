@@ -1281,7 +1281,10 @@ describe("SwapManager", () => {
             swapManager.setCallbacks(makeCallbacks({ saveSwap }));
             await swapManager.onSwapFailed(onSwapFailed);
 
-            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
             await swapManager.start([swap]);
 
             stubSwapNotFound();
@@ -1314,7 +1317,10 @@ describe("SwapManager", () => {
             swapManager.setCallbacks(makeCallbacks({ saveSwap }));
             await swapManager.onSwapFailed(onSwapFailed);
 
-            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
             await swapManager.start([swap]);
 
             stubSwapNotFound();
@@ -1335,7 +1341,10 @@ describe("SwapManager", () => {
             swapManager.setCallbacks(makeCallbacks({ saveSwap }));
             await swapManager.onSwapFailed(onSwapFailed);
 
-            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
             await swapManager.start([swap]);
 
             // 9 consecutive 404s.

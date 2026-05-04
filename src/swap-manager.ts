@@ -1296,10 +1296,7 @@ export class SwapManager implements SwapManagerClient {
             // On 429 (rate-limited), schedule a single retry for this
             // swap rather than waiting the full poll interval. This
             // avoids a 30s gap in status tracking after a burst.
-            if (
-                error instanceof NetworkError &&
-                error.statusCode === 429
-            ) {
+            if (error instanceof NetworkError && error.statusCode === 429) {
                 logger.warn(
                     `Rate-limited polling swap ${swap.id}, retrying in 2s`
                 );
@@ -1310,8 +1307,9 @@ export class SwapManager implements SwapManagerClient {
                     setTimeout(async () => {
                         this.pollRetryTimers.delete(swap.id);
                         try {
-                            const retry =
-                                await this.swapProvider.getSwapStatus(swap.id);
+                            const retry = await this.swapProvider.getSwapStatus(
+                                swap.id
+                            );
                             this.notFoundCounts.delete(swap.id);
                             if (retry.status !== swap.status) {
                                 await this.handleSwapStatusUpdate(
