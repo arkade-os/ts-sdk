@@ -476,12 +476,12 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const totalOffchain = settled + preconfirmed + recoverable;
 
         // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, number>();
+        const assetBalances = new Map<string, bigint>();
         for (const vtxo of vtxos) {
             if (!isSpendable(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0;
+                    const current = assetBalances.get(a.assetId) ?? 0n;
                     assetBalances.set(a.assetId, current + a.amount);
                 }
             }
@@ -1571,16 +1571,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             for (const [, assets] of assetInputs) {
                 for (const asset of assets) {
                     const existing = allAssets.get(asset.assetId) ?? 0n;
-                    allAssets.set(
-                        asset.assetId,
-                        existing + BigInt(asset.amount)
-                    );
+                    allAssets.set(asset.assetId, existing + asset.amount);
                 }
             }
 
             outputAssets = [];
             for (const [assetId, amount] of allAssets) {
-                outputAssets.push({ assetId, amount: Number(amount) });
+                outputAssets.push({ assetId, amount });
             }
         }
 
@@ -2218,7 +2215,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * const txid = await wallet.send({
      *     address: 'ark1q...',
      *     amount: 1000, // (optional, default to dust) btc amount to send to the output
-     *     assets: [{ assetId: 'abc123...', amount: 50 }] // (optional) list of assets to send
+     *     assets: [{ assetId: 'abc123...', amount: 50n }] // (optional) list of assets to send
      * });
      * ```
      */
@@ -2262,7 +2259,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 continue;
             }
             for (const receiverAsset of recipient.assets) {
-                let amountToSelect = BigInt(receiverAsset.amount);
+                let amountToSelect = receiverAsset.amount;
 
                 // check if existing change covers the needed amount
                 const existingChange =
@@ -2306,10 +2303,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                                 continue;
                             }
                             const existing = assetChanges.get(a.assetId) ?? 0n;
-                            assetChanges.set(
-                                a.assetId,
-                                existing + BigInt(a.amount)
-                            );
+                            assetChanges.set(a.assetId, existing + a.amount);
                         }
                     }
                 }
@@ -2346,7 +2340,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         const existing = assetChanges.get(asset.assetId) ?? 0n;
                         assetChanges.set(
                             asset.assetId,
-                            existing + BigInt(asset.amount)
+                            existing + asset.amount
                         );
                     }
                 }
@@ -2391,7 +2385,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         const existing = assetChanges.get(asset.assetId) ?? 0n;
                         assetChanges.set(
                             asset.assetId,
-                            existing + BigInt(asset.amount)
+                            existing + asset.amount
                         );
                     }
                 }
@@ -2409,7 +2403,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             const changeAssets: Asset[] = [];
             for (const [assetId, amount] of assetChanges) {
                 if (amount > 0n) {
-                    changeAssets.push({ assetId, amount: Number(amount) });
+                    changeAssets.push({ assetId, amount });
                 }
             }
 

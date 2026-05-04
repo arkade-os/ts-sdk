@@ -9,6 +9,8 @@ import {
     serializeUtxo,
     deserializeVtxo,
     deserializeUtxo,
+    serializeAssets,
+    deserializeAssets,
     SerializedTapLeaf,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
@@ -197,7 +199,7 @@ export class RealmWalletRepository implements WalletRepository {
                         settled: tx.settled,
                         createdAt: tx.createdAt,
                         assetsJson: tx.assets
-                            ? JSON.stringify(tx.assets)
+                            ? JSON.stringify(serializeAssets(tx.assets))
                             : null,
                     },
                     "modified"
@@ -335,7 +337,7 @@ function txObjectToDomain(obj: any): ArkTransaction {
         createdAt: obj.createdAt,
     };
     if (obj.assetsJson) {
-        tx.assets = JSON.parse(obj.assetsJson);
+        tx.assets = deserializeAssets(JSON.parse(obj.assetsJson));
     }
     return tx;
 }

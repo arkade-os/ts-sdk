@@ -33,7 +33,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         script: vtxo.script,
         assets: vtxo.assets?.map((a) => ({
             assetId: a.assetId,
-            amount: Number(a.amount),
+            amount: BigInt(a.amount),
         })),
     };
 }

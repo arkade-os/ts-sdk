@@ -9,6 +9,8 @@ import {
     serializeUtxo,
     deserializeVtxo,
     deserializeUtxo,
+    serializeAssets,
+    deserializeAssets,
     SerializedTapLeaf,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
@@ -409,7 +411,9 @@ export class SQLiteWalletRepository implements WalletRepository {
                     tx.amount,
                     tx.settled ? 1 : 0,
                     tx.createdAt,
-                    tx.assets ? JSON.stringify(tx.assets) : null,
+                    tx.assets
+                        ? JSON.stringify(serializeAssets(tx.assets))
+                        : null,
                 ]
             );
         }
@@ -597,7 +601,7 @@ function txRowToDomain(row: TransactionRow): ArkTransaction {
         createdAt: row.created_at,
     };
     if (row.assets_json) {
-        tx.assets = JSON.parse(row.assets_json);
+        tx.assets = deserializeAssets(JSON.parse(row.assets_json));
     }
     return tx;
 }

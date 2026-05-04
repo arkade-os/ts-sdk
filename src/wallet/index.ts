@@ -274,8 +274,12 @@ export interface Asset {
     /** Asset identifier. */
     assetId: string;
 
-    /** Asset amount in base units. */
-    amount: number;
+    /**
+     * Asset amount in base units. Typed as `bigint` because asset
+     * supplies routinely exceed `Number.MAX_SAFE_INTEGER` (2^53 - 1)
+     * and silently truncating in arithmetic would corrupt balances.
+     */
+    amount: bigint;
 }
 
 /**
@@ -336,8 +340,12 @@ export type AssetDetails = {
     /** Asset identifier. */
     assetId: string;
 
-    /** Total issued supply in base units. */
-    supply: number;
+    /**
+     * Total issued supply in base units. Typed as `bigint` for the
+     * same reason as {@link Asset.amount} — supplies often exceed
+     * `Number.MAX_SAFE_INTEGER`.
+     */
+    supply: bigint;
 
     /** Optional immutable metadata associated with the asset. */
     metadata?: AssetMetadata;
@@ -354,7 +362,7 @@ export type AssetDetails = {
  */
 export interface IssuanceParams {
     /** Initial amount of asset to issue */
-    amount: number;
+    amount: bigint;
     /** Optional control asset ID that can be used for future reissuance */
     controlAssetId?: string;
     /** Immutable asset metadata including `ticker`, `decimals`, `icon` */
@@ -383,7 +391,7 @@ export interface ReissuanceParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to issue */
-    amount: number;
+    amount: bigint;
 }
 
 /**
@@ -395,7 +403,7 @@ export interface BurnParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to burn */
-    amount: number;
+    amount: bigint;
 }
 
 /**
