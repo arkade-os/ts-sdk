@@ -11,7 +11,7 @@ import { Coin } from "../wallet";
  * stack on the standard port.
  */
 export const ESPLORA_URL: Record<NetworkName, string> = {
-    bitcoin: "https://mempool.arkade.sh/api",
+    bitcoin: "https://mempool.space/api",
     testnet: "https://mempool.space/testnet/api",
     signet: "https://mempool.signet.arkade.sh/api",
     mutinynet: "https://mempool.mutinynet.arkade.sh/api",
