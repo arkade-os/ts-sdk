@@ -8,7 +8,6 @@ docs/
 *.har
 
 # AI
-CLAUDE.md
 TASKS.md
 *.agents.md
 REVIEW.md
