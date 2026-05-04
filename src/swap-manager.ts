@@ -1372,10 +1372,17 @@ export class SwapManager implements SwapManagerClient {
             return;
         }
 
-        // Remove from monitoring first so any in-flight poll/WS handler
-        // for this ID becomes a no-op.
+        const oldStatus = swap.status;
+        // `swap.expired` is final for submarine, reverse, and chain swaps
+        // (see is*FinalStatus helpers). On next start the swap is loaded
+        // with a final status and won't be re-added to monitoredSwaps.
+        swap.status = "swap.expired";
+
+        // Remove from monitoring up-front so any in-flight poll/WS handler
+        // for this ID becomes a no-op. Subscribers are NOT cleared yet —
+        // we still need to deliver the terminal status update to them
+        // (e.g. waitForSwapCompletion is awaiting that callback).
         this.monitoredSwaps.delete(swap.id);
-        this.swapSubscriptions.delete(swap.id);
         const retryTimer = this.pollRetryTimers.get(swap.id);
         if (retryTimer) {
             clearTimeout(retryTimer);
@@ -1383,12 +1390,26 @@ export class SwapManager implements SwapManagerClient {
         }
         this.notFoundCounts.delete(swap.id);
 
-        // `swap.expired` is final for submarine, reverse, and chain swaps
-        // (see is*FinalStatus helpers). On next start the swap is loaded
-        // with a final status and won't be re-added to monitoredSwaps.
-        swap.status = "swap.expired";
+        // Mirror the emission shape of handleSwapStatusUpdate so listeners
+        // and per-swap subscribers see the terminal transition even though
+        // we bypassed that path (we did so to skip the auto-action branch).
+        this.swapUpdateListeners.forEach((listener) =>
+            listener(swap, oldStatus)
+        );
+        const subscribers = this.swapSubscriptions.get(swap.id);
+        if (subscribers) {
+            subscribers.forEach((callback) => {
+                try {
+                    callback(swap, oldStatus);
+                } catch (subscriberError) {
+                    logger.error(
+                        `Error in swap subscription callback for ${swap.id}:`,
+                        subscriberError
+                    );
+                }
+            });
+        }
 
-        const error = new SwapNotFoundError(swap.id);
         try {
             await this.saveSwap(swap);
         } catch (saveError) {
@@ -1402,7 +1423,11 @@ export class SwapManager implements SwapManagerClient {
             `Swap ${swap.id}: marked failed after ${SwapManager.NOT_FOUND_THRESHOLD} consecutive Boltz 404s — swap is unknown to the configured Boltz instance`
         );
 
+        const error = new SwapNotFoundError(swap.id);
         this.swapFailedListeners.forEach((listener) => listener(swap, error));
+
+        // Subscribers have been notified; safe to drop the set now.
+        this.swapSubscriptions.delete(swap.id);
     }
 
     /**

@@ -1335,6 +1335,52 @@ describe("SwapManager", () => {
             expect(onSwapFailed).not.toHaveBeenCalled();
         });
 
+        it("settles waitForSwapCompletion when the safety net trips", async () => {
+            // Regression: markSwapAsUnknownToProvider used to delete the
+            // per-swap subscriber set before emitting anything. Awaiters
+            // registered via subscribeToSwapUpdates (waitForSwapCompletion,
+            // waitAndClaim*, etc.) would hang forever after the trip.
+            const saveSwap = vi.fn().mockResolvedValue(undefined);
+            swapManager.setCallbacks(makeCallbacks({ saveSwap }));
+
+            const swap = {
+                ...mockSubmarineSwap,
+                status: "invoice.set" as const,
+            };
+            await swapManager.start([swap]);
+
+            const completion = swapManager.waitForSwapCompletion(swap.id);
+
+            stubSwapNotFound();
+            for (let i = 0; i < NOT_FOUND_THRESHOLD; i++) {
+                await (swapManager as any).pollAllSwaps();
+            }
+
+            await expect(completion).rejects.toThrow(/swap\.expired/);
+        });
+
+        it("notifies per-swap subscribers with the terminal status", async () => {
+            const saveSwap = vi.fn().mockResolvedValue(undefined);
+            swapManager.setCallbacks(makeCallbacks({ saveSwap }));
+
+            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            await swapManager.start([swap]);
+
+            const subscriber = vi.fn();
+            await swapManager.subscribeToSwapUpdates(swap.id, subscriber);
+
+            stubSwapNotFound();
+            for (let i = 0; i < NOT_FOUND_THRESHOLD; i++) {
+                await (swapManager as any).pollAllSwaps();
+            }
+
+            expect(subscriber).toHaveBeenCalledTimes(1);
+            const [updatedSwap, oldStatus] = subscriber.mock.calls[0];
+            expect(updatedSwap.id).toBe(swap.id);
+            expect(updatedSwap.status).toBe("swap.expired");
+            expect(oldStatus).toBe("swap.created");
+        });
+
         it("resets counter on a successful poll", async () => {
             const onSwapFailed = vi.fn();
             const saveSwap = vi.fn().mockResolvedValue(undefined);
