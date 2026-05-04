@@ -237,24 +237,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
         config: ReadonlyWalletConfig,
         pubKey: Uint8Array
     ) {
+        const arkadeServerUrl = getArkadeServerUrl(config);
+
         // Use provided arkProvider instance or create a new one from arkServerUrl
         const arkProvider =
-            config.arkProvider ||
-            (() => {
-                return new RestArkProvider(getArkadeServerUrl(config));
-            })();
-
-        // Extract arkServerUrl from provider if not explicitly provided
-        const arkServerUrl =
-            config.arkServerUrl || (arkProvider as RestArkProvider).serverUrl;
-
-        if (!arkServerUrl) {
-            throw new Error("Could not determine arkServerUrl from provider");
-        }
+            config.arkProvider ?? new RestArkProvider(arkadeServerUrl);
 
         // Use provided indexerProvider instance or create a new one
         // indexerUrl defaults to arkServerUrl if not provided
-        const indexerUrl = config.indexerUrl || arkServerUrl;
+        const indexerUrl = config.indexerUrl || arkadeServerUrl;
         const indexerProvider =
             config.indexerProvider || new RestIndexerProvider(indexerUrl);
 
