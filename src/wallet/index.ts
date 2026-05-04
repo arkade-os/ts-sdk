@@ -12,6 +12,11 @@ import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
 
+/** Defaults */
+export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
+export const DEFAULT_ARKADE_HRP = "ark";
+export const DEFAULT_NETWORK_NAME = "bitcoin";
+
 /**
  * Base configuration options shared by all wallet types.
  *
@@ -22,9 +27,6 @@ import { DelegatorProvider } from "../providers/delegator";
  *
  * Provider-based configuration supplies concrete provider instances directly,
  * including the ArkProvider, IndexerProvider, OnchainProvider, and DelegatorProvider.
- *
- * At least one of the following must be provided:
- * - arkServerUrl OR arkProvider
  *
  * The wallet will use provided URLs to create default providers if custom provider
  * instances are not supplied. If optional parameters are not provided, the wallet
