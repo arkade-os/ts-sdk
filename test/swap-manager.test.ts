@@ -1363,7 +1363,10 @@ describe("SwapManager", () => {
             const saveSwap = vi.fn().mockResolvedValue(undefined);
             swapManager.setCallbacks(makeCallbacks({ saveSwap }));
 
-            const swap = { ...mockReverseSwap, status: "swap.created" as const };
+            const swap = {
+                ...mockReverseSwap,
+                status: "swap.created" as const,
+            };
             await swapManager.start([swap]);
 
             const subscriber = vi.fn();
