@@ -14,7 +14,8 @@ captures the conventions an agent needs to do recurring repo work
   to enumerate user-visible changes.
 - Run `pnpm lint` and `pnpm test:unit` before bumping. Only run
   `pnpm test:integration` if the change plausibly touches the e2e path; it
-  needs `nigiri` running.
+  needs `nigiri` (the local Bitcoin regtest stack used by the e2e suite,
+  brought up via `regtest/docker-compose.yml`) running.
 - Use `pnpm release` (or `pnpm release:dry-run` first) to drive the bump —
   don't edit `package.json` `version` by hand. The script handles the bump,
   tag, and branch.
