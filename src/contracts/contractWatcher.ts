@@ -182,8 +182,14 @@ export class ContractWatcher {
      */
     private async seedLastKnownVtxos(state: ContractState): Promise<void> {
         try {
-            const cached = await this.config.walletRepository.getVtxos(
-                state.contract.address
+            // Apply the same script gate used by getContractVtxos so a legacy
+            // wrong-script row in the address bucket can't seed the baseline
+            // and then look "spent" on the first poll.
+            const cached = filterVtxosForScript(
+                await this.config.walletRepository.getVtxos(
+                    state.contract.address
+                ),
+                state.contract.script
             );
             for (const vtxo of cached) {
                 if (vtxo.isSpent) continue;
