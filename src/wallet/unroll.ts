@@ -1,7 +1,7 @@
 import { base64, hex } from "@scure/base";
 import { SigHash, TaprootControlBlock } from "@scure/btc-signer";
 import { TransactionInputUpdate } from "@scure/btc-signer/psbt.js";
-import { timelockToSequence } from "../contracts/handlers/helpers";
+import { timelockToSequence } from "../utils/timelock";
 import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { AnchorBumper } from "../utils/anchor";
 import { OnchainProvider } from "../providers/onchain";

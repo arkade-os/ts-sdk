@@ -6,12 +6,12 @@ import {
     TAPROOT_UNSPENDABLE_KEY,
     NETWORK,
 } from "@scure/btc-signer";
-import * as bip68 from "bip68";
 import { TAP_LEAF_VERSION } from "@scure/btc-signer/payment.js";
 import { PSBTOutput } from "@scure/btc-signer/psbt.js";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 import { ArkAddress } from "./address";
+import { timelockToSequence } from "../utils/timelock";
 import {
     CLTVMultisigTapscript,
     ConditionCSVMultisigTapscript,
@@ -227,11 +227,7 @@ export function getSequence(tapLeafScript: TapLeafScript): number | undefined {
         );
         try {
             const params = CSVMultisigTapscript.decode(script).params;
-            sequence = bip68.encode(
-                params.timelock.type === "blocks"
-                    ? { blocks: Number(params.timelock.value) }
-                    : { seconds: Number(params.timelock.value) }
-            );
+            sequence = timelockToSequence(params.timelock);
         } catch {
             const params = CLTVMultisigTapscript.decode(script).params;
             sequence = Number(params.absoluteTimelock);

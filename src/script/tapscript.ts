@@ -1,7 +1,7 @@
-import * as bip68 from "bip68";
 import { Script, ScriptNum, ScriptType, p2tr_ms } from "@scure/btc-signer";
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
+import { sequenceToTimelock, timelockToSequence } from "../utils/timelock";
 
 const MinimalScriptNum = ScriptNum(undefined, true);
 
@@ -323,13 +323,7 @@ export namespace CSVMultisigTapscript {
         }
 
         const sequence = MinimalScriptNum.encode(
-            BigInt(
-                bip68.encode(
-                    params.timelock.type === "blocks"
-                        ? { blocks: Number(params.timelock.value) }
-                        : { seconds: Number(params.timelock.value) }
-                )
-            )
+            BigInt(timelockToSequence(params.timelock))
         );
 
         const asm: ScriptType = [
@@ -392,12 +386,7 @@ export namespace CSVMultisigTapscript {
                 MinimalScriptNum.decode(sequence as Uint8Array)
             );
         }
-        const decodedTimelock = bip68.decode(sequenceNum);
-
-        const timelock: RelativeTimelock =
-            decodedTimelock.blocks !== undefined
-                ? { type: "blocks", value: BigInt(decodedTimelock.blocks) }
-                : { type: "seconds", value: BigInt(decodedTimelock.seconds!) };
+        const timelock = sequenceToTimelock(sequenceNum);
 
         const reconstructed = encode({
             timelock,

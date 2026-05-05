@@ -260,10 +260,7 @@ import type {
     VHTLCContractParams,
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
-import {
-    timelockToSequence,
-    sequenceToTimelock,
-} from "./contracts/handlers/helpers";
+import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
