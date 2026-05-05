@@ -621,9 +621,20 @@ export class ContractManager implements IContractManager {
         const contracts = opts?.scripts
             ? await this.getContracts({ script: opts.scripts })
             : undefined;
+        // Only forward an explicit window when the caller supplied one. An
+        // empty `{ after: undefined, before: undefined }` would short-circuit
+        // both the cursor-derived `?after=` query in `syncContracts` (because
+        // `??` doesn't fire on a non-nullish object) AND the cursor-advance
+        // gate (which requires `options.window === undefined`), turning every
+        // `refreshVtxos()` call into an unbounded full re-scan whose cursor
+        // never moves forward.
+        const hasExplicitWindow =
+            opts?.after !== undefined || opts?.before !== undefined;
         await this.syncContracts({
             contracts,
-            window: { after: opts?.after, before: opts?.before },
+            window: hasExplicitWindow
+                ? { after: opts?.after, before: opts?.before }
+                : undefined,
         });
     }
 
