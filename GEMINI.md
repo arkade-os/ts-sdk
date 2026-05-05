@@ -1,6 +1,6 @@
-# CLAUDE.md
+# GEMINI.md
 
-Claude Code project instructions.
+Gemini CLI project instructions.
 
 Read and follow the shared project guidance imported below.
 
