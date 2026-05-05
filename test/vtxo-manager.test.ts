@@ -2485,6 +2485,7 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
             refreshVtxos: vi.fn().mockResolvedValue(undefined),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
         return {
             wallet: {
@@ -2702,6 +2703,79 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         } finally {
             await manager.dispose();
         }
+    });
+
+    // Helper: produce an error message whose body is the JSON-serialised
+    // gRPC-gateway error envelope the server actually emits, so
+    // `maybeArkError` can extract the `vtxo_outpoint` metadata.
+    const makeStructuredVtxoSpentError = (outpoint: string): Error => {
+        const body = JSON.stringify({
+            code: 3,
+            message: `VTXO_ALREADY_SPENT (6): input ${outpoint} already spent`,
+            details: [
+                {
+                    "@type": "type.googleapis.com/ark.v1.ErrorDetails",
+                    code: 6,
+                    name: "VTXO_ALREADY_SPENT",
+                    message: `VTXO_ALREADY_SPENT (6): input ${outpoint} already spent`,
+                    metadata: { vtxo_outpoint: outpoint },
+                },
+            ],
+        });
+        return new Error(body);
+    };
+
+    it("calls contractManager.refreshOutpoints() with the offending outpoint when the server attaches metadata", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
+        const outpoint =
+            "640048627268a0f1acb9920daaf5a3c6e237cafc707b007afbbd450031038e63:0";
+        (wallet.settle as any).mockRejectedValue(
+            makeStructuredVtxoSpentError(outpoint)
+        );
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        // Targeted recovery: just the offending outpoint, no full re-scan.
+        expect(contractManager.refreshOutpoints).toHaveBeenCalledTimes(1);
+        expect(contractManager.refreshOutpoints).toHaveBeenCalledWith([
+            {
+                txid: "640048627268a0f1acb9920daaf5a3c6e237cafc707b007afbbd450031038e63",
+                vout: 0,
+            },
+        ]);
+        expect(contractManager.refreshVtxos).not.toHaveBeenCalled();
+    });
+
+    it("falls back to refreshVtxos() when the error has no parsable outpoint metadata", async () => {
+        // Plain string error — no JSON envelope, no metadata. The fallback
+        // path is the cursor-based broad refresh.
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
+        (wallet.settle as any).mockRejectedValue(
+            new Error("VTXO_ALREADY_SPENT")
+        );
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        expect(contractManager.refreshOutpoints).not.toHaveBeenCalled();
+        expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+        expect(contractManager.refreshVtxos).toHaveBeenCalledWith();
     });
 
     it("triggers refreshVtxos() from the event-driven renewal path on VTXO_ALREADY_SPENT", async () => {

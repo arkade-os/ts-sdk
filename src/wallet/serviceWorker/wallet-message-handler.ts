@@ -267,6 +267,16 @@ export type ResponseRefreshVtxos = ResponseEnvelope & {
     type: "REFRESH_VTXOS_SUCCESS";
 };
 
+export type RequestRefreshOutpoints = RequestEnvelope & {
+    type: "REFRESH_OUTPOINTS";
+    payload: {
+        outpoints: { txid: string; vout: number }[];
+    };
+};
+export type ResponseRefreshOutpoints = ResponseEnvelope & {
+    type: "REFRESH_OUTPOINTS_SUCCESS";
+};
+
 export type RequestGetAllSpendingPaths = RequestEnvelope & {
     type: "GET_ALL_SPENDING_PATHS";
     payload: { options: GetAllSpendingPathsOptions };
@@ -460,6 +470,7 @@ export type WalletUpdaterRequest =
     | RequestGetAllSpendingPaths
     | RequestIsContractManagerWatching
     | RequestRefreshVtxos
+    | RequestRefreshOutpoints
     | RequestSend
     | RequestGetAssetDetails
     | RequestIssue
@@ -502,6 +513,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseGetAllSpendingPaths
         | ResponseIsContractManagerWatching
         | ResponseRefreshVtxos
+        | ResponseRefreshOutpoints
         | ResponseContractEvent
         | ResponseSend
         | ResponseGetAssetDetails
@@ -871,6 +883,17 @@ export class WalletMessageHandler
                     return this.tagged({
                         id,
                         type: "REFRESH_VTXOS_SUCCESS",
+                    });
+                }
+                case "REFRESH_OUTPOINTS": {
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
+                    const { outpoints } = (message as RequestRefreshOutpoints)
+                        .payload;
+                    await manager.refreshOutpoints(outpoints);
+                    return this.tagged({
+                        id,
+                        type: "REFRESH_OUTPOINTS_SUCCESS",
                     });
                 }
                 case "SEND": {

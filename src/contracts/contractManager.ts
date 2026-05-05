@@ -14,7 +14,7 @@ import {
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
-import { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
+import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import { extendVirtualCoinForContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 import {
@@ -130,6 +130,22 @@ export interface IContractManager extends Disposable {
      * With options, narrows the refresh to specific scripts and/or a time window.
      */
     refreshVtxos(opts?: RefreshVtxosOptions): Promise<void>;
+
+    /**
+     * Reconcile specific outpoints with the indexer's authoritative state and
+     * upsert the result into the wallet repository.
+     *
+     * The cursor-derived delta sync filters by `created_at`, so a VTXO that
+     * was created before the cursor but spent recently won't surface in a
+     * standard `refreshVtxos()` call. This method is the surgical recovery
+     * path for that case: when something hands us a stale outpoint (e.g. the
+     * server returns `VTXO_ALREADY_SPENT` with a `vtxo_outpoint` in its
+     * error metadata), call this to pull the latest state and unblock the
+     * caller — no full re-scan, no cursor change.
+     *
+     * Outpoints not owned by any tracked contract are silently dropped.
+     */
+    refreshOutpoints(outpoints: Outpoint[]): Promise<void>;
 
     /**
      * Whether the underlying watcher is currently active.
@@ -636,6 +652,38 @@ export class ContractManager implements IContractManager {
                 ? { after: opts?.after, before: opts?.before }
                 : undefined,
         });
+    }
+
+    async refreshOutpoints(outpoints: Outpoint[]): Promise<void> {
+        if (outpoints.length === 0) return;
+
+        const { vtxos } = await this.config.indexerProvider.getVtxos({
+            outpoints,
+        });
+        if (vtxos.length === 0) return;
+
+        // Filter to outputs whose script we own. Map them to their owning
+        // contract so we can write through to the right per-address entry
+        // in the wallet repository.
+        const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
+        const contracts = await this.config.contractRepository.getContracts({
+            script: scripts,
+        });
+        const scriptToContract = new Map(contracts.map((c) => [c.script, c]));
+        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        if (owned.length === 0) return;
+
+        const annotated = await this.annotateVtxos(owned);
+        const byAddress = new Map<string, ExtendedVirtualCoin[]>();
+        for (const vtxo of annotated) {
+            const address = scriptToContract.get(vtxo.script)!.address;
+            const arr = byAddress.get(address) ?? [];
+            arr.push(vtxo);
+            byAddress.set(address, arr);
+        }
+        for (const [address, addressVtxos] of byAddress) {
+            await this.config.walletRepository.saveVtxos(address, addressVtxos);
+        }
     }
 
     /**
