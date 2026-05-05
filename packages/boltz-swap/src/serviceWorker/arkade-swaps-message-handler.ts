@@ -28,6 +28,9 @@ import {
     BoltzSubmarineSwap,
     type SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    type SubmarineRecoveryInfo,
+    type SubmarineRecoveryResult,
+    type SubmarineRefundOutcome,
 } from "../types";
 import {
     ArkProvider,
@@ -108,6 +111,45 @@ export type RequestRefundVhtlc = RequestEnvelope & {
 };
 export type ResponseRefundVhtlc = ResponseEnvelope & {
     type: "VHTLC_REFUNDED";
+    payload: SubmarineRefundOutcome;
+};
+
+// Recovery envelopes carry BoltzSubmarineSwap / SubmarineRecoveryInfo /
+// SubmarineRecoveryResult payloads — all plain JSON-serializable shapes,
+// so they survive the postMessage structured clone unchanged.
+export type RequestInspectSubmarineRecovery = RequestEnvelope & {
+    type: "INSPECT_SUBMARINE_RECOVERY";
+    payload: BoltzSubmarineSwap;
+};
+export type ResponseInspectSubmarineRecovery = ResponseEnvelope & {
+    type: "SUBMARINE_RECOVERY_INSPECTED";
+    payload: SubmarineRecoveryInfo;
+};
+
+export type RequestScanRecoverableSubmarineSwaps = RequestEnvelope & {
+    type: "SCAN_RECOVERABLE_SUBMARINE_SWAPS";
+};
+export type ResponseScanRecoverableSubmarineSwaps = ResponseEnvelope & {
+    type: "RECOVERABLE_SUBMARINE_SWAPS_SCANNED";
+    payload: SubmarineRecoveryInfo[];
+};
+
+export type RequestRecoverSubmarineFunds = RequestEnvelope & {
+    type: "RECOVER_SUBMARINE_FUNDS";
+    payload: BoltzSubmarineSwap;
+};
+export type ResponseRecoverSubmarineFunds = ResponseEnvelope & {
+    type: "SUBMARINE_FUNDS_RECOVERED";
+    payload: SubmarineRefundOutcome;
+};
+
+export type RequestRecoverAllSubmarineFunds = RequestEnvelope & {
+    type: "RECOVER_ALL_SUBMARINE_FUNDS";
+    payload: BoltzSubmarineSwap[];
+};
+export type ResponseRecoverAllSubmarineFunds = ResponseEnvelope & {
+    type: "ALL_SUBMARINE_FUNDS_RECOVERED";
+    payload: SubmarineRecoveryResult[];
 };
 
 export type RequestWaitAndClaim = RequestEnvelope & {
@@ -440,6 +482,10 @@ export type ArkadeSwapsUpdaterRequest =
     | RequestCreateReverseSwap
     | RequestClaimVhtlc
     | RequestRefundVhtlc
+    | RequestInspectSubmarineRecovery
+    | RequestScanRecoverableSubmarineSwaps
+    | RequestRecoverSubmarineFunds
+    | RequestRecoverAllSubmarineFunds
     | RequestWaitAndClaim
     | RequestWaitForSwapSettlement
     | RequestRestoreSwaps
@@ -483,6 +529,10 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseCreateReverseSwap
     | ResponseClaimVhtlc
     | ResponseRefundVhtlc
+    | ResponseInspectSubmarineRecovery
+    | ResponseScanRecoverableSubmarineSwaps
+    | ResponseRecoverSubmarineFunds
+    | ResponseRecoverAllSubmarineFunds
     | ResponseWaitAndClaim
     | ResponseWaitForSwapSettlement
     | ResponseRestoreSwaps
@@ -517,6 +567,28 @@ export type ArkadeSwapsUpdaterResponse =
     | ResponseSwapManagerIsProcessing
     | ResponseSwapManagerGetStats
     | ResponseSwapManagerWaitForCompletion;
+
+export const LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES: ReadonlySet<
+    ArkadeSwapsUpdaterRequest["type"]
+> = new Set([
+    "SEND_LIGHTNING_PAYMENT",
+    "CLAIM_VHTLC",
+    "REFUND_VHTLC",
+    "INSPECT_SUBMARINE_RECOVERY",
+    "SCAN_RECOVERABLE_SUBMARINE_SWAPS",
+    "RECOVER_SUBMARINE_FUNDS",
+    "RECOVER_ALL_SUBMARINE_FUNDS",
+    "WAIT_AND_CLAIM",
+    "WAIT_FOR_SWAP_SETTLEMENT",
+    "RESTORE_SWAPS",
+    "WAIT_AND_CLAIM_CHAIN",
+    "WAIT_AND_CLAIM_ARK",
+    "WAIT_AND_CLAIM_BTC",
+    "CLAIM_ARK",
+    "CLAIM_BTC",
+    "REFUND_ARK",
+    "SM-WAIT_FOR_COMPLETION",
+]);
 
 type BoltzSwap = BoltzReverseSwap | BoltzSubmarineSwap | BoltzChainSwap;
 
@@ -617,6 +689,15 @@ export class ArkadeSwapsMessageHandler
         return [];
     }
 
+    // Flows that surrender control to Boltz, the Ark server, or other
+    // participants in a batch round: quiet gaps between protocol events can
+    // easily exceed the bus-level messageTimeoutMs. Liveness is covered
+    // out-of-band by the page-side PING / MESSAGE_BUS_NOT_INITIALIZED path
+    // triggered by concurrent short requests (GET_FEES, GET_SWAP_STATUS, ...).
+    isLongRunning(message: ArkadeSwapsUpdaterRequest): boolean {
+        return LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES.has(message.type);
+    }
+
     private tagged(
         res: Partial<ArkadeSwapsUpdaterResponse>
     ): ArkadeSwapsUpdaterResponse {
@@ -714,9 +795,59 @@ export class ArkadeSwapsMessageHandler
                     await this.handler.claimVHTLC(message.payload);
                     return this.tagged({ id, type: "VHTLC_CLAIMED" });
 
-                case "REFUND_VHTLC":
-                    await this.handler.refundVHTLC(message.payload);
-                    return this.tagged({ id, type: "VHTLC_REFUNDED" });
+                case "REFUND_VHTLC": {
+                    const outcome = await this.handler.refundVHTLC(
+                        message.payload
+                    );
+                    return this.tagged({
+                        id,
+                        type: "VHTLC_REFUNDED",
+                        payload: outcome,
+                    });
+                }
+
+                case "INSPECT_SUBMARINE_RECOVERY": {
+                    const info = await this.handler.inspectSubmarineRecovery(
+                        message.payload
+                    );
+                    return this.tagged({
+                        id,
+                        type: "SUBMARINE_RECOVERY_INSPECTED",
+                        payload: info,
+                    });
+                }
+
+                case "SCAN_RECOVERABLE_SUBMARINE_SWAPS": {
+                    const infos =
+                        await this.handler.scanRecoverableSubmarineSwaps();
+                    return this.tagged({
+                        id,
+                        type: "RECOVERABLE_SUBMARINE_SWAPS_SCANNED",
+                        payload: infos,
+                    });
+                }
+
+                case "RECOVER_SUBMARINE_FUNDS": {
+                    const outcome = await this.handler.recoverSubmarineFunds(
+                        message.payload
+                    );
+                    return this.tagged({
+                        id,
+                        type: "SUBMARINE_FUNDS_RECOVERED",
+                        payload: outcome,
+                    });
+                }
+
+                case "RECOVER_ALL_SUBMARINE_FUNDS": {
+                    const results = await this.handler.recoverAllSubmarineFunds(
+                        message.payload
+                    );
+                    return this.tagged({
+                        id,
+                        type: "ALL_SUBMARINE_FUNDS_RECOVERED",
+                        payload: results,
+                    });
+                }
 
                 case "WAIT_AND_CLAIM": {
                     const res = await this.handler.waitAndClaim(

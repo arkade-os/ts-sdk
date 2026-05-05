@@ -18,6 +18,7 @@ import {
     isRecoverable,
     ArkTxInput,
     Identity,
+    VirtualCoin,
 } from "@arkade-os/sdk";
 import type {
     Chain,
@@ -37,6 +38,9 @@ import type {
     SendLightningPaymentResponse,
     ArkToBtcResponse,
     BtcToArkResponse,
+    SubmarineRecoveryInfo,
+    SubmarineRecoveryResult,
+    SubmarineRefundOutcome,
 } from "./types";
 import {
     BoltzSwapProvider,
@@ -46,6 +50,8 @@ import {
     CreateReverseSwapRequest,
     CreateChainSwapRequest,
     isSubmarineFinalStatus,
+    isSubmarineSuccessStatus,
+    isSubmarineRefundableStatus,
     isReverseFinalStatus,
     isChainFinalStatus,
     isRestoredReverseSwap,
@@ -92,7 +98,87 @@ import {
     createVHTLCScript,
     joinBatch,
     refundVHTLCwithOffchainTx,
+    type VhtlcTimeouts,
 } from "./utils/vhtlc";
+
+type SubmarineVHTLCDiagnostic = {
+    totalVtxoCount: number;
+    allSpent: boolean;
+};
+
+type SubmarineVHTLCContext = {
+    arkInfo: ArkInfo;
+    vhtlcScript: VHTLC.Script;
+    vhtlcAddress: string;
+    vhtlcPkScriptHex: string;
+    /**
+     * VHTLC timeout fields from the Boltz response. `refund` is an absolute
+     * Unix timestamp (CLTV); the unilateral fields are BIP68 relative delays.
+     */
+    vhtlcTimeouts: NonNullable<
+        BoltzSubmarineSwap["response"]["timeoutBlockHeights"]
+    >;
+    ourXOnlyPublicKey: Uint8Array;
+    serverXOnlyPublicKey: Uint8Array;
+    boltzXOnlyPublicKey: Uint8Array;
+};
+
+type SubmarineVHTLCLookup = SubmarineVHTLCContext & {
+    refundableVtxos: VirtualCoin[];
+    diagnostic?: SubmarineVHTLCDiagnostic;
+};
+
+type SubmarineScanPrepared =
+    | {
+          swap: BoltzSubmarineSwap;
+          context: SubmarineVHTLCContext;
+      }
+    | {
+          swap: BoltzSubmarineSwap;
+          error: string;
+      };
+
+const dedupeVtxos = (vtxos: VirtualCoin[]): VirtualCoin[] => [
+    ...new Map(
+        vtxos.map((vtxo) => [`${vtxo.txid}:${vtxo.vout}`, vtxo] as const)
+    ).values(),
+];
+
+const hasNonEmptyString = (value: unknown): value is string =>
+    typeof value === "string" && value.length > 0;
+
+const canRecoverViaBoltz3of3 = (
+    refundableVtxos: VirtualCoin[],
+    swap: BoltzSubmarineSwap
+): boolean => {
+    const hasRequiredSwapMetadata =
+        hasNonEmptyString(swap.id) &&
+        hasNonEmptyString(swap.request.refundPublicKey) &&
+        hasNonEmptyString(swap.response.address) &&
+        hasNonEmptyString(swap.response.claimPublicKey) &&
+        !!swap.response.timeoutBlockHeights;
+
+    if (!hasRequiredSwapMetadata) return false;
+
+    // Pre-CLTV Boltz co-signing only works for normal spendable VTXOs.
+    // Swept/recoverable VTXOs must wait for refundWithoutReceiver.
+    return refundableVtxos.some(
+        (vtxo) => !vtxo.isSpent && !isRecoverable(vtxo)
+    );
+};
+
+/**
+ * Boltz Ark VHTLCs encode `refund` as an absolute Unix timestamp (CLTV with
+ * timestamp semantics). Compare against wall-clock seconds; never against
+ * chain tip height.
+ */
+const isSubmarineRefundLocktimeReached = (refundTimestamp: number): boolean =>
+    Math.floor(Date.now() / 1000) >= refundTimestamp;
+
+// Retry policy for fetching the lockup VTXO when claiming a swap: the indexer
+// may lag behind the on-chain lockup tx, so retry a few times before giving up.
+const CLAIM_VTXO_RETRY_ATTEMPTS = 3;
+const CLAIM_VTXO_RETRY_DELAY_MS = 500;
 
 /**
  * Unified entry point for Lightning and chain swaps between Arkade, Lightning Network, and Bitcoin.
@@ -452,9 +538,12 @@ export class ArkadeSwaps {
                 `Swap ${pendingSwap.id}: preimage is required to claim VHTLC`
             );
 
-        const { refundPublicKey, lockupAddress, timeoutBlockHeights } =
-            pendingSwap.response;
-        if (!refundPublicKey || !lockupAddress || !timeoutBlockHeights)
+        const {
+            refundPublicKey,
+            lockupAddress,
+            timeoutBlockHeights: vhtlcTimeouts,
+        } = pendingSwap.response;
+        if (!refundPublicKey || !lockupAddress || !vhtlcTimeouts)
             throw new Error(
                 `Swap ${pendingSwap.id}: incomplete reverse swap response`
             );
@@ -488,7 +577,7 @@ export class ArkadeSwaps {
             receiverPubkey: hex.encode(receiverXOnly),
             senderPubkey: hex.encode(senderXOnly),
             serverPubkey: hex.encode(serverXOnly),
-            timeoutBlockHeights,
+            timeoutBlockHeights: vhtlcTimeouts,
         });
 
         if (!vhtlcScript.claimScript)
@@ -500,16 +589,27 @@ export class ArkadeSwaps {
                 `Swap ${pendingSwap.id}: VHTLC address mismatch. Expected ${lockupAddress}, got ${vhtlcAddress}`
             );
 
-        // get spendable VTXOs from the lockup address
-        const { vtxos } = await this.indexerProvider.getVtxos({
-            scripts: [hex.encode(vhtlcScript.pkScript)],
-        });
-        if (vtxos.length === 0)
+        let vtxo;
+        for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
+            const { vtxos } = await this.indexerProvider.getVtxos({
+                scripts: [hex.encode(vhtlcScript.pkScript)],
+            });
+            if (vtxos.length > 0) {
+                vtxo = vtxos[0];
+                break;
+            }
+            if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
+                await new Promise((resolve) =>
+                    setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS)
+                );
+            }
+        }
+
+        if (!vtxo) {
             throw new Error(
                 `Swap ${pendingSwap.id}: no spendable virtual coins found`
             );
-
-        const vtxo = vtxos[0];
+        }
 
         if (vtxo.isSpent) {
             throw new Error(`Swap ${pendingSwap.id}: VHTLC is already spent`);
@@ -763,108 +863,236 @@ export class ArkadeSwaps {
     }
 
     /**
-     * Refunds the VHTLC for a failed submarine swap, returning locked funds to the wallet.
-     * Uses multi-party signatures (user + Boltz + server) for non-recoverable VTXOs.
-     * @param pendingSwap - The submarine swap to refund.
-     * @throws {Error} If preimage hash is unavailable, VHTLC not found, or already spent.
+     * Reconstruct a submarine swap's VHTLC script from stored data. This does
+     * not query the indexer, so bulk scans can build every script first and
+     * then use batched VTXO lookups.
+     *
+     * @throws {Error} If preimage hash is unavailable, the swap response is
+     *   incomplete, the script can't be built, or the reconstructed address
+     *   doesn't match the one Boltz returned.
      */
-    async refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<void> {
-        const preimageHash = pendingSwap.request.invoice
-            ? getInvoicePaymentHash(pendingSwap.request.invoice)
-            : pendingSwap.preimageHash;
-
+    private async buildSubmarineVHTLCContext(
+        swap: BoltzSubmarineSwap,
+        arkInfo?: ArkInfo
+    ): Promise<SubmarineVHTLCContext> {
+        const preimageHash = swap.request.invoice
+            ? getInvoicePaymentHash(swap.request.invoice)
+            : swap.preimageHash;
         if (!preimageHash)
             throw new Error(
-                `Swap ${pendingSwap.id}: preimage hash is required to refund VHTLC`
+                `Swap ${swap.id}: preimage hash is required to refund VHTLC`
             );
 
-        // prepare keys and script (independent of VTXO selection)
-        const arkInfo = await this.arkProvider.getInfo();
-        const address = await this.wallet.getAddress();
-        if (!address) throw new Error("Failed to get ark address from wallet");
+        const resolvedArkInfo = arkInfo ?? (await this.arkProvider.getInfo());
 
         const ourXOnlyPublicKey = normalizeToXOnlyKey(
             await this.wallet.identity.xOnlyPublicKey(),
             "our",
-            pendingSwap.id
+            swap.id
         );
-
         const serverXOnlyPublicKey = normalizeToXOnlyKey(
-            hex.decode(arkInfo.signerPubkey),
+            hex.decode(resolvedArkInfo.signerPubkey),
             "server",
-            pendingSwap.id
+            swap.id
         );
 
-        const { claimPublicKey, timeoutBlockHeights } = pendingSwap.response;
-        if (!claimPublicKey || !timeoutBlockHeights)
+        const { claimPublicKey, timeoutBlockHeights: vhtlcTimeouts } =
+            swap.response;
+        if (!claimPublicKey || !vhtlcTimeouts)
             throw new Error(
-                `Swap ${pendingSwap.id}: incomplete submarine swap response`
+                `Swap ${swap.id}: incomplete submarine swap response`
             );
 
         const boltzXOnlyPublicKey = normalizeToXOnlyKey(
             hex.decode(claimPublicKey),
             "boltz",
-            pendingSwap.id
+            swap.id
         );
 
         const { vhtlcScript, vhtlcAddress } = this.createVHTLCScript({
-            network: arkInfo.network,
+            network: resolvedArkInfo.network,
             preimageHash: hex.decode(preimageHash),
             receiverPubkey: hex.encode(boltzXOnlyPublicKey),
             senderPubkey: hex.encode(ourXOnlyPublicKey),
             serverPubkey: hex.encode(serverXOnlyPublicKey),
-            timeoutBlockHeights,
+            timeoutBlockHeights: vhtlcTimeouts,
         });
 
         if (!vhtlcScript.claimScript)
             throw new Error(
-                `Swap ${pendingSwap.id}: failed to create VHTLC script for submarine swap`
+                `Swap ${swap.id}: failed to create VHTLC script for submarine swap`
             );
 
-        // sanity check: reconstructed address must match the swap response
-        if (vhtlcAddress !== pendingSwap.response.address)
+        if (vhtlcAddress !== swap.response.address)
             throw new Error(
-                `VHTLC address mismatch for swap ${pendingSwap.id}: ` +
-                    `expected ${pendingSwap.response.address}, got ${vhtlcAddress}`
+                `VHTLC address mismatch for swap ${swap.id}: ` +
+                    `expected ${swap.response.address}, got ${vhtlcAddress}`
             );
 
-        // Query VTXOs using the locally-reconstructed script (not the Boltz
-        // response address). The VHTLC script is unique per swap, so every
-        // refundable VTXO at this script belongs to this swap and must be
-        // processed locally. The indexer exposes "spendable" and
-        // "recoverable" VTXOs through separate filters, so merge both views
-        // before deciding whether the swap still has refundable funds.
+        // Use the locally-reconstructed script, not the Boltz response
+        // address. The VHTLC script is unique per swap, so every refundable
+        // VTXO at this script belongs to this swap.
         const vhtlcPkScriptHex = hex.encode(vhtlcScript.pkScript);
+
+        return {
+            arkInfo: resolvedArkInfo,
+            vhtlcScript,
+            vhtlcAddress,
+            vhtlcPkScriptHex,
+            vhtlcTimeouts,
+            ourXOnlyPublicKey,
+            serverXOnlyPublicKey,
+            boltzXOnlyPublicKey,
+        };
+    }
+
+    /**
+     * Reconstruct a submarine swap's VHTLC script from stored data and look
+     * up its VTXOs at the indexer. Side-effect free; shared by `refundVHTLC`
+     * (spending path) and `inspectSubmarineRecovery` (diagnostic path).
+     *
+     * `refundableVtxos` merges spendable + recoverable indexer queries
+     * (deduped by outpoint). When that set is empty, a third query
+     * populates `diagnostic` so callers can distinguish "never funded",
+     * "already spent", and "preconfirmed-only".
+     */
+    private async lookupSubmarineVHTLC(
+        swap: BoltzSubmarineSwap,
+        arkInfo?: ArkInfo
+    ): Promise<SubmarineVHTLCLookup> {
+        const context = await this.buildSubmarineVHTLCContext(swap, arkInfo);
+        // Query VTXOs using the locally-reconstructed script (not the Boltz
+        // response address). The indexer
+        // exposes "spendable" and "recoverable" VTXOs through separate
+        // filters, so merge both views.
         const [spendableResult, recoverableResult] = await Promise.all([
             this.indexerProvider.getVtxos({
-                scripts: [vhtlcPkScriptHex],
+                scripts: [context.vhtlcPkScriptHex],
                 spendableOnly: true,
             }),
             this.indexerProvider.getVtxos({
-                scripts: [vhtlcPkScriptHex],
+                scripts: [context.vhtlcPkScriptHex],
                 recoverableOnly: true,
             }),
         ]);
-        const refundableVtxos = [
-            ...new Map(
-                [...spendableResult.vtxos, ...recoverableResult.vtxos].map(
-                    (vtxo) => [`${vtxo.txid}:${vtxo.vout}`, vtxo] as const
-                )
-            ).values(),
-        ];
+        const refundableVtxos = dedupeVtxos([
+            ...spendableResult.vtxos,
+            ...recoverableResult.vtxos,
+        ]);
+
+        // Only query "all VTXOs" when the refundable set is empty — that's
+        // the only path where we need to distinguish empty cases.
+        let diagnostic: SubmarineVHTLCDiagnostic | undefined;
+        if (refundableVtxos.length === 0) {
+            const { vtxos: allVtxos } = await this.indexerProvider.getVtxos({
+                scripts: [context.vhtlcPkScriptHex],
+            });
+            diagnostic = {
+                totalVtxoCount: allVtxos.length,
+                allSpent:
+                    allVtxos.length > 0 &&
+                    allVtxos.every((vtxo) => vtxo.isSpent),
+            };
+        }
+
+        return {
+            ...context,
+            refundableVtxos,
+            diagnostic,
+        };
+    }
+
+    private submarineRecoveryInfoFromLookup(
+        swap: BoltzSubmarineSwap,
+        lookup: Pick<
+            SubmarineVHTLCLookup,
+            "vhtlcTimeouts" | "refundableVtxos" | "diagnostic"
+        >
+    ): SubmarineRecoveryInfo {
+        const { refundableVtxos, diagnostic, vhtlcTimeouts } = lookup;
+
+        if (refundableVtxos.length > 0) {
+            const cltvSatisfied = isSubmarineRefundLocktimeReached(
+                vhtlcTimeouts.refund
+            );
+            const amountSats = refundableVtxos.reduce(
+                (sum, vtxo) => sum + Number(vtxo.value),
+                0
+            );
+            const isRecoverable =
+                cltvSatisfied || canRecoverViaBoltz3of3(refundableVtxos, swap);
+            return {
+                swap,
+                status: isRecoverable ? "recoverable" : "pre_cltv",
+                vtxoCount: refundableVtxos.length,
+                amountSats,
+                refundLocktime: vhtlcTimeouts.refund,
+            };
+        }
+
+        // No refundable VTXOs. If diagnostic was not fetched (bulk scan path),
+        // classify this as "none" without issuing a third indexer query.
+        if (!diagnostic || diagnostic.totalVtxoCount === 0) {
+            return {
+                swap,
+                status: "none",
+                vtxoCount: 0,
+                amountSats: 0,
+                refundLocktime: vhtlcTimeouts.refund,
+            };
+        }
+        if (diagnostic.allSpent) {
+            return {
+                swap,
+                status: "already_spent",
+                vtxoCount: 0,
+                amountSats: 0,
+                refundLocktime: vhtlcTimeouts.refund,
+            };
+        }
+        // VTXOs exist but none refundable — preconfirmed-only state.
+        return {
+            swap,
+            status: "none",
+            vtxoCount: 0,
+            amountSats: 0,
+            refundLocktime: vhtlcTimeouts.refund,
+        };
+    }
+
+    /**
+     * Refunds the VHTLC for a failed submarine swap, returning locked funds to the wallet.
+     * Uses multi-party signatures (user + Boltz + server) for non-recoverable VTXOs.
+     * @param pendingSwap - The submarine swap to refund.
+     * @returns Counts of VTXOs swept vs. deferred. A return value of `{ swept: 0, skipped: N }`
+     *          means the call was a no-op — callers should not treat it as a successful refund.
+     * @throws {Error} If preimage hash is unavailable, VHTLC not found, or already spent.
+     */
+    async refundVHTLC(
+        pendingSwap: BoltzSubmarineSwap,
+        cachedArkInfo?: ArkInfo
+    ): Promise<SubmarineRefundOutcome> {
+        const address = await this.wallet.getAddress();
+        if (!address) throw new Error("Failed to get ark address from wallet");
+
+        const {
+            arkInfo,
+            vhtlcScript,
+            vhtlcTimeouts,
+            ourXOnlyPublicKey,
+            serverXOnlyPublicKey,
+            boltzXOnlyPublicKey,
+            refundableVtxos,
+            diagnostic,
+        } = await this.lookupSubmarineVHTLC(pendingSwap, cachedArkInfo);
 
         if (refundableVtxos.length === 0) {
-            // Distinguish "all spent" from "never funded" (or not yet
-            // refundable) for diagnostics.
-            const { vtxos: allVtxos } = await this.indexerProvider.getVtxos({
-                scripts: [vhtlcPkScriptHex],
-            });
-            if (allVtxos.length === 0) {
+            if (!diagnostic || diagnostic.totalVtxoCount === 0) {
                 throw new Error(
                     `Swap ${pendingSwap.id}: VHTLC not found for address ${pendingSwap.response.address}`
                 );
             }
-            if (allVtxos.every((vtxo) => vtxo.isSpent)) {
+            if (diagnostic.allSpent) {
                 throw new Error(
                     `Swap ${pendingSwap.id}: VHTLC is already spent`
                 );
@@ -876,13 +1104,14 @@ export class ArkadeSwaps {
 
         const outputScript = ArkAddress.decode(address).pkScript;
         const refundWithoutReceiverLeaf = vhtlcScript.refundWithoutReceiver();
-        const refundLocktime = BigInt(timeoutBlockHeights.refund);
-        const currentBlockHeight = await this.swapProvider.getChainHeight();
-        const cltvSatisfied = BigInt(currentBlockHeight) >= refundLocktime;
+        const cltvSatisfied = isSubmarineRefundLocktimeReached(
+            vhtlcTimeouts.refund
+        );
 
         // Refund every unspent VTXO at the contract address.
         // Throttle between Boltz API calls to avoid 429 rate-limiting.
         let boltzCallCount = 0;
+        let sweptCount = 0;
         let skippedCount = 0;
 
         for (const vtxo of refundableVtxos) {
@@ -909,6 +1138,7 @@ export class ArkadeSwaps {
                     arkInfo,
                     isRecoverableVtxo
                 );
+                sweptCount++;
                 continue;
             }
 
@@ -918,8 +1148,9 @@ export class ArkadeSwaps {
                 logger.error(
                     `Swap ${pendingSwap.id}: recoverable VTXO ${vtxo.txid}:${vtxo.vout} ` +
                         `cannot be refunded yet — refundWithoutReceiver locktime has not passed ` +
-                        `(refundLocktime=${timeoutBlockHeights.refund}, ` +
-                        `currentBlockHeight=${currentBlockHeight}). Refund will be retried after locktime.`
+                        `(refundLocktime=${vhtlcTimeouts.refund}, ` +
+                        `currentTimestamp=${Math.floor(Date.now() / 1000)}). ` +
+                        `Refund will be retried after locktime.`
                 );
                 skippedCount++;
                 continue;
@@ -950,6 +1181,7 @@ export class ArkadeSwaps {
                     )
                 );
                 boltzCallCount++;
+                sweptCount++;
             } catch (error) {
                 // Only fall back for Boltz-side rejections (e.g. outpoint
                 // mismatch after an Ark round). Re-throw anything else.
@@ -957,15 +1189,14 @@ export class ArkadeSwaps {
                     throw error;
                 }
 
-                // Re-check chain tip — it may have advanced while talking
-                // to Boltz.
-                const tipNow = await this.swapProvider.getChainHeight();
-                if (BigInt(tipNow) < refundLocktime) {
+                // Re-check the locktime — wall clock may have advanced while
+                // talking to Boltz.
+                if (!isSubmarineRefundLocktimeReached(vhtlcTimeouts.refund)) {
                     logger.error(
                         `Swap ${pendingSwap.id}: Boltz rejected VTXO outpoint and ` +
                             `refundWithoutReceiver locktime has not passed yet ` +
-                            `(currentBlockHeight=${tipNow}, ` +
-                            `locktime=${timeoutBlockHeights.refund}). ` +
+                            `(currentTimestamp=${Math.floor(Date.now() / 1000)}, ` +
+                            `locktime=${vhtlcTimeouts.refund}). ` +
                             `Refund will be retried after locktime.`
                     );
                     skippedCount++;
@@ -988,17 +1219,258 @@ export class ArkadeSwaps {
                     arkInfo,
                     false
                 );
+                sweptCount++;
             }
         }
 
-        // update the pending swap on storage
-        const fullyRefunded = skippedCount === 0;
-        await updateSubmarineSwapStatus(
-            pendingSwap,
-            pendingSwap.status, // Keep current status
-            this.savePendingSubmarineSwap.bind(this),
-            { refundable: true, refunded: fullyRefunded }
+        // Skip the flag update when this is a manual recovery on a
+        // successfully-claimed swap (e.g. user accidentally double-funded
+        // the lockup address). Flipping refunded:true on a
+        // transaction.claimed swap would muddle its history. Legitimate
+        // failure-refund statuses still update normally.
+        if (!isSubmarineSuccessStatus(pendingSwap.status)) {
+            const fullyRefunded = skippedCount === 0;
+            await updateSubmarineSwapStatus(
+                pendingSwap,
+                pendingSwap.status, // Keep current status
+                this.savePendingSubmarineSwap.bind(this),
+                { refundable: true, refunded: fullyRefunded }
+            );
+        }
+
+        return { swept: sweptCount, skipped: skippedCount };
+    }
+
+    /**
+     * Inspect a submarine swap's lockup address for recoverable funds.
+     *
+     * Side-effect free. Returns a structured snapshot the UI can use to
+     * decide whether to offer the user a recovery action — it will not
+     * trigger any signing or persistence.
+     *
+     * Only `transaction.claimed` (success with possible stranded extras)
+     * and refundable failure statuses are recovery candidates. Pending
+     * statuses (`invoice.set`, `transaction.mempool`, …) are returned as
+     * `invalid_swap`; this API is for recovery, not a generic VTXO probe.
+     *
+     * @param swap - The submarine swap to inspect.
+     */
+    async inspectSubmarineRecovery(
+        swap: BoltzSubmarineSwap
+    ): Promise<SubmarineRecoveryInfo> {
+        if (
+            !isSubmarineSuccessStatus(swap.status) &&
+            !isSubmarineRefundableStatus(swap.status)
+        ) {
+            return {
+                swap,
+                status: "invalid_swap",
+                vtxoCount: 0,
+                amountSats: 0,
+                refundLocktime: swap.response.timeoutBlockHeights?.refund,
+                error: `Swap status ${swap.status} is not a recovery candidate`,
+            };
+        }
+
+        let lookup;
+        try {
+            lookup = await this.lookupSubmarineVHTLC(swap);
+        } catch (err) {
+            return {
+                swap,
+                status: "invalid_swap",
+                vtxoCount: 0,
+                amountSats: 0,
+                refundLocktime: swap.response.timeoutBlockHeights?.refund,
+                error: err instanceof Error ? err.message : String(err),
+            };
+        }
+
+        return this.submarineRecoveryInfoFromLookup(swap, lookup);
+    }
+
+    /**
+     * Scan all locally-known submarine swaps for recoverable VHTLC funds.
+     *
+     * Loads submarine swaps from the repository, filters to recovery
+     * candidates (`transaction.claimed` plus refundable failure
+     * statuses), reconstructs their scripts, and performs one batched
+     * spendable query plus one batched recoverable query. Pending swaps are
+     * skipped entirely — they appear in the local repository but cannot
+     * be in a recovery state yet.
+     *
+     * Side-effect free: does not mutate the repository, does not sign,
+     * and does not query Boltz swap status.
+     */
+    async scanRecoverableSubmarineSwaps(): Promise<SubmarineRecoveryInfo[]> {
+        const submarineSwaps =
+            await this.swapRepository.getAllSwaps<BoltzSubmarineSwap>({
+                type: "submarine",
+            });
+
+        const candidates = submarineSwaps.filter(
+            (swap) =>
+                isSubmarineSuccessStatus(swap.status) ||
+                isSubmarineRefundableStatus(swap.status)
         );
+
+        let arkInfo: ArkInfo | undefined;
+        let arkInfoError: string | undefined;
+        if (candidates.length > 0) {
+            try {
+                arkInfo = await this.arkProvider.getInfo();
+            } catch (err) {
+                arkInfoError = err instanceof Error ? err.message : String(err);
+            }
+        }
+
+        const prepared: SubmarineScanPrepared[] = await Promise.all(
+            candidates.map(async (swap) => {
+                if (arkInfoError) {
+                    return {
+                        swap,
+                        error: arkInfoError,
+                    };
+                }
+
+                try {
+                    return {
+                        swap,
+                        context: await this.buildSubmarineVHTLCContext(
+                            swap,
+                            arkInfo
+                        ),
+                    };
+                } catch (err) {
+                    return {
+                        swap,
+                        error: err instanceof Error ? err.message : String(err),
+                    };
+                }
+            })
+        );
+
+        const valid = prepared.filter(
+            (
+                item
+            ): item is Extract<SubmarineScanPrepared, { context: unknown }> =>
+                "context" in item
+        );
+        const scripts = [
+            ...new Set(valid.map(({ context }) => context.vhtlcPkScriptHex)),
+        ];
+
+        const refundableByScript = new Map<string, VirtualCoin[]>();
+        if (scripts.length > 0) {
+            const [spendableResult, recoverableResult] = await Promise.all([
+                this.indexerProvider.getVtxos({
+                    scripts,
+                    spendableOnly: true,
+                }),
+                this.indexerProvider.getVtxos({
+                    scripts,
+                    recoverableOnly: true,
+                }),
+            ]);
+
+            for (const vtxo of dedupeVtxos([
+                ...spendableResult.vtxos,
+                ...recoverableResult.vtxos,
+            ])) {
+                const script = vtxo.script?.toLowerCase();
+                if (!script) continue;
+                const existing = refundableByScript.get(script) ?? [];
+                existing.push(vtxo);
+                refundableByScript.set(script, existing);
+            }
+        }
+
+        return prepared.map((item) => {
+            if ("error" in item) {
+                return {
+                    swap: item.swap,
+                    status: "invalid_swap" as const,
+                    vtxoCount: 0,
+                    amountSats: 0,
+                    refundLocktime:
+                        item.swap.response.timeoutBlockHeights?.refund,
+                    error: item.error,
+                };
+            }
+
+            const refundableVtxos =
+                refundableByScript.get(
+                    item.context.vhtlcPkScriptHex.toLowerCase()
+                ) ?? [];
+            return this.submarineRecoveryInfoFromLookup(item.swap, {
+                ...item.context,
+                refundableVtxos,
+            });
+        });
+    }
+
+    /**
+     * Recover funds locked at a single submarine swap's VHTLC address.
+     *
+     * Thin wrapper around `refundVHTLC` for callers that have already
+     * confirmed (e.g. via `inspectSubmarineRecovery`) that funds are
+     * present. Centralises the spending logic in one place — flag-write
+     * behavior matches `refundVHTLC` (no-op for `transaction.claimed`,
+     * normal flag updates for failure statuses).
+     */
+    async recoverSubmarineFunds(
+        swap: BoltzSubmarineSwap,
+        arkInfo?: ArkInfo
+    ): Promise<SubmarineRefundOutcome> {
+        return this.refundVHTLC(swap, arkInfo);
+    }
+
+    /**
+     * Recover funds for a batch of submarine swaps.
+     *
+     * Each swap's recovery is independent — a failure on one swap does
+     * not abort the rest, and the caller receives a per-swap result so
+     * they can present partial outcomes in the UI. Recovery runs
+     * sequentially to avoid hammering Boltz / the indexer with parallel
+     * batch joins.
+     */
+    async recoverAllSubmarineFunds(
+        swaps: BoltzSubmarineSwap[]
+    ): Promise<SubmarineRecoveryResult[]> {
+        const results: SubmarineRecoveryResult[] = [];
+        let arkInfo: ArkInfo | undefined;
+        try {
+            if (swaps.length > 0) {
+                arkInfo = await this.arkProvider.getInfo();
+            }
+        } catch (err) {
+            const error = err instanceof Error ? err.message : String(err);
+            return swaps.map((swap) => ({
+                swapId: swap.id,
+                recovered: false,
+                skipped: false,
+                error,
+            }));
+        }
+
+        for (const swap of swaps) {
+            try {
+                const outcome = await this.recoverSubmarineFunds(swap, arkInfo);
+                results.push({
+                    swapId: swap.id,
+                    recovered: outcome.swept > 0,
+                    skipped: outcome.skipped > 0,
+                });
+            } catch (err) {
+                results.push({
+                    swapId: swap.id,
+                    recovered: false,
+                    skipped: false,
+                    error: err instanceof Error ? err.message : String(err),
+                });
+            }
+        }
+        return results;
     }
 
     /**
@@ -1691,18 +2163,28 @@ export class ArkadeSwaps {
             });
         }
 
-        // get spendable VTXOs from the lockup address
-        const spendableVtxos = await this.indexerProvider.getVtxos({
-            scripts: [hex.encode(vhtlcScript.pkScript)],
-            spendableOnly: true,
-        });
+        let vtxo;
+        for (let attempt = 1; attempt <= CLAIM_VTXO_RETRY_ATTEMPTS; attempt++) {
+            const spendableVtxos = await this.indexerProvider.getVtxos({
+                scripts: [hex.encode(vhtlcScript.pkScript)],
+                spendableOnly: true,
+            });
+            if (spendableVtxos.vtxos.length > 0) {
+                vtxo = spendableVtxos.vtxos[0];
+                break;
+            }
+            if (attempt < CLAIM_VTXO_RETRY_ATTEMPTS) {
+                await new Promise((resolve) =>
+                    setTimeout(resolve, CLAIM_VTXO_RETRY_DELAY_MS)
+                );
+            }
+        }
 
-        if (spendableVtxos.vtxos.length === 0)
+        if (!vtxo) {
             throw new Error(
                 `Swap ${pendingSwap.id}: no spendable virtual coins found`
             );
-
-        const vtxo = spendableVtxos.vtxos[0];
+        }
 
         const input = {
             ...vtxo,
@@ -1986,7 +2468,7 @@ export class ArkadeSwaps {
             normalizeToXOnlyKey(arkInfo.signerPubkey, "server")
         );
 
-        const timeoutBlockHeights =
+        const vhtlcTimeouts =
             to === "ARK"
                 ? swap.response.claimDetails.timeouts!
                 : swap.response.lockupDetails.timeouts!;
@@ -1997,7 +2479,7 @@ export class ArkadeSwaps {
             receiverPubkey,
             senderPubkey,
             serverPubkey,
-            timeoutBlockHeights,
+            timeoutBlockHeights: vhtlcTimeouts,
         });
 
         if (lockupAddress !== vhtlcAddress) {
@@ -2060,12 +2542,7 @@ export class ArkadeSwaps {
         receiverPubkey: string;
         senderPubkey: string;
         serverPubkey: string;
-        timeoutBlockHeights: {
-            refund: number;
-            unilateralClaim: number;
-            unilateralRefund: number;
-            unilateralRefundWithoutReceiver: number;
-        };
+        timeoutBlockHeights: VhtlcTimeouts;
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
         return createVHTLCScript(args);
     }
@@ -2455,7 +2932,19 @@ export interface IArkadeSwaps extends AsyncDisposable {
         args: CreateLightningInvoiceRequest
     ): Promise<BoltzReverseSwap>;
     claimVHTLC(pendingSwap: BoltzReverseSwap): Promise<void>;
-    refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<void>;
+    refundVHTLC(
+        pendingSwap: BoltzSubmarineSwap
+    ): Promise<SubmarineRefundOutcome>;
+    inspectSubmarineRecovery(
+        swap: BoltzSubmarineSwap
+    ): Promise<SubmarineRecoveryInfo>;
+    scanRecoverableSubmarineSwaps(): Promise<SubmarineRecoveryInfo[]>;
+    recoverSubmarineFunds(
+        swap: BoltzSubmarineSwap
+    ): Promise<SubmarineRefundOutcome>;
+    recoverAllSubmarineFunds(
+        swaps: BoltzSubmarineSwap[]
+    ): Promise<SubmarineRecoveryResult[]>;
     waitAndClaim(pendingSwap: BoltzReverseSwap): Promise<{ txid: string }>;
     waitForSwapSettlement(
         pendingSwap: BoltzSubmarineSwap
@@ -2511,12 +3000,7 @@ export interface IArkadeSwaps extends AsyncDisposable {
         receiverPubkey: string;
         senderPubkey: string;
         serverPubkey: string;
-        timeoutBlockHeights: {
-            refund: number;
-            unilateralClaim: number;
-            unilateralRefund: number;
-            unilateralRefundWithoutReceiver: number;
-        };
+        timeoutBlockHeights: VhtlcTimeouts;
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string };
     getFees(): Promise<FeesResponse>;
     getFees(from: Chain, to: Chain): Promise<ChainFeesResponse>;

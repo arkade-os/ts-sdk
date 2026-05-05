@@ -738,6 +738,86 @@ describe("in-flight request deduplication", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Message timeouts
+// ---------------------------------------------------------------------------
+
+describe("message timeouts", () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        vi.useRealTimers();
+    });
+
+    it("times out non-long-running requests after the default deadline", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness();
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const assertion = runtime.getFees().then(
+            () => {
+                throw new Error("Expected getFees to time out");
+            },
+            (error) => {
+                expect(error.message).toContain("Cannot get fees");
+                expect(error.cause).toBeInstanceOf(ServiceWorkerTimeoutError);
+                expect(error.cause.message).toContain("GET_FEES");
+            }
+        );
+
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(30_000);
+
+        await assertion;
+    });
+
+    it("does not apply the page-side deadline to long-running requests", async () => {
+        vi.useFakeTimers();
+
+        const { navigatorServiceWorker, serviceWorker, emit } =
+            createServiceWorkerHarness();
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const promise = runtime.waitForSwapSettlement({
+            id: "swap-1",
+        } as BoltzSubmarineSwap);
+        const assertion = expect(promise).resolves.toEqual({
+            preimage: "preimage",
+        });
+
+        await vi.advanceTimersByTimeAsync(0);
+        const request = serviceWorker.postMessage.mock.calls
+            .map(([message]: any[]) => message)
+            .find(
+                (message: any) => message.type === "WAIT_FOR_SWAP_SETTLEMENT"
+            );
+
+        expect(request).toEqual(
+            expect.objectContaining({ type: "WAIT_FOR_SWAP_SETTLEMENT" })
+        );
+
+        await vi.advanceTimersByTimeAsync(30_000);
+        emit({
+            id: request.id,
+            tag: TAG,
+            type: "SWAP_SETTLED",
+            payload: { preimage: "preimage" },
+        });
+
+        await assertion;
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Preflight ping
 // ---------------------------------------------------------------------------
 

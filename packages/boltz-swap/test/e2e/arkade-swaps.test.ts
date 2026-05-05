@@ -18,6 +18,8 @@ import {
     SingleKey,
     EsploraProvider,
     ArkNote,
+    InMemoryWalletRepository,
+    InMemoryContractRepository,
 } from "@arkade-os/sdk";
 import { hex } from "@scure/base";
 import { schnorr } from "@noble/curves/secp256k1.js";
@@ -30,6 +32,11 @@ const execAsync = promisify(exec);
 const lncli = "docker exec -i lnd lncli --network=regtest";
 const bccli = "docker exec -t bitcoin bitcoin-cli -regtest";
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const createWalletStorage = () => ({
+    walletRepository: new InMemoryWalletRepository(),
+    contractRepository: new InMemoryContractRepository(),
+});
 
 const generateBlocks = async (numBlocks = 1) => {
     await execAsync(`nigiri rpc --generate ${numBlocks}`);
@@ -219,6 +226,7 @@ describe("ArkadeSwaps", () => {
             identity: SingleKey.fromRandomBytes(),
             arkServerUrl: arkUrl,
             settlementConfig: false,
+            storage: createWalletStorage(),
         });
 
         const amount = 1_000_000;
@@ -256,6 +264,7 @@ describe("ArkadeSwaps", () => {
             identity,
             arkServerUrl: arkUrl,
             settlementConfig: false,
+            storage: createWalletStorage(),
             onchainProvider: new EsploraProvider("http://localhost:3000", {
                 forcePolling: true,
                 pollingInterval: 2000,
@@ -728,6 +737,100 @@ describe("ArkadeSwaps", () => {
                 }
             );
         });
+    });
+
+    // ==========================================
+    // Submarine Recovery
+    // ==========================================
+
+    describe("Submarine Recovery", () => {
+        it(
+            "should inspect, scan, and recover funds stranded at a failed submarine swap's VHTLC",
+            { timeout: 30_000 },
+            async () => {
+                const amount = 1000;
+                const fundAmount = amount + 100;
+                await fundWallet(fundAmount);
+
+                // Cancel the invoice so any payment attempt by Boltz fails.
+                const { invoice, r_hash } =
+                    await getNewLightningInvoice(amount);
+                await cancelInvoice(r_hash);
+
+                // Use createSubmarineSwap directly so sendLightningPayment's
+                // catch-block auto-refund doesn't pre-empt us — we want the
+                // funds to remain stranded at the VHTLC so the recovery APIs
+                // have something to act on.
+                const pendingSwap = await swaps.createSubmarineSwap({
+                    invoice,
+                });
+                const balanceBeforeLockup = await wallet.getBalance();
+
+                await wallet.send({
+                    address: pendingSwap.response.address,
+                    amount: pendingSwap.response.expectedAmount,
+                });
+
+                // Boltz tries to pay the cancelled invoice → invoice.failedToPay.
+                // Sync the local repo so the recovery APIs see the new status.
+                await waitForSwapStatus(
+                    pendingSwap.id,
+                    "invoice.failedToPay",
+                    10_000
+                );
+                await swaps.refreshSwapsStatus();
+
+                const failedSwap = (await swaps.getSwapHistory()).find(
+                    (s): s is BoltzSubmarineSwap => s.id === pendingSwap.id
+                );
+                expect(failedSwap?.status).toBe("invoice.failedToPay");
+
+                // inspectSubmarineRecovery: pre-CLTV failure with a regular
+                // spendable VTXO at the lockup is recoverable via Boltz 3-of-3.
+                const info = await swaps.inspectSubmarineRecovery(failedSwap!);
+                expect(info.status).toBe("recoverable");
+                expect(info.swap.id).toBe(pendingSwap.id);
+                expect(info.vtxoCount).toBeGreaterThanOrEqual(1);
+                expect(info.amountSats).toBeGreaterThanOrEqual(
+                    pendingSwap.response.expectedAmount
+                );
+
+                // scanRecoverableSubmarineSwaps: bulk scan should also flag it
+                // as recoverable.
+                const scan = await swaps.scanRecoverableSubmarineSwaps();
+                const scanEntry = scan.find(
+                    (s) => s.swap.id === pendingSwap.id
+                );
+                expect(scanEntry?.status).toBe("recoverable");
+                expect(scanEntry?.vtxoCount).toBeGreaterThanOrEqual(1);
+
+                // recoverAllSubmarineFunds: sweep the VHTLC and report success
+                // through the per-swap result aggregator.
+                const results = await swaps.recoverAllSubmarineFunds([
+                    failedSwap!,
+                ]);
+                expect(results).toHaveLength(1);
+                expect(results[0]).toMatchObject({
+                    swapId: pendingSwap.id,
+                    recovered: true,
+                    skipped: false,
+                });
+                expect(results[0].error).toBeUndefined();
+
+                // Funds should land back in the wallet.
+                await waitForBalance(
+                    () => wallet.getBalance(),
+                    balanceBeforeLockup.available - 200,
+                    5_000
+                );
+
+                // Post-recovery: the lockup VTXO is now spent, so a fresh
+                // inspect classifies the swap as already_spent.
+                const post = await swaps.inspectSubmarineRecovery(failedSwap!);
+                expect(post.status).toBe("already_spent");
+                expect(post.vtxoCount).toBe(0);
+            }
+        );
     });
 
     // ==========================================
@@ -1385,6 +1488,7 @@ describe("ArkadeSwaps", () => {
                         schnorr.utils.randomSecretKey()
                     ),
                     arkServerUrl: arkUrl,
+                    storage: createWalletStorage(),
                     // no settlementConfig — VtxoManager enabled by default
                 });
 
@@ -1457,6 +1561,7 @@ describe("ArkadeSwaps", () => {
                         schnorr.utils.randomSecretKey()
                     ),
                     arkServerUrl: arkUrl,
+                    storage: createWalletStorage(),
                     // default settlementConfig — VtxoManager starts enabled
                 });
 

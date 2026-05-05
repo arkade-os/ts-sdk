@@ -191,6 +191,28 @@ const unsubscribe = manager.subscribeToSwapUpdates(
 );
 ```
 
+### Submarine Fund Recovery
+
+If a Lightning payment fails and funds get stranded in a VHTLC, you can recover them manually:
+
+```typescript
+// Scan all local swaps for recoverable funds
+const candidates = await swaps.scanRecoverableSubmarineSwaps();
+// candidates[i].status: "recoverable" | "pre_cltv" | "none" | "already_spent" | "invalid_swap"
+
+// Recover all at once
+const results = await swaps.recoverAllSubmarineFunds(candidates.map(c => c.swap));
+
+// Or inspect / recover a single swap
+const info = await swaps.inspectSubmarineRecovery(swap);
+if (info.status === 'recoverable') {
+  await swaps.recoverSubmarineFunds(swap);
+}
+```
+
+> [!NOTE]
+> This only scans swaps stored in your local repository. It does not discover swaps that exist on Boltz but are missing locally.
+
 ### Cleanup
 
 ```typescript

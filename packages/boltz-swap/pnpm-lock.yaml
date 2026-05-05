@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@arkade-os/sdk':
-        specifier: 0.4.16
-        version: 0.4.16
+        specifier: 0.4.23
+        version: 0.4.23
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.0.1
@@ -72,15 +72,15 @@ importers:
 
 packages:
 
-  '@arkade-os/sdk@0.4.16':
-    resolution: {integrity: sha512-7eKFZLEuZ9gHLWJPwaC30bnBCYNU6a+qhCyAx4JOHS9nIV+rChSl4aqjDhQBqzE/xpCf01eLLH84CLTf/WBfsQ==}
+  '@arkade-os/sdk@0.4.23':
+    resolution: {integrity: sha512-09ewNFflv3RrEN1iFln5xKXWoxGKKYeBovAu7zJSOmMZ3SzOpLxUOFGPus6q5tHLjVD7mTeyc0GzZ9e1tUmgLQ==}
     engines: {node: '>=22.12.0 <23', pnpm: '>=10.25.0 <11'}
     peerDependencies:
       '@react-native-async-storage/async-storage': '>=1.0.0'
       expo: '>=54.0.0'
-      expo-background-task: ~1.0.10
-      expo-sqlite: ~16.0.10
-      expo-task-manager: ~14.0.9
+      expo-background-task: ~1.0.10 || >=55.0.0
+      expo-sqlite: ~16.0.10 || >=55.0.0
+      expo-task-manager: ~14.0.9 || >=55.0.0
     peerDependenciesMeta:
       '@react-native-async-storage/async-storage':
         optional: true
@@ -946,6 +946,11 @@ packages:
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 
+  isomorphic-ws@5.0.0:
+    resolution: {integrity: sha512-muId7Zzn9ywDsyXgTIafTry2sV3nySZeUDe6YedVd1Hvuuep5AsIlqK+XefWpYTyJG5e503F2xIuT2lcU6rCSw==}
+    peerDependencies:
+      ws: '*'
+
   jackspeak@3.4.3:
     resolution: {integrity: sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw==}
 
@@ -1439,13 +1444,29 @@ packages:
     resolution: {integrity: sha512-si7QWI6zUMq56bESFvagtmzMdGOtoxfR+Sez11Mobfc7tm+VkUckk9bW2UeffTGVUbOksxmSw0AA2gs8g71NCQ==}
     engines: {node: '>=12'}
 
+  ws-electrumx-client@1.0.5:
+    resolution: {integrity: sha512-pBjfFqb9j2FBz7NPbnd8r2lOYanEw8ACzfKxOtHCgEGqre5QiTax5XHLVgbsiOvST0vmsHAiMtkJPvsZm77PIQ==}
+    engines: {node: '>=10'}
+
+  ws@8.20.0:
+    resolution: {integrity: sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
 
 snapshots:
 
-  '@arkade-os/sdk@0.4.16':
+  '@arkade-os/sdk@0.4.23':
     dependencies:
       '@bitcoinerlab/descriptors-scure': 3.1.7
       '@marcbachmann/cel-js': 7.3.1
@@ -1455,11 +1476,14 @@ snapshots:
       '@scure/bip39': 2.0.1
       '@scure/btc-signer': 2.0.1
       bip68: 1.0.4
+      ws-electrumx-client: 1.0.5
     transitivePeerDependencies:
       - '@ledgerhq/ledger-bitcoin'
       - bip32
       - bitcoinjs-lib
+      - bufferutil
       - ecpair
+      - utf-8-validate
 
   '@bitcoinerlab/descriptors-core@3.1.7(@noble/curves@2.0.1)(@noble/hashes@2.0.1)(@scure/base@2.0.0)(@scure/bip32@2.0.1)(@scure/btc-signer@2.0.1)':
     dependencies:
@@ -2234,6 +2258,10 @@ snapshots:
 
   isexe@2.0.0: {}
 
+  isomorphic-ws@5.0.0(ws@8.20.0):
+    dependencies:
+      ws: 8.20.0
+
   jackspeak@3.4.3:
     dependencies:
       '@isaacs/cliui': 8.0.2
@@ -2697,5 +2725,15 @@ snapshots:
       ansi-styles: 6.2.3
       string-width: 5.1.2
       strip-ansi: 7.1.2
+
+  ws-electrumx-client@1.0.5:
+    dependencies:
+      isomorphic-ws: 5.0.0(ws@8.20.0)
+      ws: 8.20.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  ws@8.20.0: {}
 
   yocto-queue@0.1.0: {}

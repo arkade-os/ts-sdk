@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { BoltzSwapProvider } from "../src/boltz-swap-provider";
-import { SchemaError, NetworkError } from "../src/errors";
+import { SchemaError, NetworkError, SwapNotFoundError } from "../src/errors";
 import {
     extractInvoiceAmount,
     extractTimeLockFromLeafOutput,
@@ -264,6 +264,67 @@ describe("BoltzSwapProvider", () => {
             await expect(provider.getSwapStatus("mock-id")).rejects.toThrow(
                 SchemaError
             );
+        });
+
+        it("should throw SwapNotFoundError on 404 with 'could not find swap' body", async () => {
+            // Boltz returns this shape when the configured instance has no
+            // record of the swap — typically after the operator switched
+            // the API URL to a different Boltz instance.
+            vi.stubGlobal(
+                "fetch",
+                vi.fn(() =>
+                    Promise.resolve({
+                        ok: false,
+                        status: 404,
+                        text: () =>
+                            Promise.resolve(
+                                JSON.stringify({
+                                    error: "could not find swap with id: mock-id",
+                                })
+                            ),
+                        headers: { get: () => null },
+                    })
+                )
+            );
+
+            try {
+                await provider.getSwapStatus("mock-id");
+                expect.fail("Should have thrown SwapNotFoundError");
+            } catch (error) {
+                expect(error).toBeInstanceOf(SwapNotFoundError);
+                expect(error).toBeInstanceOf(NetworkError);
+                expect((error as SwapNotFoundError).swapId).toBe("mock-id");
+                expect((error as SwapNotFoundError).statusCode).toBe(404);
+            }
+        });
+
+        it("should throw plain NetworkError on 404 from a renamed route or proxy", async () => {
+            // A 404 from a misconfigured proxy or a renamed route must NOT
+            // trip the safety net — the SwapManager counter only increments
+            // on the explicit "could not find swap" body.
+            vi.stubGlobal(
+                "fetch",
+                vi.fn(() =>
+                    Promise.resolve({
+                        ok: false,
+                        status: 404,
+                        text: () =>
+                            Promise.resolve(
+                                "<html><body>Not Found</body></html>"
+                            ),
+                        headers: { get: () => null },
+                    })
+                )
+            );
+
+            try {
+                await provider.getSwapStatus("mock-id");
+                expect.fail("Should have thrown NetworkError");
+            } catch (error) {
+                expect(error).toBeInstanceOf(NetworkError);
+                expect(error).not.toBeInstanceOf(SwapNotFoundError);
+                expect((error as NetworkError).statusCode).toBe(404);
+            }
         });
     });
 

@@ -147,6 +147,77 @@ export interface BoltzSubmarineSwap {
     response: CreateSubmarineSwapResponse;
 }
 
+/**
+ * Outcome of inspecting a submarine swap's lockup address for recoverable
+ * funds.
+ *
+ * - `recoverable` — unspent VTXOs exist and can be swept now, either because
+ *   the refund CLTV has elapsed or because the Boltz 3-of-3 refund path is
+ *   immediately available.
+ * - `pre_cltv` — unspent VTXOs exist but the refund locktime has not
+ *   passed yet and no immediate Boltz 3-of-3 refund path was detected.
+ * - `none` — no unspent VTXOs at the address (never funded, fully
+ *   pruned, or only preconfirmed-only state).
+ * - `already_spent` — the address has VTXOs but every one is spent
+ *   (typical for a healthy completed swap).
+ * - `invalid_swap` — the swap is not a recovery candidate (pending
+ *   status), the swap data is incomplete, or the reconstructed VHTLC
+ *   address doesn't match the one Boltz returned.
+ */
+export type SubmarineRecoveryStatus =
+    | "recoverable"
+    | "pre_cltv"
+    | "none"
+    | "already_spent"
+    | "invalid_swap";
+
+/** Diagnostic snapshot of a submarine swap's recovery state. */
+export interface SubmarineRecoveryInfo {
+    /** The submarine swap this snapshot describes. */
+    swap: BoltzSubmarineSwap;
+    /** Classification of the lockup address state. */
+    status: SubmarineRecoveryStatus;
+    /** Number of unspent VTXOs at the lockup address. */
+    vtxoCount: number;
+    /** Total satoshis across the unspent VTXOs. */
+    amountSats: number;
+    /**
+     * Absolute Unix-timestamp CLTV from the swap's VHTLC, when available.
+     * Compared against wall-clock seconds for refund readiness.
+     */
+    refundLocktime?: number;
+    /** Reason populated when `status === "invalid_swap"`. */
+    error?: string;
+}
+
+/** Outcome of a single `refundVHTLC` call: how many VTXOs were swept vs. deferred. */
+export interface SubmarineRefundOutcome {
+    /** Number of VTXOs successfully refunded (joined a batch or via Boltz co-sign). */
+    swept: number;
+    /**
+     * Number of VTXOs that could not be refunded yet (e.g. recoverable VTXO
+     * pre-CLTV, or Boltz rejected and CLTV still not satisfied). The caller
+     * is expected to retry these later.
+     */
+    skipped: number;
+}
+
+/** Per-swap outcome of a bulk recovery call. */
+export interface SubmarineRecoveryResult {
+    /** ID of the swap whose VHTLC we attempted to refund. */
+    swapId: string;
+    /** True only when at least one VTXO was actually swept by `refundVHTLC`. */
+    recovered: boolean;
+    /**
+     * True when `refundVHTLC` returned without throwing but at least one
+     * VTXO was deferred — distinguishes a real sweep from a no-op skip
+     * path. Always false when `error` is set (the error supersedes).
+     */
+    skipped: boolean;
+    /** Failure message when `refundVHTLC` threw. */
+    error?: string;
+}
+
 /** Tracks an in-progress chain swap (ARK ↔ BTC). */
 export interface BoltzChainSwap {
     /** Unique swap ID from Boltz. */

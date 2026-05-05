@@ -78,6 +78,30 @@ export class NetworkError extends Error {
     }
 }
 
+/**
+ * Thrown when Boltz responds to `GET /v2/swap/{id}` with HTTP 404 and a body
+ * matching `{"error":"could not find swap with id: ..."}`. Signals that the
+ * configured Boltz instance has no record of this swap — typically because
+ * the swap was created against a different Boltz endpoint. Distinct from a
+ * generic 404 (route change, proxy misconfig) so the polling loop can drive
+ * a per-swap "unknown to provider" counter without conflating it with
+ * transient network errors.
+ */
+export class SwapNotFoundError extends NetworkError {
+    /** The swap ID Boltz did not recognise. */
+    public readonly swapId: string;
+
+    constructor(swapId: string, errorData?: any) {
+        super(
+            `Boltz returned 404 for swap '${swapId}': swap unknown to this Boltz instance`,
+            404,
+            errorData
+        );
+        this.name = "SwapNotFoundError";
+        this.swapId = swapId;
+    }
+}
+
 /** Thrown when the Boltz API returns a response that doesn't match the expected schema. */
 export class SchemaError extends SwapError {
     constructor(options: ErrorOptions = {}) {

@@ -6,4 +6,5 @@ dist
 # AI
 CLAUDE.md
 .claude
+*.agents.md
 *.agent.md

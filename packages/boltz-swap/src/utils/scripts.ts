@@ -4,6 +4,26 @@ import { VHTLC } from "@arkade-os/sdk";
 import { ripemd160 } from "@noble/hashes/legacy.js";
 
 /**
+ * Boltz-Ark VHTLC timeouts. See {@link ./vhtlc.ts#VhtlcTimeouts} for the
+ * canonical definition; this duplicate exists only to keep the legacy
+ * `createVHTLCScript` exported from this module type-aligned. `refund` is an
+ * absolute Unix timestamp; the unilateral fields are BIP68 relative delays
+ * (seconds when ≥ 512).
+ */
+export type VhtlcTimeouts = {
+    refund: number;
+    unilateralClaim: number;
+    unilateralRefund: number;
+    unilateralRefundWithoutReceiver: number;
+};
+
+const toBip68RelativeTimelock = (value: number) =>
+    ({
+        type: value < 512 ? ("blocks" as const) : ("seconds" as const),
+        value: BigInt(value),
+    }) as const;
+
+/**
  * Creates a VHTLC script for the swap.
  * works for submarine swaps and reverse swaps
  * it creates a VHTLC script that can be used to claim or refund the swap
@@ -20,19 +40,14 @@ export function createVHTLCScript({
     receiverPubkey,
     senderPubkey,
     serverPubkey,
-    timeoutBlockHeights,
+    timeoutBlockHeights: vhtlcTimeouts,
 }: {
     network: string;
     preimageHash: Uint8Array;
     receiverPubkey: string;
     senderPubkey: string;
     serverPubkey: string;
-    timeoutBlockHeights: {
-        refund: number;
-        unilateralClaim: number;
-        unilateralRefund: number;
-        unilateralRefundWithoutReceiver: number;
-    };
+    timeoutBlockHeights: VhtlcTimeouts;
 }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
     // validate we are using a x-only receiver public key
     const receiverXOnlyPublicKey = normalizeToXOnlyPublicKey(
@@ -52,28 +67,21 @@ export function createVHTLCScript({
         "server"
     );
 
-    const delayType = (num: number) => (num < 512 ? "blocks" : "seconds");
-
     const vhtlcScript = new VHTLC.Script({
         preimageHash: ripemd160(preimageHash),
         sender: senderXOnlyPublicKey,
         receiver: receiverXOnlyPublicKey,
         server: serverXOnlyPublicKey,
-        refundLocktime: BigInt(timeoutBlockHeights.refund),
-        unilateralClaimDelay: {
-            type: delayType(timeoutBlockHeights.unilateralClaim),
-            value: BigInt(timeoutBlockHeights.unilateralClaim),
-        },
-        unilateralRefundDelay: {
-            type: delayType(timeoutBlockHeights.unilateralRefund),
-            value: BigInt(timeoutBlockHeights.unilateralRefund),
-        },
-        unilateralRefundWithoutReceiverDelay: {
-            type: delayType(
-                timeoutBlockHeights.unilateralRefundWithoutReceiver
-            ),
-            value: BigInt(timeoutBlockHeights.unilateralRefundWithoutReceiver),
-        },
+        refundLocktime: BigInt(vhtlcTimeouts.refund),
+        unilateralClaimDelay: toBip68RelativeTimelock(
+            vhtlcTimeouts.unilateralClaim
+        ),
+        unilateralRefundDelay: toBip68RelativeTimelock(
+            vhtlcTimeouts.unilateralRefund
+        ),
+        unilateralRefundWithoutReceiverDelay: toBip68RelativeTimelock(
+            vhtlcTimeouts.unilateralRefundWithoutReceiver
+        ),
     });
 
     if (!vhtlcScript) throw new Error("Failed to create VHTLC script");

@@ -27,6 +27,36 @@ import { normalizeToXOnlyKey, verifySignatures } from "./signatures";
 import { TransactionOutput, TransactionInput } from "@scure/btc-signer/psbt.js";
 
 /**
+ * Boltz-Ark VHTLC timeouts. The shape matches Boltz's `timeoutBlockHeights`
+ * API field, but the legacy name is misleading — these are not all block
+ * heights:
+ * - `refund` is an absolute Unix timestamp in seconds (CLTV with timestamp
+ *   semantics, BIP65 threshold ≥ 500_000_000).
+ * - `unilateralClaim`, `unilateralRefund`, `unilateralRefundWithoutReceiver`
+ *   are BIP68 *relative* delays measured from the lockup confirmation. Values
+ *   ≥ 512 are interpreted as seconds (BIP68 type-flag). For Boltz Ark mainnet
+ *   they're always seconds.
+ */
+export type VhtlcTimeouts = {
+    refund: number;
+    unilateralClaim: number;
+    unilateralRefund: number;
+    unilateralRefundWithoutReceiver: number;
+};
+
+/**
+ * Map a BIP68 relative-timelock value to a `{ type, value }` pair.
+ * BIP68 encodes the unit in a type-flag bit; values ≥ 512 are seconds, values
+ * below the threshold are blocks. Boltz Ark always returns seconds in
+ * production, but the helper supports both for completeness.
+ */
+const toBip68RelativeTimelock = (value: number) =>
+    ({
+        type: value < 512 ? ("blocks" as const) : ("seconds" as const),
+        value: BigInt(value),
+    }) as const;
+
+/**
  * Creates a VHTLC script for the swap.
  * Works for submarine, reverse, and chain swaps.
  * It creates a VHTLC script that can be used to claim or refund the swap.
@@ -34,6 +64,9 @@ import { TransactionOutput, TransactionInput } from "@scure/btc-signer/psbt.js";
  * @param args - The parameters for creating the VHTLC script.
  * @param args.preimageHash - The SHA256 digest of the preimage (not the raw preimage or RIPEMD160 hash).
  * The function will apply ripemd160(preimageHash) internally to create the final commitment.
+ * @param args.timeoutBlockHeights - Boltz timeout fields. Despite the legacy
+ *   field name, see {@link VhtlcTimeouts} for the actual semantics — `refund`
+ *   is a Unix timestamp, the unilateral fields are BIP68 relative delays.
  * @returns The created VHTLC script and address.
  */
 export const createVHTLCScript = (args: {
@@ -42,12 +75,7 @@ export const createVHTLCScript = (args: {
     receiverPubkey: string;
     senderPubkey: string;
     serverPubkey: string;
-    timeoutBlockHeights: {
-        refund: number;
-        unilateralClaim: number;
-        unilateralRefund: number;
-        unilateralRefundWithoutReceiver: number;
-    };
+    timeoutBlockHeights: VhtlcTimeouts;
 }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } => {
     const {
         network,
@@ -55,7 +83,7 @@ export const createVHTLCScript = (args: {
         receiverPubkey,
         senderPubkey,
         serverPubkey,
-        timeoutBlockHeights,
+        timeoutBlockHeights: vhtlcTimeouts,
     } = args;
     // validate we are using a x-only receiver public key
     const receiverXOnlyPublicKey = normalizeToXOnlyKey(
@@ -75,28 +103,21 @@ export const createVHTLCScript = (args: {
         "server"
     );
 
-    const delayType = (num: number) => (num < 512 ? "blocks" : "seconds");
-
     const vhtlcScript = new VHTLC.Script({
         preimageHash: ripemd160(preimageHash),
         sender: senderXOnlyPublicKey,
         receiver: receiverXOnlyPublicKey,
         server: serverXOnlyPublicKey,
-        refundLocktime: BigInt(timeoutBlockHeights.refund),
-        unilateralClaimDelay: {
-            type: delayType(timeoutBlockHeights.unilateralClaim),
-            value: BigInt(timeoutBlockHeights.unilateralClaim),
-        },
-        unilateralRefundDelay: {
-            type: delayType(timeoutBlockHeights.unilateralRefund),
-            value: BigInt(timeoutBlockHeights.unilateralRefund),
-        },
-        unilateralRefundWithoutReceiverDelay: {
-            type: delayType(
-                timeoutBlockHeights.unilateralRefundWithoutReceiver
-            ),
-            value: BigInt(timeoutBlockHeights.unilateralRefundWithoutReceiver),
-        },
+        refundLocktime: BigInt(vhtlcTimeouts.refund),
+        unilateralClaimDelay: toBip68RelativeTimelock(
+            vhtlcTimeouts.unilateralClaim
+        ),
+        unilateralRefundDelay: toBip68RelativeTimelock(
+            vhtlcTimeouts.unilateralRefund
+        ),
+        unilateralRefundWithoutReceiverDelay: toBip68RelativeTimelock(
+            vhtlcTimeouts.unilateralRefundWithoutReceiver
+        ),
     });
 
     if (!vhtlcScript.claimScript)

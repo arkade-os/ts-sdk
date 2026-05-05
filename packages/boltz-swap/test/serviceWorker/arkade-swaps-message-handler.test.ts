@@ -1,5 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ArkadeSwapsMessageHandler } from "../../src/serviceWorker/arkade-swaps-message-handler";
+import {
+    ArkadeSwapsMessageHandler,
+    LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES,
+} from "../../src/serviceWorker/arkade-swaps-message-handler";
 import { SwapRepository } from "../../src/repositories/swap-repository";
 import { BoltzReverseSwap } from "../../src/types";
 import { BoltzSwapStatus } from "../../src/boltz-swap-provider";
@@ -37,5 +40,29 @@ describe("ArkadeSwapsMessageHandler broadcastEvent", () => {
         expect(postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: "SM-EVENT-SWAP_UPDATE" })
         );
+    });
+});
+
+describe("ArkadeSwapsMessageHandler long-running requests", () => {
+    it("uses the exported long-running request set for bus timeout opt-out", () => {
+        const handler = new ArkadeSwapsMessageHandler({} as SwapRepository);
+
+        for (const type of LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES) {
+            expect(
+                handler.isLongRunning({
+                    id: "req",
+                    tag: handler.messageTag,
+                    type,
+                } as any)
+            ).toBe(true);
+        }
+
+        expect(
+            handler.isLongRunning({
+                id: "req",
+                tag: handler.messageTag,
+                type: "GET_FEES",
+            } as any)
+        ).toBe(false);
     });
 });

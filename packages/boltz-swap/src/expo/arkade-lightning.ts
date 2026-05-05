@@ -17,6 +17,9 @@ import type {
     BoltzSwap,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    SubmarineRecoveryInfo,
+    SubmarineRecoveryResult,
+    SubmarineRefundOutcome,
 } from "../types";
 import type { GetSwapStatusResponse } from "../boltz-swap-provider";
 import type {
@@ -26,6 +29,7 @@ import type {
 import { SWAP_POLL_TASK_TYPE } from "./swapsPollProcessor";
 import type { ArkInfo, ArkTxInput, Identity, VHTLC } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
+import type { VhtlcTimeouts } from "../utils/vhtlc";
 
 function getRandomId(): string {
     return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -302,8 +306,32 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         return this.inner.claimVHTLC(pendingSwap);
     }
 
-    refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<void> {
+    refundVHTLC(
+        pendingSwap: BoltzSubmarineSwap
+    ): Promise<SubmarineRefundOutcome> {
         return this.inner.refundVHTLC(pendingSwap);
+    }
+
+    inspectSubmarineRecovery(
+        swap: BoltzSubmarineSwap
+    ): Promise<SubmarineRecoveryInfo> {
+        return this.inner.inspectSubmarineRecovery(swap);
+    }
+
+    scanRecoverableSubmarineSwaps(): Promise<SubmarineRecoveryInfo[]> {
+        return this.inner.scanRecoverableSubmarineSwaps();
+    }
+
+    recoverSubmarineFunds(
+        swap: BoltzSubmarineSwap
+    ): Promise<SubmarineRefundOutcome> {
+        return this.inner.recoverSubmarineFunds(swap);
+    }
+
+    recoverAllSubmarineFunds(
+        swaps: BoltzSubmarineSwap[]
+    ): Promise<SubmarineRecoveryResult[]> {
+        return this.inner.recoverAllSubmarineFunds(swaps);
     }
 
     waitAndClaim(pendingSwap: BoltzReverseSwap): Promise<{ txid: string }> {
@@ -431,12 +459,7 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         receiverPubkey: string;
         senderPubkey: string;
         serverPubkey: string;
-        timeoutBlockHeights: {
-            refund: number;
-            unilateralClaim: number;
-            unilateralRefund: number;
-            unilateralRefundWithoutReceiver: number;
-        };
+        timeoutBlockHeights: VhtlcTimeouts;
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
         return this.inner.createVHTLCScript(params);
     }

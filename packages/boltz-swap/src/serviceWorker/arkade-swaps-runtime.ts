@@ -15,6 +15,9 @@ import {
     BoltzSubmarineSwap,
     SendLightningPaymentRequest,
     SendLightningPaymentResponse,
+    SubmarineRecoveryInfo,
+    SubmarineRecoveryResult,
+    SubmarineRefundOutcome,
 } from "../types";
 import { SwapRepository } from "../repositories/swap-repository";
 import {
@@ -22,6 +25,7 @@ import {
     ArkadeSwapsUpdaterResponse,
     DEFAULT_MESSAGE_TAG,
     RequestInitArkSwaps,
+    LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES,
 } from "./arkade-swaps-message-handler";
 import type {
     ResponseArkToBtc,
@@ -46,6 +50,11 @@ import type {
     ResponseWaitAndClaimChain,
     ResponseWaitAndClaim,
     ResponseWaitForSwapSettlement,
+    ResponseInspectSubmarineRecovery,
+    ResponseScanRecoverableSubmarineSwaps,
+    ResponseRecoverAllSubmarineFunds,
+    ResponseRefundVhtlc,
+    ResponseRecoverSubmarineFunds,
 } from "./arkade-swaps-message-handler";
 import {
     MESSAGE_BUS_NOT_INITIALIZED,
@@ -57,6 +66,7 @@ import {
 } from "@arkade-os/sdk";
 import type { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import { IArkadeSwaps } from "../arkade-swaps";
+import type { VhtlcTimeouts } from "../utils/vhtlc";
 import { IndexedDbSwapRepository } from "../repositories/IndexedDb/swap-repository";
 import {
     enrichReverseSwapPreimage as _enrichReverseSwapPreimage,
@@ -73,6 +83,9 @@ function isMessageBusNotInitializedError(error: unknown): boolean {
         error.message.includes(MESSAGE_BUS_NOT_INITIALIZED)
     );
 }
+
+const DEFAULT_MESSAGE_TIMEOUT_MS = 30_000;
+const NO_MESSAGE_TIMEOUT_MS = 0;
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
     "GET_FEES",
@@ -519,13 +532,61 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         });
     }
 
-    async refundVHTLC(pendingSwap: BoltzSubmarineSwap): Promise<void> {
-        await this.sendMessage({
+    async refundVHTLC(
+        pendingSwap: BoltzSubmarineSwap
+    ): Promise<SubmarineRefundOutcome> {
+        const res = await this.sendMessage({
             id: getRandomId(),
             tag: this.messageTag,
             type: "REFUND_VHTLC",
             payload: pendingSwap,
         });
+        return (res as ResponseRefundVhtlc).payload;
+    }
+
+    async inspectSubmarineRecovery(
+        swap: BoltzSubmarineSwap
+    ): Promise<SubmarineRecoveryInfo> {
+        const res = await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "INSPECT_SUBMARINE_RECOVERY",
+            payload: swap,
+        });
+        return (res as ResponseInspectSubmarineRecovery).payload;
+    }
+
+    async scanRecoverableSubmarineSwaps(): Promise<SubmarineRecoveryInfo[]> {
+        const res = await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "SCAN_RECOVERABLE_SUBMARINE_SWAPS",
+        });
+        return (res as ResponseScanRecoverableSubmarineSwaps).payload;
+    }
+
+    async recoverSubmarineFunds(
+        swap: BoltzSubmarineSwap
+    ): Promise<SubmarineRefundOutcome> {
+        const res = await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "RECOVER_SUBMARINE_FUNDS",
+            payload: swap,
+        });
+        return (res as ResponseRecoverSubmarineFunds).payload;
+    }
+
+    async recoverAllSubmarineFunds(
+        swaps: BoltzSubmarineSwap[]
+    ): Promise<SubmarineRecoveryResult[]> {
+        const res = await this.sendMessage({
+            id: getRandomId(),
+            tag: this.messageTag,
+            type: "RECOVER_ALL_SUBMARINE_FUNDS",
+            payload: swaps,
+        });
+        return (res as ResponseRecoverAllSubmarineFunds).payload;
     }
 
     async waitAndClaim(
@@ -792,12 +853,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
         receiverPubkey: string;
         senderPubkey: string;
         serverPubkey: string;
-        timeoutBlockHeights: {
-            refund: number;
-            unilateralClaim: number;
-            unilateralRefund: number;
-            unilateralRefundWithoutReceiver: number;
-        };
+        timeoutBlockHeights: VhtlcTimeouts;
     }): { vhtlcScript: VHTLC.Script; vhtlcAddress: string } {
         throw new Error(
             "createVHTLCScript is not supported via service worker"
@@ -959,7 +1015,8 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
     }
 
     private sendMessageDirect(
-        request: ArkadeSwapsUpdaterRequest
+        request: ArkadeSwapsUpdaterRequest,
+        timeoutMs: number
     ): Promise<ArkadeSwapsUpdaterResponse> {
         return new Promise((resolve, reject) => {
             const cleanup = () => {
@@ -970,14 +1027,19 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                 );
             };
 
-            const timeoutId = setTimeout(() => {
-                cleanup();
-                reject(
-                    new ServiceWorkerTimeoutError(
-                        `Service worker message timed out (${request.type})`
-                    )
-                );
-            }, 30_000);
+            // Match the SDK MessageBus convention: non-positive timeouts
+            // disable the deadline for flows that wait on remote peers.
+            const timeoutId =
+                timeoutMs > 0
+                    ? setTimeout(() => {
+                          cleanup();
+                          reject(
+                              new ServiceWorkerTimeoutError(
+                                  `Service worker message timed out (${request.type})`
+                              )
+                          );
+                      }, timeoutMs)
+                    : undefined;
 
             const messageHandler = (event: MessageEvent) => {
                 const response = event.data as
@@ -1079,10 +1141,16 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             }
         }
 
+        const timeoutMs = LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES.has(
+            request.type
+        )
+            ? NO_MESSAGE_TIMEOUT_MS
+            : DEFAULT_MESSAGE_TIMEOUT_MS;
+
         const maxRetries = 2;
         for (let attempt = 0; ; attempt++) {
             try {
-                return await this.sendMessageDirect(request);
+                return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
                 if (
                     !isMessageBusNotInitializedError(error) ||
@@ -1111,7 +1179,10 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
                 payload: this.initPayload,
             };
 
-            await this.sendMessageDirect(initMessage);
+            await this.sendMessageDirect(
+                initMessage,
+                DEFAULT_MESSAGE_TIMEOUT_MS
+            );
         })().finally(() => {
             this.reinitPromise = null;
         });
