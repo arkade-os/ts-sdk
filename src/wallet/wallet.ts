@@ -2726,7 +2726,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         commitmentTxid: string
     ): Promise<void> {
         try {
-            const addr = this.arkAddress.encode();
             const boardingAddress = await this.getBoardingAddress();
 
             const spentVtxos: ExtendedVirtualCoin[] = [];
@@ -2768,14 +2767,51 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             if (spentVtxos.length > 0) {
-                // Settle path is also user-initiated — refuse to record a
-                // settle against the wrong script.
-                validateVtxosForScript(
-                    spentVtxos,
-                    hex.encode(this.offchainTapscript.pkScript),
-                    "Wallet.updateDbAfterSettle"
+                // Route settled rows to their owning contract bucket. In a
+                // multi-contract settle the inputs may belong to several
+                // contracts; the wallet's primary contract is registered with
+                // the manager at boot, so its address is in `addrByScript`
+                // alongside the rest.
+                const contracts = await cm.getContracts();
+                const addrByScript = new Map(
+                    contracts.map((c) => [c.script, c.address])
                 );
-                await this.walletRepository.saveVtxos(addr, spentVtxos);
+
+                const byAddress = new Map<string, ExtendedVirtualCoin[]>();
+                const byScript = new Map<string, ExtendedVirtualCoin[]>();
+                for (const v of spentVtxos) {
+                    if (!v.script) {
+                        throw new Error(
+                            `Wallet.updateDbAfterSettle: spent VTXO ${v.txid}:${v.vout} has no script`
+                        );
+                    }
+                    const arr = byScript.get(v.script) ?? [];
+                    arr.push(v);
+                    byScript.set(v.script, arr);
+                }
+
+                for (const [script, vtxos] of byScript) {
+                    // User-initiated settle path: refuse to record a settle
+                    // against the wrong script.
+                    validateVtxosForScript(
+                        vtxos,
+                        script,
+                        "Wallet.updateDbAfterSettle"
+                    );
+                    const targetAddr = addrByScript.get(script);
+                    if (!targetAddr) {
+                        throw new Error(
+                            `Wallet.updateDbAfterSettle: no contract owns script ${script}`
+                        );
+                    }
+                    const bucket = byAddress.get(targetAddr) ?? [];
+                    bucket.push(...vtxos);
+                    byAddress.set(targetAddr, bucket);
+                }
+
+                for (const [bucketAddr, vtxos] of byAddress) {
+                    await this.walletRepository.saveVtxos(bucketAddr, vtxos);
+                }
             }
 
             if (boardingUtxoToRemove.size > 0) {
@@ -2795,6 +2831,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         } catch (e) {
             console.warn("error updating repository after settle", e);
+            throw e;
         }
     }
 }

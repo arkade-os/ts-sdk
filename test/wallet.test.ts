@@ -2119,3 +2119,194 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(saveVtxos).not.toHaveBeenCalled();
     });
 });
+
+describe("Wallet.updateDbAfterSettle", () => {
+    const PRIMARY_SCRIPT = "ab".repeat(34);
+    const PRIMARY_ADDR = "ark1primaryaddress";
+    const DELEGATE_SCRIPT = "cd".repeat(34);
+    const DELEGATE_ADDR = "ark1delegateaddress";
+    const BOARDING_ADDR = "bc1boardingaddr";
+
+    const makeThisArg = (overrides: {
+        annotateVtxos: ReturnType<typeof vi.fn>;
+        contracts: { script: string; address: string }[];
+        currentBoardingUtxos?: any[];
+    }) => {
+        const saveVtxos = vi.fn().mockResolvedValue(undefined);
+        const saveUtxos = vi.fn().mockResolvedValue(undefined);
+        const deleteUtxos = vi.fn().mockResolvedValue(undefined);
+        const getUtxos = vi
+            .fn()
+            .mockResolvedValue(overrides.currentBoardingUtxos ?? []);
+        const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
+        const getContractManager = vi.fn().mockResolvedValue({
+            annotateVtxos: overrides.annotateVtxos,
+            getContracts,
+        });
+        return {
+            thisArg: {
+                walletRepository: {
+                    saveVtxos,
+                    saveUtxos,
+                    deleteUtxos,
+                    getUtxos,
+                },
+                getContractManager,
+                getBoardingAddress: vi.fn().mockResolvedValue(BOARDING_ADDR),
+            } as any,
+            saveVtxos,
+            saveUtxos,
+            deleteUtxos,
+            getUtxos,
+        };
+    };
+
+    const makeVtxoInput = (script: string, suffix: string): ExtendedCoin =>
+        ({
+            txid: suffix.repeat(64).slice(0, 64),
+            vout: 0,
+            value: 5_000,
+            status: { confirmed: true },
+            virtualStatus: { state: "preconfirmed" },
+            createdAt: new Date(),
+            isUnrolled: false,
+            isSpent: false,
+            script,
+            forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
+            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            tapTree: new Uint8Array(64),
+        }) as ExtendedCoin;
+
+    const makeBoardingInput = (suffix: string): ExtendedCoin =>
+        ({
+            txid: suffix.repeat(64).slice(0, 64),
+            vout: 0,
+            value: 10_000,
+            status: { confirmed: true },
+        }) as ExtendedCoin;
+
+    it("saves single-contract settle rows under the primary bucket", async () => {
+        const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi.fn().mockResolvedValue([input]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [input],
+            "commitment-tx"
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(1);
+        const [addr, vtxos] = saveVtxos.mock.calls[0];
+        expect(addr).toBe(PRIMARY_ADDR);
+        expect(vtxos).toHaveLength(1);
+        expect(vtxos[0].virtualStatus.state).toBe("settled");
+        expect(vtxos[0].settledBy).toBe("commitment-tx");
+        expect(vtxos[0].isSpent).toBe(true);
+    });
+
+    it("routes multi-contract settle rows to their owning contract buckets", async () => {
+        const primaryInput = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const delegateInput = makeVtxoInput(DELEGATE_SCRIPT, "2");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([primaryInput, delegateInput]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [
+                { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
+                { script: DELEGATE_SCRIPT, address: DELEGATE_ADDR },
+            ],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [primaryInput, delegateInput],
+            "commitment-tx"
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(2);
+        const calls = new Map(
+            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
+        );
+        expect(calls.get(PRIMARY_ADDR)).toHaveLength(1);
+        expect(calls.get(PRIMARY_ADDR)[0].script).toBe(PRIMARY_SCRIPT);
+        expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
+        expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
+    });
+
+    it("removes settled boarding inputs even when no vtxo rows are settled", async () => {
+        const boardingInput = makeBoardingInput("b");
+        const otherUtxo = {
+            txid: "c".repeat(64),
+            vout: 0,
+            value: 1000,
+            status: { confirmed: true },
+        };
+        const annotateVtxos = vi.fn().mockResolvedValue([]);
+        const { thisArg, saveVtxos, deleteUtxos, saveUtxos, getUtxos } =
+            makeThisArg({
+                annotateVtxos,
+                contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+                currentBoardingUtxos: [
+                    { txid: boardingInput.txid, vout: 0, value: 10_000 },
+                    otherUtxo,
+                ],
+            });
+
+        await (Wallet.prototype as any).updateDbAfterSettle.call(
+            thisArg,
+            [boardingInput],
+            "commitment-tx"
+        );
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+        expect(getUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
+        expect(deleteUtxos).toHaveBeenCalledWith(BOARDING_ADDR);
+        expect(saveUtxos).toHaveBeenCalledWith(BOARDING_ADDR, [otherUtxo]);
+    });
+
+    it("rethrows when a settled VTXO has no script", async () => {
+        const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([{ ...input, script: undefined }]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterSettle.call(
+                thisArg,
+                [input],
+                "commitment-tx"
+            )
+        ).rejects.toThrow(/has no script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+    });
+
+    it("rethrows when a settled VTXO references an unknown contract", async () => {
+        const input = makeVtxoInput(PRIMARY_SCRIPT, "1");
+        const orphan = { ...input, script: "ee".repeat(34) };
+        const annotateVtxos = vi.fn().mockResolvedValue([orphan]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterSettle.call(
+                thisArg,
+                [orphan],
+                "commitment-tx"
+            )
+        ).rejects.toThrow(/no contract owns script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+    });
+});
