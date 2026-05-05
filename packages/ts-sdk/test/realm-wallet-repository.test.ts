@@ -193,6 +193,7 @@ function createMockVtxo(
         createdAt: new Date("2024-01-15T12:00:00Z"),
         isUnrolled: false,
         isSpent: false,
+        script: "5120" + "00".repeat(32),
         forfeitTapLeafScript: tapLeaf,
         intentTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(3),
@@ -226,11 +227,12 @@ function createMockVtxoWithExtras(
         spentBy: "spent-by-tx",
         settledBy: "settled-by-tx",
         arkTxId: "ark-tx-123",
+        script: "5120deadbeef",
         forfeitTapLeafScript: tapLeaf,
         intentTapLeafScript: tapLeaf,
         tapTree: new Uint8Array(32).fill(5),
         extraWitness: [new Uint8Array([0xab, 0xcd]), new Uint8Array([0xef])],
-        assets: [{ assetId: "asset-1", amount: 500 }],
+        assets: [{ assetId: "asset-1", amount: 500n }],
     };
 }
 
@@ -365,7 +367,7 @@ describe("RealmWalletRepository", () => {
             ]);
             expect(retrieved.virtualStatus.batchExpiry).toBe(1700100000);
             expect(retrieved.assets).toEqual([
-                { assetId: "asset-1", amount: 500 },
+                { assetId: "asset-1", amount: 500n },
             ]);
             // extraWitness round-trip (Uint8Array)
             expect(retrieved.extraWitness).toBeDefined();
@@ -692,8 +694,8 @@ describe("RealmWalletRepository", () => {
                 settled: true,
                 createdAt: 5000,
                 assets: [
-                    { assetId: "asset-a", amount: 100 },
-                    { assetId: "asset-b", amount: 200 },
+                    { assetId: "asset-a", amount: 100n },
+                    { assetId: "asset-b", amount: 200n },
                 ],
             };
 
@@ -703,8 +705,8 @@ describe("RealmWalletRepository", () => {
 
             expect(retrieved.settled).toBe(true);
             expect(retrieved.assets).toEqual([
-                { assetId: "asset-a", amount: 100 },
-                { assetId: "asset-b", amount: 200 },
+                { assetId: "asset-a", amount: 100n },
+                { assetId: "asset-b", amount: 200n },
             ]);
         });
 
@@ -748,43 +750,29 @@ describe("RealmWalletRepository", () => {
 
         it("should save and retrieve wallet state", async () => {
             const state: WalletState = {
-                lastSyncTime: 1700000000,
                 settings: { theme: "dark" },
+                lastSyncTime: 1000,
             };
 
             await repository.saveWalletState(state);
             const retrieved = await repository.getWalletState();
 
             expect(retrieved).toEqual(state);
-            expect(retrieved?.lastSyncTime).toBe(1700000000);
-            expect(retrieved?.settings).toEqual({ theme: "dark" });
         });
 
         it("should update existing wallet state", async () => {
             const state1: WalletState = {
-                lastSyncTime: 1700000000,
                 settings: { theme: "dark" },
             };
             await repository.saveWalletState(state1);
 
             const state2: WalletState = {
-                lastSyncTime: 1700001000,
                 settings: { theme: "light" },
             };
             await repository.saveWalletState(state2);
 
             const retrieved = await repository.getWalletState();
             expect(retrieved?.settings?.theme).toBe("light");
-            expect(retrieved?.lastSyncTime).toBe(1700001000);
-        });
-
-        it("should handle wallet state with only lastSyncTime", async () => {
-            const state: WalletState = { lastSyncTime: 1234567890 };
-            await repository.saveWalletState(state);
-
-            const retrieved = await repository.getWalletState();
-            expect(retrieved?.lastSyncTime).toBe(1234567890);
-            expect(retrieved?.settings).toBeUndefined();
         });
 
         it("should handle wallet state with only settings", async () => {
@@ -794,7 +782,6 @@ describe("RealmWalletRepository", () => {
             await repository.saveWalletState(state);
 
             const retrieved = await repository.getWalletState();
-            expect(retrieved?.lastSyncTime).toBeUndefined();
             expect(retrieved?.settings).toEqual({
                 key: "value",
                 nested: { a: 1 },
@@ -820,8 +807,6 @@ describe("RealmWalletRepository", () => {
                     1000
                 ),
             ]);
-            await repository.saveWalletState({ lastSyncTime: 1234 });
-
             await repository.clear();
 
             expect(await repository.getVtxos(testAddress)).toEqual([]);

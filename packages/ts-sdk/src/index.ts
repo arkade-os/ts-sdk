@@ -87,6 +87,7 @@ import {
     TreePartialSigs,
 } from "./tree/signingSession";
 import { Ramps } from "./wallet/ramps";
+import { HDDescriptorProvider } from "./wallet/hdDescriptorProvider";
 import { isVtxoExpiringSoon, VtxoManager } from "./wallet/vtxo-manager";
 import type { IVtxoManager, SettlementConfig } from "./wallet/vtxo-manager";
 import {
@@ -103,6 +104,17 @@ import {
     OnchainProvider,
     ExplorerTransaction,
 } from "./providers/onchain";
+import {
+    ELECTRUM_TCP_HOST,
+    ELECTRUM_WS_URL,
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
+} from "./providers/electrum";
+import type {
+    TransactionHistory as ElectrumTransactionHistory,
+    BlockHeader as ElectrumBlockHeader,
+    Unspent as ElectrumUnspent,
+} from "./providers/electrum";
 import {
     RestArkProvider,
     ArkProvider,
@@ -185,6 +197,7 @@ import {
 import { Nonces } from "./musig2/nonces";
 import { PartialSig } from "./musig2/sign";
 import { AnchorBumper, P2A } from "./utils/anchor";
+import { TxWeightEstimator, type VSize } from "./utils/txSizeEstimator";
 import { Unroll } from "./wallet/unroll";
 import { ArkError, maybeArkError } from "./providers/errors";
 import {
@@ -247,6 +260,7 @@ import type {
     VHTLCContractParams,
 } from "./contracts";
 import { IContractManager } from "./contracts/contractManager";
+import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
     WalletMessageHandler,
@@ -273,12 +287,17 @@ export {
     OnchainWallet,
     Ramps,
     VtxoManager,
+    HDDescriptorProvider,
     DelegatorManagerImpl,
     RestDelegatorProvider,
 
     // Providers
     ESPLORA_URL,
     EsploraProvider,
+    ELECTRUM_WS_URL,
+    ELECTRUM_TCP_HOST,
+    ElectrumOnchainProvider,
+    WsElectrumChainSource,
     RestArkProvider,
     RestIndexerProvider,
 
@@ -373,6 +392,9 @@ export {
     P2A,
     Unroll,
     Transaction,
+    TxWeightEstimator,
+    timelockToSequence,
+    sequenceToTimelock,
 
     // Errors
     ArkError,
@@ -438,7 +460,6 @@ export type {
     MnemonicOptions,
     NetworkOptions,
     DescriptorOptions,
-
     // Indexer types
     IndexerProvider,
     PageResponse,
@@ -460,6 +481,9 @@ export type {
     Output,
     TxNotification,
     ExplorerTransaction,
+    ElectrumTransactionHistory,
+    ElectrumBlockHeader,
+    ElectrumUnspent,
     BatchFinalizationEvent,
     BatchFinalizedEvent,
     BatchFailedEvent,
@@ -517,6 +541,7 @@ export type {
 
     // Anchor
     AnchorBumper,
+    VSize,
 
     // Storage
     StorageConfig,

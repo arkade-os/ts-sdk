@@ -1,7 +1,7 @@
 import { hex } from "@scure/base";
 import { AssetDetails, AssetMetadata, Outpoint, VirtualCoin } from "../wallet";
 import { isFetchTimeoutError } from "./ark";
-import { eventSourceIterator } from "./utils";
+import { eventSourceIterator, isEventSourceError } from "./utils";
 import { MetadataList } from "../extension/asset";
 
 export type PaginationOptions = {
@@ -470,74 +470,95 @@ export class RestIndexerProvider implements IndexerProvider {
         return data;
     }
 
-    async *getSubscription(
+    getSubscription(
         subscriptionId: string,
         abortSignal: AbortSignal
     ): AsyncIterableIterator<SubscriptionResponse> {
         const url = `${this.serverUrl}/v1/indexer/script/subscription/${subscriptionId}`;
+        let iterator: ReturnType<typeof eventSourceIterator> | null = null;
+        const closeIterator = () => iterator?.close();
 
-        while (!abortSignal?.aborted) {
+        const gen = (async function* () {
+            const abortHandler = closeIterator;
+            abortSignal?.addEventListener("abort", abortHandler);
+
             try {
-                const eventSource = new EventSource(url);
+                while (!abortSignal?.aborted) {
+                    try {
+                        const currentIterator = eventSourceIterator(
+                            new EventSource(url)
+                        );
+                        iterator = currentIterator;
 
-                // Set up abort handling
-                const abortHandler = () => {
-                    eventSource.close();
-                };
-                abortSignal?.addEventListener("abort", abortHandler);
+                        for await (const event of currentIterator) {
+                            if (abortSignal?.aborted) break;
 
-                try {
-                    for await (const event of eventSourceIterator(
-                        eventSource
-                    )) {
-                        if (abortSignal?.aborted) break;
-
-                        try {
-                            const data = JSON.parse(event.data);
-                            if (data.event) {
-                                yield {
-                                    txid: data.event.txid,
-                                    scripts: data.event.scripts || [],
-                                    newVtxos: (data.event.newVtxos || []).map(
-                                        convertVtxo
-                                    ),
-                                    spentVtxos: (
-                                        data.event.spentVtxos || []
-                                    ).map(convertVtxo),
-                                    sweptVtxos: (
-                                        data.event.sweptVtxos || []
-                                    ).map(convertVtxo),
-                                    tx: data.event.tx,
-                                    checkpointTxs: data.event.checkpointTxs,
-                                };
+                            try {
+                                const data = JSON.parse(event.data);
+                                if (data.event) {
+                                    yield {
+                                        txid: data.event.txid,
+                                        scripts: data.event.scripts || [],
+                                        newVtxos: (
+                                            data.event.newVtxos || []
+                                        ).map(convertVtxo),
+                                        spentVtxos: (
+                                            data.event.spentVtxos || []
+                                        ).map(convertVtxo),
+                                        sweptVtxos: (
+                                            data.event.sweptVtxos || []
+                                        ).map(convertVtxo),
+                                        tx: data.event.tx,
+                                        checkpointTxs: data.event.checkpointTxs,
+                                    };
+                                }
+                            } catch (err) {
+                                console.error(
+                                    "Failed to parse subscription event:",
+                                    err
+                                );
+                                throw err;
                             }
-                        } catch (err) {
-                            console.error(
-                                "Failed to parse subscription event:",
-                                err
-                            );
-                            throw err;
                         }
+                    } catch (error) {
+                        if (
+                            abortSignal?.aborted ||
+                            (error instanceof Error &&
+                                error.name === "AbortError")
+                        ) {
+                            break;
+                        }
+
+                        // ignore timeout errors, they're expected when the server is not sending anything for 5 min
+                        if (isFetchTimeoutError(error)) {
+                            console.debug("Timeout error ignored");
+                            continue;
+                        }
+
+                        if (isEventSourceError(error)) {
+                            throw error;
+                        }
+
+                        console.error("Subscription error:", error);
+                        throw error;
+                    } finally {
+                        closeIterator();
+                        iterator = null;
                     }
-                } finally {
-                    abortSignal?.removeEventListener("abort", abortHandler);
-                    eventSource.close();
                 }
-            } catch (error) {
-                if (error instanceof Error && error.name === "AbortError") {
-                    break;
-                }
-
-                // ignore timeout errors, they're expected when the server is not sending anything for 5 min
-                if (isFetchTimeoutError(error)) {
-                    console.debug("Timeout error ignored");
-                    continue;
-                }
-
-                console.error("Subscription error:", error);
-                throw error;
+            } finally {
+                abortSignal?.removeEventListener("abort", abortHandler);
+                closeIterator();
             }
-        }
+        })();
+
+        const origReturn = gen.return.bind(gen);
+        gen.return = (value) => {
+            closeIterator();
+            return origReturn(value);
+        };
+
+        return gen;
     }
 
     async getVirtualTxs(
@@ -700,7 +721,7 @@ export class RestIndexerProvider implements IndexerProvider {
             : undefined;
         return {
             assetId: data.assetId ?? assetId,
-            supply: Number(data.supply ?? 0),
+            supply: BigInt(data.supply ?? 0),
             metadata,
             controlAssetId: data.controlAsset || undefined,
         };
@@ -806,7 +827,7 @@ function convertVtxo(vtxo: Vtxo): VirtualCoin {
         script: vtxo.script,
         assets: vtxo.assets?.map((a) => ({
             assetId: a.assetId,
-            amount: Number(a.amount),
+            amount: BigInt(a.amount),
         })),
     };
 }

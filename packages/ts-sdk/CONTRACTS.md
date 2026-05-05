@@ -22,12 +22,10 @@ This document records the intended responsibilities and data flow between
   `IndexerProvider` and updates the relevant repositories.
 - **Cache invalidation.** Drives any cache invalidation logic based on wallet
   activity and contract events.
-- **Contract expiry checks.** Centralizes expiration checks (even if triggered
-  by watcher activity).
 
 ### ContractWatcher
 - **Event-only component.** Detects changes (watcher subscription + polling)
-  and emits `vtxo_received` / `vtxo_spent` / `contract_expired` events.
+  and emits `vtxo_received` / `vtxo_spent` events.
 - **No repository writes.** Must not mutate repositories directly.
 - **No VTXO reads from indexer for state.** Its role is to notify, not to fetch
   detailed state for persistence.
@@ -56,8 +54,8 @@ This document records the intended responsibilities and data flow between
 
 ## Implications for TODOs
 
-- Move any contract expiration checks or cache invalidation logic into
-  `ContractManager`, triggered by watcher events.
+- Move any cache invalidation logic into `ContractManager`, triggered by
+  watcher events.
 - Remove or refactor any direct `IndexerProvider` VTXO reads in `Wallet` and
   `ContractWatcher` in favor of repository reads.
 - Ensure `ContractManager` is the only component performing indexer fetches to

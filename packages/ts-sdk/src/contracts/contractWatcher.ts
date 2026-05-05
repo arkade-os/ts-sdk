@@ -1,5 +1,6 @@
 import { IndexerProvider, SubscriptionResponse } from "../providers/indexer";
 import { VirtualCoin } from "../wallet";
+import { extendVirtualCoinForContract } from "../wallet/utils";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -7,6 +8,7 @@ import {
     ContractEventCallback,
     ContractEvent,
 } from "./types";
+import { isEventSourceError } from "../providers/utils";
 
 /**
  * Configuration for the ContractWatcher.
@@ -154,12 +156,48 @@ export class ContractWatcher {
 
         this.contracts.set(contract.script, state);
 
+        // Seed the baseline from the repository BEFORE any poll or event
+        // emits. Without this, the first poll after (re)start treats every
+        // persisted vtxo as "new" and emits `vtxo_received` for each —
+        // which downstream triggers a redundant per-vtxo sync on every
+        // app launch and can confuse consumers that react to the event.
+        await this.seedLastKnownVtxos(state);
+
         // If we're already watching, poll to discover virtual outputs and update subscription
         if (this.isWatching) {
             // Poll first to discover virtual outputs (may affect whether we watch this contract).
             await this.pollContracts([contract.script]);
             // Update subscription based on active state and virtual outputs.
             await this.tryUpdateSubscription();
+        }
+    }
+
+    /**
+     * Pre-populate `lastKnownVtxos` from the wallet repository.
+     *
+     * Runs on add (and can be re-run after reconnect) so polling always
+     * compares the indexer's view against what is already persisted,
+     * emitting only genuine deltas.
+     */
+    private async seedLastKnownVtxos(state: ContractState): Promise<void> {
+        try {
+            const cached = await this.config.walletRepository.getVtxos(
+                state.contract.address
+            );
+            for (const vtxo of cached) {
+                if (vtxo.isSpent) continue;
+                const key = `${vtxo.txid}:${vtxo.vout}`;
+                state.lastKnownVtxos.set(key, vtxo);
+            }
+        } catch (error) {
+            // Don't throw — the watcher can still recover via poll and
+            // subscription events. A failed seed just means the first poll
+            // may emit some redundant `vtxo_received` events for already
+            // known vtxos.
+            console.error(
+                `ContractWatcher: failed to seed lastKnownVtxos for ${state.contract.script}`,
+                error
+            );
         }
     }
 
@@ -201,39 +239,23 @@ export class ContractWatcher {
     }
 
     /**
-     * Get all active in-memory contracts.
-     */
-    getActiveContracts(): Contract[] {
-        return this.getAllContracts().filter((c) => c.state === "active");
-    }
-
-    /**
-     * Get scripts that should be watched.
+     * Contracts the watcher is actually tracking:
+     * - all active contracts, plus
+     * - inactive contracts that still hold known virtual outputs
+     *   (the subscription keeps watching them so `vtxo_spent` events for
+     *   those unspent outputs are still observed).
      *
-     * Returns scripts for:
-     * - All active contracts
-     * - All contracts with known virtual outputs (regardless of state)
-     *
-     * This ensures we continue monitoring contracts even after they're
-     * deactivated, as long as they have unspent virtual outputs.
+     * This is the single source of truth for "contracts whose VTXO state
+     * we still care about" — callers and the subscription itself fan out
+     * over the same set so nothing is reconciled that isn't also watched.
      */
-    private getScriptsToWatch(): string[] {
-        const scripts = new Set<string>();
-
-        for (const [, state] of this.contracts) {
-            // Always watch active contracts
-            if (state.contract.state === "active") {
-                scripts.add(state.contract.script);
-                continue;
-            }
-
-            // Also watch inactive/expired contracts that have virtual outputs.
-            if (state.lastKnownVtxos.size > 0) {
-                scripts.add(state.contract.script);
-            }
-        }
-
-        return Array.from(scripts);
+    getWatchedContracts(): Contract[] {
+        return Array.from(this.contracts.values())
+            .filter(
+                (s) =>
+                    s.contract.state === "active" || s.lastKnownVtxos.size > 0
+            )
+            .map((s) => s.contract);
     }
 
     /**
@@ -358,42 +380,20 @@ export class ContractWatcher {
     }
 
     /**
-     * Check for expired contracts, update their state, and emit events.
-     */
-    private checkExpiredContracts(): void {
-        const now = Date.now();
-        const expired: Contract[] = [];
-
-        for (const state of this.contracts.values()) {
-            const contract = state.contract;
-            if (
-                contract.state === "active" &&
-                contract.expiresAt &&
-                contract.expiresAt <= now
-            ) {
-                contract.state = "inactive";
-                expired.push(contract);
-
-                this.eventCallback?.({
-                    type: "contract_expired",
-                    contractScript: contract.script,
-                    contract,
-                    timestamp: now,
-                });
-            }
-        }
-    }
-
-    /**
      * Connect to the subscription.
+     *
+     * @param skipUpdate - Skip the leading `updateSubscription` call when
+     *   the caller has already established `subscriptionId`.
      */
-    private async connect(): Promise<void> {
+    private async connect(skipUpdate = false): Promise<void> {
         if (!this.isWatching) return;
 
         this.connectionState = "connecting";
 
         try {
-            await this.updateSubscription();
+            if (!skipUpdate) {
+                await this.updateSubscription();
+            }
 
             // Poll immediately after connection to sync state
             await this.pollAllContracts();
@@ -407,7 +407,13 @@ export class ContractWatcher {
                 // indefinitely and block the caller.
                 // Error management must be implemented to ensure the connection
                 // is restored and events are fired.
-                console.error(e);
+                if (isEventSourceError(e)) {
+                    console.debug(
+                        "ContractWatcher subscription disconnected; reconnecting"
+                    );
+                } else {
+                    console.error(e);
+                }
                 this.connectionState = "disconnected";
                 this.eventCallback?.({
                     type: "connection_reset",
@@ -479,13 +485,10 @@ export class ContractWatcher {
         }, this.config.failsafePollIntervalMs);
     }
 
-    /**
-     * Poll all active contracts for current state.
-     */
     private async pollAllContracts(): Promise<void> {
-        const activeScripts = this.getActiveContracts().map((c) => c.script);
-        if (activeScripts.length === 0) return;
-        await this.pollContracts(activeScripts);
+        const scripts = this.getWatchedContracts().map((c) => c.script);
+        if (scripts.length === 0) return;
+        await this.pollContracts(scripts);
     }
 
     /**
@@ -559,10 +562,35 @@ export class ContractWatcher {
     }
 
     private async tryUpdateSubscription() {
+        const hadSubscription = this.subscriptionId !== undefined;
         try {
             await this.updateSubscription();
         } catch (error) {
             // nothing, the connection will be retried later
+            return;
+        }
+
+        // Cold start: `startWatching` may have run with zero scripts,
+        // leaving `listenLoop` parked behind the reconnect timer. Kick
+        // `connect` now so streaming resumes without waiting on the
+        // backoff. `skipUpdate` avoids re-issuing `subscribeForScripts`.
+        const justGotSubscription =
+            !hadSubscription && this.subscriptionId !== undefined;
+        const listenerParked =
+            this.connectionState === "disconnected" ||
+            this.connectionState === "reconnecting";
+        if (this.isWatching && justGotSubscription && listenerParked) {
+            if (this.reconnectTimeoutId) {
+                clearTimeout(this.reconnectTimeoutId);
+                this.reconnectTimeoutId = undefined;
+            }
+            this.reconnectAttempts = 0;
+            this.connect(true).catch((error) => {
+                console.warn(
+                    "ContractWatcher cold-start connect failed:",
+                    error
+                );
+            });
         }
     }
 
@@ -572,7 +600,7 @@ export class ContractWatcher {
      * Watches both active contracts and contracts with virtual outputs.
      */
     private async updateSubscription(): Promise<void> {
-        const scriptsToWatch = this.getScriptsToWatch();
+        const scriptsToWatch = this.getWatchedContracts().map((c) => c.script);
 
         if (scriptsToWatch.length === 0) {
             if (this.subscriptionId) {
@@ -651,12 +679,10 @@ export class ContractWatcher {
         if (!this.eventCallback) return;
 
         const timestamp = Date.now();
-        const scripts = update.scripts || [];
 
         if (update.newVtxos?.length) {
             this.processSubscriptionVtxos(
                 update.newVtxos,
-                scripts,
                 "vtxo_received",
                 timestamp
             );
@@ -665,7 +691,6 @@ export class ContractWatcher {
         if (update.spentVtxos?.length) {
             this.processSubscriptionVtxos(
                 update.spentVtxos,
-                scripts,
                 "vtxo_spent",
                 timestamp
             );
@@ -673,56 +698,59 @@ export class ContractWatcher {
     }
 
     /**
-     * Process virtual outputs from subscription and route to correct contracts.
-     * Uses the scripts from the subscription response to determine contract ownership.
+     * Process virtual outputs from subscription and route each VTXO to the
+     * single contract that actually locks it via `vtxo.script`. If the script
+     * doesn't match any watched contract, skip the VTXO rather than fan it
+     * out to every matching contract — fan-out produced phantom state in
+     * non-owning contracts that then never reconciled.
      */
     private processSubscriptionVtxos(
         vtxos: VirtualCoin[],
-        scripts: string[],
         eventType: ContractEvent["type"],
         timestamp: number
     ): void {
-        // If we have exactly one script, all virtual outputs belong to that contract
-        // Otherwise, we can't reliably determine ownership without script in VirtualCoin
-        if (scripts.length === 1) {
-            const contractScript = scripts[0];
-            if (contractScript) {
-                // Update tracking
-                const state = this.contracts.get(contractScript);
-                if (state) {
-                    for (const vtxo of vtxos) {
-                        const key = `${vtxo.txid}:${vtxo.vout}`;
-                        if (eventType === "vtxo_received") {
-                            state.lastKnownVtxos.set(key, vtxo);
-                        } else if (eventType === "vtxo_spent") {
-                            state.lastKnownVtxos.delete(key);
-                        }
-                    }
-                }
-                this.emitVtxoEvent(contractScript, vtxos, eventType, timestamp);
+        const byContract = new Map<string, VirtualCoin[]>();
+        let unknownScript = 0;
+        for (const vtxo of vtxos) {
+            if (!this.contracts.has(vtxo.script)) {
+                unknownScript++;
+                continue;
             }
-            return;
+            let bucket = byContract.get(vtxo.script);
+            if (!bucket) {
+                bucket = [];
+                byContract.set(vtxo.script, bucket);
+            }
+            bucket.push(vtxo);
         }
 
-        // Multiple scripts - assign virtual outputs to all matching contracts
-        // This is a limitation: we can't know which virtual output belongs to which script
-        // In practice, subscription events usually come with a single script context
-        for (const script of scripts) {
-            const contractScript = script;
-            if (contractScript) {
-                const state = this.contracts.get(contractScript);
-                if (state) {
-                    for (const vtxo of vtxos) {
-                        const key = `${vtxo.txid}:${vtxo.vout}`;
-                        if (eventType === "vtxo_received") {
-                            state.lastKnownVtxos.set(key, vtxo);
-                        } else {
-                            state.lastKnownVtxos.delete(key);
-                        }
+        if (unknownScript > 0) {
+            // The failsafe poll is the backstop for these; log at debug so we
+            // can correlate "VTXO state drift" reports with subscription
+            // drops rather than chase phantom bugs.
+            console.debug(
+                `ContractWatcher.processSubscriptionVtxos[${eventType}]: dropped ${unknownScript} unknown-script VTXOs (${vtxos.length} total)`
+            );
+        }
+
+        for (const [contractScript, bucketVtxos] of byContract) {
+            const state = this.contracts.get(contractScript);
+            if (state) {
+                for (const vtxo of bucketVtxos) {
+                    const key = `${vtxo.txid}:${vtxo.vout}`;
+                    if (eventType === "vtxo_received") {
+                        state.lastKnownVtxos.set(key, vtxo);
+                    } else if (eventType === "vtxo_spent") {
+                        state.lastKnownVtxos.delete(key);
                     }
                 }
-                this.emitVtxoEvent(contractScript, vtxos, eventType, timestamp);
             }
+            this.emitVtxoEvent(
+                contractScript,
+                bucketVtxos,
+                eventType,
+                timestamp
+            );
         }
     }
 
@@ -737,47 +765,36 @@ export class ContractWatcher {
     ): void {
         if (!this.eventCallback) return;
         const state = this.contracts.get(contractScript);
-        // ensure we check somehow regularly
-        this.checkExpiredContracts();
+        if (!state) return;
+
+        const extended = [];
+        for (const v of vtxos) {
+            try {
+                const extendedVtxo = extendVirtualCoinForContract(
+                    v,
+                    state.contract
+                );
+                extended.push({ ...extendedVtxo, contractScript });
+            } catch {
+                console.warn("failed to extend vtxo: ", v);
+                extended.push({ ...v, contractScript });
+            }
+        }
+
         switch (eventType) {
             case "vtxo_received":
-                if (!state) return;
                 this.eventCallback({
                     type: "vtxo_received",
-                    vtxos: vtxos.map((v) => ({
-                        ...v,
-                        contractScript,
-                        // These fields may not be available from basic VirtualCoin
-                        forfeitTapLeafScript: undefined as any,
-                        intentTapLeafScript: undefined as any,
-                        tapTree: undefined as any,
-                    })),
+                    vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,
                 });
                 return;
             case "vtxo_spent":
-                if (!state) return;
                 this.eventCallback({
                     type: "vtxo_spent",
-                    vtxos: vtxos.map((v) => ({
-                        ...v,
-                        contractScript,
-                        // These fields may not be available from basic VirtualCoin
-                        forfeitTapLeafScript: undefined as any,
-                        intentTapLeafScript: undefined as any,
-                        tapTree: undefined as any,
-                    })),
-                    contractScript,
-                    contract: state.contract,
-                    timestamp,
-                });
-                return;
-            case "contract_expired":
-                if (!state) return;
-                this.eventCallback({
-                    type: "contract_expired",
+                    vtxos: extended,
                     contractScript,
                     contract: state.contract,
                     timestamp,

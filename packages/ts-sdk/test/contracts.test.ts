@@ -4,8 +4,10 @@ import {
     encodeArkContract,
     decodeArkContract,
     contractFromArkContract,
+    contractFromArkContractWithAddress,
     isArkContract,
 } from "../src/contracts";
+import { DEFAULT_ARKADE_HRP } from "../src/wallet";
 import type { Contract } from "../src/contracts";
 import { InMemoryContractRepository } from "../src/repositories/inMemory/contractRepository";
 import type { IndexerProvider } from "../src/providers/indexer";
@@ -17,6 +19,7 @@ import {
     createDefaultContractParams,
     createMockIndexerProvider,
     TEST_DEFAULT_SCRIPT,
+    TEST_SERVER_PUB_KEY,
 } from "./contracts/helpers";
 
 describe("Contracts", () => {
@@ -74,6 +77,26 @@ describe("Contracts", () => {
             expect(contract.state).toBe("active");
         });
 
+        it("should default derived contract addresses to the mainnet Arkade HRP", () => {
+            const encoded = encodeArkContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: "",
+                address: "",
+                state: "active",
+                createdAt: 0,
+            });
+
+            const contract = contractFromArkContractWithAddress(
+                encoded,
+                TEST_SERVER_PUB_KEY
+            );
+
+            expect(contract.address.startsWith(`${DEFAULT_ARKADE_HRP}1`)).toBe(
+                true
+            );
+        });
+
         it("should throw for unknown contract type", () => {
             const encoded = "arkcontract=unknown-type&foo=bar";
             expect(() => contractFromArkContract(encoded)).toThrow(
@@ -94,7 +117,6 @@ describe("Contracts", () => {
             manager = await ContractManager.create({
                 indexerProvider: mockIndexer,
                 contractRepository: repository,
-                getDefaultAddress: async () => "default-address",
                 walletRepository: new InMemoryWalletRepository(),
             });
         });
@@ -146,7 +168,6 @@ describe("Contracts", () => {
             manager = await ContractManager.create({
                 indexerProvider: mockIndexer,
                 contractRepository: repository,
-                getDefaultAddress: async () => "default-address",
                 walletRepository: new InMemoryWalletRepository(),
             });
         });

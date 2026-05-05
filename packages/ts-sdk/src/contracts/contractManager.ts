@@ -14,15 +14,14 @@ import {
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
-import { VirtualCoin } from "../wallet";
-import { extendVtxoFromContract } from "../wallet/utils";
+import { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
+import { extendVirtualCoinForContract } from "../wallet/utils";
 import { ContractFilter, ContractRepository } from "../repositories";
 import {
-    advanceSyncCursors,
-    clearSyncCursors,
+    advanceSyncCursor,
     computeSyncWindow,
     cursorCutoff,
-    getAllSyncCursors,
+    getSyncCursor,
 } from "../utils/syncCursors";
 
 const DEFAULT_PAGE_SIZE = 500;
@@ -64,6 +63,20 @@ export interface IContractManager extends Disposable {
     getContractsWithVtxos(
         filter?: GetContractsFilter
     ): Promise<ContractWithVtxos[]>;
+
+    /**
+     * Stamp raw virtual outputs with the correct per-contract tapscripts
+     * (forfeit, intent, tap tree).
+     *
+     * Resolves each vtxo's `script` to its owning contract via the contract
+     * repository and attaches the matching tapscripts. Throws when any vtxo
+     * references a script with no registered contract — callers are expected
+     * to register the contract before asking for annotation. This is the
+     * single shared path that replaces scattered `extendVirtualCoin*` calls
+     * in wallet/handler code, and keeps the wallet from silently stamping the
+     * default tapscript onto a non-default vtxo.
+     */
+    annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]>;
 
     /**
      * Update mutable contract fields.
@@ -168,9 +181,6 @@ export interface ContractManagerConfig {
     /** The wallet repository for virtual output storage (single source of truth) */
     walletRepository: WalletRepository;
 
-    /** Function to get the wallet's default Arkade address */
-    getDefaultAddress: () => Promise<string>;
-
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
 }
@@ -190,7 +200,7 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
  * - Create and persist contracts
  * - Query stored contracts (optionally with their virtual outputs)
  * - Provide spendable path selection for a contract
- * - Emit contract-related events (virtual output received/spent/expired, connection reset)
+ * - Emit contract-related events (virtual output received/spent, connection reset)
  *
  * Notes:
  * - Implementations typically start watching automatically during initialization
@@ -201,8 +211,6 @@ export type CreateContractParams = Omit<Contract, "createdAt" | "state"> & {
  * const manager = await ContractManager.create({
  *   indexerProvider: wallet.indexerProvider,
  *   contractRepository: wallet.contractRepository,
- *   walletRepository: wallet.walletRepository,
- *   getDefaultAddress: () => wallet.getAddress(),
  * });
  *
  * // Create a new VHTLC contract
@@ -272,35 +280,17 @@ export class ContractManager implements IContractManager {
             return;
         }
 
-        // Load persisted contracts
+        // Register persisted contracts with the watcher BEFORE the first
+        // sync. `addContract` seeds `lastKnownVtxos` from the repo without
+        // starting to poll, so it's cheap, and it populates
+        // `getWatchedContracts()` so the sync below can scope itself to the
+        // real watched set instead of every contract ever persisted.
         const contracts = await this.config.contractRepository.getContracts();
-
-        // Delta-sync: fetch only virtual outputs that changed since the last cursor,
-        // falling back to a full bootstrap for scripts seen for the first time.
-        await this.deltaSyncContracts(contracts);
-
-        // Reconcile the pending frontier: fetch all not-yet-finalized virtual outputs
-        // to catch any that the delta window may have missed.
-        if (contracts.length > 0) {
-            await this.reconcilePendingFrontier(contracts);
-        }
-
-        // add all contracts to the watcher
-        const now = Date.now();
         for (const contract of contracts) {
-            // Check for expired contracts and mark as inactive
-            if (
-                contract.state === "active" &&
-                contract.expiresAt &&
-                contract.expiresAt <= now
-            ) {
-                contract.state = "inactive";
-                await this.config.contractRepository.saveContract(contract);
-            }
-
-            // Add to watcher
             await this.watcher.addContract(contract);
         }
+
+        await this.reconcileWatched();
 
         this.initialized = true;
 
@@ -310,6 +300,24 @@ export class ContractManager implements IContractManager {
                 console.error("Error handling contract event:", error);
             });
         });
+    }
+
+    /**
+     * Delta-sync the full watched set and reconcile the pending frontier.
+     *
+     * Shared recovery path used on initial boot and after a subscription
+     * reconnect. `syncContracts({})` scopes to the current watched set
+     * (see {@link ContractWatcher.getWatchedContracts}), uses the
+     * cursor-derived delta window, and advances the cursor on success.
+     * `reconcilePendingFrontier` catches not-yet-finalized virtual
+     * outputs that could sit outside any delta window.
+     */
+    private async reconcileWatched(): Promise<void> {
+        await this.syncContracts({});
+        const watched = this.watcher.getWatchedContracts();
+        if (watched.length > 0) {
+            await this.reconcilePendingFrontier(watched);
+        }
     }
 
     /**
@@ -368,16 +376,7 @@ export class ContractManager implements IContractManager {
         await this.config.contractRepository.saveContract(contract);
 
         // fetch all virtual outputs (including spent/swept) for this contract
-        const requestStartedAt = Date.now();
-        await this.fetchContractVxosFromIndexer([contract], true);
-
-        // Advance the sync cursor so that the watcher's vtxo_received
-        // event (triggered by addContract below) doesn't re-bootstrap
-        // the same script via deltaSyncContracts.
-        const cutoff = cursorCutoff(requestStartedAt);
-        await advanceSyncCursors(this.config.walletRepository, {
-            [contract.script]: cutoff,
-        });
+        await this.fetchContractVxosFromIndexer([contract]);
 
         // Add to watcher
         await this.watcher.addContract(contract);
@@ -410,11 +409,32 @@ export class ContractManager implements IContractManager {
         pageSize?: number
     ): Promise<ContractWithVtxos[]> {
         const contracts = await this.getContracts(filter);
-        const vtxos = await this.getVtxosForContracts(contracts, pageSize);
+        await this.syncContracts({ contracts, pageSize });
+        const vtxos = await this.getVtxosForContracts(contracts);
         return contracts.map((contract) => ({
             contract,
-            vtxos: vtxos.get(contract.script) ?? [],
+            vtxos: vtxos.filter(
+                (vtxo) => vtxo.contractScript === contract.script
+            ),
         }));
+    }
+
+    async annotateVtxos(vtxos: VirtualCoin[]): Promise<ExtendedVirtualCoin[]> {
+        if (vtxos.length === 0) return [];
+
+        const scripts = Array.from(new Set(vtxos.map((v) => v.script)));
+
+        const byScript = new Map<string, Contract>();
+        const contracts = await this.config.contractRepository.getContracts({
+            script: scripts,
+        });
+        for (const contract of contracts) {
+            byScript.set(contract.script, contract);
+        }
+
+        return vtxos.map((vtxo) =>
+            extendVirtualCoinForContract(vtxo, byScript)
+        );
     }
 
     private buildContractsDbFilter(filter: GetContractsFilter): ContractFilter {
@@ -593,57 +613,29 @@ export class ContractManager implements IContractManager {
     /**
      * Force refresh virtual outputs from the indexer.
      *
-     * Without options, clears all sync cursors and re-fetches every contract.
+     * Without options, re-fetches every contract and advances the global cursor.
      * With options, narrows the refresh to specific scripts and/or a time window.
+     * Subset refreshes (scripts filter) intentionally do not advance the cursor.
      */
     async refreshVtxos(opts?: RefreshVtxosOptions): Promise<void> {
-        let contracts = await this.config.contractRepository.getContracts();
-
-        if (opts?.scripts && opts.scripts.length > 0) {
-            const scriptSet = new Set(opts.scripts);
-            contracts = contracts.filter((c) => scriptSet.has(c.script));
-        }
-
-        const syncWindow =
-            opts?.after !== undefined || opts?.before !== undefined
-                ? {
-                      after: opts.after ?? 0,
-                      before: opts.before ?? Date.now(),
-                  }
-                : undefined;
-
-        if (!syncWindow) {
-            // Full refresh — clear cursors so the next delta sync re-bootstraps.
-            if (opts?.scripts && opts.scripts.length > 0) {
-                await clearSyncCursors(
-                    this.config.walletRepository,
-                    opts.scripts
-                );
-            } else {
-                await clearSyncCursors(this.config.walletRepository);
-            }
-        }
-
-        const requestStartedAt = Date.now();
-        const fetched = await this.fetchContractVxosFromIndexer(
+        const contracts = opts?.scripts
+            ? await this.getContracts({ script: opts.scripts })
+            : undefined;
+        // Only forward an explicit window when the caller supplied one. An
+        // empty `{ after: undefined, before: undefined }` would short-circuit
+        // both the cursor-derived `?after=` query in `syncContracts` (because
+        // `??` doesn't fire on a non-nullish object) AND the cursor-advance
+        // gate (which requires `options.window === undefined`), turning every
+        // `refreshVtxos()` call into an unbounded full re-scan whose cursor
+        // never moves forward.
+        const hasExplicitWindow =
+            opts?.after !== undefined || opts?.before !== undefined;
+        await this.syncContracts({
             contracts,
-            true,
-            undefined,
-            syncWindow
-        );
-
-        // Persist cursors so subsequent incremental syncs don't re-bootstrap.
-        const cutoff = cursorCutoff(requestStartedAt);
-        const cursorUpdates: Record<string, number> = {};
-        for (const script of fetched.keys()) {
-            cursorUpdates[script] = cutoff;
-        }
-        if (Object.keys(cursorUpdates).length > 0) {
-            await advanceSyncCursors(
-                this.config.walletRepository,
-                cursorUpdates
-            );
-        }
+            window: hasExplicitWindow
+                ? { after: opts?.after, before: opts?.before }
+                : undefined,
+        });
     }
 
     /**
@@ -674,23 +666,14 @@ export class ContractManager implements IContractManager {
             // Delta-sync only the changed virtual outputs for this contract.
             case "vtxo_received":
             case "vtxo_spent":
-                await this.deltaSyncContracts([event.contract]);
+                await this.syncContracts({ contracts: [event.contract] });
                 break;
-            case "connection_reset": {
-                // After a reconnect we don't know what we missed — full refetch.
-                const activeWatchedContracts =
-                    this.watcher.getActiveContracts();
-                await this.fetchContractVxosFromIndexer(
-                    activeWatchedContracts,
-                    true
-                );
+            case "connection_reset":
+                // Same recovery path as boot: delta-sync the watched set
+                // and reconcile the pending frontier. `advanceSyncCursor`
+                // is monotonic so this never rewinds the cursor.
+                await this.reconcileWatched();
                 break;
-            }
-            case "contract_expired":
-                // just update DB
-                await this.config.contractRepository.saveContract(
-                    event.contract
-                );
         }
 
         // Forward to all callbacks
@@ -698,87 +681,68 @@ export class ContractManager implements IContractManager {
     }
 
     private async getVtxosForContracts(
-        contracts: Contract[],
-        pageSize?: number
-    ): Promise<Map<string, ContractVtxo[]>> {
-        if (contracts.length === 0) {
-            return new Map();
-        }
-
-        return await this.fetchContractVxosFromIndexer(
-            contracts,
-            false,
-            pageSize
+        contracts: Contract[]
+    ): Promise<ContractVtxo[]> {
+        const res = await Promise.all(
+            contracts.map(({ script, address }) =>
+                this.config.walletRepository.getVtxos(address).then((vtxos) =>
+                    vtxos.map(
+                        (vtxo) =>
+                            ({
+                                ...vtxo,
+                                contractScript: script,
+                            }) as ContractVtxo
+                    )
+                )
+            )
         );
+        return res.flat();
     }
 
     /**
-     * Incrementally sync virtual outputs for the given contracts.
-     * Uses per-script cursors to fetch only what changed since the last sync.
-     * Scripts without a cursor are bootstrapped with a full fetch.
+     * Sync virtual outputs for the given contracts against the indexer.
+     *
+     * When `options.contracts` is omitted the sync covers the full
+     * watched set (active contracts plus any inactive contracts still
+     * holding cached VTXOs) and the global cursor is advanced on
+     * success. Passing an explicit subset leaves the cursor alone so a
+     * narrow poll can't hide data that other contracts still need to
+     * pick up.
      */
-    private async deltaSyncContracts(
-        contracts: Contract[],
-        pageSize?: number
-    ): Promise<Map<string, ContractVtxo[]>> {
-        if (contracts.length === 0) return new Map();
+    private async syncContracts(options: {
+        contracts?: Contract[];
+        pageSize?: number;
+        // Overrides the cursor-derived window.
+        window?: { after?: number; before?: number };
+    }): Promise<Map<string, ContractVtxo[]>> {
+        const cursor = await getSyncCursor(this.config.walletRepository);
+        const window = options.window ?? computeSyncWindow(cursor);
 
-        const cursors = await getAllSyncCursors(this.config.walletRepository);
+        // Advance the global cursor only on full-scope, cursor-derived delta
+        // syncs. A caller-supplied window is targeted (e.g. `refreshVtxos`)
+        // and must not move the cursor — it may skip data outside its bounds.
+        // `<=` lets the bootstrap case (cursor=0, window.after=0) write the
+        // migration marker on first boot; otherwise the marker would never
+        // be written and every subsequent boot would treat the cursor as
+        // legacy and re-bootstrap.
+        const mustUpdateCursor =
+            options.contracts === undefined &&
+            options.window === undefined &&
+            (window.after ?? 0) <= cursor;
 
-        // Partition into bootstrap (no cursor) and delta (has cursor) groups.
-        const bootstrap: Contract[] = [];
-        const delta: Contract[] = [];
-        for (const c of contracts) {
-            if (cursors[c.script] !== undefined) {
-                delta.push(c);
-            } else {
-                bootstrap.push(c);
-            }
-        }
+        const contracts =
+            options.contracts ?? this.watcher.getWatchedContracts();
 
-        const result = new Map<string, ContractVtxo[]>();
-        const cursorUpdates: Record<string, number> = {};
+        const requestStartedAt = Date.now();
+        const result = await this.fetchContractVxosFromIndexer(
+            contracts,
+            options.pageSize,
+            window
+        );
 
-        // Full bootstrap for new scripts.
-        if (bootstrap.length > 0) {
-            const requestStartedAt = Date.now();
-            const fetched = await this.fetchContractVxosFromIndexer(
-                bootstrap,
-                true
-            );
+        if (mustUpdateCursor) {
             const cutoff = cursorCutoff(requestStartedAt);
-            for (const [script, vtxos] of fetched) {
-                result.set(script, vtxos);
-                cursorUpdates[script] = cutoff;
-            }
-        }
-
-        // Delta sync for scripts with an existing cursor.
-        if (delta.length > 0) {
-            // Use the oldest cursor so the shared window covers every script.
-            const minCursor = Math.min(...delta.map((c) => cursors[c.script]));
-            const window = computeSyncWindow(minCursor);
-            if (window) {
-                const requestStartedAt = Date.now();
-                const fetched = await this.fetchContractVxosFromIndexer(
-                    delta,
-                    true,
-                    pageSize,
-                    window
-                );
-                const cutoff = cursorCutoff(requestStartedAt);
-                for (const [script, vtxos] of fetched) {
-                    result.set(script, vtxos);
-                    cursorUpdates[script] = cutoff;
-                }
-            }
-        }
-
-        if (Object.keys(cursorUpdates).length > 0) {
-            await advanceSyncCursors(
-                this.config.walletRepository,
-                cursorUpdates
-            );
+            await advanceSyncCursor(this.config.walletRepository, cutoff);
         }
 
         return result;
@@ -802,37 +766,40 @@ export class ContractManager implements IContractManager {
             pendingOnly: true,
         });
 
-        // Group by contract and upsert.
+        // Share the annotation path with external callers so the two entry
+        // points can't drift.
+        const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+        const annotated = await this.annotateVtxos(owned);
+
         const byContract = new Map<string, ContractVtxo[]>();
-        for (const vtxo of vtxos) {
-            if (!vtxo.script) continue;
-            const contract = scriptToContract.get(vtxo.script);
-            if (!contract) continue;
+        for (const vtxo of annotated) {
+            const contract = scriptToContract.get(vtxo.script)!;
             let arr = byContract.get(contract.address);
             if (!arr) {
                 arr = [];
                 byContract.set(contract.address, arr);
             }
             arr.push({
-                ...extendVtxoFromContract(vtxo, contract),
+                ...vtxo,
                 contractScript: contract.script,
             });
         }
 
         for (const [addr, contractVtxos] of byContract) {
-            await this.config.walletRepository.saveVtxos(addr, contractVtxos);
+            await this.config.walletRepository.saveVtxos(
+                addr,
+                contractVtxos as ExtendedVirtualCoin[]
+            );
         }
     }
 
     private async fetchContractVxosFromIndexer(
         contracts: Contract[],
-        includeSpent: boolean,
         pageSize?: number,
         syncWindow?: { after?: number; before?: number }
     ): Promise<Map<string, ContractVtxo[]>> {
         const fetched = await this.fetchContractVtxosBulk(
             contracts,
-            includeSpent,
             pageSize,
             syncWindow
         );
@@ -843,7 +810,7 @@ export class ContractManager implements IContractManager {
             if (contract) {
                 await this.config.walletRepository.saveVtxos(
                     contract.address,
-                    vtxos
+                    vtxos as ExtendedVirtualCoin[]
                 );
             }
         }
@@ -852,7 +819,6 @@ export class ContractManager implements IContractManager {
 
     private async fetchContractVtxosBulk(
         contracts: Contract[],
-        includeSpent: boolean,
         pageSize: number = DEFAULT_PAGE_SIZE,
         syncWindow?: { after?: number; before?: number }
     ): Promise<Map<string, ContractVtxo[]>> {
@@ -860,21 +826,10 @@ export class ContractManager implements IContractManager {
             return new Map();
         }
 
-        // For a single contract, use the paginated path directly.
-        if (contracts.length === 1) {
-            const contract = contracts[0];
-            const vtxos = await this.fetchContractVtxosPaginated(
-                contract,
-                includeSpent,
-                pageSize,
-                syncWindow
-            );
-            return new Map([[contract.script, vtxos]]);
-        }
-
-        // For multiple contracts, batch all scripts into a single indexer call
-        // per page to minimise round-trips.  Results are keyed by script so we
-        // can distribute them back to the correct contract afterwards.
+        // Batch all scripts into a single indexer call per page to minimise
+        // round-trips. Results are keyed by script so we can distribute them
+        // back to the correct contract afterwards. Always fetches the full
+        // history (spent/swept included) so the repo is the source of truth.
         const scriptToContract = new Map<string, Contract>(
             contracts.map((c) => [c.script, c])
         );
@@ -883,7 +838,6 @@ export class ContractManager implements IContractManager {
         );
 
         const scripts = contracts.map((c) => c.script);
-        const opts = includeSpent ? {} : { spendableOnly: true };
         const windowOpts = syncWindow
             ? {
                   ...(syncWindow.after !== undefined && {
@@ -900,21 +854,21 @@ export class ContractManager implements IContractManager {
         while (hasMore) {
             const { vtxos, page } = await this.config.indexerProvider.getVtxos({
                 scripts,
-                ...opts,
                 ...windowOpts,
                 pageIndex,
                 pageSize,
             });
 
-            for (const vtxo of vtxos) {
-                // Match the virtual output back to its contract via the script field
-                // populated by the indexer.
-                if (!vtxo.script) continue;
-                const contract = scriptToContract.get(vtxo.script);
-                if (!contract) continue;
-                result.get(contract.script)!.push({
-                    ...extendVtxoFromContract(vtxo, contract),
-                    contractScript: contract.script,
+            // Match virtual outputs back to their contract via the script field
+            // populated by the indexer, then share the annotation path with
+            // external callers via annotateVtxos so the two entry points can't
+            // drift.
+            const owned = vtxos.filter((v) => scriptToContract.has(v.script));
+            const annotated = await this.annotateVtxos(owned);
+            for (const vtxo of annotated) {
+                result.get(vtxo.script)!.push({
+                    ...vtxo,
+                    contractScript: vtxo.script,
                 });
             }
 
@@ -924,52 +878,6 @@ export class ContractManager implements IContractManager {
         }
 
         return result;
-    }
-
-    private async fetchContractVtxosPaginated(
-        contract: Contract,
-        includeSpent: boolean,
-        pageSize: number = DEFAULT_PAGE_SIZE,
-        syncWindow?: { after?: number; before?: number }
-    ): Promise<ContractVtxo[]> {
-        const allVtxos: ContractVtxo[] = [];
-        let pageIndex = 0;
-        let hasMore = true;
-
-        const opts = includeSpent ? {} : { spendableOnly: true };
-        const windowOpts = syncWindow
-            ? {
-                  ...(syncWindow.after !== undefined && {
-                      after: syncWindow.after,
-                  }),
-                  ...(syncWindow.before !== undefined && {
-                      before: syncWindow.before,
-                  }),
-              }
-            : {};
-
-        while (hasMore) {
-            const { vtxos, page } = await this.config.indexerProvider.getVtxos({
-                scripts: [contract.script],
-                ...opts,
-                ...windowOpts,
-                pageIndex,
-                pageSize,
-            });
-
-            for (const vtxo of vtxos) {
-                allVtxos.push({
-                    ...extendVtxoFromContract(vtxo, contract),
-                    contractScript: contract.script,
-                });
-            }
-
-            hasMore = page ? vtxos.length === pageSize : false;
-            pageIndex++;
-            if (hasMore) await new Promise((r) => setTimeout(r, 500));
-        }
-
-        return allVtxos;
     }
 
     /**
@@ -1003,14 +911,6 @@ export class ContractManager implements IContractManager {
      * ```
      */
     [Symbol.dispose](): void {
-        // Stop watching
-        this.stopWatcherFn?.();
-        this.stopWatcherFn = undefined;
-
-        // Clear callbacks
-        this.eventCallbacks.clear();
-
-        // Mark as uninitialized
-        this.initialized = false;
+        this.dispose();
     }
 }

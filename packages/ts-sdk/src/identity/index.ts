@@ -65,4 +65,43 @@ export function isBatchSignable(
 }
 
 export * from "./singleKey";
-export * from "./seedIdentity";
+// Explicit named re-export so the barrel stays a documented public surface.
+// `serializeSeedOwnedSigningIdentity` and `serializeSeedOwnedReadonlyIdentity`
+// are deliberately omitted — they are SDK-internal helpers consumed only by
+// `./serialize`, per Appendix A of the plan.
+export type {
+    NetworkOptions,
+    DescriptorOptions,
+    SeedIdentityOptions,
+    MnemonicOptions,
+} from "./seedIdentity";
+export {
+    SeedIdentity,
+    MnemonicIdentity,
+    ReadonlyDescriptorIdentity,
+} from "./seedIdentity";
+export * from "./serialize";
+
+// Descriptor utilities
+export {
+    isDescriptor,
+    normalizeToDescriptor,
+    extractPubKey,
+    parseHDDescriptor,
+} from "./descriptor";
+export type { ParsedHDDescriptor } from "./descriptor";
+
+// Descriptor provider interface
+export type {
+    DescriptorProvider,
+    DescriptorSigningRequest,
+} from "./descriptorProvider";
+
+// HD capability markers — readonly (xpub-only) and signing variants
+export type {
+    HDCapableIdentity,
+    ReadonlyHDCapableIdentity,
+} from "./hdCapableIdentity";
+
+// Static descriptor provider (wrapper for legacy Identity)
+export { StaticDescriptorProvider } from "./staticDescriptorProvider";

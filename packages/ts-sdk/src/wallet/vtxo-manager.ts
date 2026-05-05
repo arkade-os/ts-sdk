@@ -8,13 +8,15 @@ import {
     isSpendable,
     isSubdust,
 } from ".";
-import { SettlementEvent } from "../providers/ark";
+import { ArkProvider, SettlementEvent } from "../providers/ark";
 import { hasBoardingTxExpired } from "../utils/arkTransaction";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
 import { getSequence } from "../script/base";
 import { Transaction } from "../utils/transaction";
 import { TxWeightEstimator } from "../utils/txSizeEstimator";
+import { Estimator } from "../arkfee";
+import { ArkAddress } from "../script/address";
 import type { OnchainProvider } from "../providers/onchain";
 import type { Network } from "../networks";
 import type { DefaultVtxo } from "../script/default";
@@ -26,6 +28,7 @@ import type { DefaultVtxo } from "../script/default";
 interface SweepCapableWallet extends IReadonlyWallet {
     boardingTapscript: DefaultVtxo.Script;
     onchainProvider: OnchainProvider;
+    arkProvider: ArkProvider;
     network: Network;
 }
 
@@ -41,6 +44,7 @@ function isSweepCapable(
     return (
         "boardingTapscript" in wallet &&
         "onchainProvider" in wallet &&
+        "arkProvider" in wallet &&
         "network" in wallet
     );
 }
@@ -56,9 +60,50 @@ function assertSweepCapable(
 ): asserts wallet is IWallet & SweepCapableWallet {
     if (!isSweepCapable(wallet)) {
         throw new Error(
-            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, and network"
+            "Boarding UTXO sweep requires a Wallet instance with boardingTapscript, onchainProvider, arkProvider, and network"
         );
     }
+}
+
+/**
+ * Web Locks name used to serialize boarding-poll work across same-origin
+ * browser contexts (tabs, service worker). Static because the goal is to
+ * deduplicate polls for the *same* wallet — two distinct wallets on the
+ * same origin will take turns, which is acceptable.
+ */
+const BOARDING_POLL_LOCK_NAME = "arkade-boarding-poll";
+
+/**
+ * Run `fn` under an exclusive Web Lock when the runtime provides one
+ * (browser main thread, service worker). In environments without
+ * `navigator.locks` (Node, React Native) the callback runs immediately
+ * with no coordination.
+ *
+ * Uses `ifAvailable: true`: if another context already holds the lock,
+ * skip this cycle entirely rather than queueing — the other context will
+ * do the work and the next poll will re-check.
+ */
+async function runWithCrossInstanceLock(
+    name: string,
+    fn: () => Promise<void>
+): Promise<void> {
+    const locks =
+        typeof globalThis !== "undefined" &&
+        typeof globalThis.navigator !== "undefined"
+            ? globalThis.navigator.locks
+            : undefined;
+    if (!locks) {
+        await fn();
+        return;
+    }
+    await locks.request(
+        name,
+        { ifAvailable: true, mode: "exclusive" },
+        async (lock) => {
+            if (lock === null) return;
+            await fn();
+        }
+    );
 }
 
 /** Default renewal threshold in seconds (3 days). */
@@ -450,6 +495,26 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     private lastRenewalTimestamp = 0;
     private static readonly RENEWAL_COOLDOWN_MS = 30_000; // 30 seconds
 
+    // Guards against a retry treadmill on the periodic-settle path: a failing
+    // settle would otherwise re-submit identical intents on every 60s poll,
+    // producing per-minute DeleteIntent RPCs forever. Mirrors the renewal
+    // cooldown but with exponential backoff on consecutive failures, so a
+    // persistently broken input eventually drops to the backoff cap instead
+    // of hammering the server. Shared across boarding + expiring-VTXO work
+    // because they now ride on the same settle intent.
+    private lastPeriodicSettleTimestamp = 0;
+    private consecutivePeriodicSettleFailures = 0;
+    private static readonly PERIODIC_SETTLE_COOLDOWN_MS = 30_000;
+    private static readonly PERIODIC_SETTLE_MAX_BACKOFF_MS = 5 * 60 * 1000;
+
+    // Throttle for the VTXO_ALREADY_SPENT -> refreshVtxos() reconciliation.
+    // The server's authoritative view says our local cache is stale, so we
+    // trigger a full refresh to advance the global sync cursor. Rate-limit
+    // to guard against a buggy indexer cycling us into a refresh storm.
+    private lastVtxoSpentRefreshTimestamp = 0;
+    private vtxoSpentRefreshPromise?: Promise<void>;
+    private static readonly VTXO_SPENT_REFRESH_COOLDOWN_MS = 30_000;
+
     constructor(
         readonly wallet: IWallet,
         /** @deprecated Use settlementConfig instead */
@@ -733,9 +798,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 },
                 eventCallback
             );
-            this.lastRenewalTimestamp = Date.now();
             return txid;
         } finally {
+            // Update cooldown on EVERY attempt (success or failure) so transient
+            // settle failures (stream close, connector mismatch, duplicated input)
+            // don't allow the next vtxo_received event to re-enter renewal
+            // immediately. Without this, a failed settle leaves lastRenewalTimestamp
+            // at its previous value and the cooldown check becomes a no-op.
+            this.lastRenewalTimestamp = Date.now();
             this.renewalInProgress = false;
         }
     }
@@ -950,6 +1020,11 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         return this.getSweepWallet().onchainProvider;
     }
 
+    /** Returns the Ark provider for intent fee and server info lookups. */
+    private getArkProvider() {
+        return this.getSweepWallet().arkProvider;
+    }
+
     /** Returns the Bitcoin network configuration from the wallet. */
     private getNetwork() {
         return this.getSweepWallet().network;
@@ -1009,7 +1084,6 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             }
                             if (
                                 e.message.includes("VTXO_ALREADY_REGISTERED") ||
-                                e.message.includes("VTXO_ALREADY_SPENT") ||
                                 e.message.includes("duplicated input")
                             ) {
                                 // Virtual output is already being used in a concurrent
@@ -1018,15 +1092,26 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                                 // renewal will retry on the next cycle.
                                 return;
                             }
+                            if (e.message.includes("VTXO_ALREADY_SPENT")) {
+                                // Our local VTXO cache is stale vs. the
+                                // server's authoritative view. Trigger a
+                                // throttled refresh to reconcile, then skip
+                                // — the next cycle will see fresh data.
+                                void this.maybeRefreshAfterVtxoSpent();
+                                return;
+                            }
                         }
                         console.error("Error renewing VTXOs:", e);
                     });
                 }
-                delegatorManager
-                    ?.delegate(event.vtxos, destination)
-                    .catch((e) => {
-                        console.error("Error delegating VTXOs:", e);
-                    });
+
+                if (delegatorManager) {
+                    delegatorManager
+                        .delegate(event.vtxos, destination)
+                        .catch((e) => {
+                            console.error("Error delegating VTXOs:", e);
+                        });
+                }
             });
 
             return stopWatching;
@@ -1034,6 +1119,45 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             console.error("Error renewing VTXOs from VtxoManager", e);
             return undefined;
         }
+    }
+
+    /**
+     * VTXO_ALREADY_SPENT means the server's authoritative view of VTXO state
+     * is ahead of ours — cross-instance race, pre-lock snapshot drift, or an
+     * SSE gap left stale data in the local cache. Silent-swallowing guarantees
+     * the same error on the next cycle because nothing reconciles the cache,
+     * so instead we trigger a full refreshVtxos() to advance the global sync
+     * cursor. Throttled to prevent a buggy indexer from causing a refresh
+     * storm.
+     */
+    private maybeRefreshAfterVtxoSpent(): Promise<void> {
+        if (this.vtxoSpentRefreshPromise) {
+            return this.vtxoSpentRefreshPromise;
+        }
+
+        const now = Date.now();
+        if (
+            now - this.lastVtxoSpentRefreshTimestamp <
+            VtxoManager.VTXO_SPENT_REFRESH_COOLDOWN_MS
+        ) {
+            return Promise.resolve();
+        }
+        this.lastVtxoSpentRefreshTimestamp = now;
+        this.vtxoSpentRefreshPromise = (async () => {
+            try {
+                const contractManager = await this.wallet.getContractManager();
+                await contractManager.refreshVtxos();
+            } catch (e) {
+                console.error(
+                    "Error refreshing VTXOs after VTXO_ALREADY_SPENT:",
+                    e
+                );
+            } finally {
+                this.vtxoSpentRefreshPromise = undefined;
+            }
+        })();
+
+        return this.vtxoSpentRefreshPromise;
     }
 
     /** Computes the next poll delay, applying exponential backoff on failures. */
@@ -1087,36 +1211,51 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         let hadError = false;
 
         try {
-            // Fetch boarding inputs once for the entire poll cycle so that
-            // settle and sweep don't each hit the network independently.
-            const boardingUtxos = await this.wallet.getBoardingUtxos();
+            // Cross-instance guard: in browser / service worker environments,
+            // serialize the poll body across tabs and SW contexts so only one
+            // of them registers intents per interval. Without this, every tab
+            // submits a parallel RegisterIntent for the same boarding input
+            // and N-1 of them collide on the server's duplicated-input check,
+            // each producing a DeleteIntent RPC. No-op outside the browser.
+            await runWithCrossInstanceLock(
+                BOARDING_POLL_LOCK_NAME,
+                async () => {
+                    // Fetch boarding inputs once for the entire poll cycle so that
+                    // settle and sweep don't each hit the network independently.
+                    const boardingUtxos = await this.wallet.getBoardingUtxos();
 
-            // Settle new (unexpired) boarding inputs first, then sweep expired ones.
-            // Sequential to avoid racing for the same inputs.
-            try {
-                await this.settleBoardingUtxos(boardingUtxos);
-            } catch (e) {
-                hadError = true;
-                console.error("Error auto-settling boarding UTXOs:", e);
-            }
-
-            const sweepEnabled =
-                this.settlementConfig !== false &&
-                (this.settlementConfig?.boardingUtxoSweep ??
-                    DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
-            if (sweepEnabled) {
-                try {
-                    await this.sweepExpiredBoardingUtxos(boardingUtxos);
-                } catch (e) {
-                    if (
-                        !(e instanceof Error) ||
-                        !e.message.includes("No expired boarding UTXOs")
-                    ) {
+                    // Settle new (unexpired) boarding inputs + any near-expiry
+                    // VTXOs in a single intent, then sweep expired boarding
+                    // inputs. Sequential to avoid racing for the same inputs.
+                    try {
+                        await this.runPeriodicSettle(boardingUtxos);
+                    } catch (e) {
                         hadError = true;
-                        console.error("Error auto-sweeping boarding UTXOs:", e);
+                        console.error("Error during periodic settle:", e);
+                    }
+
+                    const sweepEnabled =
+                        this.settlementConfig !== false &&
+                        (this.settlementConfig?.boardingUtxoSweep ??
+                            DEFAULT_SETTLEMENT_CONFIG.boardingUtxoSweep);
+                    if (sweepEnabled) {
+                        try {
+                            await this.sweepExpiredBoardingUtxos(boardingUtxos);
+                        } catch (e) {
+                            if (
+                                !(e instanceof Error) ||
+                                !e.message.includes("No expired boarding UTXOs")
+                            ) {
+                                hadError = true;
+                                console.error(
+                                    "Error auto-sweeping boarding UTXOs:",
+                                    e
+                                );
+                            }
+                        }
                     }
                 }
-            }
+            );
         } catch (e) {
             hadError = true;
             console.error("Error fetching boarding UTXOs:", e);
@@ -1134,13 +1273,19 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
-     * Auto-settle new (unexpired) boarding inputs into Arkade.
-     * Skips UTXOs that are already expired (those are handled by sweep).
-     * Only settles UTXOs not already in-flight (tracked in knownBoardingUtxos).
-     * UTXOs are marked as known only after a successful settle, so failed
-     * attempts will be retried on the next poll.
+     * Auto-settle new (unexpired) boarding inputs AND near-expiry VTXOs into
+     * Arkade in a single intent. Skips boarding UTXOs that are already expired
+     * (those are handled by sweep) and those already in-flight (tracked in
+     * knownBoardingUtxos). If the event-driven renewal path is currently
+     * running, VTXOs are omitted from this cycle to avoid double-spending.
+     *
+     * Failure bookkeeping: after every settle *attempt*, lastPeriodicSettleTimestamp
+     * is armed and consecutive failures are counted so the next attempt is
+     * blocked by an exponentially growing cooldown (capped). This stops a
+     * persistently failing input from producing identical RegisterIntent +
+     * DeleteIntent retries on every 60s poll.
      */
-    private async settleBoardingUtxos(
+    private async runPeriodicSettle(
         boardingUtxos: ExtendedCoin[]
     ): Promise<void> {
         // Exclude expired boarding inputs — those should be swept, not settled.
@@ -1162,30 +1307,155 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
             throw e instanceof Error ? e : new Error(String(e));
         }
 
-        const unsettledUtxos = boardingUtxos.filter(
+        const unsettledBoarding = boardingUtxos.filter(
             (u) =>
+                u.status.confirmed &&
                 !this.knownBoardingUtxos.has(`${u.txid}:${u.vout}`) &&
                 !expiredSet.has(`${u.txid}:${u.vout}`)
         );
 
-        if (unsettledUtxos.length === 0) return;
+        // Collect near-expiry VTXOs unless the event-driven path is mid-renewal.
+        // Skipping when renewalInProgress avoids double-submitting the same VTXOs.
+        let expiringVtxos: ExtendedVirtualCoin[] = [];
+        if (!this.renewalInProgress) {
+            try {
+                expiringVtxos = await this.getExpiringVtxos();
+            } catch (e) {
+                // Non-fatal: fall back to boarding-only settle.
+                console.error("Error fetching expiring VTXOs:", e);
+            }
+        }
+
+        if (unsettledBoarding.length === 0 && expiringVtxos.length === 0) {
+            return;
+        }
+
+        // Respect the cooldown armed by the previous attempt. Cooldown grows
+        // exponentially with consecutive failures and is capped by
+        // PERIODIC_SETTLE_MAX_BACKOFF_MS.
+        const cooldownMs = Math.min(
+            VtxoManager.PERIODIC_SETTLE_COOLDOWN_MS *
+                Math.pow(2, this.consecutivePeriodicSettleFailures),
+            VtxoManager.PERIODIC_SETTLE_MAX_BACKOFF_MS
+        );
+        if (Date.now() - this.lastPeriodicSettleTimestamp < cooldownMs) {
+            return;
+        }
 
         const dustAmount = getDustAmount(this.wallet);
-        const totalAmount = unsettledUtxos.reduce(
-            (sum, u) => sum + BigInt(u.value),
-            0n
-        );
-        if (totalAmount < dustAmount) return;
+
+        // Fetch server intent-fee config so each input/output can be priced.
+        // Without this, settle sends `outputAmount = sum(inputs)` and the
+        // server rejects with INTENT_INSUFFICIENT_FEE whenever the operator
+        // charges non-zero intent fees.
+        const { fees } = await this.getArkProvider().getInfo();
+        const estimator = new Estimator(fees.intentFee);
+
+        let totalAmount = 0n;
+
+        const filteredBoarding: ExtendedCoin[] = [];
+        for (const u of unsettledBoarding) {
+            const inputFee = estimator.evalOnchainInput({
+                amount: BigInt(u.value),
+            });
+            if (inputFee.value >= BigInt(u.value)) {
+                // Fee exceeds input value — including it would drain the output.
+                continue;
+            }
+            filteredBoarding.push(u);
+            totalAmount += BigInt(u.value) - BigInt(inputFee.satoshis);
+        }
+
+        const filteredVtxos: ExtendedVirtualCoin[] = [];
+        for (const v of expiringVtxos) {
+            const inputFee = estimator.evalOffchainInput({
+                amount: BigInt(v.value),
+                type:
+                    v.virtualStatus.state === "swept" ? "recoverable" : "vtxo",
+                weight: 0,
+                birth: v.createdAt,
+                expiry: v.virtualStatus.batchExpiry
+                    ? new Date(v.virtualStatus.batchExpiry)
+                    : undefined,
+            });
+            if (inputFee.satoshis >= v.value) {
+                continue;
+            }
+            filteredVtxos.push(v);
+            totalAmount += BigInt(v.value) - BigInt(inputFee.satoshis);
+        }
+
+        if (filteredBoarding.length === 0 && filteredVtxos.length === 0) {
+            return;
+        }
 
         const arkAddress = await this.wallet.getAddress();
-        await this.wallet.settle({
-            inputs: unsettledUtxos,
-            outputs: [{ address: arkAddress, amount: totalAmount }],
-        });
 
-        // Mark as known only after successful settle
-        for (const u of unsettledUtxos) {
-            this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+        const outputFee = estimator.evalOffchainOutput({
+            amount: totalAmount,
+            script: hex.encode(ArkAddress.decode(arkAddress).pkScript),
+        });
+        totalAmount -= BigInt(outputFee.satoshis);
+
+        if (totalAmount < dustAmount) return;
+
+        const includesVtxos = filteredVtxos.length > 0;
+
+        // Block the event-driven renewal path while this settle is in flight
+        // when VTXOs are part of the intent. Mirrors renewVtxos()'s guard so
+        // the two paths can't race on the same VTXO inputs.
+        if (includesVtxos) {
+            this.renewalInProgress = true;
+        }
+
+        let success = false;
+        let staleCacheSkip = false;
+        try {
+            try {
+                await this.wallet.settle({
+                    inputs: [...filteredBoarding, ...filteredVtxos],
+                    outputs: [{ address: arkAddress, amount: totalAmount }],
+                });
+
+                // Mark boarding inputs as known only after successful settle.
+                for (const u of filteredBoarding) {
+                    this.knownBoardingUtxos.add(`${u.txid}:${u.vout}`);
+                }
+                success = true;
+            } catch (e) {
+                if (
+                    e instanceof Error &&
+                    e.message.includes("VTXO_ALREADY_SPENT")
+                ) {
+                    // Local VTXO cache is stale vs. the server's
+                    // authoritative view — not a transient failure.
+                    // Trigger a throttled refresh and skip this cycle
+                    // without bumping the failure counter, so the next
+                    // poll can retry once the cache reconciles.
+                    staleCacheSkip = true;
+                    void this.maybeRefreshAfterVtxoSpent();
+                } else {
+                    throw e;
+                }
+            }
+        } finally {
+            this.lastPeriodicSettleTimestamp = Date.now();
+            if (includesVtxos) {
+                // Match event-path semantics: bump the renewal cooldown
+                // whether we succeeded or failed so a failed periodic settle
+                // doesn't let the next vtxo_received event re-enter renewal
+                // immediately.
+                this.lastRenewalTimestamp = Date.now();
+                this.renewalInProgress = false;
+            }
+            if (success) {
+                this.consecutivePeriodicSettleFailures = 0;
+            } else if (!staleCacheSkip) {
+                // Don't bump on stale-cache skip: it's not a transient
+                // failure, and the next cycle should try immediately
+                // after the refresh lands.
+                this.consecutivePeriodicSettleFailures++;
+            }
         }
     }
 

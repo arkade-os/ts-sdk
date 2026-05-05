@@ -12,6 +12,11 @@ import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
 
+/** Defaults */
+export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
+export const DEFAULT_ARKADE_HRP = "ark";
+export const DEFAULT_NETWORK_NAME = "bitcoin";
+
 /**
  * Base configuration options shared by all wallet types.
  *
@@ -22,9 +27,6 @@ import { DelegatorProvider } from "../providers/delegator";
  *
  * Provider-based configuration supplies concrete provider instances directly,
  * including the ArkProvider, IndexerProvider, OnchainProvider, and DelegatorProvider.
- *
- * At least one of the following must be provided:
- * - arkServerUrl OR arkProvider
  *
  * The wallet will use provided URLs to create default providers if custom provider
  * instances are not supplied. If optional parameters are not provided, the wallet
@@ -272,8 +274,12 @@ export interface Asset {
     /** Asset identifier. */
     assetId: string;
 
-    /** Asset amount in base units. */
-    amount: number;
+    /**
+     * Asset amount in base units. Typed as `bigint` because asset
+     * supplies routinely exceed `Number.MAX_SAFE_INTEGER` (2^53 - 1)
+     * and silently truncating in arithmetic would corrupt balances.
+     */
+    amount: bigint;
 }
 
 /**
@@ -334,8 +340,12 @@ export type AssetDetails = {
     /** Asset identifier. */
     assetId: string;
 
-    /** Total issued supply in base units. */
-    supply: number;
+    /**
+     * Total issued supply in base units. Typed as `bigint` for the
+     * same reason as {@link Asset.amount} — supplies often exceed
+     * `Number.MAX_SAFE_INTEGER`.
+     */
+    supply: bigint;
 
     /** Optional immutable metadata associated with the asset. */
     metadata?: AssetMetadata;
@@ -352,7 +362,7 @@ export type AssetDetails = {
  */
 export interface IssuanceParams {
     /** Initial amount of asset to issue */
-    amount: number;
+    amount: bigint;
     /** Optional control asset ID that can be used for future reissuance */
     controlAssetId?: string;
     /** Immutable asset metadata including `ticker`, `decimals`, `icon` */
@@ -381,7 +391,7 @@ export interface ReissuanceParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to issue */
-    amount: number;
+    amount: bigint;
 }
 
 /**
@@ -393,7 +403,7 @@ export interface BurnParams {
     /** Existing asset ID, made up of genesis (Arkade) transaction ID and zero-based asset group index */
     assetId: string;
     /** Amount of asset to burn */
-    amount: number;
+    amount: bigint;
 }
 
 /**
@@ -519,7 +529,7 @@ export interface VirtualCoin extends Coin {
     /** Assets carried by this virtual output, if any. */
     assets?: Asset[];
     /** The scriptPubKey (hex) locking this virtual output, as returned by the indexer. */
-    script?: string;
+    script: string;
 }
 
 /** Wallet transaction direction. */

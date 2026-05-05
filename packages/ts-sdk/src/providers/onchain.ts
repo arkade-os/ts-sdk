@@ -3,12 +3,18 @@ import { Coin } from "../wallet";
 
 /**
  * The default base URLs for esplora API providers.
+ *
+ * Mainnet, mutinynet, and signet point at Ark Labs–operated
+ * mempool deployments (mempool.space-compatible esplora API).
+ * Testnet falls back to the public mempool.space deployment
+ * because Ark doesn't host it. Regtest assumes a local nigiri
+ * stack on the standard port.
  */
 export const ESPLORA_URL: Record<NetworkName, string> = {
-    bitcoin: "https://mempool.space/api",
+    bitcoin: "https://mempool.arkade.sh/api",
     testnet: "https://mempool.space/testnet/api",
-    signet: "https://mempool.space/signet/api",
-    mutinynet: "https://mutinynet.com/api",
+    signet: "https://mempool.signet.arkade.sh/api",
+    mutinynet: "https://mempool.mutinynet.arkade.sh/api",
     regtest: "http://localhost:3000",
 };
 

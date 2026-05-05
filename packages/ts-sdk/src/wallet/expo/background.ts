@@ -1,4 +1,3 @@
-import { hex } from "@scure/base";
 import type { WalletRepository } from "../../repositories/walletRepository";
 import type { ContractRepository } from "../../repositories/contractRepository";
 import type { AsyncStorageTaskQueue } from "../../worker/expo/asyncStorageTaskQueue";
@@ -9,7 +8,6 @@ import {
     contractPollProcessor,
     CONTRACT_POLL_TASK_TYPE,
 } from "../../worker/expo/processors";
-import { DefaultVtxo } from "../../script/default";
 import { ExpoArkProvider } from "../../providers/expoArk";
 import { ExpoIndexerProvider } from "../../providers/expoIndexer";
 import { getRandomId } from "../utils";
@@ -142,23 +140,11 @@ export function defineExpoBackgroundTask(
             );
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
 
-            // Reconstruct default offchainTapscript as fallback
-            // for virtual outputs not associated with a contract.
-            const offchainTapscript = new DefaultVtxo.Script({
-                pubKey: hex.decode(config.pubkeyHex),
-                serverPubKey: hex.decode(config.serverPubKeyHex),
-                csvTimelock: {
-                    value: BigInt(config.exitTimelockValue),
-                    type: config.exitTimelockType as "blocks" | "seconds",
-                },
-            });
-
             const deps = createTaskDependencies({
                 walletRepository,
                 contractRepository,
                 indexerProvider,
                 arkProvider,
-                offchainTapscript,
             });
 
             await runTasks(taskQueue, processors, deps);

@@ -14,10 +14,13 @@ import {
     createDelegateContractParams,
     createMockVtxo,
     TEST_PUB_KEY,
+    TEST_PUB_KEY_HEX,
     TEST_SERVER_PUB_KEY,
+    TEST_SERVER_PUB_KEY_HEX,
     TEST_DELEGATE_PUB_KEY,
 } from "./helpers";
-import { timelockToSequence } from "../../src/contracts/handlers/helpers";
+import { resolveRole } from "../../src/contracts/handlers/helpers";
+import { timelockToSequence } from "../../src/utils/timelock";
 
 describe("Contract Registry", () => {
     it("should have default handler registered", () => {
@@ -46,6 +49,78 @@ describe("Contract Registry", () => {
     });
 });
 
+describe("resolveRole", () => {
+    const receiverXOnly =
+        "1e1bb85455fe3f5aed60d101aa4dbdb9e7714f6226769a97a17a5331dadcd53b";
+    const senderXOnly =
+        "0192e796452d6df9697c280542e1560557bcf79a347d925895043136225c7cb4";
+    const serverXOnly =
+        "aad52d58162e9eefeafc7ad8a1cdca8060b5f01df1e7583362d052e266208f88";
+
+    const contract: Contract = {
+        type: "vhtlc",
+        params: {
+            sender: senderXOnly,
+            receiver: receiverXOnly,
+            server: serverXOnly,
+            hash: "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+            refundLocktime: "800000",
+            claimDelay: "10",
+            refundDelay: "12",
+            refundNoReceiverDelay: "14",
+        },
+        script: "script",
+        address: "address",
+        state: "active",
+        createdAt: Date.now(),
+    };
+
+    it("should resolve the role from walletDescriptor", () => {
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: `tr(${receiverXOnly.toUpperCase()})`,
+            })
+        ).toBe("receiver");
+    });
+
+    it("should fall back to walletPubKey when walletDescriptor is unresolvable", () => {
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
+                walletPubKey: senderXOnly,
+            })
+        ).toBe("sender");
+    });
+
+    it("should return undefined when neither walletDescriptor nor walletPubKey resolves", () => {
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: "tr([12345678/86'/0'/0']xpubSomething/0/5)",
+            })
+        ).toBeUndefined();
+    });
+
+    it("should not fall back to walletPubKey when walletDescriptor resolves but does not match", () => {
+        // A resolved descriptor is authoritative: if it doesn't match
+        // sender/receiver, we return undefined rather than trying walletPubKey.
+        const unrelatedXOnly = "a".repeat(64);
+        expect(
+            resolveRole(contract, {
+                collaborative: false,
+                currentTime: Date.now(),
+                walletDescriptor: `tr(${unrelatedXOnly})`,
+                walletPubKey: senderXOnly,
+            })
+        ).toBeUndefined();
+    });
+});
+
 describe("DefaultContractHandler", () => {
     it("creates a script matching the expected pkScript", () => {
         const params = {
@@ -71,15 +146,7 @@ describe("DefaultContractHandler", () => {
     });
 
     it("should create script from params", () => {
-        const params = {
-            pubKey: hex.encode(TEST_PUB_KEY),
-            serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
-            csvTimelock: DefaultContractHandler.serializeParams({
-                pubKey: TEST_PUB_KEY,
-                serverPubKey: TEST_SERVER_PUB_KEY,
-                csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
-            }).csvTimelock,
-        };
+        const params = createDefaultContractParams();
 
         const script = DefaultContractHandler.createScript(params);
 
@@ -98,11 +165,8 @@ describe("DefaultContractHandler", () => {
         const deserialized =
             DefaultContractHandler.deserializeParams(serialized);
 
-        expect(deserialized.pubKey).toBeInstanceOf(Uint8Array);
-        expect(deserialized.serverPubKey).toBeInstanceOf(Uint8Array);
-        expect(Array.from(deserialized.pubKey)).toEqual(
-            Array.from(TEST_PUB_KEY)
-        );
+        expect(deserialized.pubKey).toEqual(TEST_PUB_KEY);
+        expect(deserialized.serverPubKey).toEqual(TEST_SERVER_PUB_KEY);
     });
 
     it("should select forfeit path when collaborative", () => {
@@ -223,8 +287,8 @@ describe("DefaultContractHandler", () => {
 
     it("should omit sequence on exit path when csvTimelock is missing", () => {
         const params = {
-            pubKey: hex.encode(TEST_PUB_KEY),
-            serverPubKey: hex.encode(TEST_SERVER_PUB_KEY),
+            pubKey: TEST_PUB_KEY_HEX,
+            serverPubKey: TEST_SERVER_PUB_KEY_HEX,
         };
         const script = DefaultContractHandler.createScript(params);
         const contract: Contract = {

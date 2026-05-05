@@ -44,8 +44,8 @@ importers:
   packages/boltz-swap:
     dependencies:
       '@arkade-os/sdk':
-        specifier: 0.4.15
-        version: 0.4.15(@react-native-async-storage/async-storage@3.0.1(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(expo-background-task@1.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4)))(expo-sqlite@16.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(expo-task-manager@14.0.9(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4)))(expo@55.0.4)
+        specifier: workspace:*
+        version: link:../ts-sdk
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.0.1
@@ -138,14 +138,17 @@ importers:
         specifier: '>=54.0.0'
         version: 55.0.4(@babel/core@7.29.0)(@expo/dom-webview@55.0.3)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)(typescript@5.9.2)
       expo-background-task:
-        specifier: ~1.0.10
+        specifier: ~1.0.10 || >=55.0.0
         version: 1.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))
       expo-sqlite:
-        specifier: ~16.0.10
+        specifier: ~16.0.10 || >=55.0.0
         version: 16.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
       expo-task-manager:
-        specifier: ~14.0.9
+        specifier: ~14.0.9 || >=55.0.0
         version: 14.0.9(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))
+      ws-electrumx-client:
+        specifier: 1.0.5
+        version: 1.0.5
     devDependencies:
       '@types/better-sqlite3':
         specifier: 7.6.13
@@ -195,27 +198,6 @@ packages:
   '@ampproject/remapping@2.3.0':
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
     engines: {node: '>=6.0.0'}
-
-  '@arkade-os/sdk@0.4.15':
-    resolution: {integrity: sha512-zUA1Cw/NYj9PG6afpIuEser50wDRuUBcXkkU2YPcvDKJPwlGmmk6/NbBCevsqk0HAiQHuIDEryO3nHccwW08bA==}
-    engines: {node: '>=22.12.0 <23', pnpm: '>=10.25.0 <11'}
-    peerDependencies:
-      '@react-native-async-storage/async-storage': '>=1.0.0'
-      expo: '>=54.0.0'
-      expo-background-task: ~1.0.10
-      expo-sqlite: ~16.0.10
-      expo-task-manager: ~14.0.9
-    peerDependenciesMeta:
-      '@react-native-async-storage/async-storage':
-        optional: true
-      expo:
-        optional: true
-      expo-background-task:
-        optional: true
-      expo-sqlite:
-        optional: true
-      expo-task-manager:
-        optional: true
 
   '@babel/code-frame@7.29.0':
     resolution: {integrity: sha512-9NhCeYjq9+3uxgdtp20LSiJXJvN0FeCtNGpJxuMFZ1Kv3cWUNb6DOhJwUvcVCzKGR66cw4njwM6hrJLqgOwbcw==}
@@ -2852,6 +2834,11 @@ packages:
   isexe@2.0.0:
     resolution: {integrity: sha512-RHxMLp9lnKHGHRng9QFhRCMbYAcVpn69smSGcq3f36xjgVVWThj4qqLbTLlq7Ssj8B+fIQ1EuCEGI2lKsyQeIw==}
 
+  isomorphic-ws@5.0.0:
+    resolution: {integrity: sha512-muId7Zzn9ywDsyXgTIafTry2sV3nySZeUDe6YedVd1Hvuuep5AsIlqK+XefWpYTyJG5e503F2xIuT2lcU6rCSw==}
+    peerDependencies:
+      ws: '*'
+
   istanbul-lib-coverage@3.2.2:
     resolution: {integrity: sha512-O8dpsF+r0WV/8MNRKfnmrtCWhuKjxrq2w+jpzBL5UZKTi2LeVWnWOmWRxFlesJONmc+wLAGvKQZEOanko0LFTg==}
     engines: {node: '>=8'}
@@ -4351,6 +4338,10 @@ packages:
     resolution: {integrity: sha512-7KxauUdBmSdWnmpaGFg+ppNjKF8uNLry8LyzjauQDOVONfFLNKrKvQOxZ/VuTIcS/gge/YNahf5RIIQWTSarlg==}
     engines: {node: ^12.13.0 || ^14.15.0 || >=16.0.0}
 
+  ws-electrumx-client@1.0.5:
+    resolution: {integrity: sha512-pBjfFqb9j2FBz7NPbnd8r2lOYanEw8ACzfKxOtHCgEGqre5QiTax5XHLVgbsiOvST0vmsHAiMtkJPvsZm77PIQ==}
+    engines: {node: '>=10'}
+
   ws@7.5.10:
     resolution: {integrity: sha512-+dbF1tHwZpXcbOJdVOkzLDxZP1ailvSxM6ZweXTegylPny803bFhA+vqBYw4s31NSAk4S2Qz+AKXK9a4wkdjcQ==}
     engines: {node: '>=8.3.0'}
@@ -4427,28 +4418,6 @@ snapshots:
     dependencies:
       '@jridgewell/gen-mapping': 0.3.13
       '@jridgewell/trace-mapping': 0.3.31
-
-  '@arkade-os/sdk@0.4.15(@react-native-async-storage/async-storage@3.0.1(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(expo-background-task@1.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4)))(expo-sqlite@16.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4))(expo-task-manager@14.0.9(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4)))(expo@55.0.4)':
-    dependencies:
-      '@bitcoinerlab/descriptors-scure': 3.1.7
-      '@marcbachmann/cel-js': 7.3.1
-      '@noble/curves': 2.0.1
-      '@noble/secp256k1': 3.0.0
-      '@scure/base': 2.0.0
-      '@scure/bip39': 2.0.1
-      '@scure/btc-signer': 2.0.1
-      bip68: 1.0.4
-    optionalDependencies:
-      '@react-native-async-storage/async-storage': 3.0.1(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
-      expo: 55.0.4(@babel/core@7.29.0)(@expo/dom-webview@55.0.3)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)(typescript@5.9.2)
-      expo-background-task: 1.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))
-      expo-sqlite: 16.0.10(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))(react@19.2.4)
-      expo-task-manager: 14.0.9(expo@55.0.4)(react-native@0.84.1(@babel/core@7.29.0)(react@19.2.4))
-    transitivePeerDependencies:
-      - '@ledgerhq/ledger-bitcoin'
-      - bip32
-      - bitcoinjs-lib
-      - ecpair
 
   '@babel/code-frame@7.29.0':
     dependencies:
@@ -7449,6 +7418,10 @@ snapshots:
 
   isexe@2.0.0: {}
 
+  isomorphic-ws@5.0.0(ws@8.19.0):
+    dependencies:
+      ws: 8.19.0
+
   istanbul-lib-coverage@3.2.2: {}
 
   istanbul-lib-instrument@5.2.1:
@@ -9254,6 +9227,14 @@ snapshots:
     dependencies:
       imurmurhash: 0.1.4
       signal-exit: 3.0.7
+
+  ws-electrumx-client@1.0.5:
+    dependencies:
+      isomorphic-ws: 5.0.0(ws@8.19.0)
+      ws: 8.19.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   ws@7.5.10: {}
 

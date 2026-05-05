@@ -216,7 +216,6 @@ describe("RealmContractRepository", () => {
                 state: "active",
                 params: { sender: "ab12", receiver: "cd34", hash: "1234" },
                 createdAt: 1704067200000,
-                expiresAt: 1704153600000,
                 label: "My VHTLC",
                 metadata: { boltzId: "swap-123", nested: { a: 1 } },
             });
@@ -234,7 +233,6 @@ describe("RealmContractRepository", () => {
                 hash: "1234",
             });
             expect(retrieved.createdAt).toBe(1704067200000);
-            expect(retrieved.expiresAt).toBe(1704153600000);
             expect(retrieved.label).toBe("My VHTLC");
             expect(retrieved.metadata).toEqual({
                 boltzId: "swap-123",
@@ -245,13 +243,12 @@ describe("RealmContractRepository", () => {
         it("should not set optional fields when they are null/absent", async () => {
             const contract = createMockContract({
                 script: "script-minimal",
-                // no expiresAt, no label, no metadata
+                // no label, no metadata
             });
 
             await repository.saveContract(contract);
             const [retrieved] = await repository.getContracts();
 
-            expect(retrieved.expiresAt).toBeUndefined();
             expect(retrieved.label).toBeUndefined();
             expect(retrieved.metadata).toBeUndefined();
         });

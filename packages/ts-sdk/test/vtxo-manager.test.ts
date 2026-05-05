@@ -26,7 +26,7 @@ type MockWalletOptions = {
 // Mock wallet implementation
 const createMockWallet = (
     vtxos: ExtendedVirtualCoin[] = [],
-    arkAddress = "arkade1test",
+    arkAddress = "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
     options: MockWalletOptions = {}
 ): IWallet => {
     const contractManager = options.contractManager ?? {
@@ -342,7 +342,11 @@ describe("VtxoManager - Lifecycle", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
         };
-        const wallet = createMockWallet([], "arkade1test", { contractManager });
+        const wallet = createMockWallet(
+            [],
+            "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
+            { contractManager }
+        );
 
         new VtxoManager(wallet, undefined, {});
         await flushMicrotasks();
@@ -355,7 +359,11 @@ describe("VtxoManager - Lifecycle", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
         };
-        const wallet = createMockWallet([], "arkade1test", { contractManager });
+        const wallet = createMockWallet(
+            [],
+            "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
+            { contractManager }
+        );
 
         new VtxoManager(wallet, undefined, false);
         await flushMicrotasks();
@@ -369,7 +377,11 @@ describe("VtxoManager - Lifecycle", () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
         };
-        const wallet = createMockWallet([], "arkade1test", { contractManager });
+        const wallet = createMockWallet(
+            [],
+            "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
+            { contractManager }
+        );
         const manager = new VtxoManager(wallet, undefined, {});
 
         await flushMicrotasks();
@@ -1224,7 +1236,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
-            getAddress: vi.fn().mockResolvedValue("arkade1test"),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
             getDelegatorManager: vi.fn().mockResolvedValue(undefined),
             getContractManager: vi.fn().mockResolvedValue(contractManager),
             settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -1251,6 +1267,9 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                     time: Math.floor(Date.now() / 1000),
                     hash: "0".repeat(64),
                 }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
             },
             network: {
                 bech32: "bcrt",
@@ -1395,7 +1414,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             // A minimal IWallet that lacks boardingTapscript/onchainProvider/network
             const minimalWallet = {
                 getVtxos: vi.fn().mockResolvedValue([]),
-                getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                getAddress: vi
+                    .fn()
+                    .mockResolvedValue(
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue({
                     onContractEvent: vi.fn().mockReturnValue(() => {}),
@@ -1447,7 +1470,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
 
             return {
                 getVtxos: vi.fn().mockResolvedValue([]),
-                getAddress: vi.fn().mockResolvedValue("arkade1test"),
+                getAddress: vi
+                    .fn()
+                    .mockResolvedValue(
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    ),
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue(contractManager),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
@@ -1476,6 +1503,11 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                         time: Math.floor(Date.now() / 1000),
                         hash: "0".repeat(64),
                     }),
+                },
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue({ fees: { intentFee: {} } }),
                 },
                 network: {
                     bech32: "bcrt",
@@ -1654,62 +1686,1064 @@ describe("VtxoManager - Renewal loop prevention", () => {
         expect(wallet.settle).toHaveBeenCalledTimes(1);
     });
 
-    it("should set renewalInProgress flag correctly even on error", async () => {
-        const now = Date.now();
-        const createdAt = new Date(now - 100_000);
-        const vtxos = [
-            {
-                txid: "tx1",
-                vout: 0,
-                value: 5000,
-                createdAt,
-                virtualStatus: {
-                    state: "settled",
-                    batchExpiry: now + 5000,
-                },
-                status: { confirmed: true },
-                isUnrolled: false,
-                isSpent: false,
-            } as any,
-        ];
+    it("should clear renewalInProgress on error and honor cooldown on failed renewals", async () => {
+        // Must be >= 2025-01-01 to bypass the regtest blockheight-vs-timestamp
+        // guard in isVtxoExpiringSoon.
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
 
-        let eventHandler: ((event: any) => void) | undefined;
+        try {
+            const createdAt = new Date(baseNow - 100_000);
+            const vtxos = [
+                {
+                    txid: "tx1",
+                    vout: 0,
+                    value: 5000,
+                    createdAt,
+                    virtualStatus: {
+                        state: "settled",
+                        batchExpiry: baseNow + 5000,
+                    },
+                    status: { confirmed: true },
+                    isUnrolled: false,
+                    isSpent: false,
+                } as any,
+            ];
+
+            let eventHandler: ((event: any) => void) | undefined;
+            const contractManager = {
+                onContractEvent: vi.fn().mockImplementation((handler) => {
+                    eventHandler = handler;
+                    return () => {};
+                }),
+            };
+
+            const wallet = createMockWallet(vtxos, "arkade1myaddress", {
+                contractManager,
+            });
+            // First settle fails, then succeeds once cooldown has elapsed.
+            (wallet.settle as any)
+                .mockRejectedValueOnce(new Error("round failed"))
+                .mockResolvedValueOnce("mock-txid-2");
+
+            new VtxoManager(wallet, undefined, {});
+
+            await flushMicrotasks();
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(eventHandler).toBeDefined();
+
+            // First call → settle throws, but flag is cleared and the cooldown
+            // is armed in the finally block (lastRenewalTimestamp = now).
+            eventHandler!({ type: "vtxo_received", vtxos: [] });
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+            // Second event within the 30s cooldown must NOT re-enter renewal,
+            // even though the previous attempt failed. Without this guard a
+            // transient settle failure would re-trigger renewal on every
+            // incoming vtxo_received event.
+            nowSpy.mockReturnValue(baseNow + 5_000);
+            eventHandler!({ type: "vtxo_received", vtxos: [] });
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+            // Once the cooldown elapses, the next event proves the flag was
+            // actually cleared in the finally block (otherwise renewal would
+            // stay blocked forever).
+            nowSpy.mockReturnValue(baseNow + 31_000);
+            eventHandler!({ type: "vtxo_received", vtxos: [] });
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+});
+
+describe("VtxoManager - Periodic settle cooldown", () => {
+    // Reuse the shape of createMockWalletWithBoarding without depending on the
+    // closure variables inside the Boarding UTXO Sweep describe block.
+    const mockPubkey = new Uint8Array(32).fill(0x01);
+    const csvScript = CSVMultisigTapscript.encode({
+        timelock: { type: "seconds", value: 604672n },
+        pubkeys: [mockPubkey],
+    });
+    const exitScriptHex = hex.encode(csvScript.script);
+
+    const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
+        const mockPkScript = new Uint8Array([
+            0x51,
+            0x20,
+            ...new Array(32).fill(0),
+        ]);
         const contractManager = {
-            onContractEvent: vi.fn().mockImplementation((handler) => {
-                eventHandler = handler;
-                return () => {};
-            }),
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
         };
+        return {
+            getVtxos: vi.fn().mockResolvedValue([]),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue(contractManager),
+            settle: vi.fn().mockResolvedValue("mock-txid"),
+            dustAmount: 330n,
+            getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+            getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+            boardingTapscript: {
+                exitScript: exitScriptHex,
+                pkScript: mockPkScript,
+            },
+            onchainProvider: {
+                getFeeRate: vi.fn().mockResolvedValue(1),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: 1000,
+                    time: Math.floor(Date.now() / 1000),
+                    hash: "0".repeat(64),
+                }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+            },
+            network: {
+                bech32: "bcrt",
+                pubKeyHash: 0x6f,
+                scriptHash: 0xc4,
+                wif: 0xef,
+            },
+            identity: {
+                sign: vi.fn().mockImplementation((tx: any) => tx),
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
+            },
+        } as any;
+    };
 
-        const wallet = createMockWallet(vtxos, "arkade1myaddress", {
-            contractManager,
+    // Unexpired boarding UTXO — block_time very recent so the CSV timelock is
+    // NOT satisfied, which means it qualifies for settle (not sweep).
+    const makeUnexpiredUtxo = (value: number, vout = 0): ExtendedCoin =>
+        ({
+            txid: `boarding-txid-${value}-${vout}`,
+            vout,
+            value,
+            status: {
+                confirmed: true,
+                block_time: Math.floor(Date.now() / 1000) - 60,
+            },
+        }) as ExtendedCoin;
+
+    it("arms cooldown after a failed settle and skips subsequent attempts within the window", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const utxo = makeUnexpiredUtxo(10_000);
+            const wallet = buildBoardingWallet([utxo]);
+            (wallet.settle as any).mockRejectedValue(new Error("round failed"));
+
+            // Disable polling to avoid the startup poll from racing with our
+            // direct invocations — we drive the private method explicitly.
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            // First attempt: settle is invoked and throws. Cooldown is armed
+            // in finally, failure counter goes to 1.
+            await expect(
+                (manager as any).runPeriodicSettle([utxo])
+            ).rejects.toThrow("round failed");
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+            // Within the cooldown window (default 30s * 2^1 = 60s), a second
+            // call must NOT hit settle again — even with the same unsettled
+            // UTXO — otherwise we're back to the hot-loop the report
+            // describes.
+            nowSpy.mockReturnValue(baseNow + 30_000);
+            await (manager as any).runPeriodicSettle([utxo]);
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("allows a retry after the cooldown expires and resets counter on success", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const utxo = makeUnexpiredUtxo(10_000);
+            const wallet = buildBoardingWallet([utxo]);
+            (wallet.settle as any)
+                .mockRejectedValueOnce(new Error("round failed"))
+                .mockResolvedValueOnce("mock-txid");
+
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await expect(
+                (manager as any).runPeriodicSettle([utxo])
+            ).rejects.toThrow("round failed");
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+
+            // First failure → cooldown = 30s * 2^1 = 60s. Advance past that.
+            nowSpy.mockReturnValue(baseNow + 61_000);
+            await (manager as any).runPeriodicSettle([utxo]);
+
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+            // Success resets counter; next cooldown should drop back to base.
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("grows cooldown exponentially with consecutive failures (capped)", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const utxo = makeUnexpiredUtxo(10_000);
+            const wallet = buildBoardingWallet([utxo]);
+            (wallet.settle as any).mockRejectedValue(new Error("round failed"));
+
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            // Attempt 1 → counter becomes 1, next cooldown = 30s * 2^1 = 60s.
+            await expect(
+                (manager as any).runPeriodicSettle([utxo])
+            ).rejects.toThrow();
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(1);
+
+            // 30s later (inside 60s cooldown) → skipped, counter unchanged.
+            nowSpy.mockReturnValue(baseNow + 30_000);
+            await (manager as any).runPeriodicSettle([utxo]);
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(1);
+
+            // 61s later → cooldown elapsed, attempt 2 runs and fails.
+            nowSpy.mockReturnValue(baseNow + 61_000);
+            await expect(
+                (manager as any).runPeriodicSettle([utxo])
+            ).rejects.toThrow();
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(2);
+
+            // Next cooldown = 30s * 2^2 = 120s. 61s after 61s → 122s, still
+            // inside the 120s window from last attempt? No: 122 - 61 = 61s
+            // since last attempt < 120s cooldown → skipped.
+            nowSpy.mockReturnValue(baseNow + 61_000 + 61_000);
+            await (manager as any).runPeriodicSettle([utxo]);
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("does not arm cooldown when there is nothing to settle (no boarding, no expiring VTXOs)", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const wallet = buildBoardingWallet([]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await (manager as any).runPeriodicSettle([]);
+            expect(wallet.settle).not.toHaveBeenCalled();
+            expect((manager as any).lastPeriodicSettleTimestamp).toBe(0);
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    // Regression: issue #438 — settling an unconfirmed boarding UTXO would hit
+    // the server which rejects with INVALID_PSBT_INPUT, and the resulting
+    // failure would bump the exponential-backoff counter. Filtering them out
+    // pre-flight means no settle call happens and no cooldown is armed.
+    const makeUnconfirmedUtxo = (value: number, vout = 0): ExtendedCoin =>
+        ({
+            txid: `unconfirmed-boarding-${value}-${vout}`,
+            vout,
+            value,
+            status: {
+                confirmed: false,
+            },
+        }) as ExtendedCoin;
+
+    it("skips unconfirmed boarding UTXOs without calling settle or bumping backoff", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const unconfirmed = makeUnconfirmedUtxo(10_000);
+            const wallet = buildBoardingWallet([unconfirmed]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await (manager as any).runPeriodicSettle([unconfirmed]);
+
+            expect(wallet.settle).not.toHaveBeenCalled();
+            expect((manager as any).lastPeriodicSettleTimestamp).toBe(0);
+            expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
+            // The unconfirmed UTXO must NOT be marked as known — once it
+            // confirms, the next poll should pick it up.
+            expect(
+                (manager as any).knownBoardingUtxos.has(
+                    `${unconfirmed.txid}:${unconfirmed.vout}`
+                )
+            ).toBe(false);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("settles only the confirmed subset when a mix is present", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const confirmed = makeUnexpiredUtxo(10_000, 0);
+            const unconfirmed = makeUnconfirmedUtxo(5_000, 1);
+            const wallet = buildBoardingWallet([confirmed, unconfirmed]);
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await (manager as any).runPeriodicSettle([confirmed, unconfirmed]);
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            const callArgs = (wallet.settle as any).mock.calls[0][0];
+            // Only the confirmed UTXO should be in the inputs.
+            expect(callArgs.inputs).toHaveLength(1);
+            expect(callArgs.inputs[0].txid).toBe(confirmed.txid);
+            // Known set only tracks the one we actually tried to settle.
+            expect(
+                (manager as any).knownBoardingUtxos.has(
+                    `${confirmed.txid}:${confirmed.vout}`
+                )
+            ).toBe(true);
+            expect(
+                (manager as any).knownBoardingUtxos.has(
+                    `${unconfirmed.txid}:${unconfirmed.vout}`
+                )
+            ).toBe(false);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+});
+
+describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
+    const mockPubkey = new Uint8Array(32).fill(0x01);
+    const csvScript = CSVMultisigTapscript.encode({
+        timelock: { type: "seconds", value: 604672n },
+        pubkeys: [mockPubkey],
+    });
+    const exitScriptHex = hex.encode(csvScript.script);
+
+    const buildWallet = (
+        boardingUtxos: ExtendedCoin[],
+        vtxos: ExtendedVirtualCoin[]
+    ) => {
+        const mockPkScript = new Uint8Array([
+            0x51,
+            0x20,
+            ...new Array(32).fill(0),
+        ]);
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+        };
+        return {
+            getVtxos: vi.fn().mockResolvedValue(vtxos),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue(contractManager),
+            settle: vi.fn().mockResolvedValue("mock-txid"),
+            dustAmount: 330n,
+            getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+            getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+            boardingTapscript: {
+                exitScript: exitScriptHex,
+                pkScript: mockPkScript,
+            },
+            onchainProvider: {
+                getFeeRate: vi.fn().mockResolvedValue(1),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: 1000,
+                    time: Math.floor(Date.now() / 1000),
+                    hash: "0".repeat(64),
+                }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+            },
+            network: {
+                bech32: "bcrt",
+                pubKeyHash: 0x6f,
+                scriptHash: 0xc4,
+                wif: 0xef,
+            },
+            identity: {
+                sign: vi.fn().mockImplementation((tx: any) => tx),
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
+            },
+        } as any;
+    };
+
+    const makeUnexpiredUtxo = (value: number, vout = 0): ExtendedCoin =>
+        ({
+            txid: `boarding-txid-${value}-${vout}`,
+            vout,
+            value,
+            status: {
+                confirmed: true,
+                block_time: Math.floor(Date.now() / 1000) - 60,
+            },
+        }) as ExtendedCoin;
+
+    // VTXO expiring within 1 hour (well inside the default 3-day threshold).
+    const makeExpiringVtxo = (value: number, vout = 0): ExtendedVirtualCoin =>
+        ({
+            txid: `vtxo-txid-${value}-${vout}`,
+            vout,
+            value,
+            virtualStatus: {
+                state: "settled",
+                batchExpiry: Date.now() + 60 * 60 * 1000,
+            },
+            isSpent: false,
+            status: { confirmed: true },
+            createdAt: new Date(),
+            isUnrolled: false,
+            forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            tapTree: new Uint8Array(),
+        }) as any;
+
+    it("bundles boarding UTXO and expiring VTXO into a single settle intent", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const wallet = buildWallet([boarding], [vtxo]);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
         });
-        // First settle fails, second should succeed
-        (wallet.settle as any)
-            .mockRejectedValueOnce(new Error("round failed"))
-            .mockResolvedValueOnce("mock-txid-2");
+        manager.dispose();
 
-        new VtxoManager(wallet, undefined, {});
-
-        await flushMicrotasks();
-        await flushMicrotasks();
-        await flushMicrotasks();
-
-        expect(eventHandler).toBeDefined();
-
-        // First call → error (but renewalInProgress should be reset)
-        eventHandler!({ type: "vtxo_received", vtxos: [] });
-        await flushMicrotasks();
-        await flushMicrotasks();
+        await (manager as any).runPeriodicSettle([boarding]);
 
         expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        // Inputs carry both boarding UTXO and VTXO in one intent.
+        expect(call.inputs).toHaveLength(2);
+        expect(call.inputs[0]).toBe(boarding);
+        expect(call.inputs[1]).toBe(vtxo);
+        // Output amount is the sum of both inputs.
+        expect(call.outputs).toHaveLength(1);
+        expect(call.outputs[0].amount).toBe(15_000n);
+    });
 
-        // Second call should work because flag was cleared in finally block,
-        // and there's no cooldown since the renewal failed (lastRenewalTimestamp unchanged)
-        eventHandler!({ type: "vtxo_received", vtxos: [] });
-        await flushMicrotasks();
-        await flushMicrotasks();
+    it("subtracts the server intent fee from the output so settle is not rejected with INTENT_INSUFFICIENT_FEE", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const wallet = buildWallet([boarding], []);
+        // Server charges 200 sats per onchain input and 50 sats per offchain output.
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: {
+                intentFee: {
+                    onchainInput: "200.0",
+                    offchainOutput: "50.0",
+                },
+            },
+        });
 
-        expect(wallet.settle).toHaveBeenCalledTimes(2);
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toEqual([boarding]);
+        // 10_000 boarding - 200 input fee - 50 output fee = 9_750
+        expect(call.outputs[0].amount).toBe(9_750n);
+    });
+
+    it("skips a boarding UTXO whose onchain intent fee is greater than its value", async () => {
+        const tiny = makeUnexpiredUtxo(100);
+        const normal = makeUnexpiredUtxo(10_000, 1);
+        const wallet = buildWallet([tiny, normal], []);
+        (wallet.arkProvider.getInfo as any).mockResolvedValue({
+            fees: { intentFee: { onchainInput: "200.0" } },
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([tiny, normal]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        // Tiny boarding UTXO is dropped (fee 200 >= value 100); only the 10k one settles.
+        expect(call.inputs).toEqual([normal]);
+        expect(call.outputs[0].amount).toBe(10_000n - 200n);
+    });
+
+    it("settles VTXOs alone when no unsettled boarding UTXOs are present", async () => {
+        const vtxo = makeExpiringVtxo(5_000);
+        // No boarding UTXOs at all.
+        const wallet = buildWallet([], [vtxo]);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        expect(call.inputs).toEqual([vtxo]);
+        expect(call.outputs[0].amount).toBe(5_000n);
+    });
+
+    it("skips VTXO collection while an event-driven renewal is in flight", async () => {
+        // Simulate the event path currently mid-renewal: the periodic poll
+        // must NOT also grab VTXOs, otherwise both paths would submit the
+        // same inputs on overlapping intents.
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const wallet = buildWallet([boarding], [vtxo]);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        (manager as any).renewalInProgress = true;
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        const call = (wallet.settle as any).mock.calls[0][0];
+        // Only the boarding UTXO — VTXO fetch was suppressed.
+        expect(call.inputs).toEqual([boarding]);
+        expect(call.outputs[0].amount).toBe(10_000n);
+    });
+
+    it("bumps lastRenewalTimestamp when VTXOs were included (blocks event-path for cooldown)", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const boarding = makeUnexpiredUtxo(10_000);
+            const vtxo = makeExpiringVtxo(5_000);
+            const wallet = buildWallet([boarding], [vtxo]);
+
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            expect((manager as any).lastRenewalTimestamp).toBe(0);
+
+            await (manager as any).runPeriodicSettle([boarding]);
+
+            // VTXOs were bundled in → renewal cooldown is armed so the
+            // vtxo_received event path respects the recent activity.
+            expect((manager as any).lastRenewalTimestamp).toBe(baseNow);
+            expect((manager as any).renewalInProgress).toBe(false);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("does NOT bump lastRenewalTimestamp when only boarding UTXOs were settled", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const boarding = makeUnexpiredUtxo(10_000);
+            // No VTXOs to renew.
+            const wallet = buildWallet([boarding], []);
+
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            await (manager as any).runPeriodicSettle([boarding]);
+
+            // No VTXOs in the intent → event-path cooldown is NOT armed;
+            // a fresh vtxo_received must still be free to trigger renewal.
+            expect((manager as any).lastRenewalTimestamp).toBe(0);
+            // But the periodic-path cooldown IS armed regardless.
+            expect((manager as any).lastPeriodicSettleTimestamp).toBe(baseNow);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+});
+
+describe("VtxoManager - Cross-instance poll guard", () => {
+    const mockPubkey = new Uint8Array(32).fill(0x01);
+    const csvScript = CSVMultisigTapscript.encode({
+        timelock: { type: "seconds", value: 604672n },
+        pubkeys: [mockPubkey],
+    });
+    const exitScriptHex = hex.encode(csvScript.script);
+
+    const buildBoardingWallet = (boardingUtxos: ExtendedCoin[]) => {
+        const mockPkScript = new Uint8Array([
+            0x51,
+            0x20,
+            ...new Array(32).fill(0),
+        ]);
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+        };
+        return {
+            getVtxos: vi.fn().mockResolvedValue([]),
+            getAddress: vi
+                .fn()
+                .mockResolvedValue(
+                    "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                ),
+            getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+            getContractManager: vi.fn().mockResolvedValue(contractManager),
+            settle: vi.fn().mockResolvedValue("mock-txid"),
+            dustAmount: 330n,
+            getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+            getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+            boardingTapscript: {
+                exitScript: exitScriptHex,
+                pkScript: mockPkScript,
+            },
+            onchainProvider: {
+                getFeeRate: vi.fn().mockResolvedValue(1),
+                getChainTip: vi.fn().mockResolvedValue({
+                    height: 1000,
+                    time: Math.floor(Date.now() / 1000),
+                    hash: "0".repeat(64),
+                }),
+            },
+            arkProvider: {
+                getInfo: vi.fn().mockResolvedValue({ fees: { intentFee: {} } }),
+            },
+            network: {
+                bech32: "bcrt",
+                pubKeyHash: 0x6f,
+                scriptHash: 0xc4,
+                wif: 0xef,
+            },
+            identity: {
+                sign: vi.fn().mockImplementation((tx: any) => tx),
+                xOnlyPublicKey: vi.fn().mockResolvedValue(new Uint8Array(32)),
+            },
+        } as any;
+    };
+
+    it("skips the poll body when navigator.locks returns a null lock (held by another tab)", async () => {
+        // Simulate "another tab already holds the lock": the Web Locks API
+        // invokes the callback with `null` when ifAvailable:true is set and
+        // the lock is contended. Our wrapper should bail before calling
+        // getBoardingUtxos.
+        const requestSpy = vi
+            .fn()
+            .mockImplementation(
+                async (_name: string, _opts: unknown, cb: (l: any) => any) => {
+                    return cb(null);
+                }
+            );
+        vi.stubGlobal("navigator", { locks: { request: requestSpy } });
+        vi.useFakeTimers();
+
+        try {
+            const utxo = {
+                txid: "boarding-txid-x",
+                vout: 0,
+                value: 10_000,
+                status: {
+                    confirmed: true,
+                    block_time: Math.floor(Date.now() / 1000) - 60,
+                },
+            } as ExtendedCoin;
+            const wallet = buildBoardingWallet([utxo]);
+
+            new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+
+            // initializeSubscription delays the first poll by 1000ms; advance
+            // past it so the Web Locks gate is exercised.
+            await vi.advanceTimersByTimeAsync(1_100);
+
+            expect(requestSpy).toHaveBeenCalled();
+            // Lock was unavailable → poll body skipped → no network fetch,
+            // no settle attempt.
+            expect(wallet.getBoardingUtxos).not.toHaveBeenCalled();
+            expect(wallet.settle).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+            vi.unstubAllGlobals();
+        }
+    });
+
+    it("runs the poll body when navigator.locks grants the lock", async () => {
+        const requestSpy = vi
+            .fn()
+            .mockImplementation(
+                async (_name: string, _opts: unknown, cb: (l: any) => any) => {
+                    return cb({
+                        name: "arkade-boarding-poll",
+                        mode: "exclusive",
+                    });
+                }
+            );
+        vi.stubGlobal("navigator", { locks: { request: requestSpy } });
+        vi.useFakeTimers();
+
+        try {
+            const wallet = buildBoardingWallet([]);
+
+            new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+
+            await vi.advanceTimersByTimeAsync(1_100);
+
+            expect(requestSpy).toHaveBeenCalled();
+            // Lock granted → poll body executed → boarding fetch attempted.
+            expect(wallet.getBoardingUtxos).toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+            vi.unstubAllGlobals();
+        }
+    });
+});
+
+describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
+    const mockPubkey = new Uint8Array(32).fill(0x01);
+    const csvScript = CSVMultisigTapscript.encode({
+        timelock: { type: "seconds", value: 604672n },
+        pubkeys: [mockPubkey],
+    });
+    const exitScriptHex = hex.encode(csvScript.script);
+
+    const buildWallet = (
+        boardingUtxos: ExtendedCoin[],
+        vtxos: ExtendedVirtualCoin[]
+    ) => {
+        const mockPkScript = new Uint8Array([
+            0x51,
+            0x20,
+            ...new Array(32).fill(0),
+        ]);
+        const contractManager = {
+            onContractEvent: vi.fn().mockReturnValue(() => {}),
+            refreshVtxos: vi.fn().mockResolvedValue(undefined),
+        };
+        return {
+            wallet: {
+                getVtxos: vi.fn().mockResolvedValue(vtxos),
+                getAddress: vi
+                    .fn()
+                    .mockResolvedValue(
+                        "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g"
+                    ),
+                getDelegatorManager: vi.fn().mockResolvedValue(undefined),
+                getContractManager: vi.fn().mockResolvedValue(contractManager),
+                settle: vi.fn().mockResolvedValue("mock-txid"),
+                dustAmount: 330n,
+                getBoardingUtxos: vi.fn().mockResolvedValue(boardingUtxos),
+                getBoardingAddress: vi.fn().mockResolvedValue("bcrt1qtest"),
+                boardingTapscript: {
+                    exitScript: exitScriptHex,
+                    pkScript: mockPkScript,
+                },
+                onchainProvider: {
+                    getFeeRate: vi.fn().mockResolvedValue(1),
+                    getChainTip: vi.fn().mockResolvedValue({
+                        height: 1000,
+                        time: Math.floor(Date.now() / 1000),
+                        hash: "0".repeat(64),
+                    }),
+                },
+                arkProvider: {
+                    getInfo: vi
+                        .fn()
+                        .mockResolvedValue({ fees: { intentFee: {} } }),
+                },
+                network: {
+                    bech32: "bcrt",
+                    pubKeyHash: 0x6f,
+                    scriptHash: 0xc4,
+                    wif: 0xef,
+                },
+                identity: {
+                    sign: vi.fn().mockImplementation((tx: any) => tx),
+                    xOnlyPublicKey: vi
+                        .fn()
+                        .mockResolvedValue(new Uint8Array(32)),
+                },
+            } as any,
+            contractManager,
+        };
+    };
+
+    const makeUnexpiredUtxo = (value: number, vout = 0): ExtendedCoin =>
+        ({
+            txid: `boarding-txid-${value}-${vout}`,
+            vout,
+            value,
+            status: {
+                confirmed: true,
+                block_time: Math.floor(Date.now() / 1000) - 60,
+            },
+        }) as ExtendedCoin;
+
+    const makeExpiringVtxo = (value: number, vout = 0): ExtendedVirtualCoin =>
+        ({
+            txid: `vtxo-txid-${value}-${vout}`,
+            vout,
+            value,
+            virtualStatus: {
+                state: "settled",
+                batchExpiry: Date.now() + 60 * 60 * 1000,
+            },
+            isSpent: false,
+            status: { confirmed: true },
+            createdAt: new Date(),
+            isUnrolled: false,
+            forfeitTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            intentTapLeafScript: [new Uint8Array(), new Uint8Array()],
+            tapTree: new Uint8Array(),
+        }) as any;
+
+    it("calls contractManager.refreshVtxos() when poll-path settle fails with VTXO_ALREADY_SPENT", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
+        (wallet.settle as any).mockRejectedValue(
+            new Error("VTXO_ALREADY_SPENT")
+        );
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        // Must NOT rethrow: VTXO_ALREADY_SPENT is a stale-cache signal, the
+        // poll loop treats it as "skip this cycle" not a transient failure.
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        expect(wallet.settle).toHaveBeenCalledTimes(1);
+        // Full refresh (no args) — advances the global sync cursor.
+        expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+        expect(contractManager.refreshVtxos).toHaveBeenCalledWith();
+    });
+
+    it("does not bump consecutivePeriodicSettleFailures on VTXO_ALREADY_SPENT", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const { wallet } = buildWallet([boarding], [vtxo]);
+        (wallet.settle as any).mockRejectedValue(
+            new Error("VTXO_ALREADY_SPENT")
+        );
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        // Stale cache is NOT a transient failure → counter must stay at 0 so
+        // the next cycle can retry immediately once the refresh lands.
+        expect((manager as any).consecutivePeriodicSettleFailures).toBe(0);
+    });
+
+    it("still bumps consecutivePeriodicSettleFailures on non-VTXO_ALREADY_SPENT errors", async () => {
+        const boarding = makeUnexpiredUtxo(10_000);
+        const { wallet, contractManager } = buildWallet([boarding], []);
+        (wallet.settle as any).mockRejectedValue(new Error("round failed"));
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await expect(
+            (manager as any).runPeriodicSettle([boarding])
+        ).rejects.toThrow("round failed");
+
+        expect((manager as any).consecutivePeriodicSettleFailures).toBe(1);
+        // Refresh is reserved for stale-cache signals; generic failures
+        // must not trigger indexer re-sync.
+        expect(contractManager.refreshVtxos).not.toHaveBeenCalled();
+    });
+
+    it("throttles refreshVtxos() within the cooldown window", async () => {
+        const baseNow = new Date("2026-01-01T00:00:00Z").getTime();
+        const nowSpy = vi.spyOn(Date, "now").mockReturnValue(baseNow);
+
+        try {
+            const boarding = makeUnexpiredUtxo(10_000);
+            const { wallet, contractManager } = buildWallet([boarding], []);
+            (wallet.settle as any).mockRejectedValue(
+                new Error("VTXO_ALREADY_SPENT")
+            );
+
+            const manager = new VtxoManager(wallet, undefined, {
+                boardingUtxoSweep: false,
+                pollIntervalMs: 60_000,
+            });
+            manager.dispose();
+
+            // First SPENT-signalled settle → refresh triggered.
+            await (manager as any).runPeriodicSettle([boarding]);
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+
+            // Clear the periodic-settle cooldown so we get to the settle
+            // call again, but stay inside the refresh cooldown window (30s).
+            (manager as any).lastPeriodicSettleTimestamp = 0;
+            nowSpy.mockReturnValue(baseNow + 10_000); // 10s later
+
+            await (manager as any).runPeriodicSettle([boarding]);
+            expect(wallet.settle).toHaveBeenCalledTimes(2);
+            // Throttled → still exactly one refresh call.
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+
+            // Past the refresh cooldown (30s + margin) → a fresh refresh is
+            // allowed.
+            (manager as any).lastPeriodicSettleTimestamp = 0;
+            nowSpy.mockReturnValue(baseNow + 31_000);
+
+            await (manager as any).runPeriodicSettle([boarding]);
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(2);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it("deduplicates concurrent refreshVtxos() calls while a refresh is in flight", async () => {
+        const { wallet, contractManager } = buildWallet([], []);
+        let resolveRefresh!: () => void;
+        const refreshPromise = new Promise<void>((resolve) => {
+            resolveRefresh = resolve;
+        });
+        contractManager.refreshVtxos.mockReturnValue(refreshPromise);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        try {
+            const first = (manager as any).maybeRefreshAfterVtxoSpent();
+            const second = (manager as any).maybeRefreshAfterVtxoSpent();
+
+            expect(first).toBe(second);
+
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+
+            resolveRefresh();
+            await Promise.all([first, second]);
+
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+        } finally {
+            await manager.dispose();
+        }
+    });
+
+    it("triggers refreshVtxos() from the event-driven renewal path on VTXO_ALREADY_SPENT", async () => {
+        // Drive the actual onContractEvent -> renewVtxos().catch(...) branch:
+        // a vtxo_received event triggers renewal, settle rejects with
+        // VTXO_ALREADY_SPENT, and the event handler must reconcile via
+        // refreshVtxos() without surfacing the error.
+        const vtxo = makeExpiringVtxo(5_000);
+        const { wallet, contractManager } = buildWallet([], [vtxo]);
+        (wallet.settle as any).mockRejectedValue(
+            new Error("VTXO_ALREADY_SPENT")
+        );
+
+        let eventHandler: ((event: any) => void) | undefined;
+        contractManager.onContractEvent.mockImplementation((handler) => {
+            eventHandler = handler;
+            return () => {};
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+
+        try {
+            await flushMicrotasks();
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(eventHandler).toBeDefined();
+
+            eventHandler!({ type: "vtxo_received", vtxos: [] });
+
+            await flushMicrotasks();
+            await flushMicrotasks();
+            await flushMicrotasks();
+
+            expect(wallet.settle).toHaveBeenCalledTimes(1);
+            expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
+            expect(contractManager.refreshVtxos).toHaveBeenCalledWith();
+        } finally {
+            await manager.dispose();
+        }
     });
 });

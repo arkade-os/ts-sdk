@@ -9,8 +9,11 @@ import {
     serializeUtxo,
     deserializeVtxo,
     deserializeUtxo,
+    serializeAssets,
+    deserializeAssets,
     SerializedTapLeaf,
 } from "../serialization";
+import { scriptFromArkAddress } from "../scriptFromAddress";
 import { RealmLike } from "./types";
 
 /**
@@ -97,6 +100,7 @@ export class RealmWalletRepository implements WalletRepository {
                             ? JSON.stringify(s.extraWitness)
                             : null,
                         assetsJson: s.assets ? JSON.stringify(s.assets) : null,
+                        script: s.script ?? null,
                     },
                     "modified"
                 );
@@ -195,7 +199,7 @@ export class RealmWalletRepository implements WalletRepository {
                         settled: tx.settled,
                         createdAt: tx.createdAt,
                         assetsJson: tx.assets
-                            ? JSON.stringify(tx.assets)
+                            ? JSON.stringify(serializeAssets(tx.assets))
                             : null,
                     },
                     "modified"
@@ -226,12 +230,10 @@ export class RealmWalletRepository implements WalletRepository {
 
         const obj = items[0];
         const state: WalletState = {};
-        if (obj.lastSyncTime !== null && obj.lastSyncTime !== undefined) {
-            state.lastSyncTime = obj.lastSyncTime;
-        }
         if (obj.settingsJson) {
             state.settings = JSON.parse(obj.settingsJson);
         }
+        state.lastSyncTime = obj.lastSyncTime ?? undefined;
         return state;
     }
 
@@ -242,7 +244,7 @@ export class RealmWalletRepository implements WalletRepository {
                 "ArkWalletState",
                 {
                     key: "state",
-                    lastSyncTime: state.lastSyncTime ?? null,
+                    lastSyncTime: state.lastSyncTime,
                     settingsJson: state.settings
                         ? JSON.stringify(state.settings)
                         : null,
@@ -288,6 +290,10 @@ function vtxoObjectToDomain(obj: any): ExtendedVirtualCoin {
             ? JSON.parse(obj.extraWitnessJson)
             : undefined,
         assets: obj.assetsJson ? JSON.parse(obj.assetsJson) : undefined,
+        // Post-migration every row has `script`, but the backfill is
+        // idempotent: derive from `address` if the legacy column is still
+        // null (e.g. the migration hasn't run yet on this handle).
+        script: obj.script ?? scriptFromArkAddress(obj.address),
     };
 
     return deserializeVtxo(serialized);
@@ -331,7 +337,7 @@ function txObjectToDomain(obj: any): ArkTransaction {
         createdAt: obj.createdAt,
     };
     if (obj.assetsJson) {
-        tx.assets = JSON.parse(obj.assetsJson);
+        tx.assets = deserializeAssets(JSON.parse(obj.assetsJson));
     }
     return tx;
 }

@@ -42,6 +42,38 @@ describe("VHTLC address", () => {
                     .encode();
 
                 expect(vhtlcAddress).toBe(f.expected);
+
+                // Assert the enriched fixture fields stay in sync with the
+                // SDK. These are also test vectors for other VHTLC
+                // implementations; if they drift from what
+                // `VHTLC.Script` produces, this test breaks loudly
+                // instead of silently shipping stale documentation.
+                if (f.scripts) {
+                    expect(vhtlcScript.claimScript).toBe(f.scripts.claimScript);
+                    expect(vhtlcScript.refundScript).toBe(
+                        f.scripts.refundScript
+                    );
+                    expect(vhtlcScript.refundWithoutReceiverScript).toBe(
+                        f.scripts.refundWithoutReceiverScript
+                    );
+                    expect(vhtlcScript.unilateralClaimScript).toBe(
+                        f.scripts.unilateralClaimScript
+                    );
+                    expect(vhtlcScript.unilateralRefundScript).toBe(
+                        f.scripts.unilateralRefundScript
+                    );
+                    expect(
+                        vhtlcScript.unilateralRefundWithoutReceiverScript
+                    ).toBe(f.scripts.unilateralRefundWithoutReceiverScript);
+                }
+                if (f.taproot) {
+                    expect(hex.encode(vhtlcScript.tweakedPublicKey)).toBe(
+                        f.taproot.tweakedPublicKey
+                    );
+                    expect(hex.encode(vhtlcScript.encode())).toBe(
+                        f.taproot.tapTree
+                    );
+                }
             });
         });
     });

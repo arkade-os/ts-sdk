@@ -1,34 +1,25 @@
-import { RelativeTimelock } from "../../script/tapscript";
-import * as bip68 from "bip68";
+import { sequenceToTimelock } from "../../utils/timelock";
 import { Contract, PathContext } from "../types";
+import { isDescriptor, extractPubKey } from "../../identity/descriptor";
 
 /**
- * Convert RelativeTimelock to BIP68 sequence number.
+ * Extract raw hex pubkey from a value that may be a descriptor or raw hex.
+ * Returns undefined for HD descriptors or unparseable values so role
+ * resolution stays best-effort and never throws.
  */
-export function timelockToSequence(timelock: RelativeTimelock): number {
-    return bip68.encode(
-        timelock.type === "blocks"
-            ? { blocks: Number(timelock.value) }
-            : { seconds: Number(timelock.value) }
-    );
+function extractRawPubKey(value: string): string | undefined {
+    if (!isDescriptor(value)) {
+        return value.toLowerCase();
+    }
+    try {
+        return extractPubKey(value).toLowerCase();
+    } catch {
+        return undefined;
+    }
 }
 
 /**
- * Convert BIP68 sequence number back to RelativeTimelock.
- */
-export function sequenceToTimelock(sequence: number): RelativeTimelock {
-    const decoded = bip68.decode(sequence);
-    if ("blocks" in decoded && decoded.blocks !== undefined) {
-        return { type: "blocks", value: BigInt(decoded.blocks) };
-    }
-    if ("seconds" in decoded && decoded.seconds !== undefined) {
-        return { type: "seconds", value: BigInt(decoded.seconds) };
-    }
-    throw new Error(`Invalid BIP68 sequence: ${sequence}`);
-}
-
-/**
- * Resolve wallet's role from explicit role or by matching pubkey.
+ * Resolve wallet's role from explicit role or by matching descriptor/pubkey.
  */
 export function resolveRole(
     contract: Contract,
@@ -39,14 +30,44 @@ export function resolveRole(
         return context.role;
     }
 
-    // Try to match wallet pubkey against contract params
-    if (context.walletPubKey) {
-        if (context.walletPubKey === contract.params.sender) {
+    const senderKey = contract.params.sender
+        ? extractRawPubKey(contract.params.sender)
+        : undefined;
+    const receiverKey = contract.params.receiver
+        ? extractRawPubKey(contract.params.receiver)
+        : undefined;
+
+    const matchRole = (
+        rawWalletKey: string | undefined
+    ): "sender" | "receiver" | undefined => {
+        if (!rawWalletKey) return undefined;
+        if (senderKey && rawWalletKey === senderKey) {
             return "sender";
         }
-        if (context.walletPubKey === contract.params.receiver) {
+        if (receiverKey && rawWalletKey === receiverKey) {
             return "receiver";
         }
+        return undefined;
+    };
+
+    // Try the preferred descriptor first. If it cannot be resolved
+    // (for example an HD descriptor without derivation support), fall back
+    // to walletPubKey for backward compatibility.
+    if (context.walletDescriptor) {
+        const walletDescriptorKey = extractRawPubKey(context.walletDescriptor);
+        const matchedRole = matchRole(walletDescriptorKey);
+        if (matchedRole) {
+            return matchedRole;
+        }
+
+        if (!walletDescriptorKey && context.walletPubKey) {
+            return matchRole(extractRawPubKey(context.walletPubKey));
+        }
+        return undefined;
+    }
+
+    if (context.walletPubKey) {
+        return matchRole(extractRawPubKey(context.walletPubKey));
     }
 
     return undefined;

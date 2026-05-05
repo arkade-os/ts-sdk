@@ -1,32 +1,78 @@
+export type ManagedEventSourceIterator = AsyncGenerator<
+    MessageEvent,
+    void,
+    unknown
+> & {
+    close(): void;
+};
+
+function createAbortError(): Error {
+    const error = new Error("EventSource closed");
+    error.name = "AbortError";
+    return error;
+}
+
 /**
- * Creates an async iterator over EventSource messages that attaches listeners
- * eagerly (at call time) rather than lazily (at first .next() call).
- * This ensures events are buffered immediately, preventing race conditions
- * where events arrive before iteration begins.
+ * Creates a close-aware EventSource async iterator.
+ *
+ * Listeners attach eagerly so events are buffered before the first next() call.
+ * close() closes the EventSource, removes listeners, and wakes any pending
+ * next() even when the browser does not emit an error from EventSource.close().
  */
 export function eventSourceIterator(
     eventSource: EventSource
-): AsyncGenerator<MessageEvent, void, unknown> {
+): ManagedEventSourceIterator {
     const messageQueue: MessageEvent[] = [];
     const errorQueue: Error[] = [];
     let messageResolve: ((value: MessageEvent) => void) | null = null;
     let errorResolve: ((error: Error) => void) | null = null;
+    let closed = false;
+    let cleanedUp = false;
+
+    const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        eventSource.removeEventListener("message", messageHandler);
+        eventSource.removeEventListener("error", errorHandler);
+    };
+
+    const close = () => {
+        if (closed) return;
+        closed = true;
+        messageQueue.length = 0;
+        errorQueue.length = 0;
+        eventSource.close();
+        cleanup();
+
+        if (errorResolve) {
+            const reject = errorResolve;
+            messageResolve = null;
+            errorResolve = null;
+            reject(createAbortError());
+        }
+    };
 
     const messageHandler = (event: MessageEvent) => {
+        if (closed) return;
         if (messageResolve) {
-            messageResolve(event);
+            const resolve = messageResolve;
             messageResolve = null;
+            errorResolve = null;
+            resolve(event);
         } else {
             messageQueue.push(event);
         }
     };
 
     const errorHandler = () => {
+        if (closed) return;
         const error = new Error("EventSource error");
         error.name = "EventSourceError";
         if (errorResolve) {
-            errorResolve(error);
+            const reject = errorResolve;
+            messageResolve = null;
             errorResolve = null;
+            reject(error);
         } else {
             errorQueue.push(error);
         }
@@ -37,9 +83,9 @@ export function eventSourceIterator(
     eventSource.addEventListener("message", messageHandler);
     eventSource.addEventListener("error", errorHandler);
 
-    return (async function* () {
+    const gen = (async function* () {
         try {
-            while (true) {
+            while (!closed) {
                 // if we have queued messages, yield the first one, remove it from the queue
                 if (messageQueue.length > 0) {
                     yield messageQueue.shift()!;
@@ -63,14 +109,28 @@ export function eventSourceIterator(
                     errorResolve = null;
                 });
 
-                if (result) {
+                if (!closed && result) {
                     yield result;
                 }
             }
         } finally {
-            // clean up
-            eventSource.removeEventListener("message", messageHandler);
-            eventSource.removeEventListener("error", errorHandler);
+            closed = true;
+            cleanup();
+            eventSource.close();
         }
     })();
+
+    const origReturn = gen.return.bind(gen);
+    const managed = gen as ManagedEventSourceIterator;
+    managed.close = close;
+    managed.return = (value?: void | PromiseLike<void>) => {
+        close();
+        return origReturn(value);
+    };
+
+    return managed;
+}
+
+export function isEventSourceError(error: unknown): error is Error {
+    return error instanceof Error && error.name === "EventSourceError";
 }

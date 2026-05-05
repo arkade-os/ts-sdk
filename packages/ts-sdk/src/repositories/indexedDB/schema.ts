@@ -1,3 +1,5 @@
+import { scriptFromArkAddress } from "../scriptFromAddress";
+
 // Store names introduced in V2, they are all new to the migration
 export const STORE_VTXOS = "vtxos";
 export const STORE_UTXOS = "utxos";
@@ -8,9 +10,20 @@ export const STORE_CONTRACTS = "contracts";
 // @deprecated use only for migrations, this is created in V1
 export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 
-export const DB_VERSION = 2;
+// Version history:
+//   v1 — initial wallet repo schema, `contractsCollections` store.
+//   v2 — new `vtxos/utxos/transactions/walletState/contracts` stores.
+//   v3 — add `script` index on the vtxos store and backfill missing
+//        `vtxo.script` from `vtxo.address` so the field is always present
+//        at read time. Matches the `script` indexing already in place for
+//        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
+export const DB_VERSION = 3;
 
-export function initDatabase(db: IDBDatabase): void {
+export function initDatabase(
+    db: IDBDatabase,
+    oldVersion: number,
+    transaction: IDBTransaction | null
+): void {
     // Create wallet stores
     if (!db.objectStoreNames.contains(STORE_VTXOS)) {
         const vtxosStore = db.createObjectStore(STORE_VTXOS, {
@@ -65,6 +78,11 @@ export function initDatabase(db: IDBDatabase): void {
         }
         if (!vtxosStore.indexNames.contains("arkTxId")) {
             vtxosStore.createIndex("arkTxId", "arkTxId", {
+                unique: false,
+            });
+        }
+        if (!vtxosStore.indexNames.contains("script")) {
+            vtxosStore.createIndex("script", "script", {
                 unique: false,
             });
         }
@@ -164,4 +182,36 @@ export function initDatabase(db: IDBDatabase): void {
             keyPath: "key",
         });
     }
+
+    // v2 → v3: add the `script` index on the existing vtxos store and
+    // backfill missing `script` on legacy VTXO rows. The upgrade transaction
+    // is null only on a brand-new database (oldVersion === 0), where no
+    // legacy rows exist. `createIndex` scans existing records; rows still
+    // missing `script` are skipped and get indexed automatically when the
+    // backfill's `cursor.update()` adds the field.
+    if (oldVersion >= 1 && oldVersion < 3 && transaction) {
+        const vtxosStore = transaction.objectStore(STORE_VTXOS);
+        if (!vtxosStore.indexNames.contains("script")) {
+            vtxosStore.createIndex("script", "script", { unique: false });
+        }
+        backfillVtxoScripts(transaction);
+    }
+}
+
+// Exported for unit tests — the `onupgradeneeded` transaction can't be
+// forged in-process, so tests exercise the cursor logic with a regular
+// readwrite transaction on a live DB.
+export function backfillVtxoScripts(transaction: IDBTransaction): void {
+    const store = transaction.objectStore(STORE_VTXOS);
+    const cursorRequest = store.openCursor();
+    cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+        const value = cursor.value as { script?: string; address: string };
+        if (!value.script) {
+            value.script = scriptFromArkAddress(value.address);
+            cursor.update(value);
+        }
+        cursor.continue();
+    };
 }

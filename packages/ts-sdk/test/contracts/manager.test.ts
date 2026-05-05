@@ -13,6 +13,7 @@ import { ContractRepository } from "../../src/repositories";
 import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
+    createMockContractVtxo,
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
@@ -34,7 +35,6 @@ describe("ContractManager", () => {
         manager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
             watcherConfig: {
                 failsafePollIntervalMs: 1000,
@@ -160,7 +160,6 @@ describe("ContractManager", () => {
         const newManager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: new InMemoryWalletRepository(),
         });
 
@@ -181,11 +180,11 @@ describe("ContractManager", () => {
         (mockIndexer.getVtxos as any).mockClear();
 
         // Mock indexer to return a mix of settled and spent VTXOs
-        const settledVtxo = createMockVtxo({
+        const settledVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "aa".repeat(32),
             virtualStatus: { state: "settled" },
         });
-        const spentVtxo = createMockVtxo({
+        const spentVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "bb".repeat(32),
             isSpent: true,
             virtualStatus: { state: "settled" },
@@ -199,7 +198,6 @@ describe("ContractManager", () => {
         const newManager = await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: walletRepo,
         });
 
@@ -230,11 +228,11 @@ describe("ContractManager", () => {
             state: "active",
         });
 
-        const vtxo1 = createMockVtxo({
+        const vtxo1 = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "cc".repeat(32),
             virtualStatus: { state: "settled" },
         });
-        const vtxo2 = createMockVtxo({
+        const vtxo2 = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "dd".repeat(32),
             virtualStatus: { state: "swept" },
         });
@@ -245,7 +243,6 @@ describe("ContractManager", () => {
         await ContractManager.create({
             indexerProvider: mockIndexer,
             contractRepository: repository,
-            getDefaultAddress: async () => "default-address",
             walletRepository: walletRepo,
         });
 
@@ -256,7 +253,7 @@ describe("ContractManager", () => {
         expect(states).toContain("swept");
     });
 
-    it("should use spendable-only filter for getContractsWithVtxos", async () => {
+    it("should not use spendable-only filter for getContractsWithVtxos", async () => {
         const contract = await manager.createContract({
             type: "default",
             params: createDefaultContractParams(),
@@ -265,11 +262,11 @@ describe("ContractManager", () => {
         });
 
         // Mock indexer to return both spendable and spent VTXOs
-        const spendable = createMockVtxo({
+        const spendable = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "aa".repeat(32),
             isSpent: false,
         });
-        const spent = createMockVtxo({
+        const spent = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
             txid: "bb".repeat(32),
             isSpent: true,
         });
@@ -279,10 +276,9 @@ describe("ContractManager", () => {
 
         const result = await manager.getContractsWithVtxos();
 
-        // getContractsWithVtxos uses getVtxosForContracts which passes
-        // includeSpent=false, so the indexer call should have spendableOnly
+        // getContractsWithVtxos forces a sync to retrieve all VTXOs in the time window
         const lastCall = (mockIndexer.getVtxos as any).mock.calls.at(-1);
-        expect(lastCall[0].spendableOnly).toBe(true);
+        expect(lastCall[0].spendableOnly).toBeUndefined();
     });
 
     it("should force VTXOs refresh from indexer when received a `connection_reset` event", async () => {
@@ -321,5 +317,120 @@ describe("ContractManager", () => {
         });
 
         vi.advanceTimersByTime(3000);
+    });
+
+    describe("annotateVtxos", () => {
+        it("returns empty array for empty input", async () => {
+            const extended = await manager.annotateVtxos([]);
+            expect(extended).toEqual([]);
+        });
+
+        it("stamps the owning contract's tapscripts via vtxo.script", async () => {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+
+            const vtxo = createMockVtxo({ script: TEST_DEFAULT_SCRIPT });
+            const [extended] = await manager.annotateVtxos([vtxo]);
+
+            expect(extended.forfeitTapLeafScript).toBeDefined();
+            expect(extended.intentTapLeafScript).toBeDefined();
+            expect(extended.tapTree).toBeDefined();
+        });
+
+        it("throws when a vtxo's script has no registered contract", async () => {
+            const orphan = createMockVtxo({ script: "ab".repeat(34) });
+            await expect(manager.annotateVtxos([orphan])).rejects.toThrow();
+        });
+    });
+
+    describe("refreshVtxos cursor handling", () => {
+        // Regression: a previous version of refreshVtxos passed
+        // `window: { after: undefined, before: undefined }` even when the
+        // caller supplied no options. That truthy object short-circuited the
+        // `??` fallback in syncContracts (so the indexer query went out
+        // without `?after=`, forcing a full re-scan) AND blocked the cursor
+        // advance gate (`options.window === undefined` was always false).
+        // The fix is to forward `window` only when the caller actually
+        // bounded it.
+        const SEEDED_CURSOR = Date.now() - 60_000; // recent enough to clear OVERLAP_MS
+
+        async function makeFreshManager(): Promise<{
+            mgr: ContractManager;
+            repo: InMemoryWalletRepository;
+        }> {
+            const repo = new InMemoryWalletRepository();
+            const mgr = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: new InMemoryContractRepository(),
+                walletRepository: repo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+            // Need at least one watched contract so syncContracts has
+            // something to query.
+            await mgr.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+            return { mgr, repo };
+        }
+
+        it("uses the cursor-derived window and advances the cursor when no opts are given", async () => {
+            const { mgr, repo } = await makeFreshManager();
+
+            // Seed a recent cursor + the migration marker so a healthy
+            // delta sync goes out with `?after=<cursor - OVERLAP>`. Without
+            // the marker the cursor module treats stored state as
+            // untrusted-bootstrap and the delta would fall back to 0.
+            await repo.saveWalletState({
+                lastSyncTime: SEEDED_CURSOR,
+                settings: { vtxoCursorMigrated: true },
+            });
+
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+            await mgr.refreshVtxos();
+
+            const calls = (mockIndexer.getVtxos as any).mock.calls;
+            // Every call must carry an `after` filter — the cursor-derived
+            // window. The bug omitted `after`, producing an unbounded scan.
+            for (const args of calls) {
+                expect(args[0]?.after).toBeDefined();
+                expect(typeof args[0]?.after).toBe("number");
+            }
+            expect(calls.length).toBeGreaterThan(0);
+
+            // Cursor advanced past the seeded value (the bug left it pinned).
+            const stateAfter = await repo.getWalletState();
+            expect((stateAfter?.lastSyncTime ?? 0) >= SEEDED_CURSOR).toBe(true);
+        });
+
+        it("does not advance the cursor when an explicit `after` is provided", async () => {
+            const { mgr, repo } = await makeFreshManager();
+
+            await repo.saveWalletState({
+                lastSyncTime: SEEDED_CURSOR,
+                settings: { vtxoCursorMigrated: true },
+            });
+
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+            await mgr.refreshVtxos({ after: 1_000_000 });
+
+            // Cursor untouched — caller-supplied windows are targeted and
+            // must not move the global high-water mark.
+            const stateAfter = await repo.getWalletState();
+            expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
+        });
     });
 });

@@ -1,6 +1,7 @@
 import { hex } from "@scure/base";
 import { Contract } from "./types";
 import { contractHandlers } from "./handlers";
+import { DEFAULT_ARKADE_HRP } from "../wallet";
 
 /**
  * Prefix for arkcontract strings.
@@ -120,7 +121,6 @@ export function contractFromArkContract(
     options: {
         label?: string;
         state?: "active" | "inactive";
-        expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
 ): Omit<Contract, "script" | "address"> & {
@@ -147,7 +147,6 @@ export function contractFromArkContract(
         params,
         state: options.state || "active",
         createdAt: Date.now(),
-        expiresAt: options.expiresAt,
         metadata: options.metadata,
     };
 }
@@ -164,11 +163,10 @@ export function contractFromArkContract(
 export function contractFromArkContractWithAddress(
     encoded: string,
     serverPubKey: Uint8Array,
-    addressPrefix: string,
+    addressPrefix: string = DEFAULT_ARKADE_HRP,
     options: {
         label?: string;
         state?: "active" | "inactive";
-        expiresAt?: number;
         metadata?: Record<string, unknown>;
     } = {}
 ): Contract {
@@ -186,7 +184,6 @@ export function contractFromArkContractWithAddress(
         address: vtxoScript.address(addressPrefix, serverPubKey).encode(),
         state: options.state || "active",
         createdAt: Date.now(),
-        expiresAt: options.expiresAt,
         metadata: options.metadata,
     };
 }

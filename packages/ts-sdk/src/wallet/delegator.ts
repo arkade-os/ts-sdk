@@ -16,10 +16,12 @@ import {
     Outpoint,
     Recipient,
     SignedIntent,
+    TapLeafScript,
     Transaction,
     VirtualCoin,
     VtxoScript,
 } from "..";
+import { ContractVtxo } from "../contracts/types";
 import { DelegatorProvider } from "../providers/delegator";
 import { base64, hex } from "@scure/base";
 import { scriptFromTapLeafScript } from "../script/base";
@@ -35,13 +37,17 @@ export interface IDelegatorManager {
     /**
      * Delegate virtual outputs to the remote delegation service.
      *
+     * Vtxos that are not locked to a delegate-type contract (no tap leaf
+     * matches the delegator's pubkey) are filtered out silently, since they
+     * cannot be co-signed by the delegator.
+     *
      * @param vtxos - Virtual outputs to delegate
      * @param destination - Arkade address that should receive renewed funds
      * @param delegateAt - Optional timestamp to force a specific delegation time
      * @returns Successfully delegated and failed outpoint groups
      */
     delegate(
-        vtxos: ExtendedVirtualCoin[],
+        vtxos: ContractVtxo[],
         destination: string,
         delegateAt?: Date
     ): Promise<{
@@ -66,7 +72,7 @@ export class DelegatorManagerImpl implements IDelegatorManager {
     }
 
     async delegate(
-        vtxos: ExtendedVirtualCoin[],
+        vtxos: ContractVtxo[],
         destination: string,
         delegateAt?: Date
     ): Promise<{
@@ -83,6 +89,16 @@ export class DelegatorManagerImpl implements IDelegatorManager {
         const arkInfo = await this.arkInfoProvider.getInfo();
         const delegateInfo = await this.delegatorProvider.getDelegateInfo();
 
+        // keep only vtxos that can be signed by the delegate
+        const eligible: ExtendedVirtualCoin[] = vtxos
+            .filter(
+                (v) => findDelegateTapLeaf(v, delegateInfo.pubkey) !== undefined
+            )
+            .map((v) => v as ExtendedVirtualCoin);
+        if (eligible.length === 0) {
+            return { delegated: [], failed: [] };
+        }
+
         // if explicit delegateAt is provided, delegate all virtual outputs at once without sorting
         if (delegateAt) {
             try {
@@ -91,21 +107,24 @@ export class DelegatorManagerImpl implements IDelegatorManager {
                     this.delegatorProvider,
                     arkInfo,
                     delegateInfo,
-                    vtxos,
+                    eligible,
                     destinationScript,
                     delegateAt
                 );
             } catch (error) {
-                return { delegated: [], failed: [{ outpoints: vtxos, error }] };
+                return {
+                    delegated: [],
+                    failed: [{ outpoints: eligible, error }],
+                };
             }
-            return { delegated: vtxos, failed: [] };
+            return { delegated: eligible, failed: [] };
         }
 
         // if no explicit delegateAt is provided, sort virtual outputs by expiry and delegate in groups of the same expiry day
         const groupByExpiry: Map<number, ExtendedVirtualCoin[]> = new Map();
         let recoverableVtxos: ExtendedVirtualCoin[] = [];
 
-        for (const vtxo of vtxos) {
+        for (const vtxo of eligible) {
             if (isRecoverable(vtxo)) {
                 recoverableVtxos.push(vtxo);
                 continue;
@@ -340,23 +359,7 @@ async function makeDelegateForfeitTx(
     forfeitOutputScript: Bytes,
     identity: Identity
 ): Promise<Transaction> {
-    if (delegatePubkey.length === 66) {
-        delegatePubkey = delegatePubkey.slice(2);
-    }
-
-    const vtxoScript = VtxoScript.decode(input.tapTree);
-    const delegateTapLeaf = vtxoScript.leaves.find((tapLeaf) => {
-        const arkTapscript = decodeTapscript(scriptFromTapLeafScript(tapLeaf));
-        if (!MultisigTapscript.is(arkTapscript)) return false;
-        if (
-            !arkTapscript.params.pubkeys
-                .map(hex.encode)
-                .includes(delegatePubkey)
-        )
-            return false;
-        return true;
-    });
-
+    const delegateTapLeaf = findDelegateTapLeaf(input, delegatePubkey);
     if (!delegateTapLeaf) {
         throw new Error(
             `delegate tap leaf not found for input: ${input.txid}:${input.vout}`
@@ -425,13 +428,13 @@ async function makeSignedDelegateIntent(
         for (const [, assets] of assetInputs) {
             for (const asset of assets) {
                 const existing = allAssets.get(asset.assetId) ?? 0n;
-                allAssets.set(asset.assetId, existing + BigInt(asset.amount));
+                allAssets.set(asset.assetId, existing + asset.amount);
             }
         }
 
         outputAssets = [];
         for (const [assetId, amount] of allAssets) {
-            outputAssets.push({ assetId, amount: Number(amount) });
+            outputAssets.push({ assetId, amount });
         }
     }
 
@@ -480,4 +483,19 @@ function getDayTimestamp(timestamp: number): number {
     const date = new Date(timestamp);
     date.setUTCHours(0, 0, 0, 0);
     return date.getTime();
+}
+
+function findDelegateTapLeaf(
+    vtxo: { tapTree?: Bytes },
+    delegatePubkey: string
+): TapLeafScript | undefined {
+    if (!vtxo.tapTree) return undefined;
+    const pk =
+        delegatePubkey.length === 66 ? delegatePubkey.slice(2) : delegatePubkey;
+    const vtxoScript = VtxoScript.decode(vtxo.tapTree);
+    return vtxoScript.leaves.find((tapLeaf) => {
+        const arkTapscript = decodeTapscript(scriptFromTapLeafScript(tapLeaf));
+        if (!MultisigTapscript.is(arkTapscript)) return false;
+        return arkTapscript.params.pubkeys.map(hex.encode).includes(pk);
+    });
 }

@@ -1,6 +1,6 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
-import { TapLeafScript, VtxoScript } from "../script/base";
-import { VirtualCoin, ExtendedVirtualCoin } from "../wallet";
+import { EncodedVtxoScript, TapLeafScript, VtxoScript } from "../script/base";
+import { VirtualCoin, TapLeaves } from "../wallet";
 import { ContractFilter } from "../repositories";
 
 /**
@@ -67,9 +67,6 @@ export interface Contract {
     /** Unix timestamp in milliseconds when this contract was created. */
     createdAt: number;
 
-    /** Unix timestamp in milliseconds when this contract expires. */
-    expiresAt?: number;
-
     /**
      * Optional metadata for external integrations.
      */
@@ -79,10 +76,11 @@ export interface Contract {
 /**
  * A virtual output that has been associated with a specific contract.
  */
-export interface ContractVtxo extends ExtendedVirtualCoin {
-    /** The contract script this virtual output belongs to. */
-    contractScript: string;
-}
+export type ContractVtxo = VirtualCoin &
+    Partial<TapLeaves & EncodedVtxoScript> & {
+        extraWitness?: Bytes[];
+        contractScript: string;
+    };
 
 /**
  * Result of path selection, including the tapleaf to use and any extra witness data.
@@ -116,14 +114,23 @@ export interface PathContext {
     blockHeight?: number;
 
     /**
-     * Wallet public key encoded as 32-byte x-only hex.
-     * Used by handlers to determine the wallet's role in multi-party contracts.
+     * Wallet's descriptor for signing.
+     * Format: tr(pubkey) for static keys, tr([fingerprint/path']xpub/0/{index}) for HD.
+     * Used by handlers to determine wallet's role in multi-party contracts.
+     */
+    walletDescriptor?: string;
+
+    /**
+     * Wallet's public key (x-only, 32 bytes hex).
+     * @deprecated Use walletDescriptor instead.
      */
     walletPubKey?: string;
 
     /**
      * Explicit role override for multi-party contracts such as VHTLC.
-     * If not provided, the handler may derive the role from `walletPubKey`.
+     * If not provided, the handler may derive the role by matching
+     * {@link walletDescriptor} (preferred) — or {@link walletPubKey} as a
+     * fallback — against the contract's sender/receiver params.
      */
     role?: string;
 
@@ -237,12 +244,6 @@ export type ContractEvent =
           type: "vtxo_spent";
           contractScript: string;
           vtxos: ContractVtxo[];
-          contract: Contract;
-          timestamp: number;
-      }
-    | {
-          type: "contract_expired";
-          contractScript: string;
           contract: Contract;
           timestamp: number;
       }

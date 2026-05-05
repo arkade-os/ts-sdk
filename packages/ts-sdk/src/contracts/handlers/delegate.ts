@@ -8,11 +8,8 @@ import {
     PathContext,
     PathSelection,
 } from "../types";
-import {
-    isCsvSpendable,
-    sequenceToTimelock,
-    timelockToSequence,
-} from "./helpers";
+import { isCsvSpendable } from "./helpers";
+import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
 
 /**
  * Typed parameters for DelegateVtxo contracts.

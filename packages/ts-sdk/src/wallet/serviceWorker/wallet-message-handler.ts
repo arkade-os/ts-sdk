@@ -31,11 +31,12 @@ import {
     ReissuanceParams,
     SendBitcoinParams,
     SettleParams,
+    VirtualCoin,
     WalletBalance,
 } from "../index";
 import { DelegateInfo } from "../../providers/delegator";
 import { ReadonlyWallet, Wallet } from "../wallet";
-import { extendCoin, extendVirtualCoin } from "../utils";
+import { extendCoin } from "../utils";
 import {
     MessageHandler,
     RequestEnvelope,
@@ -70,7 +71,15 @@ export const DEFAULT_MESSAGE_TAG = "WALLET_UPDATER";
 export type RequestInitWallet = RequestEnvelope & {
     type: "INIT_WALLET";
     payload: {
-        key: { privateKey: string } | { publicKey: string };
+        /**
+         * Legacy per-request key material. Ignored by the current handler —
+         * identity hydration happens during INITIALIZE_MESSAGE_BUS. Retained
+         * for wire compatibility with older workers that may still read it.
+         * Slated for removal in the next major.
+         *
+         * @deprecated Identity is now carried by INITIALIZE_MESSAGE_BUS.
+         */
+        key?: { privateKey: string } | { publicKey: string } | {};
         arkServerUrl: string;
         arkServerPublicKey?: string;
     };
@@ -197,6 +206,15 @@ export type RequestGetContractsWithVtxos = RequestEnvelope & {
 export type ResponseGetContractsWithVtxos = ResponseEnvelope & {
     type: "CONTRACTS_WITH_VTXOS";
     payload: { contracts: ContractWithVtxos[] };
+};
+
+export type RequestAnnotateVtxos = RequestEnvelope & {
+    type: "ANNOTATE_VTXOS";
+    payload: { vtxos: VirtualCoin[] };
+};
+export type ResponseAnnotateVtxos = ResponseEnvelope & {
+    type: "ANNOTATED_VTXOS";
+    payload: { vtxos: ExtendedVirtualCoin[] };
 };
 
 export type RequestUpdateContract = RequestEnvelope & {
@@ -435,6 +453,7 @@ export type WalletUpdaterRequest =
     | RequestCreateContract
     | RequestGetContracts
     | RequestGetContractsWithVtxos
+    | RequestAnnotateVtxos
     | RequestUpdateContract
     | RequestDeleteContract
     | RequestGetSpendablePaths
@@ -476,6 +495,7 @@ export type WalletUpdaterResponse = ResponseEnvelope &
         | ResponseCreateContract
         | ResponseGetContracts
         | ResponseGetContractsWithVtxos
+        | ResponseAnnotateVtxos
         | ResponseUpdateContract
         | ResponseDeleteContract
         | ResponseGetSpendablePaths
@@ -599,6 +619,19 @@ export class WalletMessageHandler
             ...res,
             tag: this.messageTag,
         } as WalletUpdaterResponse;
+    }
+
+    // Flows that surrender control to the Ark server and the other participants
+    // in a batch round: quiet gaps between protocol events can easily exceed
+    // the bus-level messageTimeoutMs. Liveness is covered out-of-band by the
+    // page-side PING / MESSAGE_BUS_NOT_INITIALIZED path triggered by concurrent
+    // short requests (GET_STATUS, GET_BALANCE, ...).
+    isLongRunning(message: WalletUpdaterRequest): boolean {
+        return (
+            message.type === "SETTLE" ||
+            message.type === "RECOVER_VTXOS" ||
+            message.type === "RENEW_VTXOS"
+        );
     }
 
     async handleMessage(
@@ -758,6 +791,18 @@ export class WalletMessageHandler
                         id,
                         type: "CONTRACTS_WITH_VTXOS",
                         payload: { contracts },
+                    });
+                }
+                case "ANNOTATE_VTXOS": {
+                    const manager =
+                        await this.readonlyWallet.getContractManager();
+                    const annotated = await manager.annotateVtxos(
+                        message.payload.vtxos
+                    );
+                    return this.tagged({
+                        id,
+                        type: "ANNOTATED_VTXOS",
+                        payload: { vtxos: annotated },
                     });
                 }
                 case "UPDATE_CONTRACT": {
@@ -1046,11 +1091,11 @@ export class WalletMessageHandler
         const totalOffchain = settled + preconfirmed + recoverable;
 
         // aggregate asset balances from spendable virtual outputs
-        const assetBalances = new Map<string, number>();
+        const assetBalances = new Map<string, bigint>();
         for (const vtxo of spendableVtxos) {
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
-                    const current = assetBalances.get(a.assetId) ?? 0;
+                    const current = assetBalances.get(a.assetId) ?? 0n;
                     assetBalances.set(a.assetId, current + a.amount);
                 }
             }
@@ -1132,20 +1177,14 @@ export class WalletMessageHandler
         this.incomingFundsSubscription =
             await this.readonlyWallet.notifyIncomingFunds(async (funds) => {
                 if (funds.type === "vtxo") {
-                    const newVtxos =
-                        funds.newVtxos.length > 0
-                            ? funds.newVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.readonlyWallet!, vtxo)
-                              )
-                            : [];
-                    const spentVtxos =
-                        funds.spentVtxos.length > 0
-                            ? funds.spentVtxos.map((vtxo) =>
-                                  extendVirtualCoin(this.readonlyWallet!, vtxo)
-                              )
-                            : [];
+                    // `funds.newVtxos` / `funds.spentVtxos` are already
+                    // ExtendedVirtualCoin — annotation happened inside the
+                    // underlying Wallet's subscription handler before this
+                    // callback fired. Re-annotating here would only duplicate
+                    // work and re-expose us to `annotateVtxos` throws.
+                    const { newVtxos, spentVtxos } = funds;
 
-                    if ([...newVtxos, ...spentVtxos].length === 0) return;
+                    if (newVtxos.length + spentVtxos.length === 0) return;
 
                     // save virtual outputs using unified repository
                     await this.walletRepository?.saveVtxos(address, [
@@ -1297,9 +1336,9 @@ export class WalletMessageHandler
         const outpointSet = new Set(
             vtxoOutpoints.map((o) => `${o.txid}:${o.vout}`)
         );
-        const filtered = allVtxos.filter((v) =>
-            outpointSet.has(`${v.txid}:${v.vout}`)
-        );
+        const filtered = allVtxos
+            .filter((v) => outpointSet.has(`${v.txid}:${v.vout}`))
+            .map((v) => ({ ...v, contractScript: v.script }));
 
         const result = await delegatorManager.delegate(
             filtered,
