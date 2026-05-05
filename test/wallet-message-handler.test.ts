@@ -467,7 +467,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("read operations work with readonly wallet only", async () => {
         (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue("bc1-readonly"),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
@@ -491,7 +491,7 @@ describe("WalletMessageHandler handleMessage", () => {
         } as any);
         expect(addrRes).toMatchObject({
             type: "ADDRESS",
-            payload: { address: "bc1-readonly" },
+            payload: { address: TEST_DEFAULT_ARK_ADDRESS },
         });
 
         const boardingRes = await updater.handleMessage({
@@ -954,7 +954,7 @@ describe("WalletMessageHandler handleMessage", () => {
     it("eagerly starts VtxoManager on wallet initialization", async () => {
         const getVtxoManagerSpy = vi.fn().mockResolvedValue({});
         (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue("bc1-test"),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
@@ -992,7 +992,7 @@ describe("WalletMessageHandler handleMessage", () => {
 
     it("does not start VtxoManager for readonly wallets", async () => {
         (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue("bc1-test"),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("bc1-boarding"),
             getBoardingTxs: vi.fn().mockResolvedValue({
                 boardingTxs: [],
@@ -1622,5 +1622,19 @@ describe("WalletMessageHandler repo-backed reads", () => {
         expect(matched).toHaveLength(1);
         expect(matched[0].script).toBe("scriptB");
         expect(matched[0].isSpent).toBe(true);
+    });
+
+    it("GET_VTXOS fails fast when the wallet's primary address can't be decoded", async () => {
+        setupHandler();
+        // Override the readonly wallet to return a malformed address that
+        // scriptFromArkAddress cannot decode. Before the fix this silently
+        // dropped the wallet's primary bucket and zeroed the visible balance.
+        (updater as any).readonlyWallet.getAddress = vi
+            .fn()
+            .mockResolvedValue("not-a-valid-ark-address");
+
+        await expect((updater as any).getVtxosFromRepo()).rejects.toThrow(
+            /failed to derive script from wallet address/
+        );
     });
 });

@@ -1505,20 +1505,21 @@ export class WalletMessageHandler
         }
 
         // Also check the wallet's primary address. Decode it to its script
-        // and apply the same script gate; if the address can't be decoded we
-        // skip the bucket rather than admit unvalidated rows.
+        // and apply the same script gate. Failing to decode the wallet's own
+        // address is a structural bug — surfacing the error is safer than
+        // silently dropping the primary bucket and zeroing the user's
+        // visible balance.
         const walletAddress = await this.readonlyWallet.getAddress();
-        let walletScript: string | undefined;
+        let walletScript: string;
         try {
             walletScript = scriptFromArkAddress(walletAddress);
-        } catch {
-            walletScript = undefined;
+        } catch (e) {
+            throw new Error(
+                `WalletMessageHandler.getVtxosFromRepo: failed to derive script from wallet address ${walletAddress}: ${e instanceof Error ? e.message : String(e)}`
+            );
         }
-        if (walletScript) {
-            const walletVtxos =
-                await this.walletRepository.getVtxos(walletAddress);
-            addVtxos(filterVtxosForScript(walletVtxos, walletScript));
-        }
+        const walletVtxos = await this.walletRepository.getVtxos(walletAddress);
+        addVtxos(filterVtxosForScript(walletVtxos, walletScript));
 
         return allVtxos;
     }
