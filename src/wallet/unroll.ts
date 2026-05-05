@@ -342,7 +342,7 @@ export async function prepareUnrollTransaction(
         throw new Error("send amount is less than dust amount");
     }
 
-    tx.addOutputAddress(outputAddress, sendAmount);
+    tx.addOutputAddress(outputAddress, sendAmount, wallet.network);
 
     const signedTx = await wallet.identity.sign(tx);
     signedTx.finalize();
