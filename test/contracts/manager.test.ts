@@ -346,4 +346,107 @@ describe("ContractManager", () => {
             await expect(manager.annotateVtxos([orphan])).rejects.toThrow();
         });
     });
+
+    describe("refreshOutpoints", () => {
+        it("queries the indexer by outpoint and upserts the authoritative state into the wallet repo", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const localManager = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: repository,
+                walletRepository: walletRepo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+            await localManager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "address",
+            });
+
+            // Indexer is the source of truth: returns the same VTXO marked
+            // spent. A cursor-derived delta sync would NOT surface this
+            // because the VTXO was created before the cursor; the surgical
+            // outpoint query bypasses that.
+            const spent = createMockVtxo({
+                txid: "aa".repeat(32),
+                script: TEST_DEFAULT_SCRIPT,
+                isSpent: true,
+            });
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [spent],
+            });
+
+            await localManager.refreshOutpoints([
+                { txid: spent.txid, vout: spent.vout },
+            ]);
+
+            // Outpoint-scoped indexer call.
+            expect(mockIndexer.getVtxos).toHaveBeenCalledWith({
+                outpoints: [{ txid: spent.txid, vout: spent.vout }],
+            });
+
+            // The wallet repo now reflects the spent flag for this address.
+            const stored = await walletRepo.getVtxos("address");
+            const found = stored.find(
+                (v) => v.txid === spent.txid && v.vout === spent.vout
+            );
+            expect(found).toBeDefined();
+            expect(found!.isSpent).toBe(true);
+        });
+
+        it("silently skips outpoints not owned by any tracked contract", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const localManager = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: repository,
+                walletRepository: walletRepo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+            // Indexer returns a VTXO at a script we don't track. The
+            // method should not throw and should not write anything.
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({
+                vtxos: [
+                    createMockVtxo({
+                        txid: "aa".repeat(32),
+                        script: "cd".repeat(34),
+                        isSpent: true,
+                    }),
+                ],
+            });
+
+            await localManager.refreshOutpoints([
+                { txid: "aa".repeat(32), vout: 0 },
+            ]);
+
+            expect(mockIndexer.getVtxos).toHaveBeenCalled();
+            const stored = await walletRepo.getVtxos("address");
+            expect(stored).toEqual([]);
+        });
+
+        it("is a no-op for an empty outpoint list", async () => {
+            const walletRepo = new InMemoryWalletRepository();
+            const localManager = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: repository,
+                walletRepository: walletRepo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+            (mockIndexer.getVtxos as any).mockClear();
+
+            await localManager.refreshOutpoints([]);
+
+            expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
+        });
+    });
 });
