@@ -9,6 +9,7 @@ import {
     ContractEvent,
 } from "./types";
 import { isEventSourceError } from "../providers/utils";
+import { filterVtxosForScript } from "./vtxoOwnership";
 
 /**
  * Configuration for the ContractWatcher.
@@ -281,8 +282,13 @@ export class ContractWatcher {
                 return true;
             })
             .map(async (state): Promise<[[string, ContractVtxo[]]] | []> => {
-                // Use contract address as cache key
-                const cached = await repo.getVtxos(state.contract.address);
+                // Use contract address as cache key. Legacy address buckets
+                // can contain rows from other contracts; gate by script before
+                // converting so a wrong-script row never reaches the watcher.
+                const cached = filterVtxosForScript(
+                    await repo.getVtxos(state.contract.address),
+                    state.contract.script
+                );
                 if (cached.length > 0) {
                     // Convert to ContractVtxo with contractScript
                     const contractVtxos: ContractVtxo[] = cached.map((v) => ({

@@ -101,6 +101,7 @@ import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
+import { validateVtxosForScript } from "../contracts/vtxoOwnership";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -2647,10 +2648,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 };
             }
 
-            await this.walletRepository.saveVtxos(
-                addr,
-                changeVtxo ? [...spentVtxos, changeVtxo] : spentVtxos
+            const toSave = changeVtxo
+                ? [...spentVtxos, changeVtxo]
+                : spentVtxos;
+            // User-initiated send path: a wrong-script row here means the
+            // wallet is about to record ownership against the wrong contract
+            // — fail loudly rather than persist inconsistent state.
+            validateVtxosForScript(
+                toSave,
+                hex.encode(this.offchainTapscript.pkScript),
+                "Wallet.updateDbAfterOffchainTx"
             );
+            await this.walletRepository.saveVtxos(addr, toSave);
 
             await this.walletRepository.saveTransactions(addr, [
                 {
@@ -2718,6 +2727,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             if (spentVtxos.length > 0) {
+                // Settle path is also user-initiated — refuse to record a
+                // settle against the wrong script.
+                validateVtxosForScript(
+                    spentVtxos,
+                    hex.encode(this.offchainTapscript.pkScript),
+                    "Wallet.updateDbAfterSettle"
+                );
                 await this.walletRepository.saveVtxos(addr, spentVtxos);
             }
 

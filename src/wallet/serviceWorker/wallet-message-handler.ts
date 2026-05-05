@@ -44,6 +44,11 @@ import {
 } from "../../worker/messageBus";
 import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
+import {
+    filterVtxosForScript,
+    warnAndFilterVtxosForScript,
+} from "../../contracts/vtxoOwnership";
+import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
 
 export class WalletNotInitializedError extends Error {
     constructor() {
@@ -1186,11 +1191,46 @@ export class WalletMessageHandler
 
                     if (newVtxos.length + spentVtxos.length === 0) return;
 
-                    // save virtual outputs using unified repository
-                    await this.walletRepository?.saveVtxos(address, [
-                        ...newVtxos,
-                        ...spentVtxos,
-                    ]);
+                    // Save virtual outputs using unified repository. The
+                    // event may carry rows for several scripts (other
+                    // contracts the wallet watches), so split by script and
+                    // save each bucket under its own contract address rather
+                    // than saving a mixed-script array under one address.
+                    const byScript = new Map<string, ExtendedVirtualCoin[]>();
+                    for (const v of [...newVtxos, ...spentVtxos]) {
+                        if (!v.script) continue;
+                        const arr = byScript.get(v.script) ?? [];
+                        arr.push(v);
+                        byScript.set(v.script, arr);
+                    }
+                    let walletScript: string | undefined;
+                    try {
+                        walletScript = scriptFromArkAddress(address);
+                    } catch {
+                        walletScript = undefined;
+                    }
+                    const cm = await this.readonlyWallet!.getContractManager();
+                    const contracts = await cm.getContracts();
+                    const addrByScript = new Map(
+                        contracts.map((c) => [c.script, c.address])
+                    );
+                    for (const [script, vtxos] of byScript) {
+                        const filtered = warnAndFilterVtxosForScript(
+                            vtxos,
+                            script,
+                            "WalletMessageHandler.notifyIncomingFunds"
+                        );
+                        if (filtered.length === 0) continue;
+                        const targetAddress =
+                            script === walletScript
+                                ? address
+                                : addrByScript.get(script);
+                        if (!targetAddress) continue;
+                        await this.walletRepository?.saveVtxos(
+                            targetAddress,
+                            filtered
+                        );
+                    }
 
                     // notify all clients about the virtual output state update
                     this.scheduleForNextTick(() =>
@@ -1443,20 +1483,34 @@ export class WalletMessageHandler
             }
         };
 
-        // Aggregate virtual outputs from all contract addresses
+        // Aggregate virtual outputs from all contract addresses. Address
+        // buckets may carry legacy duplicate rows from other contracts; gate
+        // each bucket by its owning contract script before deduplication so a
+        // wrong-script row never wins the txid:vout race.
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
         for (const contract of contracts) {
             const vtxos = await this.walletRepository.getVtxos(
                 contract.address
             );
-            addVtxos(vtxos);
+            addVtxos(filterVtxosForScript(vtxos, contract.script));
         }
 
-        // Also check the wallet's primary address
+        // Also check the wallet's primary address. Decode it to its script
+        // and apply the same script gate; if the address can't be decoded we
+        // skip the bucket rather than admit unvalidated rows.
         const walletAddress = await this.readonlyWallet.getAddress();
-        const walletVtxos = await this.walletRepository.getVtxos(walletAddress);
-        addVtxos(walletVtxos);
+        let walletScript: string | undefined;
+        try {
+            walletScript = scriptFromArkAddress(walletAddress);
+        } catch {
+            walletScript = undefined;
+        }
+        if (walletScript) {
+            const walletVtxos =
+                await this.walletRepository.getVtxos(walletAddress);
+            addVtxos(filterVtxosForScript(walletVtxos, walletScript));
+        }
 
         return allVtxos;
     }

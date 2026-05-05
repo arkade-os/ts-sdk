@@ -8,6 +8,8 @@ import { InMemoryWalletRepository } from "../src";
 import {
     createMockExtendedVtxo,
     createMockIndexerProvider,
+    TEST_DEFAULT_ARK_ADDRESS,
+    TEST_DEFAULT_SCRIPT,
 } from "./contracts/helpers";
 const baseMessage = (id: string = "1") => ({
     id,
@@ -1141,7 +1143,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
         walletRepo = new InMemoryWalletRepository();
 
         (updater as any).readonlyWallet = {
-            getAddress: vi.fn().mockResolvedValue("wallet-address"),
+            getAddress: vi.fn().mockResolvedValue(TEST_DEFAULT_ARK_ADDRESS),
             getBoardingAddress: vi.fn().mockResolvedValue("boarding-address"),
             getBoardingUtxos: vi.fn().mockResolvedValue([]),
             getBoardingTxs: vi.fn().mockResolvedValue({
@@ -1174,7 +1176,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             virtualStatus: { state: "settled" },
         });
-        await walletRepo.saveVtxos("wallet-address", [vtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1207,7 +1209,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             virtualStatus: { state: "swept" },
         });
-        await walletRepo.saveVtxos("wallet-address", [settled, recoverable]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+            settled,
+            recoverable,
+        ]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1232,7 +1237,10 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 50000,
             virtualStatus: { state: "preconfirmed" },
         });
-        await walletRepo.saveVtxos("wallet-address", [settled, preconfirmed]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
+            settled,
+            preconfirmed,
+        ]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1258,7 +1266,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             virtualStatus: { state: "settled" },
             createdAt: new Date(),
         });
-        await walletRepo.saveVtxos("wallet-address", [vtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1283,11 +1291,13 @@ describe("WalletMessageHandler repo-backed reads", () => {
             txid: "aa".repeat(32),
             value: 10000,
             virtualStatus: { state: "settled" },
+            script: "s1",
         });
         const vtxo2 = createMockExtendedVtxo({
             txid: "bb".repeat(32),
             value: 20000,
             virtualStatus: { state: "settled" },
+            script: "s2",
         });
         await walletRepo.saveVtxos("contract-1", [vtxo1]);
         await walletRepo.saveVtxos("contract-2", [vtxo2]);
@@ -1314,6 +1324,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 txid: "aa".repeat(32),
                 value: 10000,
                 virtualStatus: { state: "settled" },
+                script: "s1",
             }),
         ]);
         await walletRepo.saveVtxos("contract-2", [
@@ -1321,6 +1332,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 txid: "bb".repeat(32),
                 value: 20000,
                 virtualStatus: { state: "settled" },
+                script: "s2",
             }),
         ]);
 
@@ -1339,7 +1351,9 @@ describe("WalletMessageHandler repo-backed reads", () => {
     });
 
     it("GET_VTXOS deduplicates across wallet and contract addresses", async () => {
-        const contracts = [{ address: "wallet-address", script: "s1" }];
+        const contracts = [
+            { address: TEST_DEFAULT_ARK_ADDRESS, script: TEST_DEFAULT_SCRIPT },
+        ];
         setupHandler(contracts);
 
         const vtxo = createMockExtendedVtxo({
@@ -1348,7 +1362,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             virtualStatus: { state: "settled" },
         });
         // Save same VTXO under both keys (contract address = wallet address)
-        await walletRepo.saveVtxos("wallet-address", [vtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [vtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1378,7 +1392,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 20000,
             virtualStatus: { state: "swept" },
         });
-        await walletRepo.saveVtxos("wallet-address", [
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [
             preconfirmed,
             settled,
             swept,
@@ -1540,7 +1554,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 10000,
             virtualStatus: { state: "settled" },
         });
-        await walletRepo.saveVtxos("wallet-address", [initial]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [initial]);
 
         // Simulate subscription update by saving new VTXOs
         const newVtxo = createMockExtendedVtxo({
@@ -1548,7 +1562,7 @@ describe("WalletMessageHandler repo-backed reads", () => {
             value: 20000,
             virtualStatus: { state: "settled" },
         });
-        await walletRepo.saveVtxos("wallet-address", [newVtxo]);
+        await walletRepo.saveVtxos(TEST_DEFAULT_ARK_ADDRESS, [newVtxo]);
 
         const response = await updater.handleMessage({
             ...baseMessage(),
@@ -1561,5 +1575,52 @@ describe("WalletMessageHandler repo-backed reads", () => {
                 settled: 30000,
             },
         });
+    });
+
+    // Regression: legacy address buckets can hold rows whose `script`
+    // belongs to a different contract. The aggregator must filter each
+    // bucket by the owning contract's script before deduping by txid:vout
+    // so a wrong-script duplicate cannot win the dedupe over the correct
+    // row stored under another bucket.
+    it("GET_VTXOS skips wrong-script rows and prefers script-matching ones across legacy duplicates", async () => {
+        const contracts = [
+            { address: "contract-A-addr", script: "scriptA" },
+            { address: "contract-B-addr", script: "scriptB" },
+        ];
+        setupHandler(contracts);
+
+        // Stale row under contract A's address bucket but actually locked
+        // to contract B's script — left behind by a legacy save under the
+        // wrong bucket. Must be ignored by the contract-A read.
+        const stale = createMockExtendedVtxo({
+            txid: "ee".repeat(32),
+            vout: 0,
+            value: 1000,
+            virtualStatus: { state: "settled" },
+            isSpent: false,
+            script: "scriptB",
+        });
+        // Correct row under contract B's bucket with the same outpoint and
+        // contract B's script. Marked spent — proves the read returns the
+        // script-matching row regardless of its lifecycle state, instead of
+        // the stale unspent row from the wrong bucket.
+        const correct = createMockExtendedVtxo({
+            txid: "ee".repeat(32),
+            vout: 0,
+            value: 1000,
+            virtualStatus: { state: "settled" },
+            isSpent: true,
+            script: "scriptB",
+        });
+        await walletRepo.saveVtxos("contract-A-addr", [stale]);
+        await walletRepo.saveVtxos("contract-B-addr", [correct]);
+
+        const all = await (updater as any).getVtxosFromRepo();
+        const matched = all.filter(
+            (v: any) => v.txid === "ee".repeat(32) && v.vout === 0
+        );
+        expect(matched).toHaveLength(1);
+        expect(matched[0].script).toBe("scriptB");
+        expect(matched[0].isSpent).toBe(true);
     });
 });
