@@ -760,13 +760,25 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         try {
             // Get all virtual outputs (including recoverable ones)
             // Use default threshold to bypass settlementConfig gate (manual API should always work)
-            const vtxos = await this.getExpiringVtxos(
+            const threshold =
                 this.settlementConfig !== false &&
-                    this.settlementConfig?.vtxoThreshold !== undefined
+                this.settlementConfig?.vtxoThreshold !== undefined
                     ? this.settlementConfig.vtxoThreshold * 1000
-                    : DEFAULT_RENEWAL_CONFIG.thresholdMs
-            );
+                    : DEFAULT_RENEWAL_CONFIG.thresholdMs;
+            let vtxos = await this.getExpiringVtxos(threshold);
 
+            if (vtxos.length === 0) {
+                throw new Error("No VTXOs available to renew");
+            }
+
+            // Pre-flight: validate the chosen inputs against the indexer's
+            // authoritative state before submitting. The cursor-derived
+            // delta sync filters by `created_at`, so a VTXO created
+            // before the cursor and spent recently can sit in the local
+            // cache forever; settling against it yields a guaranteed
+            // VTXO_ALREADY_SPENT 400. Refreshing the candidates here
+            // catches that BEFORE the network round-trip.
+            vtxos = await this.revalidateBeforeSettle(vtxos, threshold);
             if (vtxos.length === 0) {
                 throw new Error("No VTXOs available to renew");
             }
@@ -1181,6 +1193,52 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
+     * Reconcile the chosen VTXOs with the indexer's authoritative state
+     * before submitting a settle intent. Pulls the canonical record for
+     * each candidate outpoint via {@link IContractManager.refreshOutpoints}
+     * (which upserts the result into the wallet repository), then
+     * re-selects through the standard expiring-vtxo filter so anything
+     * the refresh flagged as spent is dropped.
+     *
+     * Best-effort: a failed refresh just falls back to the original
+     * candidates and lets the post-submit `VTXO_ALREADY_SPENT` recovery
+     * handle whatever slipped through.
+     */
+    private async revalidateBeforeSettle(
+        candidates: ExtendedVirtualCoin[],
+        thresholdMs?: number
+    ): Promise<ExtendedVirtualCoin[]> {
+        if (candidates.length === 0) return candidates;
+        try {
+            const cm = await this.wallet.getContractManager();
+            await cm.refreshOutpoints(
+                candidates.map((v) => ({ txid: v.txid, vout: v.vout }))
+            );
+        } catch (e) {
+            console.error("Error pre-validating VTXOs before settle:", e);
+            return candidates;
+        }
+        // Re-select from the now-fresh local cache. Anything previously
+        // selected but spent gets filtered out by the standard
+        // `isSpendable`/`isSpent` checks inside getVtxos / getExpiringVtxos.
+        try {
+            const refreshed = await this.getExpiringVtxos(thresholdMs);
+            const candidateKeys = new Set(
+                candidates.map((v) => `${v.txid}:${v.vout}`)
+            );
+            // Restrict to vtxos that were also in the original candidate set
+            // — `getExpiringVtxos` may surface NEW vtxos and we don't want
+            // pre-flight to silently expand the input set.
+            return refreshed.filter((v) =>
+                candidateKeys.has(`${v.txid}:${v.vout}`)
+            );
+        } catch (e) {
+            console.error("Error re-selecting VTXOs after pre-validate:", e);
+            return candidates;
+        }
+    }
+
+    /**
      * Extract the offending VTXO outpoint from a `VTXO_ALREADY_SPENT` error,
      * if the server attached one in `metadata.vtxo_outpoint`. Returns
      * `undefined` when the error isn't a parsed ArkError, isn't this code,
@@ -1358,6 +1416,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         if (!this.renewalInProgress) {
             try {
                 expiringVtxos = await this.getExpiringVtxos();
+                // Pre-flight validation: see comment in `renewVtxos`. The
+                // local cache may carry vtxos that the indexer already
+                // marks spent because the cursor-derived delta sync only
+                // catches `created_at`-recent updates, not status changes
+                // for older VTXOs.
+                expiringVtxos =
+                    await this.revalidateBeforeSettle(expiringVtxos);
             } catch (e) {
                 // Non-fatal: fall back to boarding-only settle.
                 console.error("Error fetching expiring VTXOs:", e);
