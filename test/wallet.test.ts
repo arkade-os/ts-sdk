@@ -1899,3 +1899,223 @@ describe("Wallet._settleImpl", () => {
         batchJoinSpy.mockRestore();
     });
 });
+
+describe("Wallet.updateDbAfterOffchainTx", () => {
+    const PRIMARY_SCRIPT = "ab".repeat(34);
+    const PRIMARY_ADDR = "ark1primaryaddress";
+    const DELEGATE_SCRIPT = "cd".repeat(34);
+    const DELEGATE_ADDR = "ark1delegateaddress";
+
+    const primaryPkScript = hex.decode(PRIMARY_SCRIPT);
+
+    const makeThisArg = (overrides: {
+        annotateVtxos: ReturnType<typeof vi.fn>;
+        contracts: { script: string; address: string }[];
+        saveVtxos?: ReturnType<typeof vi.fn>;
+        saveTransactions?: ReturnType<typeof vi.fn>;
+    }) => {
+        const saveVtxos =
+            overrides.saveVtxos ?? vi.fn().mockResolvedValue(undefined);
+        const saveTransactions =
+            overrides.saveTransactions ?? vi.fn().mockResolvedValue(undefined);
+        const getContracts = vi.fn().mockResolvedValue(overrides.contracts);
+        const getContractManager = vi.fn().mockResolvedValue({
+            annotateVtxos: overrides.annotateVtxos,
+            getContracts,
+        });
+        const offchainTapscript: any = {
+            pkScript: primaryPkScript,
+            forfeit: () => [new Uint8Array(32), new Uint8Array(33)],
+            encode: () => new Uint8Array(64),
+        };
+        const arkAddress = { encode: () => PRIMARY_ADDR };
+        return {
+            thisArg: {
+                arkAddress,
+                offchainTapscript,
+                walletRepository: { saveVtxos, saveTransactions },
+                getContractManager,
+            } as any,
+            saveVtxos,
+            saveTransactions,
+            getContracts,
+        };
+    };
+
+    const makeSpentInput = (script: string, suffix: string): VirtualCoin => ({
+        txid: suffix.repeat(64).slice(0, 64),
+        vout: 0,
+        value: 5_000,
+        status: { confirmed: true },
+        virtualStatus: { state: "preconfirmed", batchExpiry: 1_700_000_000 },
+        createdAt: new Date(),
+        isUnrolled: false,
+        isSpent: false,
+        script,
+    });
+
+    const annotated = (input: VirtualCoin): any => ({
+        ...input,
+        forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
+        intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+        tapTree: new Uint8Array(64),
+    });
+
+    it("saves single-contract spend rows and the change row under the primary bucket", async () => {
+        const input = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi.fn().mockResolvedValue([annotated(input)]);
+        const { thisArg, saveVtxos, saveTransactions } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [input],
+            "ark-tx-id",
+            [], // empty checkpoints → loop takes the no-PSBT branch
+            1_000, // sentAmount
+            4_000n, // changeAmount
+            1 // changeVout
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(1);
+        const [addr, vtxos] = saveVtxos.mock.calls[0];
+        expect(addr).toBe(PRIMARY_ADDR);
+        expect(vtxos).toHaveLength(2); // spent + change
+        expect(vtxos[0].txid).toBe(input.txid);
+        expect(vtxos[0].isSpent).toBe(true);
+        expect(vtxos[0].script).toBe(PRIMARY_SCRIPT);
+        expect(vtxos[1].txid).toBe("ark-tx-id");
+        expect(vtxos[1].vout).toBe(1);
+        expect(vtxos[1].script).toBe(PRIMARY_SCRIPT);
+
+        expect(saveTransactions).toHaveBeenCalledTimes(1);
+        expect(saveTransactions.mock.calls[0][0]).toBe(PRIMARY_ADDR);
+    });
+
+    it("routes multi-contract spend rows to their owning contract buckets", async () => {
+        const primaryInput = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const delegateInput = makeSpentInput(DELEGATE_SCRIPT, "2");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([
+                annotated(primaryInput),
+                annotated(delegateInput),
+            ]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [
+                { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
+                { script: DELEGATE_SCRIPT, address: DELEGATE_ADDR },
+            ],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [primaryInput, delegateInput],
+            "ark-tx-id",
+            [],
+            1_000,
+            0n, // no change → only spent rows
+            0
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(2);
+        const calls = new Map(
+            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
+        );
+        expect(calls.get(PRIMARY_ADDR)).toHaveLength(1);
+        expect(calls.get(PRIMARY_ADDR)[0].script).toBe(PRIMARY_SCRIPT);
+        expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
+        expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
+    });
+
+    it("aggregates change with primary-bucket spent rows in a single save", async () => {
+        const primaryInput = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const delegateInput = makeSpentInput(DELEGATE_SCRIPT, "2");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([
+                annotated(primaryInput),
+                annotated(delegateInput),
+            ]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [
+                { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
+                { script: DELEGATE_SCRIPT, address: DELEGATE_ADDR },
+            ],
+        });
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [primaryInput, delegateInput],
+            "ark-tx-id",
+            [],
+            1_000,
+            4_000n,
+            1
+        );
+
+        expect(saveVtxos).toHaveBeenCalledTimes(2);
+        const calls = new Map(
+            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
+        );
+        // Primary bucket gets the primary spent row + the change row.
+        expect(calls.get(PRIMARY_ADDR)).toHaveLength(2);
+        expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
+    });
+
+    it("rethrows when a spent VTXO has no script", async () => {
+        const input = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const annotateVtxos = vi
+            .fn()
+            .mockResolvedValue([{ ...annotated(input), script: undefined }]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+                thisArg,
+                [input],
+                "ark-tx-id",
+                [],
+                1_000,
+                0n,
+                0
+            )
+        ).rejects.toThrow(/has no script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+    });
+
+    it("rethrows when a spent VTXO references an unknown contract", async () => {
+        const input = makeSpentInput(PRIMARY_SCRIPT, "1");
+        const orphan = {
+            ...annotated(input),
+            script: "ee".repeat(34),
+        };
+        const annotateVtxos = vi.fn().mockResolvedValue([orphan]);
+        const { thisArg, saveVtxos } = makeThisArg({
+            annotateVtxos,
+            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+        });
+
+        await expect(
+            (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+                thisArg,
+                [input],
+                "ark-tx-id",
+                [],
+                1_000,
+                0n,
+                0
+            )
+        ).rejects.toThrow(/no contract owns script/);
+
+        expect(saveVtxos).not.toHaveBeenCalled();
+    });
+});

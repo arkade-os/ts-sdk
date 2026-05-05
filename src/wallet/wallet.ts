@@ -2619,7 +2619,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const createdAt = Date.now();
-            const addr = this.arkAddress.encode();
+            const primaryAddr = this.arkAddress.encode();
 
             // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
@@ -2648,20 +2648,60 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 };
             }
 
-            const toSave = changeVtxo
-                ? [...spentVtxos, changeVtxo]
-                : spentVtxos;
-            // User-initiated send path: a wrong-script row here means the
-            // wallet is about to record ownership against the wrong contract
-            // — fail loudly rather than persist inconsistent state.
-            validateVtxosForScript(
-                toSave,
-                hex.encode(this.offchainTapscript.pkScript),
-                "Wallet.updateDbAfterOffchainTx"
+            // Route spent rows to their owning contract bucket. The wallet's
+            // primary contract is registered with the manager at boot, so
+            // `addrByScript` already includes it; in a multi-contract spend
+            // each input may belong to a different contract.
+            const contracts = await cm.getContracts();
+            const addrByScript = new Map(
+                contracts.map((c) => [c.script, c.address])
             );
-            await this.walletRepository.saveVtxos(addr, toSave);
 
-            await this.walletRepository.saveTransactions(addr, [
+            const spentByScript = new Map<string, ExtendedVirtualCoin[]>();
+            for (const v of spentVtxos) {
+                if (!v.script) {
+                    throw new Error(
+                        `Wallet.updateDbAfterOffchainTx: spent VTXO ${v.txid}:${v.vout} has no script`
+                    );
+                }
+                const arr = spentByScript.get(v.script) ?? [];
+                arr.push(v);
+                spentByScript.set(v.script, arr);
+            }
+
+            const byAddress = new Map<string, ExtendedVirtualCoin[]>();
+            for (const [script, vtxos] of spentByScript) {
+                // User-initiated send path: a wrong-script row here means the
+                // wallet is about to record ownership against the wrong
+                // contract — fail loudly rather than persist inconsistent state.
+                validateVtxosForScript(
+                    vtxos,
+                    script,
+                    "Wallet.updateDbAfterOffchainTx"
+                );
+                const targetAddr = addrByScript.get(script);
+                if (!targetAddr) {
+                    throw new Error(
+                        `Wallet.updateDbAfterOffchainTx: no contract owns script ${script}`
+                    );
+                }
+                const bucket = byAddress.get(targetAddr) ?? [];
+                bucket.push(...vtxos);
+                byAddress.set(targetAddr, bucket);
+            }
+
+            // Change is always primary-script by construction.
+            if (changeVtxo) {
+                const bucket = byAddress.get(primaryAddr) ?? [];
+                bucket.push(changeVtxo);
+                byAddress.set(primaryAddr, bucket);
+            }
+
+            for (const [addr, vtxos] of byAddress) {
+                await this.walletRepository.saveVtxos(addr, vtxos);
+            }
+
+            await this.walletRepository.saveTransactions(primaryAddr, [
                 {
                     key: {
                         boardingTxid: "",
@@ -2676,6 +2716,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ]);
         } catch (e) {
             console.warn("error saving offchain tx to repository", e);
+            throw e;
         }
     }
 
