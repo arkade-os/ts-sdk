@@ -1198,7 +1198,15 @@ export class WalletMessageHandler
                     // than saving a mixed-script array under one address.
                     const byScript = new Map<string, ExtendedVirtualCoin[]>();
                     for (const v of [...newVtxos, ...spentVtxos]) {
-                        if (!v.script) continue;
+                        if (!v.script) {
+                            // Without a script we can't route the row to the
+                            // right contract bucket; surface the drop instead
+                            // of silently losing the VTXO.
+                            console.warn(
+                                `WalletMessageHandler.notifyIncomingFunds: dropping VTXO without script ${v.txid}:${v.vout}`
+                            );
+                            continue;
+                        }
                         const arr = byScript.get(v.script) ?? [];
                         arr.push(v);
                         byScript.set(v.script, arr);
