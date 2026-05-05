@@ -734,6 +734,14 @@ describe("Common", () => {
                             execCommand(
                                 `nigiri rpc --generate ${remainingBlocks}`
                             );
+                            // Wait for the onchain provider to observe the new
+                            // tip; nigiri-mined blocks are not always visible
+                            // to esplora the instant `nigiri rpc` returns.
+                            await waitFor(async () => {
+                                const tip =
+                                    await alice.wallet.onchainProvider.getChainTip();
+                                return tip.height >= requiredHeight;
+                            });
                         }
                     } else {
                         const requiredTime =
