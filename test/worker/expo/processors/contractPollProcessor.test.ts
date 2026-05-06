@@ -32,8 +32,11 @@ describe("contractPollProcessor", () => {
         const firstPageVtxos = Array.from({ length: 100 }, (_, i) => ({
             txid: `tx-${i}`,
             vout: i,
+            script: "script-a",
         }));
-        const secondPageVtxos = [{ txid: "tx-100", vout: 100 }];
+        const secondPageVtxos = [
+            { txid: "tx-100", vout: 100, script: "script-a" },
+        ];
 
         const contractRepository = {
             getContracts: vi.fn().mockResolvedValue([contractA, contractB]),
