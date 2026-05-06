@@ -1193,6 +1193,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     }
 
     /**
+     * Extract the offending VTXO outpoint from a `VTXO_ALREADY_SPENT` error,
+     * if the server attached one in `metadata.vtxo_outpoint`. Returns
+     * `undefined` when the error isn't a parsed ArkError, isn't this code,
+     * or doesn't carry the metadata.
+     */
+    private extractSpentOutpoint(error: unknown): Outpoint | undefined {
+        const ark = maybeArkError(error);
+        if (!ark || ark.name !== "VTXO_ALREADY_SPENT") return undefined;
+        const raw = ark.metadata?.vtxo_outpoint;
+        if (typeof raw !== "string") return undefined;
+        const [txid, voutStr] = raw.split(":");
+        if (!txid || !voutStr) return undefined;
+        const vout = Number(voutStr);
+        if (!Number.isInteger(vout) || vout < 0) return undefined;
+        return { txid, vout };
+    }
+
+    /**
      * Reconcile the chosen VTXOs with the indexer's authoritative state
      * before submitting a settle intent. Pulls the canonical record for
      * each candidate outpoint via {@link IContractManager.refreshOutpoints}

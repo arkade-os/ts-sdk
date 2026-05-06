@@ -23,6 +23,10 @@ import {
     cursorCutoff,
     getSyncCursor,
 } from "../utils/syncCursors";
+import {
+    filterVtxosForScript,
+    warnAndFilterVtxosForScript,
+} from "./vtxoOwnership";
 
 const DEFAULT_PAGE_SIZE = 500;
 
@@ -637,9 +641,20 @@ export class ContractManager implements IContractManager {
         const contracts = opts?.scripts
             ? await this.getContracts({ script: opts.scripts })
             : undefined;
+        // Only forward an explicit window when the caller supplied one. An
+        // empty `{ after: undefined, before: undefined }` would short-circuit
+        // both the cursor-derived `?after=` query in `syncContracts` (because
+        // `??` doesn't fire on a non-nullish object) AND the cursor-advance
+        // gate (which requires `options.window === undefined`), turning every
+        // `refreshVtxos()` call into an unbounded full re-scan whose cursor
+        // never moves forward.
+        const hasExplicitWindow =
+            opts?.after !== undefined || opts?.before !== undefined;
         await this.syncContracts({
             contracts,
-            window: { after: opts?.after, before: opts?.before },
+            window: hasExplicitWindow
+                ? { after: opts?.after, before: opts?.before }
+                : undefined,
         });
     }
 
@@ -723,7 +738,10 @@ export class ContractManager implements IContractManager {
         const res = await Promise.all(
             contracts.map(({ script, address }) =>
                 this.config.walletRepository.getVtxos(address).then((vtxos) =>
-                    vtxos.map(
+                    // Address buckets may carry legacy duplicate rows from
+                    // other contracts that once shared the same address —
+                    // gate by script so the wrong-script row never wins.
+                    filterVtxosForScript(vtxos, script).map(
                         (vtxo) =>
                             ({
                                 ...vtxo,
@@ -823,9 +841,19 @@ export class ContractManager implements IContractManager {
         }
 
         for (const [addr, contractVtxos] of byContract) {
+            // The bucket is keyed by contract address, so the script filter
+            // here is the same as the contract's. Skip wrong-script rows
+            // rather than crash the reconcile loop.
+            const contract = contracts.find((c) => c.address === addr)!;
+            const filtered = warnAndFilterVtxosForScript(
+                contractVtxos,
+                contract.script,
+                "ContractManager.reconcilePendingFrontier"
+            );
+            if (filtered.length === 0) continue;
             await this.config.walletRepository.saveVtxos(
                 addr,
-                contractVtxos as ExtendedVirtualCoin[]
+                filtered as ExtendedVirtualCoin[]
             );
         }
     }
@@ -845,9 +873,15 @@ export class ContractManager implements IContractManager {
             result.set(contractScript, vtxos);
             const contract = contracts.find((c) => c.script === contractScript);
             if (contract) {
+                const filtered = warnAndFilterVtxosForScript(
+                    vtxos,
+                    contract.script,
+                    "ContractManager.fetchContractVxosFromIndexer"
+                );
+                if (filtered.length === 0) continue;
                 await this.config.walletRepository.saveVtxos(
                     contract.address,
-                    vtxos as ExtendedVirtualCoin[]
+                    filtered as ExtendedVirtualCoin[]
                 );
             }
         }

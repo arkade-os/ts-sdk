@@ -9,6 +9,7 @@ import {
     ContractEvent,
 } from "./types";
 import { isEventSourceError } from "../providers/utils";
+import { filterVtxosForScript } from "./vtxoOwnership";
 
 /**
  * Configuration for the ContractWatcher.
@@ -181,8 +182,14 @@ export class ContractWatcher {
      */
     private async seedLastKnownVtxos(state: ContractState): Promise<void> {
         try {
-            const cached = await this.config.walletRepository.getVtxos(
-                state.contract.address
+            // Apply the same script gate used by getContractVtxos so a legacy
+            // wrong-script row in the address bucket can't seed the baseline
+            // and then look "spent" on the first poll.
+            const cached = filterVtxosForScript(
+                await this.config.walletRepository.getVtxos(
+                    state.contract.address
+                ),
+                state.contract.script
             );
             for (const vtxo of cached) {
                 if (vtxo.isSpent) continue;
@@ -281,8 +288,13 @@ export class ContractWatcher {
                 return true;
             })
             .map(async (state): Promise<[[string, ContractVtxo[]]] | []> => {
-                // Use contract address as cache key
-                const cached = await repo.getVtxos(state.contract.address);
+                // Use contract address as cache key. Legacy address buckets
+                // can contain rows from other contracts; gate by script before
+                // converting so a wrong-script row never reaches the watcher.
+                const cached = filterVtxosForScript(
+                    await repo.getVtxos(state.contract.address),
+                    state.contract.script
+                );
                 if (cached.length > 0) {
                     // Convert to ContractVtxo with contractScript
                     const contractVtxos: ContractVtxo[] = cached.map((v) => ({
