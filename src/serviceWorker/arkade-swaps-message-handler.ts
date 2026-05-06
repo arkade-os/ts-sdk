@@ -51,6 +51,7 @@ export type RequestInitArkSwaps = RequestEnvelope & {
     > & {
         network: Network;
         arkServerUrl: string;
+        referralId?: string;
         swapProvider: {
             baseUrl: string;
         };
@@ -1175,6 +1176,7 @@ export class ArkadeSwapsMessageHandler
         this.swapProvider = new BoltzSwapProvider({
             apiUrl: payload.swapProvider.baseUrl,
             network: payload.network,
+            referralId: payload.referralId,
         });
 
         const handler = new ArkadeSwaps({
