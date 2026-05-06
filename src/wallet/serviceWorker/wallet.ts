@@ -54,6 +54,7 @@ import {
     RequestInitWallet,
     RequestIsContractManagerWatching,
     RequestRefreshVtxos,
+    RequestRefreshOutpoints,
     RequestReloadWallet,
     RequestSendBitcoin,
     RequestSettle,
@@ -199,6 +200,7 @@ export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     UPDATE_CONTRACT: 30_000,
     DELETE_CONTRACT: 10_000,
     REFRESH_VTXOS: 30_000,
+    REFRESH_OUTPOINTS: 30_000,
 };
 
 const DEDUPABLE_REQUEST_TYPES: ReadonlySet<string> = new Set([
@@ -1271,6 +1273,18 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                     id: getRandomId(),
                     tag: messageTag,
                     payload: opts,
+                };
+                await sendContractMessage(message);
+            },
+
+            async refreshOutpoints(
+                outpoints: { txid: string; vout: number }[]
+            ): Promise<void> {
+                const message: RequestRefreshOutpoints = {
+                    type: "REFRESH_OUTPOINTS",
+                    id: getRandomId(),
+                    tag: messageTag,
+                    payload: { outpoints },
                 };
                 await sendContractMessage(message);
             },

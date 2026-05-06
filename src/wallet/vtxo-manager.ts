@@ -7,8 +7,10 @@ import {
     isRecoverable,
     isSpendable,
     isSubdust,
+    Outpoint,
 } from ".";
 import { ArkProvider, SettlementEvent } from "../providers/ark";
+import { maybeArkError } from "../providers/errors";
 import { hasBoardingTxExpired } from "../utils/arkTransaction";
 import { CSVMultisigTapscript } from "../script/tapscript";
 import { hex } from "@scure/base";
@@ -1095,9 +1097,13 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                             if (e.message.includes("VTXO_ALREADY_SPENT")) {
                                 // Our local VTXO cache is stale vs. the
                                 // server's authoritative view. Trigger a
-                                // throttled refresh to reconcile, then skip
-                                // — the next cycle will see fresh data.
-                                void this.maybeRefreshAfterVtxoSpent();
+                                // throttled, targeted refresh on the
+                                // offending outpoint (if the server told
+                                // us which one), then skip — the next
+                                // cycle will see fresh data.
+                                void this.maybeRefreshAfterVtxoSpent(
+                                    this.extractSpentOutpoint(e)
+                                );
                                 return;
                             }
                         }
@@ -1124,13 +1130,22 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
     /**
      * VTXO_ALREADY_SPENT means the server's authoritative view of VTXO state
      * is ahead of ours — cross-instance race, pre-lock snapshot drift, or an
-     * SSE gap left stale data in the local cache. Silent-swallowing guarantees
-     * the same error on the next cycle because nothing reconciles the cache,
-     * so instead we trigger a full refreshVtxos() to advance the global sync
-     * cursor. Throttled to prevent a buggy indexer from causing a refresh
-     * storm.
+     * SSE gap left stale data in the local cache. Silent-swallowing
+     * guarantees the same error on the next cycle because nothing
+     * reconciles the cache.
+     *
+     * The cursor-derived delta sync filters by `created_at`, so a VTXO that
+     * was created before the cursor but spent recently can never be
+     * reconciled by `refreshVtxos()`. Use `refreshOutpoints` for surgical
+     * recovery: query the indexer for the specific stale outpoint and
+     * upsert its authoritative state into the wallet repository.
+     *
+     * Throttled because the same VTXO can fire repeatedly before the
+     * upsert observably propagates through the renewal selector.
      */
-    private maybeRefreshAfterVtxoSpent(): Promise<void> {
+    private maybeRefreshAfterVtxoSpent(
+        spentOutpoint?: Outpoint
+    ): Promise<void> {
         if (this.vtxoSpentRefreshPromise) {
             return this.vtxoSpentRefreshPromise;
         }
@@ -1146,7 +1161,12 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         this.vtxoSpentRefreshPromise = (async () => {
             try {
                 const contractManager = await this.wallet.getContractManager();
-                await contractManager.refreshVtxos();
+                if (spentOutpoint) {
+                    await contractManager.refreshOutpoints([spentOutpoint]);
+                } else {
+                    // No outpoint metadata — fall back to the broader refresh.
+                    await contractManager.refreshVtxos();
+                }
             } catch (e) {
                 console.error(
                     "Error refreshing VTXOs after VTXO_ALREADY_SPENT:",
@@ -1158,6 +1178,24 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
         })();
 
         return this.vtxoSpentRefreshPromise;
+    }
+
+    /**
+     * Extract the offending VTXO outpoint from a `VTXO_ALREADY_SPENT` error,
+     * if the server attached one in `metadata.vtxo_outpoint`. Returns
+     * `undefined` when the error isn't a parsed ArkError, isn't this code,
+     * or doesn't carry the metadata.
+     */
+    private extractSpentOutpoint(error: unknown): Outpoint | undefined {
+        const ark = maybeArkError(error);
+        if (!ark || ark.name !== "VTXO_ALREADY_SPENT") return undefined;
+        const raw = ark.metadata?.vtxo_outpoint;
+        if (typeof raw !== "string") return undefined;
+        const [txid, voutStr] = raw.split(":");
+        if (!txid || !voutStr) return undefined;
+        const vout = Number(voutStr);
+        if (!Number.isInteger(vout) || vout < 0) return undefined;
+        return { txid, vout };
     }
 
     /** Computes the next poll delay, applying exponential backoff on failures. */
@@ -1429,11 +1467,14 @@ export class VtxoManager implements AsyncDisposable, IVtxoManager {
                 ) {
                     // Local VTXO cache is stale vs. the server's
                     // authoritative view — not a transient failure.
-                    // Trigger a throttled refresh and skip this cycle
-                    // without bumping the failure counter, so the next
-                    // poll can retry once the cache reconciles.
+                    // Trigger a throttled, targeted refresh on the
+                    // offending outpoint and skip this cycle without
+                    // bumping the failure counter, so the next poll
+                    // can retry once the cache reconciles.
                     staleCacheSkip = true;
-                    void this.maybeRefreshAfterVtxoSpent();
+                    void this.maybeRefreshAfterVtxoSpent(
+                        this.extractSpentOutpoint(e)
+                    );
                 } else {
                     throw e;
                 }
