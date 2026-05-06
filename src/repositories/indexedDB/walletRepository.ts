@@ -237,7 +237,7 @@ export class IndexedDBWalletRepository implements WalletRepository {
             });
         } catch (error) {
             console.error(`Failed to get VTXOs for script ${script}:`, error);
-            return [];
+            throw error;
         }
     }
 
