@@ -14,6 +14,7 @@ import { hex } from "@scure/base";
 import {
     createDefaultContractParams,
     createMockContractVtxo,
+    createMockExtendedVtxo,
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
@@ -535,5 +536,131 @@ describe("ContractManager", () => {
 
             expect(mockIndexer.getVtxos).not.toHaveBeenCalled();
         });
+    });
+
+    // Regression: an address bucket can hold a row whose `script` belongs
+    // to a different contract (legacy duplicate). `getContractsWithVtxos`
+    // must filter each contract's bucket by its own `script` before mapping
+    // to ContractVtxo, otherwise the wrong-script row leaks into the wrong
+    // contract's view.
+    it("getContractsWithVtxos drops wrong-script rows from a contract's address bucket", async () => {
+        const altParams = DefaultContractHandler.serializeParams({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+            csvTimelock: {
+                type: "blocks",
+                value: DefaultVtxo.Script.DEFAULT_TIMELOCK.value + 1n,
+            },
+        });
+        const altScript = hex.encode(
+            DefaultContractHandler.createScript(altParams).pkScript
+        );
+
+        const walletRepo = new InMemoryWalletRepository();
+        const localManager = await ContractManager.create({
+            indexerProvider: createMockIndexerProvider(),
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: walletRepo,
+            watcherConfig: {
+                failsafePollIntervalMs: 1000,
+                reconnectDelayMs: 500,
+            },
+        });
+
+        const contractA = await localManager.createContract({
+            type: "default",
+            params: createDefaultContractParams(),
+            script: TEST_DEFAULT_SCRIPT,
+            address: "contract-A-addr",
+        });
+        const contractB = await localManager.createContract({
+            type: "default",
+            params: altParams,
+            script: altScript,
+            address: "contract-B-addr",
+        });
+
+        // Seed contract A's bucket with a row whose script actually
+        // belongs to contract B — the live bug we're guarding against.
+        const wrongScriptRow = createMockExtendedVtxo({
+            txid: "ee".repeat(32),
+            vout: 0,
+            virtualStatus: { state: "settled" },
+            isSpent: false,
+            script: contractB.script,
+        });
+        // Seed contract B's bucket with the script-matching row at the
+        // same outpoint, marked spent so we can prove the spent row wins
+        // over the unspent wrong-script duplicate.
+        const correctRow = createMockExtendedVtxo({
+            txid: "ee".repeat(32),
+            vout: 0,
+            virtualStatus: { state: "settled" },
+            isSpent: true,
+            script: contractB.script,
+        });
+        await walletRepo.saveVtxos(contractA.address, [wrongScriptRow]);
+        await walletRepo.saveVtxos(contractB.address, [correctRow]);
+
+        const result = await localManager.getContractsWithVtxos();
+        const a = result.find((c) => c.contract.script === contractA.script);
+        const b = result.find((c) => c.contract.script === contractB.script);
+
+        // Contract A must not return a row whose script is contract B's.
+        expect(
+            a?.vtxos.find((v) => v.txid === "ee".repeat(32))
+        ).toBeUndefined();
+        // Contract B returns its own script-matching row.
+        const bRow = b?.vtxos.find((v) => v.txid === "ee".repeat(32));
+        expect(bRow).toBeDefined();
+        expect(bRow?.isSpent).toBe(true);
+
+        localManager.dispose();
+    });
+
+    it("fetchContractVxosFromIndexer skips wrong-script rows without crashing the sync", async () => {
+        const walletRepo = new InMemoryWalletRepository();
+        const indexer = createMockIndexerProvider();
+        const goodVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+            txid: "aa".repeat(32),
+            virtualStatus: { state: "settled" },
+        });
+        // A row coming back tagged with the wrong script (e.g. indexer
+        // mis-routing) must be dropped, not persisted under the contract's
+        // address bucket.
+        const badVtxo = createMockContractVtxo(TEST_DEFAULT_SCRIPT, {
+            txid: "bb".repeat(32),
+            virtualStatus: { state: "settled" },
+            script: "ff".repeat(34),
+        });
+        (indexer.getVtxos as any).mockResolvedValue({
+            vtxos: [goodVtxo, badVtxo],
+        });
+
+        const localManager = await ContractManager.create({
+            indexerProvider: indexer,
+            contractRepository: new InMemoryContractRepository(),
+            walletRepository: walletRepo,
+            watcherConfig: {
+                failsafePollIntervalMs: 1000,
+                reconnectDelayMs: 500,
+            },
+        });
+
+        await expect(
+            localManager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "contract-addr",
+            })
+        ).resolves.toBeDefined();
+
+        const saved = await walletRepo.getVtxos("contract-addr");
+        // The badVtxo must have been filtered out; the good one persists.
+        expect(saved.find((v) => v.txid === "aa".repeat(32))).toBeDefined();
+        expect(saved.find((v) => v.txid === "bb".repeat(32))).toBeUndefined();
+
+        localManager.dispose();
     });
 });

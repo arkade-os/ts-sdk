@@ -23,6 +23,10 @@ import {
     cursorCutoff,
     getSyncCursor,
 } from "../utils/syncCursors";
+import {
+    filterVtxosForScript,
+    warnAndFilterVtxosForScript,
+} from "./vtxoOwnership";
 
 const DEFAULT_PAGE_SIZE = 500;
 
@@ -734,7 +738,10 @@ export class ContractManager implements IContractManager {
         const res = await Promise.all(
             contracts.map(({ script, address }) =>
                 this.config.walletRepository.getVtxos(address).then((vtxos) =>
-                    vtxos.map(
+                    // Address buckets may carry legacy duplicate rows from
+                    // other contracts that once shared the same address —
+                    // gate by script so the wrong-script row never wins.
+                    filterVtxosForScript(vtxos, script).map(
                         (vtxo) =>
                             ({
                                 ...vtxo,
@@ -834,9 +841,19 @@ export class ContractManager implements IContractManager {
         }
 
         for (const [addr, contractVtxos] of byContract) {
+            // The bucket is keyed by contract address, so the script filter
+            // here is the same as the contract's. Skip wrong-script rows
+            // rather than crash the reconcile loop.
+            const contract = contracts.find((c) => c.address === addr)!;
+            const filtered = warnAndFilterVtxosForScript(
+                contractVtxos,
+                contract.script,
+                "ContractManager.reconcilePendingFrontier"
+            );
+            if (filtered.length === 0) continue;
             await this.config.walletRepository.saveVtxos(
                 addr,
-                contractVtxos as ExtendedVirtualCoin[]
+                filtered as ExtendedVirtualCoin[]
             );
         }
     }
@@ -856,9 +873,15 @@ export class ContractManager implements IContractManager {
             result.set(contractScript, vtxos);
             const contract = contracts.find((c) => c.script === contractScript);
             if (contract) {
+                const filtered = warnAndFilterVtxosForScript(
+                    vtxos,
+                    contract.script,
+                    "ContractManager.fetchContractVxosFromIndexer"
+                );
+                if (filtered.length === 0) continue;
                 await this.config.walletRepository.saveVtxos(
                     contract.address,
-                    vtxos as ExtendedVirtualCoin[]
+                    filtered as ExtendedVirtualCoin[]
                 );
             }
         }

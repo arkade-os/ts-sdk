@@ -67,6 +67,12 @@ export const testDefaultScript = new DefaultVtxo.Script({
     serverPubKey: TEST_SERVER_PUB_KEY,
 });
 export const TEST_DEFAULT_SCRIPT = hex.encode(testDefaultScript.pkScript);
+// Real Arkade address whose pkScript decodes to TEST_DEFAULT_SCRIPT. Use this
+// as the wallet's primary address in tests so script-aware code paths can
+// derive a script via scriptFromArkAddress and match VTXOs by default script.
+export const TEST_DEFAULT_ARK_ADDRESS = testDefaultScript
+    .address("ark", TEST_SERVER_PUB_KEY)
+    .encode();
 
 // Create a valid delegate contract script
 export const testDelegateScript = new DelegateVtxo.Script({
