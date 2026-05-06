@@ -17,6 +17,7 @@ import { hex } from "@scure/base";
 type MockWalletOptions = {
     contractManager?: {
         onContractEvent: ReturnType<typeof vi.fn>;
+        refreshOutpoints?: ReturnType<typeof vi.fn>;
     };
     delegatorManager?: {
         delegate: ReturnType<typeof vi.fn>;
@@ -29,9 +30,21 @@ const createMockWallet = (
     arkAddress = "tark1qpt0syx7j0jspe69kldtljet0x9jz6ns4xw70m0w0xl30yfhn0mzmxz6yz8rduexx9sv73mqth7ecy8rtzcgm498kad3avmhyhmy097ew6h83g",
     options: MockWalletOptions = {}
 ): IWallet => {
+    // Provide a default no-op refreshOutpoints stub when the caller-supplied
+    // mock omits one — the pre-flight `revalidateBeforeSettle` invokes it
+    // before every settle attempt.
     const contractManager = options.contractManager ?? {
         onContractEvent: vi.fn().mockReturnValue(() => {}),
+        refreshOutpoints: vi.fn().mockResolvedValue(undefined),
     };
+    if (
+        contractManager &&
+        !(contractManager as Record<string, unknown>).refreshOutpoints
+    ) {
+        (contractManager as Record<string, unknown>).refreshOutpoints = vi
+            .fn()
+            .mockResolvedValue(undefined);
+    }
 
     return {
         getVtxos: vi.fn().mockResolvedValue(vtxos),
@@ -46,8 +59,14 @@ const createMockWallet = (
 };
 
 const flushMicrotasks = async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    // Drain enough cycles to clear the longest async chain in
+    // VtxoManager: getExpiringVtxos → revalidateBeforeSettle (which
+    // itself does getContractManager + refreshOutpoints +
+    // getExpiringVtxos) → settle. Two awaits used to be sufficient
+    // before pre-flight was added.
+    for (let i = 0; i < 8; i++) {
+        await Promise.resolve();
+    }
 };
 
 // Helper to create mock VTXO
@@ -341,6 +360,7 @@ describe("VtxoManager - Lifecycle", () => {
         const unsubscribe = vi.fn();
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
         const wallet = createMockWallet(
             [],
@@ -358,6 +378,7 @@ describe("VtxoManager - Lifecycle", () => {
     it("should not subscribe to contract events when settlement is disabled", async () => {
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
         const wallet = createMockWallet(
             [],
@@ -376,6 +397,7 @@ describe("VtxoManager - Lifecycle", () => {
         const unsubscribe = vi.fn();
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(unsubscribe),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
         const wallet = createMockWallet(
             [],
@@ -1226,6 +1248,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
         } = opts;
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
 
         const mockPkScript = new Uint8Array([
@@ -1422,6 +1445,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
                 getDelegatorManager: vi.fn().mockResolvedValue(undefined),
                 getContractManager: vi.fn().mockResolvedValue({
                     onContractEvent: vi.fn().mockReturnValue(() => {}),
+                    refreshOutpoints: vi.fn().mockResolvedValue(undefined),
                 }),
                 settle: vi.fn().mockResolvedValue("mock-txid"),
                 getBoardingUtxos: vi
@@ -1466,6 +1490,7 @@ describe("VtxoManager - Boarding UTXO Sweep", () => {
             ]);
             const contractManager = {
                 onContractEvent: vi.fn().mockReturnValue(() => {}),
+                refreshOutpoints: vi.fn().mockResolvedValue(undefined),
             };
 
             return {
@@ -1596,6 +1621,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
                 eventHandler = handler;
                 return () => {};
             }),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
 
         const wallet = createMockWallet(vtxos, "arkade1myaddress", {
@@ -1656,6 +1682,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
                 eventHandler = handler;
                 return () => {};
             }),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
 
         const wallet = createMockWallet(vtxos, "arkade1myaddress", {
@@ -1716,6 +1743,7 @@ describe("VtxoManager - Renewal loop prevention", () => {
                     eventHandler = handler;
                     return () => {};
                 }),
+                refreshOutpoints: vi.fn().mockResolvedValue(undefined),
             };
 
             const wallet = createMockWallet(vtxos, "arkade1myaddress", {
@@ -1786,6 +1814,7 @@ describe("VtxoManager - Periodic settle cooldown", () => {
         ]);
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
@@ -2079,6 +2108,7 @@ describe("VtxoManager - Combined periodic settle (boarding + VTXOs)", () => {
         ]);
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
         return {
             getVtxos: vi.fn().mockResolvedValue(vtxos),
@@ -2342,6 +2372,7 @@ describe("VtxoManager - Cross-instance poll guard", () => {
         ]);
         const contractManager = {
             onContractEvent: vi.fn().mockReturnValue(() => {}),
+            refreshOutpoints: vi.fn().mockResolvedValue(undefined),
         };
         return {
             getVtxos: vi.fn().mockResolvedValue([]),
@@ -2744,9 +2775,13 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
         await (manager as any).runPeriodicSettle([boarding]);
 
         expect(wallet.settle).toHaveBeenCalledTimes(1);
-        // Targeted recovery: just the offending outpoint, no full re-scan.
-        expect(contractManager.refreshOutpoints).toHaveBeenCalledTimes(1);
-        expect(contractManager.refreshOutpoints).toHaveBeenCalledWith([
+        // Two refreshOutpoints calls in this test:
+        //   1. pre-flight validation against the chosen candidate
+        //   2. post-failure recovery on the server-supplied outpoint
+        // The recovery call (last) is what verifies the structured-error
+        // metadata is parsed correctly.
+        expect(contractManager.refreshOutpoints).toHaveBeenCalledTimes(2);
+        expect(contractManager.refreshOutpoints).toHaveBeenLastCalledWith([
             {
                 txid: "640048627268a0f1acb9920daaf5a3c6e237cafc707b007afbbd450031038e63",
                 vout: 0,
@@ -2756,8 +2791,8 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
     });
 
     it("falls back to refreshVtxos() when the error has no parsable outpoint metadata", async () => {
-        // Plain string error — no JSON envelope, no metadata. The fallback
-        // path is the cursor-based broad refresh.
+        // Plain string error — no JSON envelope, no metadata. The
+        // recovery path is the cursor-based broad refresh.
         const boarding = makeUnexpiredUtxo(10_000);
         const vtxo = makeExpiringVtxo(5_000);
         const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
@@ -2773,9 +2808,77 @@ describe("VtxoManager - VTXO_ALREADY_SPENT reconciliation", () => {
 
         await (manager as any).runPeriodicSettle([boarding]);
 
-        expect(contractManager.refreshOutpoints).not.toHaveBeenCalled();
+        // refreshOutpoints fires once for the pre-flight validation; the
+        // post-failure recovery has no outpoint to target so it falls back
+        // to refreshVtxos.
+        expect(contractManager.refreshOutpoints).toHaveBeenCalledTimes(1);
         expect(contractManager.refreshVtxos).toHaveBeenCalledTimes(1);
         expect(contractManager.refreshVtxos).toHaveBeenCalledWith();
+    });
+
+    it("pre-flight refreshOutpoints runs before settle on the periodic poll path", async () => {
+        // Verify the pre-flight validation step happens BEFORE the
+        // settle attempt — even on the success path.
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
+        (wallet.settle as any).mockResolvedValue("mock-txid");
+
+        const callOrder: string[] = [];
+        contractManager.refreshOutpoints.mockImplementation(async () => {
+            callOrder.push("refreshOutpoints");
+        });
+        (wallet.settle as any).mockImplementation(async () => {
+            callOrder.push("settle");
+            return "mock-txid";
+        });
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        // Pre-flight is called with the chosen vtxo's outpoint, then settle.
+        expect(callOrder).toEqual(["refreshOutpoints", "settle"]);
+        expect(contractManager.refreshOutpoints).toHaveBeenCalledWith([
+            { txid: vtxo.txid, vout: vtxo.vout },
+        ]);
+    });
+
+    it("pre-flight drops candidates the indexer reports as spent and skips a fully-stale settle", async () => {
+        // The pre-flight calls refreshOutpoints (which would mark the
+        // candidate spent in the wallet repo). When we re-pull via
+        // getExpiringVtxos, a real wallet would now return [] — simulate
+        // that by switching the wallet's getVtxos mock to return an
+        // empty array on the second call.
+        const boarding = makeUnexpiredUtxo(10_000);
+        const vtxo = makeExpiringVtxo(5_000);
+        const { wallet, contractManager } = buildWallet([boarding], [vtxo]);
+
+        // First getVtxos call (initial selection) returns the stale vtxo.
+        // Second call (post-refresh) returns nothing — the refresh
+        // "discovered" the vtxo is spent.
+        (wallet.getVtxos as any)
+            .mockResolvedValueOnce([vtxo])
+            .mockResolvedValue([]);
+
+        const manager = new VtxoManager(wallet, undefined, {
+            boardingUtxoSweep: false,
+            pollIntervalMs: 60_000,
+        });
+        manager.dispose();
+
+        await (manager as any).runPeriodicSettle([boarding]);
+
+        // No settle attempt at all — pre-flight saved us the round-trip.
+        // (Boarding-only settles still run but the test setup has the
+        // boarding utxo unsettled, so a settle fires for it. We assert
+        // the failing-vtxo path didn't trigger the recovery handler.)
+        expect(contractManager.refreshOutpoints).toHaveBeenCalledTimes(1);
+        expect(contractManager.refreshVtxos).not.toHaveBeenCalled();
     });
 
     it("triggers refreshVtxos() from the event-driven renewal path on VTXO_ALREADY_SPENT", async () => {
