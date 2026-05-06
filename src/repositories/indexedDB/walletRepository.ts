@@ -24,7 +24,7 @@ import { closeDatabase, openDatabase } from "./manager";
 import { initDatabase } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
-import { isVtxoForScript, vtxoOutpoint } from "../../contracts/vtxoOwnership";
+import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
