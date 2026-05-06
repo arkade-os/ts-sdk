@@ -115,6 +115,7 @@ export type SvcWrkArkadeSwapsConfig = Pick<
     messageTag?: string;
     network: Network;
     arkServerUrl: string;
+    referralId?: string;
 };
 
 export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
@@ -176,6 +177,7 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             arkServerUrl: config.arkServerUrl,
             swapProvider: { baseUrl: config.swapProvider.getApiUrl() },
             swapManager: config.swapManager,
+            referralId: config.referralId,
         };
 
         const initMessage: RequestInitArkSwaps = {
