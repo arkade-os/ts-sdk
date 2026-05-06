@@ -101,7 +101,10 @@ import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
-import { validateVtxosForScript } from "../contracts/vtxoOwnership";
+import {
+    validateVtxosForScript,
+    saveVtxosForContract,
+} from "../contracts/vtxoOwnership";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -2669,7 +2672,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 spentByScript.set(v.script, arr);
             }
 
-            const byAddress = new Map<string, ExtendedVirtualCoin[]>();
             for (const [script, vtxos] of spentByScript) {
                 // User-initiated send path: a wrong-script row here means the
                 // wallet is about to record ownership against the wrong
@@ -2685,20 +2687,20 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         `Wallet.updateDbAfterOffchainTx: no contract owns script ${script}`
                     );
                 }
-                const bucket = byAddress.get(targetAddr) ?? [];
-                bucket.push(...vtxos);
-                byAddress.set(targetAddr, bucket);
+                await saveVtxosForContract(
+                    this.walletRepository,
+                    { script, address: targetAddr },
+                    vtxos
+                );
             }
 
             // Change is always primary-script by construction.
             if (changeVtxo) {
-                const bucket = byAddress.get(primaryAddr) ?? [];
-                bucket.push(changeVtxo);
-                byAddress.set(primaryAddr, bucket);
-            }
-
-            for (const [addr, vtxos] of byAddress) {
-                await this.walletRepository.saveVtxos(addr, vtxos);
+                await saveVtxosForContract(
+                    this.walletRepository,
+                    { script: changeVtxo.script!, address: primaryAddr },
+                    [changeVtxo]
+                );
             }
 
             await this.walletRepository.saveTransactions(primaryAddr, [
@@ -2777,7 +2779,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     contracts.map((c) => [c.script, c.address])
                 );
 
-                const byAddress = new Map<string, ExtendedVirtualCoin[]>();
                 const byScript = new Map<string, ExtendedVirtualCoin[]>();
                 for (const v of spentVtxos) {
                     if (!v.script) {
@@ -2804,13 +2805,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                             `Wallet.updateDbAfterSettle: no contract owns script ${script}`
                         );
                     }
-                    const bucket = byAddress.get(targetAddr) ?? [];
-                    bucket.push(...vtxos);
-                    byAddress.set(targetAddr, bucket);
-                }
-
-                for (const [bucketAddr, vtxos] of byAddress) {
-                    await this.walletRepository.saveVtxos(bucketAddr, vtxos);
+                    await saveVtxosForContract(
+                        this.walletRepository,
+                        { script, address: targetAddr },
+                        vtxos
+                    );
                 }
             }
 

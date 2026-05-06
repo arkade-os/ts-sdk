@@ -1,7 +1,10 @@
 import type { TaskItem, TaskResult } from "../taskQueue";
 import type { TaskProcessor, TaskDependencies } from "../taskRunner";
 import type { ExtendedVirtualCoin } from "../../../wallet";
-import { warnAndFilterVtxosForScript } from "../../../contracts/vtxoOwnership";
+import {
+    warnAndFilterVtxosForScript,
+    saveVtxosForContract,
+} from "../../../contracts/vtxoOwnership";
 
 export const CONTRACT_POLL_TASK_TYPE = "contract-poll";
 
@@ -69,7 +72,7 @@ export const contractPollProcessor: TaskProcessor = {
                 contract.script,
                 "contractPollProcessor"
             );
-            await walletRepository.saveVtxos(contract.address, filtered);
+            await saveVtxosForContract(walletRepository, contract, filtered);
             vtxosSaved += filtered.length;
             contractsProcessed++;
         }

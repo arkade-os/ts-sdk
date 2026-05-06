@@ -46,6 +46,8 @@ import { Transaction } from "../../utils/transaction";
 import { buildTransactionHistory } from "../../utils/transactionHistory";
 import {
     filterVtxosForScript,
+    getVtxosForContract,
+    saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "../../contracts/vtxoOwnership";
 import { scriptFromArkAddress } from "../../repositories/scriptFromAddress";
@@ -1257,10 +1259,13 @@ export class WalletMessageHandler
                                 ? address
                                 : addrByScript.get(script);
                         if (!targetAddress) continue;
-                        await this.walletRepository?.saveVtxos(
-                            targetAddress,
-                            filtered
-                        );
+                        if (this.walletRepository) {
+                            await saveVtxosForContract(
+                                this.walletRepository,
+                                { script, address: targetAddress },
+                                filtered
+                            );
+                        }
                     }
 
                     // notify all clients about the virtual output state update
@@ -1521,10 +1526,9 @@ export class WalletMessageHandler
         const manager = await this.readonlyWallet.getContractManager();
         const contracts = await manager.getContracts();
         for (const contract of contracts) {
-            const vtxos = await this.walletRepository.getVtxos(
-                contract.address
+            addVtxos(
+                await getVtxosForContract(this.walletRepository, contract)
             );
-            addVtxos(filterVtxosForScript(vtxos, contract.script));
         }
 
         // Also check the wallet's primary address. Decode it to its script

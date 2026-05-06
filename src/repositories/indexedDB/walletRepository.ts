@@ -3,7 +3,11 @@ import {
     ExtendedVirtualCoin,
     ArkTransaction,
 } from "../../wallet";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+} from "../walletRepository";
 import {
     STORE_VTXOS,
     STORE_UTXOS,
@@ -20,6 +24,7 @@ import { closeDatabase, openDatabase } from "./manager";
 import { initDatabase } from "./schema";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { DEFAULT_DB_NAME } from "../../worker/browser/utils";
+import { isVtxoForScript, vtxoOutpoint } from "../../contracts/vtxoOwnership";
 
 /**
  * IndexedDB-based implementation of WalletRepository.
@@ -178,6 +183,103 @@ export class IndexedDBWalletRepository implements WalletRepository {
                 `Failed to clear VTXOs for address ${address}:`,
                 error
             );
+            throw error;
+        }
+    }
+
+    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_VTXOS], "readonly");
+                const store = transaction.objectStore(STORE_VTXOS);
+                const index = store.index("script");
+                const request: IDBRequest<
+                    (SerializedVtxo & { address: string })[]
+                > = index.getAll(script);
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    const results = request.result || [];
+                    try {
+                        // Defensive filter: only rows whose script matches.
+                        const matching = results.filter(
+                            (r) => r.script === script
+                        );
+
+                        // Dedup same outpoint rows across address buckets.
+                        // Work on raw rows so the address field is available
+                        // for the canonicality tiebreaker.
+                        const byOutpoint = new Map<
+                            string,
+                            SerializedVtxo & { address: string }
+                        >();
+                        for (const row of matching) {
+                            const outpoint = `${row.txid}:${row.vout}`;
+                            const existing = byOutpoint.get(outpoint);
+                            if (!existing) {
+                                byOutpoint.set(outpoint, row);
+                                continue;
+                            }
+                            if (shouldReplaceVtxo(existing, row)) {
+                                byOutpoint.set(outpoint, row);
+                            }
+                        }
+                        resolve(
+                            Array.from(byOutpoint.values()).map(
+                                deserializeVtxoWithBackfill
+                            )
+                        );
+                    } catch (err) {
+                        reject(err);
+                    }
+                };
+            });
+        } catch (error) {
+            console.error(`Failed to get VTXOs for script ${script}:`, error);
+            return [];
+        }
+    }
+
+    async saveVtxosForScript(
+        key: VtxoRepositoryKey,
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<void> {
+        if (!key.address) {
+            throw new Error("IndexedDBWalletRepository requires an address");
+        }
+        for (const vtxo of vtxos) {
+            if (!isVtxoForScript(vtxo, key.script)) {
+                throw new Error(
+                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
+                );
+            }
+        }
+        return this.saveVtxos(key.address, vtxos);
+    }
+
+    async deleteVtxosForScript(script: string): Promise<void> {
+        try {
+            const db = await this.getDB();
+            return new Promise((resolve, reject) => {
+                const transaction = db.transaction([STORE_VTXOS], "readwrite");
+                const store = transaction.objectStore(STORE_VTXOS);
+                const index = store.index("script");
+                const request = index.openCursor(IDBKeyRange.only(script));
+
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    const cursor = request.result;
+                    if (cursor) {
+                        cursor.delete();
+                        cursor.continue();
+                    } else {
+                        resolve();
+                    }
+                };
+            });
+        } catch (error) {
+            console.error(`Failed to clear VTXOs for script ${script}:`, error);
             throw error;
         }
     }
@@ -436,4 +538,44 @@ function deserializeVtxoWithBackfill(
         o = { ...o, script: scriptFromArkAddress(o.address) };
     }
     return deserializeVtxo(o);
+}
+
+type RawVtxoRow = SerializedVtxo & { address: string };
+
+function isCanonicalRow(row: RawVtxoRow): boolean {
+    try {
+        return scriptFromArkAddress(row.address) === row.script;
+    } catch {
+        return false;
+    }
+}
+
+function shouldReplaceVtxo(
+    existing: RawVtxoRow,
+    incoming: RawVtxoRow
+): boolean {
+    const existingCanonical = isCanonicalRow(existing);
+    const incomingCanonical = isCanonicalRow(incoming);
+
+    if (incomingCanonical && !existingCanonical) return true;
+    if (existingCanonical && !incomingCanonical) return false;
+
+    // Tie on canonicality, check lifecycle completeness
+    const existingWeight = getLifecycleWeight(existing);
+    const incomingWeight = getLifecycleWeight(incoming);
+
+    if (incomingWeight > existingWeight) return true;
+    if (existingWeight > incomingWeight) return false;
+
+    // Tie on weight, stable sort by address
+    return incoming.address < existing.address;
+}
+
+function getLifecycleWeight(v: RawVtxoRow): number {
+    let weight = 0;
+    if (v.isSpent !== undefined) weight += 1;
+    if (v.spentBy) weight += 2;
+    if (v.settledBy) weight += 2;
+    if (v.arkTxId) weight += 2;
+    return weight;
 }

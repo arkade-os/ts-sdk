@@ -3,7 +3,11 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
 } from "../../wallet";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+} from "../walletRepository";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -15,6 +19,7 @@ import {
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
 import { SQLExecutor } from "./types";
+import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 
 interface SQLiteWalletRepositoryOptions {
     /** Table name prefix (default: "ark_") */
@@ -329,6 +334,39 @@ export class SQLiteWalletRepository implements WalletRepository {
             `DELETE FROM ${this.tables.vtxos} WHERE address = ?`,
             [address]
         );
+    }
+
+    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
+        await this.ensureInit();
+        const rows = await this.db.all<VtxoRow>(
+            `SELECT * FROM ${this.tables.vtxos} WHERE script = ?`,
+            [script]
+        );
+        return rows.map(vtxoRowToDomain);
+    }
+
+    async saveVtxosForScript(
+        key: VtxoRepositoryKey,
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<void> {
+        if (!key.address) {
+            throw new Error("SQLiteWalletRepository requires an address");
+        }
+        for (const vtxo of vtxos) {
+            if (!isVtxoForScript(vtxo, key.script)) {
+                throw new Error(
+                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
+                );
+            }
+        }
+        return this.saveVtxos(key.address, vtxos);
+    }
+
+    async deleteVtxosForScript(script: string): Promise<void> {
+        await this.ensureInit();
+        await this.db.run(`DELETE FROM ${this.tables.vtxos} WHERE script = ?`, [
+            script,
+        ]);
     }
 
     // ── UTXO management ────────────────────────────────────────────────

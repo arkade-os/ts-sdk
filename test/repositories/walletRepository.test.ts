@@ -37,7 +37,7 @@ const walletRepositoryImplementations: Array<
 // WalletRepository tests
 describe.each(walletRepositoryImplementations)(
     "WalletRepository: $name",
-    ({ factory }) => {
+    ({ factory, name }) => {
         let repository: WalletRepository;
         const testAddress = "test-address-123";
 
@@ -111,6 +111,103 @@ describe.each(walletRepositoryImplementations)(
                 expect(retrieved2).toHaveLength(1);
                 expect(retrieved2[0].txid).toBe("tx2");
             });
+        });
+
+        describe("Script-scoped VTXO management", () => {
+            it("should return empty array when no VTXOs exist for script", async () => {
+                const vtxos = await repository.getVtxosForScript!("script1");
+                expect(vtxos).toEqual([]);
+            });
+
+            it("should save and retrieve VTXOs by script", async () => {
+                const script1 = "script1";
+                const address1 = "address1";
+                const vtxo1 = {
+                    ...createMockVtxo("tx1", 0, 10000),
+                    script: script1,
+                };
+
+                await repository.saveVtxosForScript!(
+                    { script: script1, address: address1 },
+                    [vtxo1]
+                );
+                const retrieved = await repository.getVtxosForScript!(script1);
+
+                expect(retrieved).toHaveLength(1);
+                expect(retrieved[0].txid).toBe("tx1");
+                expect(retrieved[0].script).toBe(script1);
+            });
+
+            it("should throw when saving VTXO with mismatched script", async () => {
+                const script1 = "script1";
+                const address1 = "address1";
+                const vtxo1 = {
+                    ...createMockVtxo("tx1", 0, 10000),
+                    script: "wrong-script",
+                };
+
+                await expect(
+                    repository.saveVtxosForScript!(
+                        { script: script1, address: address1 },
+                        [vtxo1]
+                    )
+                ).rejects.toThrow();
+            });
+
+            it("should delete VTXOs by script across address buckets", async () => {
+                const script1 = "script1";
+                const address1 = "address1";
+                const address2 = "address2";
+                const vtxo1 = {
+                    ...createMockVtxo("tx1", 0, 10000),
+                    script: script1,
+                };
+                const vtxo2 = {
+                    ...createMockVtxo("tx2", 0, 20000),
+                    script: script1,
+                };
+
+                await repository.saveVtxos(address1, [vtxo1]);
+                await repository.saveVtxos(address2, [vtxo2]);
+
+                await repository.deleteVtxosForScript!(script1);
+
+                expect(await repository.getVtxosForScript!(script1)).toEqual(
+                    []
+                );
+                expect(await repository.getVtxos(address1)).toEqual([]);
+                expect(await repository.getVtxos(address2)).toEqual([]);
+            });
+
+            if (name.includes("IndexedDB")) {
+                it("should dedup same outpoint across address buckets in getVtxosForScript", async () => {
+                    const script1 = "script1";
+                    const address1 = "address1";
+                    const address2 = "address2";
+                    const txid = "tx1";
+                    const vout = 0;
+
+                    // vtxo1 is canonical for address1
+                    const vtxo1 = {
+                        ...createMockVtxo(txid, vout, 10000),
+                        script: script1,
+                        address: address1,
+                    };
+                    // vtxo2 is a duplicate in address2 bucket
+                    const vtxo2 = {
+                        ...createMockVtxo(txid, vout, 10000),
+                        script: script1,
+                        address: address2,
+                    };
+
+                    await repository.saveVtxos(address1, [vtxo1]);
+                    await repository.saveVtxos(address2, [vtxo2]);
+
+                    const retrieved =
+                        await repository.getVtxosForScript!(script1);
+                    expect(retrieved).toHaveLength(1);
+                });
+            }
         });
 
         describe("UTXO management", () => {

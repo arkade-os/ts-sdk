@@ -1979,16 +1979,28 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1 // changeVout
         );
 
-        expect(saveVtxos).toHaveBeenCalledTimes(1);
-        const [addr, vtxos] = saveVtxos.mock.calls[0];
-        expect(addr).toBe(PRIMARY_ADDR);
-        expect(vtxos).toHaveLength(2); // spent + change
-        expect(vtxos[0].txid).toBe(input.txid);
-        expect(vtxos[0].isSpent).toBe(true);
-        expect(vtxos[0].script).toBe(PRIMARY_SCRIPT);
-        expect(vtxos[1].txid).toBe("ark-tx-id");
-        expect(vtxos[1].vout).toBe(1);
-        expect(vtxos[1].script).toBe(PRIMARY_SCRIPT);
+        // Per-script saves: one for the spent row, one for the change row.
+        expect(saveVtxos).toHaveBeenCalledTimes(2);
+        expect(saveVtxos).toHaveBeenCalledWith(
+            PRIMARY_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({
+                    txid: input.txid,
+                    isSpent: true,
+                    script: PRIMARY_SCRIPT,
+                }),
+            ])
+        );
+        expect(saveVtxos).toHaveBeenCalledWith(
+            PRIMARY_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({
+                    txid: "ark-tx-id",
+                    vout: 1,
+                    script: PRIMARY_SCRIPT,
+                }),
+            ])
+        );
 
         expect(saveTransactions).toHaveBeenCalledTimes(1);
         expect(saveTransactions.mock.calls[0][0]).toBe(PRIMARY_ADDR);
@@ -2031,7 +2043,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         expect(calls.get(DELEGATE_ADDR)[0].script).toBe(DELEGATE_SCRIPT);
     });
 
-    it("aggregates change with primary-bucket spent rows in a single save", async () => {
+    it("saves change separately from primary-bucket spent rows", async () => {
         const primaryInput = makeSpentInput(PRIMARY_SCRIPT, "1");
         const delegateInput = makeSpentInput(DELEGATE_SCRIPT, "2");
         const annotateVtxos = vi
@@ -2058,13 +2070,20 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             1
         );
 
-        expect(saveVtxos).toHaveBeenCalledTimes(2);
-        const calls = new Map(
-            saveVtxos.mock.calls.map(([addr, vtxos]: any) => [addr, vtxos])
+        // Per-script saves: primary spent, delegate spent, change (primary script).
+        expect(saveVtxos).toHaveBeenCalledTimes(3);
+        expect(saveVtxos).toHaveBeenCalledWith(
+            PRIMARY_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({ script: PRIMARY_SCRIPT }),
+            ])
         );
-        // Primary bucket gets the primary spent row + the change row.
-        expect(calls.get(PRIMARY_ADDR)).toHaveLength(2);
-        expect(calls.get(DELEGATE_ADDR)).toHaveLength(1);
+        expect(saveVtxos).toHaveBeenCalledWith(
+            DELEGATE_ADDR,
+            expect.arrayContaining([
+                expect.objectContaining({ script: DELEGATE_SCRIPT }),
+            ])
+        );
     });
 
     it("rethrows when a spent VTXO has no script", async () => {
