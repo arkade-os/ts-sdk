@@ -96,10 +96,12 @@ export async function saveVtxosForContract(
     contract: Pick<Contract, "script" | "address">,
     vtxos: ExtendedVirtualCoin[]
 ): Promise<void> {
-    return repo.saveVtxosForScript
-        ? repo.saveVtxosForScript(
-              { script: contract.script, address: contract.address },
-              vtxos
-          )
-        : repo.saveVtxos(contract.address, vtxos);
+    if (repo.saveVtxosForScript) {
+        return repo.saveVtxosForScript(
+            { script: contract.script, address: contract.address },
+            vtxos
+        );
+    }
+    validateVtxosForScript(vtxos, contract.script, "saveVtxosForContract");
+    return repo.saveVtxos(contract.address, vtxos);
 }
