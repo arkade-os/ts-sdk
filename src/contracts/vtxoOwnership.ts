@@ -1,4 +1,6 @@
-import type { VirtualCoin } from "../wallet";
+import type { ExtendedVirtualCoin, VirtualCoin } from "../wallet";
+import type { WalletRepository } from "../repositories/walletRepository";
+import type { Contract } from "./types";
 
 /**
  * Tier 1 helpers that enforce VTXO ownership at call sites that already know
@@ -71,4 +73,35 @@ export function validateVtxosForScript(
     throw new Error(
         `${context}: refusing to persist ${mismatches.length} VTXO(s) whose script does not match ${script}: ${detail}`
     );
+}
+
+/**
+ * Tier 2 dispatch helpers: route to script-scoped repository methods when
+ * available, falling back to Tier 1 address-based filtering otherwise.
+ */
+export async function getVtxosForContract(
+    repo: WalletRepository,
+    contract: Pick<Contract, "script" | "address">
+): Promise<ExtendedVirtualCoin[]> {
+    return repo.getVtxosForScript
+        ? repo.getVtxosForScript(contract.script)
+        : filterVtxosForScript(
+              await repo.getVtxos(contract.address),
+              contract.script
+          );
+}
+
+export async function saveVtxosForContract(
+    repo: WalletRepository,
+    contract: Pick<Contract, "script" | "address">,
+    vtxos: ExtendedVirtualCoin[]
+): Promise<void> {
+    if (repo.saveVtxosForScript) {
+        return repo.saveVtxosForScript(
+            { script: contract.script, address: contract.address },
+            vtxos
+        );
+    }
+    validateVtxosForScript(vtxos, contract.script, "saveVtxosForContract");
+    return repo.saveVtxos(contract.address, vtxos);
 }

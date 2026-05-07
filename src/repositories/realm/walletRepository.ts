@@ -3,7 +3,11 @@ import {
     ExtendedCoin,
     ExtendedVirtualCoin,
 } from "../../wallet";
-import { WalletRepository, WalletState } from "../walletRepository";
+import {
+    WalletRepository,
+    WalletState,
+    VtxoRepositoryKey,
+} from "../walletRepository";
 import {
     serializeVtxo,
     serializeUtxo,
@@ -14,6 +18,7 @@ import {
     SerializedTapLeaf,
 } from "../serialization";
 import { scriptFromArkAddress } from "../scriptFromAddress";
+import { isVtxoForScript } from "../../contracts/vtxoOwnership";
 import { RealmLike } from "./types";
 
 /**
@@ -114,6 +119,41 @@ export class RealmWalletRepository implements WalletRepository {
             const toDelete = this.realm
                 .objects("ArkVtxo")
                 .filtered("address == $0", address);
+            this.realm.delete(toDelete);
+        });
+    }
+
+    async getVtxosForScript(script: string): Promise<ExtendedVirtualCoin[]> {
+        await this.ensureInit();
+        const results = this.realm
+            .objects("ArkVtxo")
+            .filtered("script == $0", script);
+        return [...results].map(vtxoObjectToDomain);
+    }
+
+    async saveVtxosForScript(
+        key: VtxoRepositoryKey,
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<void> {
+        if (!key.address) {
+            throw new Error("RealmWalletRepository requires an address");
+        }
+        for (const vtxo of vtxos) {
+            if (!isVtxoForScript(vtxo, key.script)) {
+                throw new Error(
+                    `VTXO ${vtxo.txid}:${vtxo.vout} script mismatch: expected ${key.script}, got ${vtxo.script}`
+                );
+            }
+        }
+        return this.saveVtxos(key.address, vtxos);
+    }
+
+    async deleteVtxosForScript(script: string): Promise<void> {
+        await this.ensureInit();
+        this.realm.write(() => {
+            const toDelete = this.realm
+                .objects("ArkVtxo")
+                .filtered("script == $0", script);
             this.realm.delete(toDelete);
         });
     }

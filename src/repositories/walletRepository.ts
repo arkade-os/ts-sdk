@@ -25,6 +25,13 @@ export type CommitmentTxRecord = {
     createdAt: number;
 };
 
+export interface VtxoRepositoryKey {
+    /** Authoritative ownership key. */
+    script: string;
+    /** Legacy storage bucket. Required by all current backends; throw if absent. */
+    address?: string;
+}
+
 export interface WalletRepository extends AsyncDisposable {
     readonly version: 1;
 
@@ -39,6 +46,27 @@ export interface WalletRepository extends AsyncDisposable {
     saveVtxos(address: string, vtxos: ExtendedVirtualCoin[]): Promise<void>;
     /** Delete stored virtual outputs for an address. */
     deleteVtxos(address: string): Promise<void>;
+
+    /**
+     * Fetch stored virtual outputs for a script.
+     * @optional SDK backends implement this; custom backends fall back to Tier 1.
+     */
+    getVtxosForScript?(script: string): Promise<ExtendedVirtualCoin[]>;
+
+    /**
+     * Save virtual outputs for a script.
+     * @optional SDK backends implement this; custom backends fall back to Tier 1.
+     */
+    saveVtxosForScript?(
+        key: VtxoRepositoryKey,
+        vtxos: ExtendedVirtualCoin[]
+    ): Promise<void>;
+
+    /**
+     * Delete stored virtual outputs for a script.
+     * @optional SDK backends implement this; custom backends fall back to Tier 1.
+     */
+    deleteVtxosForScript?(script: string): Promise<void>;
 
     /** Fetch stored boarding inputs for an address. */
     getUtxos(address: string): Promise<ExtendedCoin[]>;

@@ -25,6 +25,8 @@ import {
 } from "../utils/syncCursors";
 import {
     filterVtxosForScript,
+    getVtxosForContract,
+    saveVtxosForContract,
     warnAndFilterVtxosForScript,
 } from "./vtxoOwnership";
 
@@ -680,13 +682,27 @@ export class ContractManager implements IContractManager {
         const annotated = await this.annotateVtxos(owned);
         const byAddress = new Map<string, ExtendedVirtualCoin[]>();
         for (const vtxo of annotated) {
-            const address = scriptToContract.get(vtxo.script)!.address;
+            const contract = scriptToContract.get(vtxo.script);
+            if (!contract) continue;
+            const address = contract.address;
             const arr = byAddress.get(address) ?? [];
             arr.push(vtxo);
             byAddress.set(address, arr);
         }
         for (const [address, addressVtxos] of byAddress) {
-            await this.config.walletRepository.saveVtxos(address, addressVtxos);
+            const contract = contracts.find((c) => c.address === address);
+            if (contract) {
+                await saveVtxosForContract(
+                    this.config.walletRepository,
+                    contract,
+                    addressVtxos
+                );
+            } else {
+                await this.config.walletRepository.saveVtxos(
+                    address,
+                    addressVtxos
+                );
+            }
         }
     }
 
@@ -736,16 +752,16 @@ export class ContractManager implements IContractManager {
         contracts: Contract[]
     ): Promise<ContractVtxo[]> {
         const res = await Promise.all(
-            contracts.map(({ script, address }) =>
-                this.config.walletRepository.getVtxos(address).then((vtxos) =>
-                    // Address buckets may carry legacy duplicate rows from
-                    // other contracts that once shared the same address —
-                    // gate by script so the wrong-script row never wins.
-                    filterVtxosForScript(vtxos, script).map(
+            contracts.map((contract) =>
+                getVtxosForContract(
+                    this.config.walletRepository,
+                    contract
+                ).then((vtxos) =>
+                    vtxos.map(
                         (vtxo) =>
                             ({
                                 ...vtxo,
-                                contractScript: script,
+                                contractScript: contract.script,
                             }) as ContractVtxo
                     )
                 )
@@ -851,8 +867,9 @@ export class ContractManager implements IContractManager {
                 "ContractManager.reconcilePendingFrontier"
             );
             if (filtered.length === 0) continue;
-            await this.config.walletRepository.saveVtxos(
-                addr,
+            await saveVtxosForContract(
+                this.config.walletRepository,
+                contract,
                 filtered as ExtendedVirtualCoin[]
             );
         }
@@ -879,8 +896,9 @@ export class ContractManager implements IContractManager {
                     "ContractManager.fetchContractVxosFromIndexer"
                 );
                 if (filtered.length === 0) continue;
-                await this.config.walletRepository.saveVtxos(
-                    contract.address,
+                await saveVtxosForContract(
+                    this.config.walletRepository,
+                    contract,
                     filtered as ExtendedVirtualCoin[]
                 );
             }
