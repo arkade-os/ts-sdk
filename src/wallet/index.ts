@@ -14,8 +14,8 @@ import { DelegatorProvider } from "../providers/delegator";
 
 /** Defaults */
 export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
-export const DEFAULT_ARKADE_HRP = "ark";
-export const DEFAULT_NETWORK_NAME = "bitcoin";
+export const DEFAULT_ARKADE_HRP = "ark" as const;
+export const DEFAULT_NETWORK_NAME = "bitcoin" as const;
 
 /**
  * Base configuration options shared by all wallet types.
@@ -512,24 +512,27 @@ export interface Coin extends Outpoint {
  * @see VirtualStatus
  */
 export interface VirtualCoin extends Coin {
-    /** Virtual output status */
-    virtualStatus: VirtualStatus;
-    /** Transaction id that spent this virtual output, when known. */
-    spentBy?: string;
-    /** Settlement transaction associated with this virtual output, when known. */
-    settledBy?: string;
-    /** Arkade transaction id that created or spent this virtual output, when known. */
-    arkTxId?: string;
     /** Creation time of the virtual output. */
     createdAt: Date;
-    /** Whether this virtual output has been unrolled to onchain outputs. */
-    isUnrolled: boolean;
-    /** Whether this virtual output is already spent. */
-    isSpent?: boolean;
-    /** Assets carried by this virtual output, if any. */
-    assets?: Asset[];
     /** The scriptPubKey (hex) locking this virtual output, as returned by the indexer. */
     script: string;
+    /** Whether this virtual output has been broadcasted onchain via an unroll (unilateral exit). */
+    isUnrolled: boolean;
+    /**
+     * Whether this virtual output is already spent (boolean helper for `spentBy`).
+     * This is not set to true if the virtual output is unrolled or swept, only when it's spent offchain.
+     */
+    isSpent?: boolean;
+    /** ID of the onchain commitment transaction that settled this output, if applicable. */
+    settledBy?: string;
+    /** ID of the offchain checkpoint transaction that spent this output, if applicable. */
+    spentBy?: string;
+    /** ID of the offchain Arkade transaction that spent the above checkpoint output, if applicable. */
+    arkTxId?: string;
+    /** Virtual output status */
+    virtualStatus: VirtualStatus;
+    /** Assets carried by this virtual output, if any. */
+    assets?: Asset[];
 }
 
 /** Wallet transaction direction. */
