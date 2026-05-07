@@ -20,6 +20,13 @@ export interface DescriptorSigningRequest {
  * The provider has no read accessor for "current" — it is a pure descriptor
  * allocator. "What addresses am I currently bound to?" is a question the
  * contract repository answers, not the provider.
+ *
+ * Providers that want to participate in HD receive rotation can also
+ * implement the wallet-side `ReceiveRotatorFactory` interface (see
+ * `src/wallet/walletReceiveRotator.ts`). That extension is opt-in — the
+ * core `DescriptorProvider` contract intentionally stays free of
+ * wallet-specific concerns so HSM-backed and other minimal providers
+ * don't have to know about the receive-rotation lifecycle.
  */
 export interface DescriptorProvider {
     /**

@@ -105,10 +105,7 @@ import {
     validateVtxosForScript,
     saveVtxosForContract,
 } from "../contracts/vtxoOwnership";
-import { HDDescriptorProvider } from "./hdDescriptorProvider";
-import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
-import { expand, networks } from "@bitcoinerlab/descriptors-scure";
-import { isMainnetDescriptor } from "../identity/descriptor";
+import { WalletReceiveRotator } from "./walletReceiveRotator";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -180,102 +177,6 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
         "toReadonly" in identity &&
         typeof (identity as any).toReadonly === "function"
     );
-}
-
-/**
- * Extracts the x-only (32-byte) pubkey from a materialized HD descriptor.
- *
- * `expand()` populates `@0.pubkey` for non-ranged descriptors (including HD
- * ones where a concrete child index is already substituted for the
- * wildcard). This sidesteps {@link extractPubKey}, which intentionally
- * rejects any descriptor carrying a `bip32` key because it was designed
- * for static `tr(pubkey)` inputs.
- */
-function deriveLeafPubkey(descriptor: string): Uint8Array {
-    const network = isMainnetDescriptor(descriptor)
-        ? networks.bitcoin
-        : networks.testnet;
-    const expansion = expand({ descriptor, network });
-    const key = expansion.expansionMap?.["@0"];
-    if (!key?.pubkey) {
-        throw new Error(
-            `Cannot derive leaf pubkey from descriptor "${descriptor}": ` +
-                `ensure the descriptor is materialized (no wildcard) and parsable.`
-        );
-    }
-    return key.pubkey;
-}
-
-/**
- * Rebuild the given offchain tapscript with a different owner pubkey,
- * preserving its {@link DelegateVtxo.Script} vs {@link DefaultVtxo.Script}
- * shape and all other options.
- */
-function rebuildTapscript(
-    current: DefaultVtxo.Script | DelegateVtxo.Script,
-    pubKey: Uint8Array
-): DefaultVtxo.Script | DelegateVtxo.Script {
-    if (current instanceof DelegateVtxo.Script) {
-        return new DelegateVtxo.Script({ ...current.options, pubKey });
-    }
-    return new DefaultVtxo.Script({ ...current.options, pubKey });
-}
-
-/**
- * Sentinel value stored in `contract.metadata.source` to identify the
- * wallet's current display contract. Borrowed from btcpay-arkade's
- * source-tagging pattern — every contract records "where and why it was
- * generated", and the wallet only cares about the ones it generated for
- * its own receive address.
- *
- * Tagging makes the boot lookup unambiguous: `pickActiveReceivePubkey`
- * filters on `metadata.source === WALLET_RECEIVE_SOURCE` rather than on
- * "any active default contract", so a contract repo that also holds
- * default contracts created for other reasons (legacy timelock variants,
- * external integrations) doesn't confuse the wallet's display state.
- */
-const WALLET_RECEIVE_SOURCE = "wallet-receive";
-
-/**
- * Look up the most-recently-created active default contract that this
- * wallet itself generated for its display address. Returns its owner
- * pubkey, or `undefined` when no such contract exists — the caller
- * should treat that as "fresh wallet" and allocate a new descriptor via
- * the HD provider.
- *
- * Filters by `serverPubKey` so a contract repo seeded against a different
- * server doesn't accidentally resurrect an unrelated pubkey, and by the
- * `metadata.source` sentinel so contracts created by other code paths
- * (legacy timelock registrations, external integrations) are not
- * mistaken for the wallet's own display address.
- */
-async function pickActiveReceivePubkey(
-    contractRepository: ContractRepository,
-    serverPubKey: Uint8Array
-): Promise<Uint8Array | undefined> {
-    // Both `default` and `delegate` contract types can be the wallet's
-    // display address (delegate wallets use the delegate variant). The
-    // `metadata.source` tag is the discriminator that says "this is the
-    // one I generated for myself."
-    const candidates = await contractRepository.getContracts({
-        type: ["default", "delegate"],
-        state: "active",
-    });
-    const serverPubKeyHex = hex.encode(serverPubKey);
-    const matching = candidates
-        .filter(
-            (c) =>
-                c.params.serverPubKey === serverPubKeyHex &&
-                c.metadata?.source === WALLET_RECEIVE_SOURCE
-        )
-        .sort((a, b) => b.createdAt - a.createdAt);
-    const newest = matching[0];
-    if (!newest?.params.pubKey) return undefined;
-    try {
-        return hex.decode(newest.params.pubKey);
-    } catch {
-        return undefined;
-    }
 }
 
 export class ReadonlyWallet implements IReadonlyWallet {
@@ -1033,19 +934,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             watcherConfig: this.watcherConfig,
         });
 
-        // Tag the contract whose script matches the wallet's current
-        // display address with `metadata.source = WALLET_RECEIVE_SOURCE`.
-        // That's the one a future boot will look up via
-        // `pickActiveReceivePubkey` to recover the rotated state. Other
-        // variants in this loop (past timelocks, the non-delegate
-        // companion of a delegate wallet) are backwards-compat
-        // registrations and stay untagged.
-        const displayScript = this.defaultContractScript;
-        const tagIfDisplay = (script: string) =>
-            script === displayScript
-                ? { metadata: { source: WALLET_RECEIVE_SOURCE } }
-                : {};
-
+        // Register the wallet's baseline always-active contracts: every
+        // `walletContractTimelocks` entry × {default, delegate-if-enabled}.
+        // For an HD wallet, this is the index-0 set; for a static wallet
+        // it's the only set. None of these are tagged with
+        // `metadata.source = WALLET_RECEIVE_SOURCE` — the tag exists only
+        // to identify the wallet's CURRENT rotated display address (set
+        // by {@link WalletReceiveRotator.rotate}). Baseline contracts
+        // stay active in the repo so addresses derived from index 0
+        // continue to credit this wallet even after rotations.
         for (const csvTimelock of this.walletContractTimelocks) {
             const csvTimelockStr = timelockToSequence(csvTimelock).toString();
             const defaultScript = new DefaultVtxo.Script({
@@ -1069,7 +966,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     .address(this.network.hrp, this.arkServerPublicKey)
                     .encode(),
                 state: "active",
-                ...tagIfDisplay(defaultScriptHex),
             });
 
             if (this.offchainTapscript instanceof DelegateVtxo.Script) {
@@ -1099,7 +995,6 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         .address(this.network.hrp, this.arkServerPublicKey)
                         .encode(),
                     state: "active",
-                    ...tagIfDisplay(delegateScriptHex),
                 });
             }
         }
@@ -1170,24 +1065,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private _walletAssetManager?: IAssetManager;
 
     /**
-     * HD provider installed when identity is a {@link SeedIdentity} with a
-     * vanilla BIP-86-style account descriptor. Absent for SingleKey wallets
-     * or for SeedIdentities whose descriptor isn't templatable.
+     * HD receive rotator. Owns the {@link DescriptorProvider}, the
+     * `vtxo_received` subscription, and the rotate-and-register
+     * lifecycle. Absent in `walletMode: 'static'` and for SingleKey
+     * wallets under `'auto'`. Wired in via the constructor; the actual
+     * subscription is installed lazily on first `getVtxoManager()` so
+     * the contract manager is up first.
      */
-    private _hdProvider?: HDDescriptorProvider;
-
-    /**
-     * Unsubscribe function returned by {@link ContractManager.onContractEvent},
-     * used to tear down the rotation callback on {@link dispose}.
-     */
-    private _hdRotationUnsubscribe?: () => void;
-
-    /**
-     * Async mutex serialising rotation attempts so two rapid-fire
-     * `vtxo_received` events cannot overlap the
-     * `getNextSigningDescriptor → rebuild → createContract` sequence.
-     */
-    private _hdRotationChain: Promise<void> = Promise.resolve();
+    private _receiveRotator?: WalletReceiveRotator;
+    private _receiveRotatorInstalled = false;
 
     /**
      * Async mutex that serializes all operations submitting VTXOs to the Arkade
@@ -1256,7 +1142,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         delegatorProvider?: DelegatorProvider,
         watcherConfig?: WalletConfig["watcherConfig"],
         settlementConfig?: WalletConfig["settlementConfig"],
-        walletContractTimelocks?: RelativeTimelock[]
+        walletContractTimelocks?: RelativeTimelock[],
+        receiveRotator?: WalletReceiveRotator
     ) {
         super(
             identity,
@@ -1301,6 +1188,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
+        this._receiveRotator = receiveRotator;
     }
 
     override get assetManager(): IAssetManager {
@@ -1324,6 +1212,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         try {
             const manager = await this._vtxoManagerInitializing;
             this._vtxoManager = manager;
+            // First-time hookup of the HD rotator: subscribe to
+            // `vtxo_received` AFTER the contract manager (which is
+            // initialised inside the VtxoManager construction path) has
+            // registered the wallet's baseline contracts. The flag
+            // makes this idempotent across repeated `getVtxoManager`
+            // calls — install runs at most once per wallet instance.
+            if (this._receiveRotator && !this._receiveRotatorInstalled) {
+                this._receiveRotatorInstalled = true;
+                await this._receiveRotator.install(this);
+            }
             return manager;
         } catch (error) {
             this._vtxoManagerInitializing = undefined;
@@ -1334,22 +1232,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     override async dispose(): Promise<void> {
-        // Tear down the rotation subscription first so no late
-        // `vtxo_received` event can queue work on a disposing wallet.
-        if (this._hdRotationUnsubscribe) {
-            try {
-                this._hdRotationUnsubscribe();
-            } catch {
-                // best-effort teardown
-            } finally {
-                this._hdRotationUnsubscribe = undefined;
-            }
-        }
-        // Drain any in-flight rotation so its `createContract` call finishes
-        // before we dispose the contract manager underneath it. Optional-
-        // chained because tests sometimes instantiate a Wallet via
-        // `Object.create(Wallet.prototype)`, skipping field initializers.
-        await this._hdRotationChain?.catch(() => undefined);
+        // Tear down the rotation subscription + drain in-flight rotations
+        // first so no late `vtxo_received` event can queue work on a
+        // disposing wallet, and so any in-flight `createContract` call
+        // finishes before we dispose the contract manager underneath it.
+        await this._receiveRotator?.dispose();
 
         const manager =
             this._vtxoManager ??
@@ -1408,61 +1295,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         );
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
-        // HD wiring (boot path).
-        //
-        // We follow the dotnet-sdk's split of responsibilities: the provider
-        // is a pure rotating allocator; "what address am I currently bound
-        // to?" is answered by the contract repository, not the provider.
-        //
-        // - If an active default contract already exists, use its pubkey
-        //   for the offchain tapscript (continues from where a previous
-        //   session left off — no provider call, no extra index allocation).
-        // - If no active default contract exists, allocate the first index
-        //   via `getNextSigningDescriptor` so the provider's persisted
-        //   `lastIndexUsed` advances in lockstep with the contract we're
-        //   about to register.
-        // - Single-key identities and SeedIdentities with non-vanilla
-        //   descriptors stay on the static path unchanged.
-        let hdProvider: HDDescriptorProvider | undefined;
-        let offchainTapscript = setup.offchainTapscript;
-        if (isHDCapableIdentity(config.identity)) {
-            try {
-                hdProvider = await HDDescriptorProvider.create(
-                    config.identity,
-                    setup.walletRepository
-                );
-
-                const activePubkey = await pickActiveReceivePubkey(
-                    setup.contractRepository,
-                    setup.serverPubKey
-                );
-                let receivePubkey: Uint8Array;
-                if (activePubkey) {
-                    receivePubkey = activePubkey;
-                } else {
-                    // Fresh wallet (or contract repo wiped). Allocate the
-                    // first descriptor through the provider so storage and
-                    // the contract we'll register in a moment are in sync.
-                    // If the identity's descriptor isn't a ranged template
-                    // the call throws and we fall back to the static path
-                    // via the surrounding catch.
-                    const descriptor =
-                        await hdProvider.getNextSigningDescriptor();
-                    receivePubkey = deriveLeafPubkey(descriptor);
-                }
-                if (!equalBytes(receivePubkey, pubkey)) {
-                    offchainTapscript = rebuildTapscript(
-                        offchainTapscript,
-                        receivePubkey
-                    );
-                }
-            } catch {
-                // Descriptor not rangeable, contract repo unavailable, or
-                // descriptor mismatch — fall back to the static path
-                // rather than fail wallet construction.
-                hdProvider = undefined;
-            }
-        }
+        // HD wiring (boot path) — resolved via the descriptor provider.
+        // The rotator (when present) is handed to the constructor as
+        // the last positional arg and `getVtxoManager()` lazily
+        // installs its `vtxo_received` subscription on first call,
+        // after the contract manager has registered the wallet's
+        // baseline contracts.
+        const boot = await WalletReceiveRotator.resolveBoot(config, setup);
 
         const wallet = new Wallet(
             config.identity,
@@ -1471,7 +1310,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.arkProvider,
             setup.indexerProvider,
             setup.serverPubKey,
-            offchainTapscript,
+            boot?.offchainTapscript ?? setup.offchainTapscript,
             setup.boardingTapscript,
             serverUnrollScript,
             forfeitOutputScript,
@@ -1483,106 +1322,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             config.delegatorProvider,
             config.watcherConfig,
             config.settlementConfig,
-            setup.walletContractTimelocks
+            setup.walletContractTimelocks,
+            boot?.rotator
         );
-
-        if (hdProvider) {
-            wallet._hdProvider = hdProvider;
-        }
 
         await wallet.getVtxoManager();
-
-        // Subscribe to rotation AFTER the contract manager is ready so the
-        // initial `default` contract registration (inside
-        // `initializeContractManager`) happens first.
-        if (hdProvider) {
-            await wallet.installHdRotationHandler();
-        }
-
         return wallet;
-    }
-
-    /**
-     * Subscribe to `vtxo_received` events on the contract manager and
-     * trigger an HD rotation whenever the currently-active default contract
-     * fires. Old default contracts remain registered (and active) so
-     * earlier shared addresses keep crediting this wallet.
-     */
-    private async installHdRotationHandler(): Promise<void> {
-        const manager = await this.getContractManager();
-        this._hdRotationUnsubscribe = manager.onContractEvent((event) => {
-            if (event.type !== "vtxo_received") return;
-            if (event.contractScript !== this.defaultContractScript) return;
-            // Serialise rotations: two rapid `vtxo_received` events on the
-            // same contract must not interleave the rotate → rebuild →
-            // createContract sequence.
-            this._hdRotationChain = this._hdRotationChain
-                .catch(() => undefined)
-                .then(() => this.rotateAndRegister());
-        });
-    }
-
-    /**
-     * Allocate the next HD descriptor, swap it into the active offchain
-     * tapscript, and register the corresponding contract via the
-     * contract manager. The new contract is tagged with
-     * `metadata.source = WALLET_RECEIVE_SOURCE` so the next boot can find
-     * it via {@link pickActiveReceivePubkey}. The previous receive
-     * contract stays active in the repo so earlier addresses continue to
-     * credit the wallet.
-     *
-     * Contract type matches the wallet's tapscript shape: a default
-     * wallet rotates to a new `default` contract, a delegate wallet to a
-     * new `delegate` contract.
-     */
-    private async rotateAndRegister(): Promise<void> {
-        if (!this._hdProvider) return;
-        const descriptor = await this._hdProvider.getNextSigningDescriptor();
-        const pubKey = deriveLeafPubkey(descriptor);
-        this.offchainTapscript = rebuildTapscript(
-            this.offchainTapscript,
-            pubKey
-        );
-
-        const manager = await this.getContractManager();
-        const csvTimelock =
-            this.offchainTapscript.options.csvTimelock ??
-            DefaultVtxo.Script.DEFAULT_TIMELOCK;
-        const csvTimelockStr = timelockToSequence(csvTimelock).toString();
-        const serverPubKeyHex = hex.encode(
-            this.offchainTapscript.options.serverPubKey
-        );
-        const baseParams = {
-            script: this.defaultContractScript,
-            address: await this.getAddress(),
-            state: "active" as const,
-            metadata: { source: WALLET_RECEIVE_SOURCE },
-        };
-
-        if (this.offchainTapscript instanceof DelegateVtxo.Script) {
-            await manager.createContract({
-                ...baseParams,
-                type: "delegate",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: serverPubKeyHex,
-                    delegatePubKey: hex.encode(
-                        this.offchainTapscript.options.delegatePubKey
-                    ),
-                    csvTimelock: csvTimelockStr,
-                },
-            });
-        } else {
-            await manager.createContract({
-                ...baseParams,
-                type: "default",
-                params: {
-                    pubKey: hex.encode(pubKey),
-                    serverPubKey: serverPubKeyHex,
-                    csvTimelock: csvTimelockStr,
-                },
-            });
-        }
     }
 
     /**
