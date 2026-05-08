@@ -439,6 +439,7 @@ describe("BoltzSwapProvider", () => {
                         to: "BTC",
                         invoice,
                         refundPublicKey: mockHexCompressedPubKey,
+                        referralId: "arkade-ts-sdk",
                     }),
                 }
             );
@@ -501,6 +502,7 @@ describe("BoltzSwapProvider", () => {
                         claimPublicKey: mockHexCompressedPubKey,
                         preimageHash: "mock-preimage-hash",
                         description: "Send to Arkade address",
+                        referralId: "arkade-ts-sdk",
                     }),
                 }
             );
@@ -547,6 +549,7 @@ describe("BoltzSwapProvider", () => {
                         claimPublicKey: mockHexCompressedPubKey,
                         preimageHash: "mock-preimage-hash",
                         description: "Test payment for coffee",
+                        referralId: "arkade-ts-sdk",
                     }),
                 }
             );
@@ -593,6 +596,7 @@ describe("BoltzSwapProvider", () => {
                         claimPublicKey: mockHexCompressedPubKey,
                         preimageHash: "mock-preimage-hash",
                         description: "Send to Arkade address",
+                        referralId: "arkade-ts-sdk",
                         // description should be replaced with default
                     }),
                 }
