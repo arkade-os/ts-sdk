@@ -1,4 +1,4 @@
-import { Bytes } from "@scure/btc-signer/utils";
+import { Bytes } from "@scure/btc-signer/utils.js";
 import { DefaultVtxo } from "./default";
 import { MultisigTapscript } from "./tapscript";
 import { TapLeafScript, VtxoScript } from "./base";

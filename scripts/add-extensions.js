@@ -1,12 +1,12 @@
 /**
  * ESM Import Path Fixer
  * 
- * This script adds .js extensions to all ESM imports in the compiled JavaScript files.
+ * This script adds .js extensions to relative imports in compiled output files.
  * It's necessary for Node.js ESM compatibility since Node.js requires explicit file extensions
  * in import statements when using ES modules.
  * 
  * The script:
- * 1. Finds all JS files in the ESM output directory
+ * 1. Finds files in the ESM and types output directories
  * 2. For each file, it processes all relative imports
  * 3. Adds .js extensions where needed, handling various edge cases
  */
@@ -18,7 +18,18 @@ import { glob } from 'glob';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.join(__dirname, '..');
-const esmDir = path.join(rootDir, 'dist', 'esm');
+const outputDirs = [
+  {
+    dir: path.join(rootDir, 'dist', 'esm'),
+    pattern: '**/*.js',
+    lookupExtensions: ['.js'],
+  },
+  {
+    dir: path.join(rootDir, 'dist', 'types'),
+    pattern: '**/*.d.ts',
+    lookupExtensions: ['.d.ts'],
+  },
+];
 
 /**
  * Resolves an import path to include the correct extension
@@ -26,28 +37,40 @@ const esmDir = path.join(rootDir, 'dist', 'esm');
  * @param {string} currentDir - The directory of the file containing the import
  * @returns {string} - The resolved import path with proper extension
  */
-function resolveImportPath(importPath, currentDir) {
-  // If it already has .js extension, return as is
-  if (importPath.endsWith('.js')) {
+function resolveImportPath(importPath, currentDir, lookupExtensions) {
+  // If it already has an extension, return as is
+  if (path.extname(importPath)) {
     return importPath;
   }
-  
-  // Check if the file exists with .js extension
-  const withJsExt = `${importPath}.js`;
-  const absolutePath = path.resolve(currentDir, withJsExt);
-  
-  if (fs.existsSync(absolutePath)) {
-    return withJsExt;
+
+  for (const extension of lookupExtensions) {
+    const absolutePath = path.resolve(currentDir, `${importPath}${extension}`);
+
+    if (fs.existsSync(absolutePath)) {
+      return `${importPath}.js`;
+    }
   }
-  
-  // Check if it's a directory with an index.js file
-  const indexPath = path.resolve(currentDir, `${importPath}/index.js`);
-  if (fs.existsSync(indexPath)) {
-    return `${importPath}/index.js`;
+
+  for (const extension of lookupExtensions) {
+    const indexPath = path.resolve(currentDir, `${importPath}/index${extension}`);
+    if (fs.existsSync(indexPath)) {
+      return `${importPath}/index.js`;
+    }
   }
-  
+
   // If neither exists, add .js as a fallback
   return `${importPath}.js`;
+}
+
+function addExtensionsToContent(content, currentDir, lookupExtensions) {
+  const fixSpecifier = (match, prefix, importPath, suffix) => {
+    const resolvedPath = resolveImportPath(importPath, currentDir, lookupExtensions);
+    return `${prefix}${resolvedPath}${suffix}`;
+  };
+
+  return content
+    .replace(/(from\s+['"])(\.[^'"]*)(['"])/g, fixSpecifier)
+    .replace(/(import\(\s*['"])(\.[^'"]*)(['"]\s*\))/g, fixSpecifier);
 }
 
 /**
@@ -55,36 +78,26 @@ function resolveImportPath(importPath, currentDir) {
  */
 async function addExtensions() {
   try {
-    // Find all JS files in the ESM directory
-    const files = await glob('**/*.js', { cwd: esmDir });
+    const existingOutputDirs = outputDirs.filter(({ dir }) => fs.existsSync(dir));
     let fixedImports = 0;
-    
-    for (const file of files) {
-      const filePath = path.join(esmDir, file);
-      const fileDir = path.dirname(filePath);
-      let content = fs.readFileSync(filePath, 'utf8');
-      
-      // Replace relative imports without extensions
-      const updatedContent = content.replace(
-        /from\s+['"](\.[^'"]*)['"]/g,
-        (match, importPath) => {
-          // Skip if already has an extension
-          if (importPath.endsWith('.js')) {
-            return match;
-          }
-          
-          const resolvedPath = resolveImportPath(importPath, fileDir);
+
+    for (const { dir, pattern, lookupExtensions } of existingOutputDirs) {
+      const files = await glob(pattern, { cwd: dir });
+
+      for (const file of files) {
+        const filePath = path.join(dir, file);
+        const fileDir = path.dirname(filePath);
+        const content = fs.readFileSync(filePath, 'utf8');
+        const updatedContent = addExtensionsToContent(content, fileDir, lookupExtensions);
+
+        if (content !== updatedContent) {
           fixedImports++;
-          return `from '${resolvedPath}'`;
+          fs.writeFileSync(filePath, updatedContent);
         }
-      );
-      
-      if (content !== updatedContent) {
-        fs.writeFileSync(filePath, updatedContent);
       }
     }
-    
-    console.log(`✅ Added .js extensions to ${fixedImports} ESM imports`);
+
+    console.log(`✅ Added .js extensions to imports in ${fixedImports} files`);
   } catch (error) {
     console.error('Error adding extensions:', error);
     process.exit(1);
