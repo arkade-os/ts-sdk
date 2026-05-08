@@ -1,6 +1,6 @@
 import { Transaction as BtcSignerTransaction } from "@scure/btc-signer";
-import { TxOpts } from "@scure/btc-signer/transaction";
-import { Bytes } from "@scure/btc-signer/utils";
+import { TxOpts } from "@scure/btc-signer/transaction.js";
+import { Bytes } from "@scure/btc-signer/utils.js";
 
 /**
  * Transaction is a wrapper around the @scure/btc-signer Transaction class.
