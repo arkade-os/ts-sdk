@@ -1035,7 +1035,7 @@ export class BoltzSwapProvider {
     /** @param config Provider configuration with network and optional API URL. */
     constructor(config: SwapProviderConfig) {
         this.network = config.network;
-        this.referralId = config.referralId;
+        this.referralId = config.referralId ?? "arkade-ts-sdk";
         const apiUrl = config.apiUrl || BASE_URLS[config.network];
         if (!apiUrl)
             throw new Error(
