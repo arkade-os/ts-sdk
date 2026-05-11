@@ -83,15 +83,20 @@ export type ContractVtxo = VirtualCoin &
     };
 
 /**
- * A contract vtxo with a fully-populated taproot annotation.
+ * A {@link ContractVtxo} with all taproot annotation fields required.
  *
- * Produced by paths that go through `annotateVtxos` or repository reads.
- * Strictly narrower than {@link ContractVtxo} — useful where downstream
- * code requires the `ExtendedVirtualCoin` shape (e.g. `saveVtxos`,
- * forfeit tx construction) and the compiler should enforce that the
- * annotation has actually run.
+ * Mirrors the {@link ExtendedVirtualCoin} / {@link VirtualCoin} split:
+ * - {@link ContractVtxo} carries `TapLeaves` and `EncodedVtxoScript` as
+ *   `Partial<>` because VTXOs fetched raw from the indexer do not yet have
+ *   taproot data.
+ * - `ExtendedContractVtxo` narrows those fields to required, guaranteeing
+ *   that `annotateVtxos` has run and the taproot leaves are present.
+ *
+ * Use this type (instead of {@link ContractVtxo}) wherever the compiler
+ * should enforce that annotation has happened — e.g. `saveVtxos` and
+ * forfeit transaction construction.
  */
-export type PersistedContractVtxo = ExtendedVirtualCoin & {
+export type ExtendedContractVtxo = ExtendedVirtualCoin & {
     contractScript: string;
 };
 
@@ -278,7 +283,7 @@ export type GetContractsFilter = ContractFilter;
  */
 export type ContractWithVtxos = {
     contract: Contract;
-    vtxos: PersistedContractVtxo[];
+    vtxos: ExtendedContractVtxo[];
 };
 
 /**
