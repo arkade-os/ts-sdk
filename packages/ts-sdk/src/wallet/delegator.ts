@@ -1,4 +1,4 @@
-import { TransactionOutput } from "@scure/btc-signer/psbt";
+import { TransactionOutput } from "@scure/btc-signer/psbt.js";
 import {
     ArkAddress,
     ArkInfo,
@@ -27,7 +27,7 @@ import { base64, hex } from "@scure/base";
 import { scriptFromTapLeafScript } from "../script/base";
 import { buildForfeitTxWithOutput } from "../forfeit";
 import { Address, OutScript, SigHash } from "@scure/btc-signer";
-import { Bytes } from "@scure/btc-signer/utils";
+import { Bytes } from "@scure/btc-signer/utils.js";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { getNetwork, NetworkName } from "../networks";
 import { createAssetPacket } from "./asset";

@@ -10,6 +10,12 @@ coverage
 .tmp
 .swp
 .nyc_output
+.claude/
+*.sqlite
+
+# Debug
+*.har
+*.idb
 
 # AI
 TASKS.md

@@ -1,6 +1,10 @@
 import type { TaskItem, TaskResult } from "../taskQueue";
 import type { TaskProcessor, TaskDependencies } from "../taskRunner";
 import type { ExtendedVirtualCoin } from "../../../wallet";
+import {
+    warnAndFilterVtxosForScript,
+    saveVtxosForContract,
+} from "../../../contracts/vtxoOwnership";
 
 export const CONTRACT_POLL_TASK_TYPE = "contract-poll";
 
@@ -60,8 +64,16 @@ export const contractPollProcessor: TaskProcessor = {
                 pageIndex++;
             }
 
-            await walletRepository.saveVtxos(contract.address, allVtxos);
-            vtxosSaved += allVtxos.length;
+            // Skip wrong-script rows (legacy duplicates or indexer drift)
+            // before persisting; the loop must keep going for the remaining
+            // contracts even when one row is rejected.
+            const filtered = warnAndFilterVtxosForScript(
+                allVtxos,
+                contract.script,
+                "contractPollProcessor"
+            );
+            await saveVtxosForContract(walletRepository, contract, filtered);
+            vtxosSaved += filtered.length;
             contractsProcessed++;
         }
 

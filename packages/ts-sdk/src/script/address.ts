@@ -34,10 +34,10 @@ import { DEFAULT_ARKADE_HRP } from "../wallet";
  */
 export class ArkAddress {
     /**
-     * Create an Arkade address from its server key, vtxo taproot public key, and prefix.
+     * Create an Arkade address from its server public key, Taproot output key, and prefix.
      *
      * @param serverPubKey - 32-byte Arkade server public key
-     * @param vtxoTaprootKey - 32-byte tweaked vtxo taproot public key
+     * @param vtxoTaprootKey - 32-byte Taproot output key (a.k.a. tweaked public key)
      * @param hrp - Bech32 human-readable prefix
      * @param version - Address version byte
      * @defaultValue `version = 0`

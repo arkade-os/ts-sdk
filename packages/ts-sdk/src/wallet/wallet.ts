@@ -101,6 +101,10 @@ import { ContractManager } from "../contracts/contractManager";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
+import {
+    validateVtxosForScript,
+    saveVtxosForContract,
+} from "../contracts/vtxoOwnership";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -2618,7 +2622,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const createdAt = Date.now();
-            const addr = this.arkAddress.encode();
+            const primaryAddr = this.arkAddress.encode();
 
             // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
@@ -2647,12 +2651,59 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 };
             }
 
-            await this.walletRepository.saveVtxos(
-                addr,
-                changeVtxo ? [...spentVtxos, changeVtxo] : spentVtxos
+            // Route spent rows to their owning contract bucket. The wallet's
+            // primary contract is registered with the manager at boot, so
+            // `addrByScript` already includes it; in a multi-contract spend
+            // each input may belong to a different contract.
+            const contracts = await cm.getContracts();
+            const addrByScript = new Map(
+                contracts.map((c) => [c.script, c.address])
             );
 
-            await this.walletRepository.saveTransactions(addr, [
+            const spentByScript = new Map<string, ExtendedVirtualCoin[]>();
+            for (const v of spentVtxos) {
+                if (!v.script) {
+                    throw new Error(
+                        `Wallet.updateDbAfterOffchainTx: spent VTXO ${v.txid}:${v.vout} has no script`
+                    );
+                }
+                const arr = spentByScript.get(v.script) ?? [];
+                arr.push(v);
+                spentByScript.set(v.script, arr);
+            }
+
+            for (const [script, vtxos] of spentByScript) {
+                // User-initiated send path: a wrong-script row here means the
+                // wallet is about to record ownership against the wrong
+                // contract — fail loudly rather than persist inconsistent state.
+                validateVtxosForScript(
+                    vtxos,
+                    script,
+                    "Wallet.updateDbAfterOffchainTx"
+                );
+                const targetAddr = addrByScript.get(script);
+                if (!targetAddr) {
+                    throw new Error(
+                        `Wallet.updateDbAfterOffchainTx: no contract owns script ${script}`
+                    );
+                }
+                await saveVtxosForContract(
+                    this.walletRepository,
+                    { script, address: targetAddr },
+                    vtxos
+                );
+            }
+
+            // Change is always primary-script by construction.
+            if (changeVtxo) {
+                await saveVtxosForContract(
+                    this.walletRepository,
+                    { script: changeVtxo.script!, address: primaryAddr },
+                    [changeVtxo]
+                );
+            }
+
+            await this.walletRepository.saveTransactions(primaryAddr, [
                 {
                     key: {
                         boardingTxid: "",
@@ -2667,6 +2718,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ]);
         } catch (e) {
             console.warn("error saving offchain tx to repository", e);
+            throw e;
         }
     }
 
@@ -2676,7 +2728,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         commitmentTxid: string
     ): Promise<void> {
         try {
-            const addr = this.arkAddress.encode();
             const boardingAddress = await this.getBoardingAddress();
 
             const spentVtxos: ExtendedVirtualCoin[] = [];
@@ -2718,7 +2769,48 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             if (spentVtxos.length > 0) {
-                await this.walletRepository.saveVtxos(addr, spentVtxos);
+                // Route settled rows to their owning contract bucket. In a
+                // multi-contract settle the inputs may belong to several
+                // contracts; the wallet's primary contract is registered with
+                // the manager at boot, so its address is in `addrByScript`
+                // alongside the rest.
+                const contracts = await cm.getContracts();
+                const addrByScript = new Map(
+                    contracts.map((c) => [c.script, c.address])
+                );
+
+                const byScript = new Map<string, ExtendedVirtualCoin[]>();
+                for (const v of spentVtxos) {
+                    if (!v.script) {
+                        throw new Error(
+                            `Wallet.updateDbAfterSettle: spent VTXO ${v.txid}:${v.vout} has no script`
+                        );
+                    }
+                    const arr = byScript.get(v.script) ?? [];
+                    arr.push(v);
+                    byScript.set(v.script, arr);
+                }
+
+                for (const [script, vtxos] of byScript) {
+                    // User-initiated settle path: refuse to record a settle
+                    // against the wrong script.
+                    validateVtxosForScript(
+                        vtxos,
+                        script,
+                        "Wallet.updateDbAfterSettle"
+                    );
+                    const targetAddr = addrByScript.get(script);
+                    if (!targetAddr) {
+                        throw new Error(
+                            `Wallet.updateDbAfterSettle: no contract owns script ${script}`
+                        );
+                    }
+                    await saveVtxosForContract(
+                        this.walletRepository,
+                        { script, address: targetAddr },
+                        vtxos
+                    );
+                }
             }
 
             if (boardingUtxoToRemove.size > 0) {
@@ -2738,6 +2830,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
         } catch (e) {
             console.warn("error updating repository after settle", e);
+            throw e;
         }
     }
 }

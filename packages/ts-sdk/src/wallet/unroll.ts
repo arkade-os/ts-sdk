@@ -28,6 +28,7 @@ export namespace Unroll {
      */
     export type UnrollStep = {
         tx: Transaction;
+        pkg: [parent: string, child: string];
     };
 
     /**
@@ -191,10 +192,12 @@ export namespace Unroll {
                 tx.finalize();
             }
 
+            const pkg = await this.bumper.bumpP2A(tx);
             return {
                 type: StepType.UNROLL,
                 tx,
-                do: doUnroll(this.bumper, this.explorer, tx),
+                pkg,
+                do: doUnroll(this.explorer, pkg),
             };
         }
 
@@ -231,102 +234,119 @@ export namespace Unroll {
         vtxoTxids: string[],
         outputAddress: string
     ): Promise<string> {
-        const chainTip = await wallet.onchainProvider.getChainTip();
-
-        let vtxos = await wallet.getVtxos({ withUnrolled: true });
-        vtxos = vtxos.filter((vtxo) => vtxoTxids.includes(vtxo.txid));
-
-        if (vtxos.length === 0) {
-            throw new Error("No vtxos to complete unroll");
-        }
-
-        const inputs: TransactionInputUpdate[] = [];
-        let totalAmount = 0n;
-        const txWeightEstimator = TxWeightEstimator.create();
-        for (const vtxo of vtxos) {
-            if (!vtxo.isUnrolled) {
-                throw new Error(
-                    `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`
-                );
-            }
-
-            const txStatus = await wallet.onchainProvider.getTxStatus(
-                vtxo.txid
-            );
-            if (!txStatus.confirmed) {
-                throw new Error(`tx ${vtxo.txid} is not confirmed`);
-            }
-
-            const exit = availableExitPath(
-                { height: txStatus.blockHeight, time: txStatus.blockTime },
-                chainTip,
-                vtxo
-            );
-            if (!exit) {
-                throw new Error(
-                    `no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`
-                );
-            }
-
-            const spendingLeaf = VtxoScript.decode(vtxo.tapTree).findLeaf(
-                hex.encode(exit.script)
-            );
-            if (!spendingLeaf) {
-                throw new Error(
-                    `spending leaf not found for vtxo ${vtxo.txid}:${vtxo.vout}`
-                );
-            }
-
-            totalAmount += BigInt(vtxo.value);
-            const sequence = timelockToSequence(exit.params.timelock);
-            inputs.push({
-                txid: vtxo.txid,
-                index: vtxo.vout,
-                tapLeafScript: [spendingLeaf],
-                sequence,
-                witnessUtxo: {
-                    amount: BigInt(vtxo.value),
-                    script: VtxoScript.decode(vtxo.tapTree).pkScript,
-                },
-                sighashType: SigHash.DEFAULT,
-            });
-            txWeightEstimator.addTapscriptInput(
-                64,
-                spendingLeaf[1].length,
-                TaprootControlBlock.encode(spendingLeaf[0]).length
-            );
-        }
-
-        const tx = new Transaction({ version: 2 });
-        for (const input of inputs) {
-            tx.addInput(input);
-        }
-
-        txWeightEstimator.addOutputAddress(outputAddress, wallet.network);
-
-        let feeRate = await wallet.onchainProvider.getFeeRate();
-        if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
-            feeRate = Wallet.MIN_FEE_RATE;
-        }
-        const feeAmount = txWeightEstimator.vsize().fee(BigInt(feeRate));
-        if (feeAmount > totalAmount) {
-            throw new Error("fee amount is greater than the total amount");
-        }
-
-        const sendAmount = totalAmount - feeAmount;
-        if (sendAmount < BigInt(DUST_AMOUNT)) {
-            throw new Error("send amount is less than dust amount");
-        }
-
-        tx.addOutputAddress(outputAddress, sendAmount);
-
-        const signedTx = await wallet.identity.sign(tx);
-        signedTx.finalize();
-
+        const signedTx = await prepareUnrollTransaction(
+            wallet,
+            vtxoTxids,
+            outputAddress
+        );
         await wallet.onchainProvider.broadcastTransaction(signedTx.hex);
-
         return signedTx.id;
     }
+}
+
+/**
+ * Prepares the transaction that spends the CSV path to complete unrolling a VTXO.
+ * @param wallet the wallet owning the VTXO(s)
+ * @param vtxoTxIds the txids of the VTXO(s) to complete unroll
+ * @param outputAddress the address to send the unrolled funds to
+ * @throws if the VTXO(s) are not fully unrolled, if the txids are not found, if the tx is not confirmed, if no exit path is found or not available
+ * @returns the transaction spending the unrolled funds
+ */
+export async function prepareUnrollTransaction(
+    wallet: Wallet,
+    vtxoTxIds: string[],
+    outputAddress: string
+): Promise<Transaction> {
+    const chainTip = await wallet.onchainProvider.getChainTip();
+
+    let vtxos = await wallet.getVtxos({ withUnrolled: true });
+    vtxos = vtxos.filter((vtxo) => vtxoTxIds.includes(vtxo.txid));
+
+    if (vtxos.length === 0) {
+        throw new Error("No vtxos to complete unroll");
+    }
+
+    const inputs: TransactionInputUpdate[] = [];
+    let totalAmount = 0n;
+    const txWeightEstimator = TxWeightEstimator.create();
+    for (const vtxo of vtxos) {
+        if (!vtxo.isUnrolled) {
+            throw new Error(
+                `Vtxo ${vtxo.txid}:${vtxo.vout} is not fully unrolled, use unroll first`
+            );
+        }
+
+        const txStatus = await wallet.onchainProvider.getTxStatus(vtxo.txid);
+        if (!txStatus.confirmed) {
+            throw new Error(`tx ${vtxo.txid} is not confirmed`);
+        }
+
+        const exit = availableExitPath(
+            { height: txStatus.blockHeight, time: txStatus.blockTime },
+            chainTip,
+            vtxo
+        );
+        if (!exit) {
+            throw new Error(
+                `no available exit path found for vtxo ${vtxo.txid}:${vtxo.vout}`
+            );
+        }
+
+        const spendingLeaf = VtxoScript.decode(vtxo.tapTree).findLeaf(
+            hex.encode(exit.script)
+        );
+        if (!spendingLeaf) {
+            throw new Error(
+                `spending leaf not found for vtxo ${vtxo.txid}:${vtxo.vout}`
+            );
+        }
+
+        totalAmount += BigInt(vtxo.value);
+        const sequence = timelockToSequence(exit.params.timelock);
+        inputs.push({
+            txid: vtxo.txid,
+            index: vtxo.vout,
+            tapLeafScript: [spendingLeaf],
+            sequence,
+            witnessUtxo: {
+                amount: BigInt(vtxo.value),
+                script: VtxoScript.decode(vtxo.tapTree).pkScript,
+            },
+            sighashType: SigHash.DEFAULT,
+        });
+        txWeightEstimator.addTapscriptInput(
+            64,
+            spendingLeaf[1].length,
+            TaprootControlBlock.encode(spendingLeaf[0]).length
+        );
+    }
+
+    const tx = new Transaction({ version: 2 });
+    for (const input of inputs) {
+        tx.addInput(input);
+    }
+
+    txWeightEstimator.addOutputAddress(outputAddress, wallet.network);
+
+    let feeRate = await wallet.onchainProvider.getFeeRate();
+    if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
+        feeRate = Wallet.MIN_FEE_RATE;
+    }
+    const feeAmount = txWeightEstimator.vsize().fee(BigInt(feeRate));
+    if (feeAmount > totalAmount) {
+        throw new Error("fee amount is greater than the total amount");
+    }
+
+    const sendAmount = totalAmount - feeAmount;
+    if (sendAmount < BigInt(DUST_AMOUNT)) {
+        throw new Error("send amount is less than dust amount");
+    }
+
+    tx.addOutputAddress(outputAddress, sendAmount, wallet.network);
+
+    const signedTx = await wallet.identity.sign(tx);
+    signedTx.finalize();
+    return signedTx;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -334,14 +354,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 function doUnroll(
-    bumper: AnchorBumper,
     onchainProvider: OnchainProvider,
-    tx: Transaction
+    pkg: Unroll.UnrollStep["pkg"]
 ): () => Promise<void> {
-    return async () => {
-        const [parent, child] = await bumper.bumpP2A(tx);
-        await onchainProvider.broadcastTransaction(parent, child);
-    };
+    return () =>
+        onchainProvider.broadcastTransaction(...pkg).then(() => undefined);
 }
 
 function doWait(
