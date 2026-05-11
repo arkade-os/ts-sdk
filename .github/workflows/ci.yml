@@ -62,6 +62,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Build
+        run: pnpm -C packages/ts-sdk build
+
       - name: Start regtest environment
         run: chmod +x regtest/*.sh regtest/helpers/*.sh && ./regtest/start-env.sh
 
