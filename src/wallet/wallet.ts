@@ -112,6 +112,16 @@ export const getArkadeServerUrl = ({
     arkServerUrl?: string;
 }) => arkServerUrl || DEFAULT_ARKADE_SERVER_URL;
 
+// Built-in ArkProvider implementations (Rest/Expo) expose `serverUrl`,
+// but the interface itself does not declare a URL accessor — so this is a
+// structural read that returns undefined for custom implementations.
+function extractArkProviderUrl(provider: ArkProvider): string | undefined {
+    const serverUrl = (provider as { serverUrl?: unknown }).serverUrl;
+    return typeof serverUrl === "string" && serverUrl.length > 0
+        ? serverUrl
+        : undefined;
+}
+
 // Historical unilateral exit delay for mainnet (~7 days in seconds).
 // Kept so existing wallets can still discover and spend VTXOs sent to the
 // legacy address after arkd starts advertising a different delay.
@@ -237,26 +247,36 @@ export class ReadonlyWallet implements IReadonlyWallet {
         config: ReadonlyWalletConfig,
         pubKey: Uint8Array
     ) {
+        const arkadeServerUrl = getArkadeServerUrl(config);
+
         // Use provided arkProvider instance or create a new one from arkServerUrl
         const arkProvider =
-            config.arkProvider ||
-            (() => {
-                return new RestArkProvider(getArkadeServerUrl(config));
-            })();
+            config.arkProvider ?? new RestArkProvider(arkadeServerUrl);
 
-        // Extract arkServerUrl from provider if not explicitly provided
-        const arkServerUrl =
-            config.arkServerUrl || (arkProvider as RestArkProvider).serverUrl;
-
-        if (!arkServerUrl) {
-            throw new Error("Could not determine arkServerUrl from provider");
+        // Resolve the indexer provider. If a full instance is supplied, use it
+        // directly. Otherwise pick a URL with priority:
+        //   1. explicit config.indexerUrl
+        //   2. URL derived from the injected arkProvider (so a custom
+        //      arkProvider does not silently pair with the public default)
+        //   3. arkadeServerUrl (only when no custom arkProvider was injected)
+        let indexerProvider = config.indexerProvider;
+        if (!indexerProvider) {
+            let indexerUrl = config.indexerUrl;
+            if (!indexerUrl) {
+                if (config.arkProvider) {
+                    const derived = extractArkProviderUrl(config.arkProvider);
+                    if (!derived) {
+                        throw new Error(
+                            "indexerUrl is required when arkProvider is provided without a discoverable serverUrl"
+                        );
+                    }
+                    indexerUrl = derived;
+                } else {
+                    indexerUrl = arkadeServerUrl;
+                }
+            }
+            indexerProvider = new RestIndexerProvider(indexerUrl);
         }
-
-        // Use provided indexerProvider instance or create a new one
-        // indexerUrl defaults to arkServerUrl if not provided
-        const indexerUrl = config.indexerUrl || arkServerUrl;
-        const indexerProvider =
-            config.indexerProvider || new RestIndexerProvider(indexerUrl);
 
         const info = await arkProvider.getInfo();
 
@@ -523,7 +543,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
         const vtxos = await contractManager.getContractsWithVtxos();
 
         return vtxos
-            .flatMap((_) => _.vtxos as ExtendedVirtualCoin[])
+            .flatMap((_) => _.vtxos)
             .filter((vtxo) => {
                 if (
                     this._pendingSpendOutpoints.has(`${vtxo.txid}:${vtxo.vout}`)
