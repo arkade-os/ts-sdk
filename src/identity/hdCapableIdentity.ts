@@ -52,24 +52,3 @@ export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
         signatureType?: "schnorr" | "ecdsa"
     ): Promise<Uint8Array>;
 }
-
-/**
- * Structural type guard for {@link HDCapableIdentity}. Returns `true`
- * when the value exposes the four members the HD wallet flow relies on:
- * `descriptor`, `isOurs`, `signWithDescriptor`, and
- * `signMessageWithDescriptor`. Used by callers that need to opt into
- * the HD path (e.g. installing an `HDDescriptorProvider`) without
- * coupling to a concrete identity class.
- */
-export function isHDCapableIdentity(
-    value: unknown
-): value is HDCapableIdentity {
-    if (typeof value !== "object" || value === null) return false;
-    const v = value as Record<string, unknown>;
-    return (
-        typeof v.descriptor === "string" &&
-        typeof v.isOurs === "function" &&
-        typeof v.signWithDescriptor === "function" &&
-        typeof v.signMessageWithDescriptor === "function"
-    );
-}
