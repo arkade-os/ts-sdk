@@ -495,6 +495,72 @@ describe("Wallet HD rotation", () => {
             await wallet.dispose();
         });
 
+        it("does NOT re-register the multi-timelock matrix at a rotated pubkey on reboot", async () => {
+            // Design: the multi-timelock matrix (default + delegate ×
+            // every walletContractTimelocks entry) is bound to INDEX 0
+            // — the identity's x-only pubkey. Rotated display contracts
+            // are intentionally single-timelock-single-pubkey. A reboot
+            // after rotation must keep the matrix at index 0 and NOT
+            // expand it into a multi-timelock set at the rotated pubkey
+            // (that would dilute the "index-0 baseline" guarantee).
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+
+            const first = await makeHdWallet(walletRepo, contractRepo);
+            const baselineScript = first.defaultContractScript;
+
+            // Rotate once so the next boot has a tagged display contract.
+            const manager = await first.getContractManager();
+            const event: ContractEvent = {
+                type: "vtxo_received",
+                contractScript: baselineScript,
+                vtxos: [],
+                contract: { script: baselineScript } as never,
+                timestamp: Date.now(),
+            };
+            for (const cb of (manager as any).eventCallbacks as Set<
+                (e: ContractEvent) => void
+            >) {
+                cb(event);
+            }
+            await (first as any)._receiveRotator?.drain();
+            const rotatedScript = first.defaultContractScript;
+            expect(rotatedScript).not.toBe(baselineScript);
+            await first.dispose();
+
+            // Boot a second wallet on the same repos. Its display is
+            // the rotated pubkey. `initializeContractManager` runs
+            // again and must register the matrix at the IDENTITY
+            // pubkey, not at the rotated pubkey.
+            const beforeCount = (await contractRepo.getContracts({})).length;
+            const second = await makeHdWallet(walletRepo, contractRepo);
+            await second.getContractManager();
+            const all = await contractRepo.getContracts({});
+
+            // The rotated display is exactly ONE tagged contract.
+            const tagged = all.filter(
+                (c) => c.metadata?.source === "wallet-receive"
+            );
+            expect(tagged).toHaveLength(1);
+            expect(tagged[0].script).toBe(rotatedScript);
+
+            // The rotated pubkey appears ONLY in the tagged display
+            // contract — never duplicated across timelocks. (Each
+            // contract in `all` either matches the baseline-script
+            // family or is the single tagged display.)
+            const rotatedFamily = all.filter((c) => c.script === rotatedScript);
+            expect(rotatedFamily).toHaveLength(1);
+            expect(rotatedFamily[0].metadata?.source).toBe("wallet-receive");
+
+            // Re-registering the matrix at boot is idempotent: the
+            // second boot did NOT add new contracts at the rotated
+            // pubkey (the matrix at index 0 may be re-written but
+            // contract count for the rotated family stays at 1).
+            expect(all.length).toBe(beforeCount);
+
+            await second.dispose();
+        });
+
         it("index-0 baseline contracts stay active and untagged after rotation", async () => {
             // The user-facing guarantee: addresses derived from index 0
             // (the identity's xOnlyPublicKey) keep crediting the wallet
