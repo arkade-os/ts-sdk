@@ -11,6 +11,12 @@ import {
 } from "../repositories/walletRepository";
 import { Transaction } from "../utils/transaction";
 import { updateWalletState } from "../utils/syncCursors";
+import {
+    ReceiveRotatorBoot,
+    ReceiveRotatorBootOpts,
+    ReceiveRotatorFactory,
+    WalletReceiveRotator,
+} from "./walletReceiveRotator";
 
 /**
  * Persisted HD wallet state stored under {@link WalletState.settings}`.hd`.
@@ -62,7 +68,9 @@ const HD_SETTINGS_KEY = "hd";
  * // next: tr([fp/86'/0'/0']xpub/0/1)
  * ```
  */
-export class HDDescriptorProvider implements DescriptorProvider {
+export class HDDescriptorProvider
+    implements DescriptorProvider, ReceiveRotatorFactory
+{
     private constructor(
         private readonly identity: HDCapableIdentity,
         private readonly walletRepository: WalletRepository
@@ -100,6 +108,25 @@ export class HDDescriptorProvider implements DescriptorProvider {
     }
 
     /**
+     * Re-derive the descriptor at the most recently allocated index
+     * WITHOUT advancing — i.e. read the same descriptor
+     * `getNextSigningDescriptor` last returned. Returns `undefined`
+     * when no descriptor has ever been allocated on this repo.
+     *
+     * Used by the boot path to keep the wallet's display address
+     * stable across restarts: when no tagged display contract exists
+     * (e.g. a fresh wallet that hasn't rotated yet, or a wallet whose
+     * baseline-only repo carries no rotation history), the boot should
+     * re-derive the existing index rather than burn a new one.
+     */
+    async getCurrentSigningDescriptor(): Promise<string | undefined> {
+        const state = await this.walletRepository.getWalletState();
+        const settings = this.parseSettings(state ?? ({} as WalletState));
+        if (settings.lastIndexUsed === undefined) return undefined;
+        return this.materializeAt(settings.lastIndexUsed);
+    }
+
+    /**
      * Returns true when the given descriptor is derivable from this wallet's
      * seed. Delegates to the underlying identity, which handles both HD and
      * simple `tr(pubkey)` descriptors.
@@ -130,6 +157,18 @@ export class HDDescriptorProvider implements DescriptorProvider {
             message,
             signatureType
         );
+    }
+
+    /**
+     * HD providers participate in receive rotation. The default
+     * factory boot (contract-repo lookup → allocate fresh descriptor)
+     * is exactly what we want, so this just delegates to
+     * {@link WalletReceiveRotator.defaultBoot}.
+     */
+    async createReceiveRotator(
+        opts: ReceiveRotatorBootOpts
+    ): Promise<ReceiveRotatorBoot | undefined> {
+        return WalletReceiveRotator.defaultBoot(this, opts);
     }
 
     // ── internals ────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { Bytes } from "@scure/btc-signer/utils.js";
 import { ArkProvider, Output, SettlementEvent } from "../providers/ark";
 import { Identity, ReadonlyIdentity } from "../identity";
+import { DescriptorProvider } from "../identity/descriptorProvider";
 import { RelativeTimelock } from "../script/tapscript";
 import { EncodedVtxoScript, TapLeafScript } from "../script/base";
 import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
@@ -16,6 +17,27 @@ import { DelegatorProvider } from "../providers/delegator";
 export const DEFAULT_ARKADE_SERVER_URL = "https://arkade.computer" as const;
 export const DEFAULT_ARKADE_HRP = "ark" as const;
 export const DEFAULT_NETWORK_NAME = "bitcoin" as const;
+
+/**
+ * Wallet receive-address strategy.
+ *
+ * - `'auto'` *(default)*: probe the identity. If it can produce a rangeable
+ *   HD descriptor, rotate the receive address on every incoming VTXO. If
+ *   not, behave like `'static'`. Failures during HD setup fall back to
+ *   `'static'` silently — preserves backwards compatibility.
+ * - `'static'`: never rotate. The wallet uses one receive address derived
+ *   from `identity.xOnlyPublicKey()`.
+ * - `'hd'`: must rotate, using the built-in HD provider derived from the
+ *   identity. Throws at `Wallet.create` if the identity isn't HD-capable
+ *   or its descriptor isn't rangeable — no silent fallback.
+ * - A {@link DescriptorProvider} instance: rotate via the supplied
+ *   provider on every incoming VTXO. The wallet does not probe the
+ *   identity; the caller is responsible for ensuring the identity can
+ *   sign for whatever pubkey the provider returns. Errors thrown by the
+ *   provider propagate — there is no silent fallback for an explicit
+ *   provider.
+ */
+export type WalletMode = "auto" | "static" | "hd" | DescriptorProvider;
 
 /**
  * Base configuration options shared by all wallet types.
@@ -170,6 +192,16 @@ export interface WalletConfig extends ReadonlyWalletConfig {
      * @see SettlementConfig
      */
     settlementConfig?: SettlementConfig | false;
+
+    /**
+     * Receive-address strategy. Pass `'static'`, `'hd'`, or a
+     * {@link DescriptorProvider} instance to drive rotation; omit (or
+     * pass `'auto'`) for the built-in auto-detect behaviour. See
+     * {@link WalletMode}.
+     *
+     * @defaultValue `'auto'`
+     */
+    walletMode?: WalletMode;
 }
 
 /**

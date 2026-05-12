@@ -2,7 +2,7 @@ import { base64, hex } from "@scure/base";
 import { tapLeafHash } from "@scure/btc-signer/payment.js";
 import { Address, OutScript, SigHash, Transaction } from "@scure/btc-signer";
 import { TransactionOutput } from "@scure/btc-signer/psbt.js";
-import { Bytes, sha256 } from "@scure/btc-signer/utils.js";
+import { Bytes, equalBytes, sha256 } from "@scure/btc-signer/utils.js";
 import { ArkAddress } from "../script/address";
 import { DefaultVtxo } from "../script/default";
 import { getNetwork, Network, NetworkName } from "../networks";
@@ -105,6 +105,7 @@ import {
     validateVtxosForScript,
     saveVtxosForContract,
 } from "../contracts/vtxoOwnership";
+import { WalletReceiveRotator } from "./walletReceiveRotator";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -202,7 +203,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         readonly onchainProvider: OnchainProvider,
         readonly indexerProvider: IndexerProvider,
         readonly arkServerPublicKey: Bytes,
-        readonly offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
+        /**
+         * Mutable so {@link Wallet} can swap the active receive tapscript
+         * after an HD rotation. External consumers should treat it as
+         * read-only — writes happen exclusively in
+         * {@link Wallet.rebuildOffchainTapscript} and the boot path.
+         */
+        public offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
@@ -927,13 +934,28 @@ export class ReadonlyWallet implements IReadonlyWallet {
             watcherConfig: this.watcherConfig,
         });
 
+        // Register the wallet's baseline always-active contracts: every
+        // `walletContractTimelocks` entry × {default, delegate-if-enabled}.
+        // This matrix is bound to INDEX 0 — the identity's x-only pubkey
+        // — by design: it's the permanent fallback set the wallet wants
+        // active forever, independent of any HD rotation. Rotated
+        // display contracts (registered separately by
+        // {@link WalletReceiveRotator.rotate}) are intentionally
+        // single-timelock-single-pubkey at the CURRENT arkd delay, and
+        // get the `metadata.source = WALLET_RECEIVE_SOURCE` tag so the
+        // next boot can find them. We deliberately do NOT re-register
+        // the matrix at a rotated pubkey: doing so would dilute the
+        // "index-0 baseline" guarantee and turn every rotation into a
+        // multi-timelock matrix expansion on every boot.
+        const baselinePubkey = await this.identity.xOnlyPublicKey();
         for (const csvTimelock of this.walletContractTimelocks) {
             const csvTimelockStr = timelockToSequence(csvTimelock).toString();
             const defaultScript = new DefaultVtxo.Script({
-                pubKey: this.offchainTapscript.options.pubKey,
+                pubKey: baselinePubkey,
                 serverPubKey: this.offchainTapscript.options.serverPubKey,
                 csvTimelock,
             });
+            const defaultScriptHex = hex.encode(defaultScript.pkScript);
 
             await manager.createContract({
                 type: "default",
@@ -944,7 +966,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                     ),
                     csvTimelock: csvTimelockStr,
                 },
-                script: hex.encode(defaultScript.pkScript),
+                script: defaultScriptHex,
                 address: defaultScript
                     .address(this.network.hrp, this.arkServerPublicKey)
                     .encode(),
@@ -953,12 +975,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
             if (this.offchainTapscript instanceof DelegateVtxo.Script) {
                 const delegateScript = new DelegateVtxo.Script({
-                    pubKey: this.offchainTapscript.options.pubKey,
+                    pubKey: baselinePubkey,
                     serverPubKey: this.offchainTapscript.options.serverPubKey,
                     delegatePubKey:
                         this.offchainTapscript.options.delegatePubKey,
                     csvTimelock,
                 });
+                const delegateScriptHex = hex.encode(delegateScript.pkScript);
 
                 await manager.createContract({
                     type: "delegate",
@@ -972,7 +995,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                         ),
                         csvTimelock: csvTimelockStr,
                     },
-                    script: hex.encode(delegateScript.pkScript),
+                    script: delegateScriptHex,
                     address: delegateScript
                         .address(this.network.hrp, this.arkServerPublicKey)
                         .encode(),
@@ -1047,6 +1070,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private _walletAssetManager?: IAssetManager;
 
     /**
+     * HD receive rotator. Owns the {@link DescriptorProvider}, the
+     * `vtxo_received` subscription, and the rotate-and-register
+     * lifecycle. Absent in `walletMode: 'static'` and for SingleKey
+     * wallets under `'auto'`. Wired in via the constructor; the actual
+     * subscription is installed lazily on first `getVtxoManager()` so
+     * the contract manager is up first.
+     */
+    private _receiveRotator?: WalletReceiveRotator;
+    private _receiveRotatorInstalled = false;
+
+    /**
      * Async mutex that serializes all operations submitting VTXOs to the Arkade
      * server (`settle`, `send`, `sendBitcoin`). This prevents VtxoManager's
      * background renewal from racing with user-initiated transactions for the
@@ -1113,7 +1147,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         delegatorProvider?: DelegatorProvider,
         watcherConfig?: WalletConfig["watcherConfig"],
         settlementConfig?: WalletConfig["settlementConfig"],
-        walletContractTimelocks?: RelativeTimelock[]
+        walletContractTimelocks?: RelativeTimelock[],
+        receiveRotator?: WalletReceiveRotator
     ) {
         super(
             identity,
@@ -1158,6 +1193,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         this._delegatorManager = delegatorProvider
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
+        this._receiveRotator = receiveRotator;
     }
 
     override get assetManager(): IAssetManager {
@@ -1181,6 +1217,16 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         try {
             const manager = await this._vtxoManagerInitializing;
             this._vtxoManager = manager;
+            // First-time hookup of the HD rotator: subscribe to
+            // `vtxo_received` AFTER the contract manager (which is
+            // initialised inside the VtxoManager construction path) has
+            // registered the wallet's baseline contracts. The flag
+            // makes this idempotent across repeated `getVtxoManager`
+            // calls — install runs at most once per wallet instance.
+            if (this._receiveRotator && !this._receiveRotatorInstalled) {
+                this._receiveRotatorInstalled = true;
+                await this._receiveRotator.install(this);
+            }
             return manager;
         } catch (error) {
             this._vtxoManagerInitializing = undefined;
@@ -1191,6 +1237,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     override async dispose(): Promise<void> {
+        // Tear down the rotation subscription + drain in-flight rotations
+        // first so no late `vtxo_received` event can queue work on a
+        // disposing wallet, and so any in-flight `createContract` call
+        // finishes before we dispose the contract manager underneath it.
+        await this._receiveRotator?.dispose();
+
         const manager =
             this._vtxoManager ??
             (this._vtxoManagerInitializing
@@ -1248,6 +1300,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         );
         const forfeitOutputScript = OutScript.encode(forfeitAddress);
 
+        // HD wiring (boot path) — resolved via the descriptor provider.
+        // The rotator (when present) is handed to the constructor as
+        // the last positional arg and `getVtxoManager()` lazily
+        // installs its `vtxo_received` subscription on first call,
+        // after the contract manager has registered the wallet's
+        // baseline contracts.
+        const boot = await WalletReceiveRotator.resolveBoot(config, setup);
+
         const wallet = new Wallet(
             config.identity,
             setup.network,
@@ -1255,7 +1315,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             setup.arkProvider,
             setup.indexerProvider,
             setup.serverPubKey,
-            setup.offchainTapscript,
+            boot?.offchainTapscript ?? setup.offchainTapscript,
             setup.boardingTapscript,
             serverUnrollScript,
             forfeitOutputScript,
@@ -1267,11 +1327,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             config.delegatorProvider,
             config.watcherConfig,
             config.settlementConfig,
-            setup.walletContractTimelocks
+            setup.walletContractTimelocks,
+            boot?.rotator
         );
 
         await wallet.getVtxoManager();
-
         return wallet;
     }
 
@@ -2580,6 +2640,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         changeVout: number,
         changeAssets?: Asset[]
     ): Promise<void> {
+        // Snapshot the current offchain tapscript + display address at
+        // function entry, synchronously, before any `await`.
+        // `WalletReceiveRotator.rotate` mutates `this.offchainTapscript`
+        // without acquiring `_txLock`, so a concurrent `vtxo_received`
+        // could swap it between the `forfeit()` read for the change
+        // VTXO and the `pkScript` read below — stamping the change with
+        // mixed scripts and binding it to the wrong contract. The two
+        // snapshot reads happen on the same synchronous tick so they
+        // are guaranteed consistent with each other, even if rotation
+        // fires the moment the next `await` yields.
+        const offchainTapscript = this.offchainTapscript;
+        const primaryAddress = this.arkAddress.encode();
+
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
             const commitmentTxIds = new Set<string>();
@@ -2642,7 +2715,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const createdAt = Date.now();
-            const primaryAddr = this.arkAddress.encode();
+            const primaryAddr = primaryAddress;
 
             // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
@@ -2652,11 +2725,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     txid: arkTxid,
                     vout: changeVout,
                     createdAt: new Date(createdAt),
-                    forfeitTapLeafScript: this.offchainTapscript.forfeit(),
-                    intentTapLeafScript: this.offchainTapscript.forfeit(),
+                    forfeitTapLeafScript: offchainTapscript.forfeit(),
+                    intentTapLeafScript: offchainTapscript.forfeit(),
                     isUnrolled: false,
                     isSpent: false,
-                    tapTree: this.offchainTapscript.encode(),
+                    tapTree: offchainTapscript.encode(),
                     value: Number(changeAmount),
                     virtualStatus: {
                         state: "preconfirmed",
@@ -2667,7 +2740,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         confirmed: false,
                     },
                     assets: changeAssets,
-                    script: hex.encode(this.offchainTapscript.pkScript),
+                    script: hex.encode(offchainTapscript.pkScript),
                 };
             }
 
