@@ -43,6 +43,15 @@ import type { SwapManagerClient } from "../swap-manager";
 
 export const DEFAULT_MESSAGE_TAG = "ARKADE_SWAPS_UPDATER";
 
+export const HANDLER_NOT_INITIALIZED = "ArkadeSwaps handler not initialized";
+
+export class HandlerNotInitializedError extends Error {
+    constructor() {
+        super(HANDLER_NOT_INITIALIZED);
+        this.name = "HandlerNotInitializedError";
+    }
+}
+
 export type RequestInitArkSwaps = RequestEnvelope & {
     type: "INIT_ARKADE_SWAPS";
     payload: Omit<
@@ -742,7 +751,7 @@ export class ArkadeSwapsMessageHandler
         if (!this.handler || !this.wallet) {
             return this.tagged({
                 id,
-                error: new Error("handler not initialized"),
+                error: new HandlerNotInitializedError(),
             });
         }
 

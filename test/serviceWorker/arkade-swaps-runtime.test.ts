@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ServiceWorkerArkadeSwaps } from "../../src/serviceWorker/arkade-swaps-runtime";
 import {
     DEFAULT_MESSAGE_TAG,
+    HANDLER_NOT_INITIALIZED,
     type RequestInitArkSwaps,
 } from "../../src/serviceWorker/arkade-swaps-message-handler";
 import type { BoltzReverseSwap, BoltzSubmarineSwap } from "../../src/types";
@@ -412,6 +413,58 @@ describe("sendMessage reinitialize on SW restart", () => {
         expect(serviceWorker.postMessage).toHaveBeenCalledWith(
             expect.objectContaining({ type: "INIT_ARKADE_SWAPS" })
         );
+    });
+
+    it("retries after re-initializing when SW returns 'ArkadeSwaps handler not initialized'", async () => {
+        // Simulates the wallet-driven bus reinit gap: the bus has been
+        // re-initialized after a SW restart (so PING/PONG works and routing
+        // happens), but the page-side ArkadeSwaps init payload has not been
+        // re-sent yet, so handler.handler is undefined and handleMessage
+        // returns HANDLER_NOT_INITIALIZED for any non-INIT request.
+        let handlerInitialized = false;
+        const { navigatorServiceWorker, serviceWorker } =
+            createServiceWorkerHarness((message) => {
+                if (message.type === "INIT_ARKADE_SWAPS") {
+                    handlerInitialized = true;
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "ARKADE_SWAPS_INITIALIZED",
+                    };
+                }
+                if (!handlerInitialized) {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        error: new Error(HANDLER_NOT_INITIALIZED),
+                    };
+                }
+                if (message.type === "GET_FEES") {
+                    return {
+                        id: message.id,
+                        tag: TAG,
+                        type: "FEES",
+                        payload: { minerFees: 100 },
+                    };
+                }
+                return null;
+            });
+
+        vi.stubGlobal("navigator", {
+            serviceWorker: navigatorServiceWorker,
+        } as any);
+
+        const runtime = createRuntimeWithConfig(serviceWorker as any);
+        const fees = await runtime.getFees();
+
+        expect(fees).toEqual({ minerFees: 100 });
+        expect(serviceWorker.postMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ type: "INIT_ARKADE_SWAPS" })
+        );
+        const feesCalls = serviceWorker.postMessage.mock.calls.filter(
+            ([msg]: any) => msg.type === "GET_FEES"
+        );
+        expect(feesCalls).toHaveLength(2);
     });
 
     it("throws after exhausting retries", async () => {
