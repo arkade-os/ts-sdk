@@ -27,6 +27,13 @@ export interface ReceiveRotatorBootOpts {
     walletRepository: WalletRepository;
     contractRepository: ContractRepository;
     serverPubKey: Uint8Array;
+    /**
+     * Expected contract family ("default" or "delegate"). When provided,
+     * boot will only consider contracts of this type when looking up the
+     * wallet's current display contract, preventing a default wallet from
+     * accidentally picking up a delegate contract or vice versa.
+     */
+    expectedContractType?: "default" | "delegate";
 }
 
 /**
@@ -212,10 +219,15 @@ export class WalletReceiveRotator {
         if (!provider) return undefined;
 
         const allowSilentFallback = (config.walletMode ?? "auto") === "auto";
+        const expectedContractType: "default" | "delegate" =
+            setup.offchainTapscript instanceof DelegateVtxo.Script
+                ? "delegate"
+                : "default";
         const factoryOpts: ReceiveRotatorBootOpts = {
             walletRepository: setup.walletRepository,
             contractRepository: setup.contractRepository,
             serverPubKey: setup.serverPubKey,
+            expectedContractType,
         };
 
         let boot: ReceiveRotatorBoot | undefined;
@@ -224,8 +236,15 @@ export class WalletReceiveRotator {
                 ? await provider.createReceiveRotator(factoryOpts)
                 : await WalletReceiveRotator.defaultBoot(provider, factoryOpts);
         } catch (e) {
-            if (!allowSilentFallback) throw e;
-            return undefined;
+            // Only swallow errors from non-rangeable descriptor compatibility issues
+            const isCompatibilityError = (err: unknown): boolean => {
+                if (!(err instanceof Error)) return false;
+                return err.message.includes("wildcard descriptor");
+            };
+            if (allowSilentFallback && isCompatibilityError(e)) {
+                return undefined;
+            }
+            throw e;
         }
         if (!boot) return undefined;
 
@@ -265,7 +284,8 @@ export class WalletReceiveRotator {
     ): Promise<ReceiveRotatorBoot> {
         const existing = await pickActiveReceive(
             opts.contractRepository,
-            opts.serverPubKey
+            opts.serverPubKey,
+            opts.expectedContractType
         );
         if (existing) {
             return {
@@ -496,17 +516,22 @@ export function rebuildTapscript(
  * contracts created by other code paths — legacy timelock registrations,
  * external integrations) are not mistaken for the wallet's display
  * address.
+ *
+ * When `expectedType` is provided, only contracts of that type are considered,
+ * preventing a "default" wallet from accidentally picking up a "delegate" contract
+ * or vice versa.
  */
 async function pickActiveReceive(
     contractRepository: ContractRepository,
-    serverPubKey: Uint8Array
+    serverPubKey: Uint8Array,
+    expectedType?: "default" | "delegate"
 ): Promise<{ pubKey: Uint8Array; script: string } | undefined> {
     // Both `default` and `delegate` contract types can be the wallet's
     // display address (delegate wallets use the delegate variant). The
     // `metadata.source` tag is the discriminator that says "this is the
     // one I generated for myself."
     const candidates = await contractRepository.getContracts({
-        type: ["default", "delegate"],
+        type: expectedType ? [expectedType] : ["default", "delegate"],
         state: "active",
     });
     const serverPubKeyHex = hex.encode(serverPubKey);
