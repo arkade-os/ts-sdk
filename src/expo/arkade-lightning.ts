@@ -39,8 +39,10 @@ function getRandomId(): string {
  * Catches JS callers still passing the pre-fix-#136 fields: TypeScript
  * blocks these at compile time, but compiled JS silently dropped them
  * and consumers would never realize the OS task wasn't scheduled.
+ *
+ * @internal Exported for tests; not part of the public API surface.
  */
-function warnOnRemovedBackgroundFields(bg: unknown): void {
+export function warnOnRemovedBackgroundFields(bg: unknown): void {
     if (!bg || typeof bg !== "object") return;
     const removed: string[] = [];
     if ("taskName" in bg) removed.push("taskName");

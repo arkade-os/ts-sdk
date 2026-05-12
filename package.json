@@ -61,7 +61,7 @@
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts src/expo/index.ts src/expo/background.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean --external expo-task-manager --external expo-background-task",
+        "build": "tsup src/index.ts src/expo/index.ts src/expo/background.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
         "prepack": "pnpm run build",
@@ -95,6 +95,18 @@
         "bip68": "^1.0.4",
         "@noble/curves": "^2.0.1",
         "light-bolt11-decoder": "3.2.0"
+    },
+    "peerDependencies": {
+        "expo-task-manager": ">=3.0.0",
+        "expo-background-task": ">=0.1.0"
+    },
+    "peerDependenciesMeta": {
+        "expo-task-manager": {
+            "optional": true
+        },
+        "expo-background-task": {
+            "optional": true
+        }
     },
     "devDependencies": {
         "@eslint/js": "^9.35.0",
