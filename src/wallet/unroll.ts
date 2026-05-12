@@ -332,7 +332,11 @@ export async function prepareUnrollTransaction(
     if (!feeRate || feeRate < Wallet.MIN_FEE_RATE) {
         feeRate = Wallet.MIN_FEE_RATE;
     }
-    const feeAmount = txWeightEstimator.vsize().fee(BigInt(feeRate));
+    // Esplora returns a `number` and bitcoind regtest sometimes reports
+    // fractional sat/vB (e.g. 1.006). `BigInt(1.006)` throws RangeError
+    // — round up so we always pay AT LEAST the advertised rate and
+    // satisfy BigInt's integer requirement.
+    const feeAmount = txWeightEstimator.vsize().fee(BigInt(Math.ceil(feeRate)));
     if (feeAmount > totalAmount) {
         throw new Error("fee amount is greater than the total amount");
     }
