@@ -4,8 +4,6 @@ import { CONTRACT_POLL_TASK_TYPE } from "../../../src/worker/expo/processors";
 
 const walletCreateMock = vi.fn();
 const runTasksMock = vi.fn();
-const registerExpoBackgroundTaskMock = vi.fn();
-const unregisterExpoBackgroundTaskMock = vi.fn();
 
 vi.mock("../../../src/wallet/wallet", () => ({
     Wallet: {
@@ -22,11 +20,6 @@ vi.mock("../../../src/worker/expo/taskRunner", async () => {
         runTasks: runTasksMock,
     };
 });
-
-vi.mock("../../../src/wallet/expo/background", () => ({
-    registerExpoBackgroundTask: registerExpoBackgroundTaskMock,
-    unregisterExpoBackgroundTask: unregisterExpoBackgroundTaskMock,
-}));
 
 const loadExpoWallet = async () => import("../../../src/wallet/expo/wallet");
 
@@ -70,7 +63,7 @@ describe("ExpoWallet", () => {
         vi.useRealTimers();
     });
 
-    it("setup persists background config, seeds tasks, and registers background task", async () => {
+    it("setup persists background config and seeds tasks", async () => {
         const taskQueue = new QueueWithConfig();
         const walletStub = createWalletStub();
         walletCreateMock.mockResolvedValue(walletStub);
@@ -83,9 +76,7 @@ describe("ExpoWallet", () => {
             esploraUrl: "https://esplora.example",
             storage: {} as any,
             background: {
-                taskName: "ark-background-poll",
                 taskQueue: taskQueue as any,
-                minimumBackgroundInterval: 20,
             },
         } as any);
 
@@ -99,12 +90,6 @@ describe("ExpoWallet", () => {
         });
         expect(await taskQueue.getTasks(CONTRACT_POLL_TASK_TYPE)).toHaveLength(
             1
-        );
-        expect(registerExpoBackgroundTaskMock).toHaveBeenCalledWith(
-            "ark-background-poll",
-            {
-                minimumInterval: 20,
-            }
         );
 
         await wallet.dispose();
@@ -141,7 +126,6 @@ describe("ExpoWallet", () => {
             esploraUrl: "https://esplora.example",
             storage: {} as any,
             background: {
-                taskName: "ark-foreground-poll",
                 taskQueue,
                 foregroundIntervalMs: 1_000,
             },
@@ -164,9 +148,6 @@ describe("ExpoWallet", () => {
         const callsBefore = runTasksMock.mock.calls.length;
         await vi.advanceTimersByTimeAsync(1_000);
         expect(runTasksMock).toHaveBeenCalledTimes(callsBefore);
-        expect(unregisterExpoBackgroundTaskMock).toHaveBeenCalledWith(
-            "ark-foreground-poll"
-        );
     });
 
     it("delegates wallet methods to the inner wallet", async () => {
@@ -182,7 +163,6 @@ describe("ExpoWallet", () => {
             esploraUrl: "https://esplora.example",
             storage: {} as any,
             background: {
-                taskName: "ark-delegation",
                 taskQueue,
             },
         } as any);
@@ -224,8 +204,70 @@ describe("ExpoWallet", () => {
 
         await wallet.dispose();
         expect(walletStub.dispose).toHaveBeenCalledTimes(1);
-        expect(unregisterExpoBackgroundTaskMock).toHaveBeenCalledWith(
-            "ark-delegation"
-        );
+    });
+});
+
+describe("warnOnRemovedBackgroundFields", () => {
+    let warnSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+        warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        warnSpy.mockRestore();
+    });
+
+    it("does not warn when neither removed field is present", async () => {
+        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
+        warnOnRemovedBackgroundFields({
+            taskQueue: {},
+            foregroundIntervalMs: 20_000,
+        });
+        expect(warnSpy).not.toHaveBeenCalled();
+    });
+
+    it("warns and names taskName when present (pre-fix-#486 field)", async () => {
+        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
+        warnOnRemovedBackgroundFields({
+            taskName: "ark-background-poll",
+            taskQueue: {},
+        });
+        expect(warnSpy).toHaveBeenCalledOnce();
+        const msg = String(warnSpy.mock.calls[0][0]);
+        expect(msg).toContain("taskName");
+        expect(msg).toContain("@arkade-os/sdk/wallet/expo/background");
+    });
+
+    it("warns and names minimumBackgroundInterval when present", async () => {
+        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
+        warnOnRemovedBackgroundFields({
+            taskQueue: {},
+            minimumBackgroundInterval: 15,
+        });
+        expect(warnSpy).toHaveBeenCalledOnce();
+        const msg = String(warnSpy.mock.calls[0][0]);
+        expect(msg).toContain("minimumBackgroundInterval");
+    });
+
+    it("lists both removed fields in a single warning when both present", async () => {
+        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
+        warnOnRemovedBackgroundFields({
+            taskName: "ark-background-poll",
+            minimumBackgroundInterval: 15,
+            taskQueue: {},
+        });
+        expect(warnSpy).toHaveBeenCalledOnce();
+        const msg = String(warnSpy.mock.calls[0][0]);
+        expect(msg).toContain("taskName");
+        expect(msg).toContain("minimumBackgroundInterval");
+    });
+
+    it("does not throw on null / undefined / non-object inputs", async () => {
+        const { warnOnRemovedBackgroundFields } = await loadExpoWallet();
+        expect(() => warnOnRemovedBackgroundFields(null)).not.toThrow();
+        expect(() => warnOnRemovedBackgroundFields(undefined)).not.toThrow();
+        expect(() => warnOnRemovedBackgroundFields("nonsense")).not.toThrow();
+        expect(warnSpy).not.toHaveBeenCalled();
     });
 });
