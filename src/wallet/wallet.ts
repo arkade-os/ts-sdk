@@ -2635,6 +2635,19 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         changeVout: number,
         changeAssets?: Asset[]
     ): Promise<void> {
+        // Snapshot the current offchain tapscript + display address at
+        // function entry, synchronously, before any `await`.
+        // `WalletReceiveRotator.rotate` mutates `this.offchainTapscript`
+        // without acquiring `_txLock`, so a concurrent `vtxo_received`
+        // could swap it between the `forfeit()` read for the change
+        // VTXO and the `pkScript` read below — stamping the change with
+        // mixed scripts and binding it to the wrong contract. The two
+        // snapshot reads happen on the same synchronous tick so they
+        // are guaranteed consistent with each other, even if rotation
+        // fires the moment the next `await` yields.
+        const offchainTapscript = this.offchainTapscript;
+        const primaryAddress = this.arkAddress.encode();
+
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
             const commitmentTxIds = new Set<string>();
@@ -2697,7 +2710,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const createdAt = Date.now();
-            const primaryAddr = this.arkAddress.encode();
+            const primaryAddr = primaryAddress;
 
             // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
@@ -2707,11 +2720,11 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     txid: arkTxid,
                     vout: changeVout,
                     createdAt: new Date(createdAt),
-                    forfeitTapLeafScript: this.offchainTapscript.forfeit(),
-                    intentTapLeafScript: this.offchainTapscript.forfeit(),
+                    forfeitTapLeafScript: offchainTapscript.forfeit(),
+                    intentTapLeafScript: offchainTapscript.forfeit(),
                     isUnrolled: false,
                     isSpent: false,
-                    tapTree: this.offchainTapscript.encode(),
+                    tapTree: offchainTapscript.encode(),
                     value: Number(changeAmount),
                     virtualStatus: {
                         state: "preconfirmed",
@@ -2722,7 +2735,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         confirmed: false,
                     },
                     assets: changeAssets,
-                    script: hex.encode(this.offchainTapscript.pkScript),
+                    script: hex.encode(offchainTapscript.pkScript),
                 };
             }
 

@@ -471,9 +471,12 @@ describe("ContractManager", () => {
             const requested = collectRequestedScripts(mockIndexer);
             expect(requested.has(inactiveScript)).toBe(true);
 
-            // Cursor moved forward past the seeded value.
+            // Cursor moved strictly forward — `>=` would pass even on
+            // the no-op case (cursor unchanged), defeating the test.
             const stateAfter = await walletRepo.getWalletState();
-            expect((stateAfter?.lastSyncTime ?? 0) >= SEEDED_CURSOR).toBe(true);
+            expect(stateAfter?.lastSyncTime ?? 0).toBeGreaterThan(
+                SEEDED_CURSOR
+            );
         });
 
         it("does NOT advance the cursor on a windowed includeInactive sweep", async () => {
