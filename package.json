@@ -26,6 +26,16 @@
                 "default": "./dist/expo/index.cjs"
             }
         },
+        "./expo/background": {
+            "import": {
+                "types": "./dist/expo/background.d.ts",
+                "default": "./dist/expo/background.js"
+            },
+            "require": {
+                "types": "./dist/expo/background.d.ts",
+                "default": "./dist/expo/background.cjs"
+            }
+        },
         "./repositories/sqlite": {
             "import": {
                 "types": "./dist/repositories/sqlite/index.d.ts",
@@ -51,7 +61,7 @@
         "dist"
     ],
     "scripts": {
-        "build": "tsup src/index.ts src/expo/index.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean",
+        "build": "tsup src/index.ts src/expo/index.ts src/expo/background.ts src/repositories/sqlite/index.ts src/repositories/realm/index.ts --format esm,cjs --dts --clean --external expo-task-manager --external expo-background-task",
         "format": "prettier --write src test",
         "lint": "prettier --check src test",
         "prepack": "pnpm run build",

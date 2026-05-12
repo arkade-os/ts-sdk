@@ -1,3 +1,24 @@
+/**
+ * Expo background task entrypoint — `@arkade-os/boltz-swap/expo/background`.
+ *
+ * This subpath is the **only** module in the package that touches
+ * `expo-task-manager` / `expo-background-task`. It is split out from
+ * `/expo` on purpose: those packages have no web platform and are not
+ * declared dependencies, so importing them from `/expo` would regress
+ * react-native-web / Node consumers who only need the foreground APIs.
+ *
+ * The imports are static (not lazy `require()`) because Metro's static
+ * dependency collector cannot see modules hidden behind `__require()` in
+ * the ESM build — without static imports the packages never enter the
+ * bundle graph and resolution fails at runtime. See
+ * https://github.com/arkade-os/boltz-swap/issues/136 for details.
+ *
+ * Consumers install the peers in their Expo app:
+ *   npx expo install expo-task-manager expo-background-task
+ */
+import * as TaskManager from "expo-task-manager";
+import * as BackgroundTask from "expo-background-task";
+
 import type { TaskItem } from "@arkade-os/sdk/worker/expo";
 import { runTasks } from "@arkade-os/sdk/worker/expo";
 import {
@@ -13,51 +34,12 @@ import type {
     SwapTaskDependencies,
 } from "./types";
 
-// ── Inline type declarations for optional Expo packages ──────────
-// These avoid a hard build-time dependency on expo-background-task
-// and expo-task-manager (they are optional peerDependencies).
-
-interface TaskManagerModule {
-    defineTask(
-        taskName: string,
-        executor: (body: {
-            data: unknown;
-            error: { code: string | number; message: string } | null;
-            executionInfo: { eventId: string; taskName: string };
-        }) => Promise<unknown>
-    ): void;
-}
-
-interface BackgroundTaskModule {
-    BackgroundTaskResult: { Success: 1; Failed: 2 };
-    registerTaskAsync(
-        taskName: string,
-        options?: { minimumInterval?: number }
-    ): Promise<void>;
-    unregisterTaskAsync(taskName: string): Promise<void>;
-}
-
-function requireTaskManager(): TaskManagerModule {
-    try {
-        return require("expo-task-manager") as TaskManagerModule;
-    } catch {
-        throw new Error(
-            "expo-task-manager is required for background tasks. " +
-                "Install it with: npx expo install expo-task-manager"
-        );
-    }
-}
-
-function requireBackgroundTask(): BackgroundTaskModule {
-    try {
-        return require("expo-background-task") as BackgroundTaskModule;
-    } catch {
-        throw new Error(
-            "expo-background-task is required for background tasks. " +
-                "Install it with: npx expo install expo-background-task"
-        );
-    }
-}
+export { swapsPollProcessor, SWAP_POLL_TASK_TYPE };
+export type {
+    DefineSwapBackgroundTaskOptions,
+    PersistedSwapBackgroundConfig,
+    SwapTaskDependencies,
+};
 
 function getRandomId(): string {
     return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -104,13 +86,17 @@ function createBackgroundWalletShim(args: {
 /**
  * Define the Expo background task handler for swap polling.
  *
- * **Must be called at module/global scope** (before React mounts).
- * Internally calls `TaskManager.defineTask()`.
+ * **Must be called at module/global scope** (before React mounts) so
+ * Expo's TaskManager can resume the task on cold start.
+ *
+ * Pair with {@link registerExpoSwapBackgroundTask} to activate the OS
+ * scheduler — `ExpoArkadeSwaps.setup()` no longer registers the task
+ * for you.
  *
  * @example
  * ```ts
- * // At the top of your app entry file (_layout.tsx)
- * import { defineExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo";
+ * // App entry (e.g. _layout.tsx) — module scope
+ * import { defineExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo/background";
  * import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
  * import AsyncStorage from "@react-native-async-storage/async-storage";
  *
@@ -129,9 +115,6 @@ export function defineExpoSwapBackgroundTask(
     taskName: string,
     options: DefineSwapBackgroundTaskOptions
 ): void {
-    const TaskManager = requireTaskManager();
-    const BackgroundTask = requireBackgroundTask();
-
     const { taskQueue, swapRepository, identityFactory } = options;
 
     TaskManager.defineTask(taskName, async () => {
@@ -143,10 +126,8 @@ export function defineExpoSwapBackgroundTask(
                 return BackgroundTask.BackgroundTaskResult.Success;
             }
 
-            // Reconstruct Identity from secure storage
             const identity = await identityFactory();
 
-            // Reconstruct providers
             const arkProvider = new ExpoArkProvider(config.arkServerUrl);
             const indexerProvider = new ExpoIndexerProvider(
                 config.arkServerUrl
@@ -222,31 +203,34 @@ export function defineExpoSwapBackgroundTask(
 /**
  * Activate the OS-level background task scheduler.
  *
- * Call this after {@link defineExpoSwapBackgroundTask} (typically inside
- * {@link ExpoArkadeSwaps.setup}).
+ * Call once after {@link defineExpoSwapBackgroundTask} — typically right
+ * after `ExpoArkadeSwaps.setup()`. Safe to call again to update the
+ * interval.
  *
- * @param taskName - The task name registered with defineExpoSwapBackgroundTask.
- * @param options - Optional configuration.
- * @param options.minimumInterval - Minimum interval in minutes (default 15).
+ * @param taskName - The task name passed to {@link defineExpoSwapBackgroundTask}.
+ * @param options.minimumInterval - Minimum interval in **minutes** (default
+ *   15, the floor enforced by `expo-background-task`).
+ *
+ * @see https://docs.expo.dev/versions/latest/sdk/background-task/#backgroundtaskoptions
  */
 export async function registerExpoSwapBackgroundTask(
     taskName: string,
     options?: { minimumInterval?: number }
 ): Promise<void> {
-    const BackgroundTask = requireBackgroundTask();
     await BackgroundTask.registerTaskAsync(taskName, {
-        // expo-background-task expects minutes:
-        // https://docs.expo.dev/versions/latest/sdk/background-task/#backgroundtaskoptions
         minimumInterval: options?.minimumInterval ?? 15,
     });
 }
 
 /**
  * Unregister the swap background task from the OS scheduler.
+ *
+ * `ExpoArkadeSwaps.dispose()` does **not** call this — the OS-level
+ * task lifecycle is the consumer's responsibility, matching the explicit
+ * `register` step.
  */
 export async function unregisterExpoSwapBackgroundTask(
     taskName: string
 ): Promise<void> {
-    const BackgroundTask = requireBackgroundTask();
     await BackgroundTask.unregisterTaskAsync(taskName);
 }

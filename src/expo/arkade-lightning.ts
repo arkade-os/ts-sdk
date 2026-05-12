@@ -36,6 +36,26 @@ function getRandomId(): string {
 }
 
 /**
+ * Catches JS callers still passing the pre-fix-#136 fields: TypeScript
+ * blocks these at compile time, but compiled JS silently dropped them
+ * and consumers would never realize the OS task wasn't scheduled.
+ */
+function warnOnRemovedBackgroundFields(bg: unknown): void {
+    if (!bg || typeof bg !== "object") return;
+    const removed: string[] = [];
+    if ("taskName" in bg) removed.push("taskName");
+    if ("minimumBackgroundInterval" in bg) {
+        removed.push("minimumBackgroundInterval");
+    }
+    if (removed.length === 0) return;
+    console.warn(
+        `[boltz-swap] ExpoArkadeSwaps.setup: ignoring removed background field(s): ${removed.join(", ")}. ` +
+            'OS-task registration moved to "@arkade-os/boltz-swap/expo/background". ' +
+            "See https://github.com/arkade-os/boltz-swap/issues/136"
+    );
+}
+
+/**
  * Expo/React Native wrapper for ArkadeSwaps with background task support.
  *
  * In the foreground, delegates to a full {@link ArkadeSwaps} instance
@@ -50,20 +70,30 @@ function getRandomId(): string {
  * acknowledges background outbox results and re-seeds the task queue
  * for the next background wake.
  *
+ * OS-level task registration is the consumer's responsibility — call
+ * `registerExpoSwapBackgroundTask` from
+ * `@arkade-os/boltz-swap/expo/background` after `setup()`. Keeping
+ * registration out of `setup()` lets this entrypoint avoid pulling
+ * `expo-task-manager` / `expo-background-task` into the `/expo` bundle.
+ *
  * @example
  * ```ts
+ * import { ExpoArkadeSwaps } from "@arkade-os/boltz-swap/expo";
+ * import { registerExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo/background";
+ *
  * const arkSwaps = await ExpoArkadeSwaps.setup({
  *     wallet,
  *     arkServerUrl: "https://ark.example.com",
  *     swapProvider,
  *     swapManager: true,
  *     background: {
- *         taskName: "ark-swap-poll",
  *         taskQueue: swapTaskQueue,
  *         foregroundIntervalMs: 20_000,
- *         minimumBackgroundInterval: 15,
  *     },
  * });
+ *
+ * // Activate the OS scheduler (Expo Android/iOS only)
+ * await registerExpoSwapBackgroundTask("ark-swap-poll", { minimumInterval: 15 });
  *
  * await arkSwaps.createLightningInvoice({ amount: 1000 });
  * ```
@@ -72,28 +102,31 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
     readonly swapRepository: ArkadeSwaps["swapRepository"];
 
     private foregroundIntervalId?: ReturnType<typeof setInterval>;
-    private readonly taskName: string;
 
     private constructor(
         private readonly inner: ArkadeSwaps,
         private readonly config: ExpoArkadeSwapsConfig
     ) {
-        this.taskName = config.background.taskName;
         this.swapRepository = inner.swapRepository;
     }
 
     /**
-     * Create an ExpoArkadeSwaps with background task support.
+     * Create an ExpoArkadeSwaps with foreground/background queue handoff.
      *
      * 1. Creates the inner {@link ArkadeSwaps} with SwapManager enabled.
      * 2. Persists {@link PersistedSwapBackgroundConfig} for background rehydration.
      * 3. Seeds the task queue with a swap-poll task.
-     * 4. Registers the background task with the OS scheduler (if configured).
-     * 5. Starts foreground interval (if configured).
+     * 4. Starts the foreground interval (if configured).
+     *
+     * OS-level scheduling lives in
+     * `@arkade-os/boltz-swap/expo/background` and is invoked separately
+     * by the consumer.
      */
     static async setup(
         config: ExpoArkadeSwapsConfig
     ): Promise<ExpoArkadeSwaps> {
+        warnOnRemovedBackgroundFields(config.background);
+
         // Create inner ArkadeSwaps with swapManager enabled for foreground
         const inner = new ArkadeSwaps({
             ...config,
@@ -125,42 +158,6 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
 
         // Seed the queue so the first background wake has work
         await instance.seedSwapPollTask();
-
-        // Activate OS-level background scheduling
-        if (config.background.minimumBackgroundInterval) {
-            try {
-                const { registerExpoSwapBackgroundTask } = await import(
-                    "./background"
-                );
-                await registerExpoSwapBackgroundTask(
-                    config.background.taskName,
-                    {
-                        minimumInterval:
-                            config.background.minimumBackgroundInterval,
-                    }
-                );
-            } catch (err) {
-                const message =
-                    err instanceof Error ? err.message : String(err);
-                const code =
-                    typeof err === "object" && err !== null && "code" in err
-                        ? (err as { code?: unknown }).code
-                        : undefined;
-                const codeString = typeof code === "string" ? code : undefined;
-
-                const isModuleNotFound =
-                    codeString === "MODULE_NOT_FOUND" ||
-                    /cannot find module/i.test(message) ||
-                    /module not found/i.test(message);
-
-                if (!isModuleNotFound) {
-                    console.warn(
-                        `[boltz-swap] Failed to register background task "${config.background.taskName}":`,
-                        err
-                    );
-                }
-            }
-        }
 
         // Start foreground interval
         if (
@@ -232,32 +229,6 @@ export class ExpoArkadeSwaps implements IArkadeSwaps {
         }
 
         await this.inner.dispose();
-
-        try {
-            const { unregisterExpoSwapBackgroundTask } = await import(
-                "./background"
-            );
-            await unregisterExpoSwapBackgroundTask(this.taskName);
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            const code =
-                typeof err === "object" && err !== null && "code" in err
-                    ? (err as { code?: unknown }).code
-                    : undefined;
-            const codeString = typeof code === "string" ? code : undefined;
-
-            const isModuleNotFound =
-                codeString === "MODULE_NOT_FOUND" ||
-                /cannot find module/i.test(message) ||
-                /module not found/i.test(message);
-
-            if (!isModuleNotFound) {
-                console.warn(
-                    `[boltz-swap] Failed to unregister background task "${this.taskName}":`,
-                    err
-                );
-            }
-        }
     }
 
     async [Symbol.asyncDispose](): Promise<void> {

@@ -260,6 +260,21 @@ Custom implementations must set `readonly version = 1` — TypeScript will error
 
 Expo/React Native cannot run a long-lived Service Worker, and background work is executed by the OS for a short window (typically every ~15+ minutes). To enable best-effort background claim/refund for swaps, use `ExpoArkadeLightning` plus a background task defined at global scope.
 
+> [!WARNING]
+> **Change since 0.3.30** — fix for [#136](https://github.com/arkade-os/boltz-swap/issues/136).
+>
+> Background task helpers moved from `@arkade-os/boltz-swap/expo` to
+> `@arkade-os/boltz-swap/expo/background`. OS-level registration is no
+> longer performed by `ExpoArkadeSwaps.setup()` — call it explicitly.
+>
+> | Before | After |
+> | --- | --- |
+> | `import { defineExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo"` | `import { defineExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo/background"` |
+> | `background: { taskName, taskQueue, minimumBackgroundInterval, foregroundIntervalMs }` | `background: { taskQueue, foregroundIntervalMs }` + explicit `await registerExpoSwapBackgroundTask(taskName, { minimumInterval })` |
+> | `dispose()` unregistered the OS task | Call `unregisterExpoSwapBackgroundTask(taskName)` yourself |
+>
+> TypeScript callers get a compile error on the removed fields. **JS callers must update manually** — the old fields are silently ignored and the OS task will never run.
+
 ### Prerequisites
 
 - Install Expo background task dependencies:
@@ -298,7 +313,7 @@ import * as SecureStore from "expo-secure-store";
 import { SingleKey } from "@arkade-os/sdk";
 import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
 import { IndexedDbSwapRepository } from "@arkade-os/boltz-swap";
-import { defineExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo";
+import { defineExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo/background";
 
 const swapTaskQueue = new AsyncStorageTaskQueue(AsyncStorage, "ark:swap-queue");
 const swapRepository = new IndexedDbSwapRepository();
@@ -324,6 +339,7 @@ import { ExpoWallet } from "@arkade-os/sdk/wallet/expo";
 import { AsyncStorageTaskQueue } from "@arkade-os/sdk/worker/expo";
 import { BoltzSwapProvider } from "@arkade-os/boltz-swap";
 import { ExpoArkadeLightning } from "@arkade-os/boltz-swap/expo";
+import { registerExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo/background";
 
 // Used by ExpoWallet's background task (defined via @arkade-os/sdk/wallet/expo)
 const walletTaskQueue = new AsyncStorageTaskQueue(AsyncStorage, "ark:wallet-queue");
@@ -350,15 +366,30 @@ const arkLn = await ExpoArkadeLightning.setup({
   swapProvider,
   swapRepository, // must match the one used in defineExpoSwapBackgroundTask
   background: {
-    taskName: "ark-swap-poll",
     taskQueue: swapTaskQueue, // must match the one used in defineExpoSwapBackgroundTask
     foregroundIntervalMs: 20_000,
-    minimumBackgroundInterval: 15,
   },
 });
 
+// Activate the OS scheduler (Expo Android/iOS only).
+// Must use the same task name passed to defineExpoSwapBackgroundTask above.
+await registerExpoSwapBackgroundTask("ark-swap-poll", { minimumInterval: 15 });
+
 await arkLn.createLightningInvoice({ amount: 1000 });
+
+// On logout / wallet reset / app teardown:
+import { unregisterExpoSwapBackgroundTask } from "@arkade-os/boltz-swap/expo/background";
+await arkLn.dispose();
+await unregisterExpoSwapBackgroundTask("ark-swap-poll");
 ```
+
+> [!IMPORTANT]
+> The OS-task helpers (`defineExpoSwapBackgroundTask`,
+> `registerExpoSwapBackgroundTask`, `unregisterExpoSwapBackgroundTask`)
+> live under `@arkade-os/boltz-swap/expo/background`. That subpath is
+> the **only** module that imports `expo-task-manager` /
+> `expo-background-task`; keeping it isolated lets react-native-web and
+> Node consumers use `/expo` without those native packages.
 
 ### Error Handling
 
