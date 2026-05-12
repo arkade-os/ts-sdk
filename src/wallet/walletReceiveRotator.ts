@@ -476,8 +476,12 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
     const expansion = expand({ descriptor, network });
     const key = expansion.expansionMap?.["@0"];
     if (!key?.pubkey) {
+        // Avoid interpolating the descriptor itself: it normally
+        // contains an xpub, but a misconfigured caller could pass an
+        // xprv, and error messages surface in logs / crash reporters /
+        // Sentry. The length is enough context for debugging.
         throw new Error(
-            `Cannot derive leaf pubkey from descriptor "${descriptor}": ` +
+            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
                 `ensure the descriptor is materialized (no wildcard) and parsable.`
         );
     }
