@@ -936,17 +936,22 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // Register the wallet's baseline always-active contracts: every
         // `walletContractTimelocks` entry × {default, delegate-if-enabled}.
-        // For an HD wallet, this is the index-0 set; for a static wallet
-        // it's the only set. None of these are tagged with
-        // `metadata.source = WALLET_RECEIVE_SOURCE` — the tag exists only
-        // to identify the wallet's CURRENT rotated display address (set
-        // by {@link WalletReceiveRotator.rotate}). Baseline contracts
-        // stay active in the repo so addresses derived from index 0
-        // continue to credit this wallet even after rotations.
+        // This matrix is bound to INDEX 0 — the identity's x-only pubkey
+        // — by design: it's the permanent fallback set the wallet wants
+        // active forever, independent of any HD rotation. Rotated
+        // display contracts (registered separately by
+        // {@link WalletReceiveRotator.rotate}) are intentionally
+        // single-timelock-single-pubkey at the CURRENT arkd delay, and
+        // get the `metadata.source = WALLET_RECEIVE_SOURCE` tag so the
+        // next boot can find them. We deliberately do NOT re-register
+        // the matrix at a rotated pubkey: doing so would dilute the
+        // "index-0 baseline" guarantee and turn every rotation into a
+        // multi-timelock matrix expansion on every boot.
+        const baselinePubkey = await this.identity.xOnlyPublicKey();
         for (const csvTimelock of this.walletContractTimelocks) {
             const csvTimelockStr = timelockToSequence(csvTimelock).toString();
             const defaultScript = new DefaultVtxo.Script({
-                pubKey: this.offchainTapscript.options.pubKey,
+                pubKey: baselinePubkey,
                 serverPubKey: this.offchainTapscript.options.serverPubKey,
                 csvTimelock,
             });
@@ -970,7 +975,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
             if (this.offchainTapscript instanceof DelegateVtxo.Script) {
                 const delegateScript = new DelegateVtxo.Script({
-                    pubKey: this.offchainTapscript.options.pubKey,
+                    pubKey: baselinePubkey,
                     serverPubKey: this.offchainTapscript.options.serverPubKey,
                     delegatePubKey:
                         this.offchainTapscript.options.delegatePubKey,
