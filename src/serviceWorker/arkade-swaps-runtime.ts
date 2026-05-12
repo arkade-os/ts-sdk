@@ -24,6 +24,7 @@ import {
     ArkadeSwapsUpdaterRequest,
     ArkadeSwapsUpdaterResponse,
     DEFAULT_MESSAGE_TAG,
+    HANDLER_NOT_INITIALIZED,
     RequestInitArkSwaps,
     LONG_RUNNING_ARKADE_SWAPS_REQUEST_TYPES,
 } from "./arkade-swaps-message-handler";
@@ -81,6 +82,17 @@ function isMessageBusNotInitializedError(error: unknown): boolean {
     return (
         error instanceof Error &&
         error.message.includes(MESSAGE_BUS_NOT_INITIALIZED)
+    );
+}
+
+// Same structured-clone caveat as above: match by message string. Triggered
+// when the bus has been re-initialized (e.g. by the wallet's restart-recovery
+// path) but the ArkadeSwaps handler's own init payload has not been re-sent,
+// leaving `handler.handler` undefined. Reinitialize from cached initPayload.
+function isHandlerNotInitializedError(error: unknown): boolean {
+    return (
+        error instanceof Error &&
+        error.message.includes(HANDLER_NOT_INITIALIZED)
     );
 }
 
@@ -1154,10 +1166,10 @@ export class ServiceWorkerArkadeSwaps implements IArkadeSwaps {
             try {
                 return await this.sendMessageDirect(request, timeoutMs);
             } catch (error: any) {
-                if (
-                    !isMessageBusNotInitializedError(error) ||
-                    attempt >= maxRetries
-                ) {
+                const recoverable =
+                    isMessageBusNotInitializedError(error) ||
+                    isHandlerNotInitializedError(error);
+                if (!recoverable || attempt >= maxRetries) {
                     throw error;
                 }
 
