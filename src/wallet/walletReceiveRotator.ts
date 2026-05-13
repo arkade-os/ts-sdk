@@ -562,14 +562,15 @@ async function pickActiveReceive(
  * Resolve the polymorphic `walletMode` config field into a concrete
  * {@link DescriptorProvider} (or `undefined` for the static path).
  *
+ * - `'auto'` *(default)*: behaves like `'static'` — no HD rotation.
+ *   Deliberately conservative until HD rotation has more soak time in
+ *   the field. Switch to `'hd'` or pass a {@link DescriptorProvider}
+ *   to opt in.
  * - `'static'`: returns `undefined`.
  * - A {@link DescriptorProvider} instance: returns it as-is.
  * - `'hd'`: builds the built-in HD provider from the identity. Throws
  *   if the identity isn't HD-capable or the descriptor isn't rangeable —
  *   no silent fallback.
- * - `'auto'` *(default)*: builds the built-in HD provider if the
- *   identity is HD-capable, falling through silently to `undefined` if
- *   construction fails (preserves backwards compatibility).
  */
 async function resolveDescriptorProvider(
     config: WalletConfig,
@@ -577,48 +578,34 @@ async function resolveDescriptorProvider(
 ): Promise<DescriptorProvider | undefined> {
     const mode: WalletMode = config.walletMode ?? "auto";
 
-    if (mode === "static") return undefined;
+    // Treat the default ('auto') as 'static' for now. HD rotation must
+    // be explicitly opted into via `walletMode: 'hd'` or a supplied
+    // DescriptorProvider — we don't want existing wallets to silently
+    // start rotating their receive addresses on an SDK upgrade.
+    if (mode === "static" || mode === "auto") return undefined;
 
     if (typeof mode !== "string") {
         // Caller supplied a DescriptorProvider directly.
         return mode;
     }
 
-    if (mode === "hd") {
-        if (!isHDCapableIdentity(config.identity)) {
-            throw new Error(
-                "walletMode 'hd' requires an HD-capable identity " +
-                    "(SeedIdentity / MnemonicIdentity with a rangeable BIP-32 " +
-                    "descriptor) or an explicit DescriptorProvider."
-            );
-        }
-        try {
-            return await HDDescriptorProvider.create(
-                config.identity,
-                walletRepository
-            );
-        } catch (e) {
-            throw new Error(
-                "walletMode 'hd' failed to initialize: " +
-                    (e instanceof Error ? e.message : String(e))
-            );
-        }
-    }
-
-    // mode === 'auto'
+    // mode === 'hd'
     if (!isHDCapableIdentity(config.identity)) {
-        return undefined;
+        throw new Error(
+            "walletMode 'hd' requires an HD-capable identity " +
+                "(SeedIdentity / MnemonicIdentity with a rangeable BIP-32 " +
+                "descriptor) or an explicit DescriptorProvider."
+        );
     }
     try {
         return await HDDescriptorProvider.create(
             config.identity,
             walletRepository
         );
-    } catch {
-        // Descriptor not rangeable, contract repo unavailable, or
-        // descriptor mismatch — fall back to the static path rather
-        // than fail wallet construction. Use `walletMode: 'hd'` if
-        // you want this to throw instead.
-        return undefined;
+    } catch (e) {
+        throw new Error(
+            "walletMode 'hd' failed to initialize: " +
+                (e instanceof Error ? e.message : String(e))
+        );
     }
 }

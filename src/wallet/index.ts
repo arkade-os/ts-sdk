@@ -21,10 +21,12 @@ export const DEFAULT_NETWORK_NAME = "bitcoin" as const;
 /**
  * Wallet receive-address strategy.
  *
- * - `'auto'` *(default)*: probe the identity. If it can produce a rangeable
- *   HD descriptor, rotate the receive address on every incoming VTXO. If
- *   not, behave like `'static'`. Failures during HD setup fall back to
- *   `'static'` silently — preserves backwards compatibility.
+ * - `'auto'` *(default)*: behaves like `'static'` for now — HD rotation
+ *   is conservatively OFF by default until it has more soak time. The
+ *   `'auto'` name is reserved for a future change that will probe the
+ *   identity automatically; today, picking `'auto'` is identical to
+ *   picking `'static'`. Opt in to HD via `'hd'` or a
+ *   {@link DescriptorProvider}.
  * - `'static'`: never rotate. The wallet uses one receive address derived
  *   from `identity.xOnlyPublicKey()`.
  * - `'hd'`: must rotate, using the built-in HD provider derived from the

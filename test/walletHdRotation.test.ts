@@ -81,6 +81,10 @@ function makeHdWallet(
     });
     return Wallet.create({
         identity,
+        // `'auto'` is currently a synonym for `'static'`. Tests in
+        // this file exercise the HD-rotation path, so they must opt
+        // in explicitly.
+        walletMode: "hd",
         arkServerUrl: "http://localhost:7070",
         storage: {
             walletRepository: walletRepo ?? new InMemoryWalletRepository(),
@@ -721,6 +725,30 @@ describe("Wallet HD rotation", () => {
             });
             // No `hd` settings persisted — the resolver short-circuited
             // before HDDescriptorProvider.create.
+            const state = await repo.getWalletState();
+            expect(state?.settings?.hd).toBeUndefined();
+            await wallet.dispose();
+        });
+
+        it("default ('auto') currently behaves like 'static' for HD-capable identities", async () => {
+            // Until HD rotation has more soak time, the default behaviour
+            // is conservative: an HD-capable identity gets the static
+            // path unless the caller explicitly opts into HD via
+            // `walletMode: 'hd'` or a supplied DescriptorProvider. This
+            // test locks that in so a future change to flip the default
+            // is loud and intentional.
+            const repo = new InMemoryWalletRepository();
+            const wallet = await Wallet.create({
+                identity: MnemonicIdentity.fromMnemonic(MNEMONIC, {
+                    isMainnet: false,
+                }),
+                // walletMode intentionally omitted → defaults to 'auto'.
+                arkServerUrl: "http://localhost:7070",
+                storage: {
+                    walletRepository: repo,
+                    contractRepository: new InMemoryContractRepository(),
+                },
+            });
             const state = await repo.getWalletState();
             expect(state?.settings?.hd).toBeUndefined();
             await wallet.dispose();
