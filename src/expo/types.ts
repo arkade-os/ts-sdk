@@ -41,16 +41,17 @@ export interface PersistedSwapBackgroundConfig {
 
 /**
  * Background scheduling configuration for {@link ExpoArkadeSwaps}.
+ *
+ * OS-level task registration is **not** part of this config — call
+ * `registerExpoSwapBackgroundTask` from `@arkade-os/boltz-swap/expo/background`
+ * explicitly. Splitting that step out keeps `/expo` free of the
+ * `expo-task-manager` / `expo-background-task` dependencies.
  */
 export interface ExpoSwapBackgroundConfig {
-    /** Identifier registered with expo-background-task. */
-    taskName: string;
     /** Persistence layer for foreground ↔ background handoff. */
     taskQueue: AsyncStorageTaskQueue;
     /** If set, acknowledges background results at this interval (ms) while the app is in the foreground. */
     foregroundIntervalMs?: number;
-    /** If set, registers the background task with the OS at this interval (minutes, min 15). */
-    minimumBackgroundInterval?: number;
 }
 
 /**
