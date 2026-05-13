@@ -562,10 +562,9 @@ async function pickActiveReceive(
  * Resolve the polymorphic `walletMode` config field into a concrete
  * {@link DescriptorProvider} (or `undefined` for the static path).
  *
- * - `'auto'` *(default)*: behaves like `'static'` — no HD rotation.
- *   Deliberately conservative until HD rotation has more soak time in
- *   the field. Switch to `'hd'` or pass a {@link DescriptorProvider}
- *   to opt in.
+ * - `'auto'` *(default)*: **short-term**, behaves like `'static'` — no
+ *   HD rotation. See the `TODO` below for the criteria to flip this
+ *   back to the identity-probing behaviour.
  * - `'static'`: returns `undefined`.
  * - A {@link DescriptorProvider} instance: returns it as-is.
  * - `'hd'`: builds the built-in HD provider from the identity. Throws
@@ -578,10 +577,19 @@ async function resolveDescriptorProvider(
 ): Promise<DescriptorProvider | undefined> {
     const mode: WalletMode = config.walletMode ?? "auto";
 
-    // Treat the default ('auto') as 'static' for now. HD rotation must
-    // be explicitly opted into via `walletMode: 'hd'` or a supplied
-    // DescriptorProvider — we don't want existing wallets to silently
-    // start rotating their receive addresses on an SDK upgrade.
+    // TODO(hd-maturation): TEMPORARY — collapse `'auto'` into `'static'`
+    // until the HD receive-rotation pipeline has soaked in the field.
+    // Flip `'auto'` back to its identity-probing behaviour once:
+    //   1. At least one consumer (btcpay-arkade, arkade-os/wallet,
+    //      Fulmine) has been running with `walletMode: 'hd'` against
+    //      mainnet for ≥ 1 month with no rotation-induced fund-loss
+    //      or address-drift reports.
+    //   2. The test `default ('auto') currently behaves like 'static'`
+    //      in `test/walletHdRotation.test.ts` is flipped in the same
+    //      commit (it's the explicit gate — flipping the default
+    //      MUST flip the test).
+    //   3. The `WalletMode` docstring in `src/wallet/index.ts` is
+    //      updated to drop the "behaves like 'static' for now" notice.
     if (mode === "static" || mode === "auto") return undefined;
 
     if (typeof mode !== "string") {

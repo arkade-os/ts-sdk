@@ -730,13 +730,22 @@ describe("Wallet HD rotation", () => {
             await wallet.dispose();
         });
 
-        it("default ('auto') currently behaves like 'static' for HD-capable identities", async () => {
-            // Until HD rotation has more soak time, the default behaviour
-            // is conservative: an HD-capable identity gets the static
-            // path unless the caller explicitly opts into HD via
-            // `walletMode: 'hd'` or a supplied DescriptorProvider. This
-            // test locks that in so a future change to flip the default
-            // is loud and intentional.
+        it("default ('auto') currently behaves like 'static' for HD-capable identities — TODO(hd-maturation): flip me back when re-enabling auto-probe", async () => {
+            // TEMPORARY DEFAULT — short-term safety while HD rotation
+            // matures. An HD-capable identity gets the static path
+            // unless the caller explicitly opts into HD via
+            // `walletMode: 'hd'` or a supplied DescriptorProvider.
+            //
+            // This test is the explicit gate that locks the behaviour
+            // in. Re-enabling identity-probing under `'auto'` MUST flip
+            // this test in the same commit (the assertion below
+            // captures the current short-term contract; a future
+            // diff that re-enables `'auto'` will fail here, forcing
+            // the author to acknowledge the behaviour change).
+            //
+            // See `TODO(hd-maturation)` in
+            // `src/wallet/walletReceiveRotator.ts:resolveDescriptorProvider`
+            // for the flip-back criteria.
             const repo = new InMemoryWalletRepository();
             const wallet = await Wallet.create({
                 identity: MnemonicIdentity.fromMnemonic(MNEMONIC, {

@@ -21,12 +21,14 @@ export const DEFAULT_NETWORK_NAME = "bitcoin" as const;
 /**
  * Wallet receive-address strategy.
  *
- * - `'auto'` *(default)*: behaves like `'static'` for now — HD rotation
- *   is conservatively OFF by default until it has more soak time. The
- *   `'auto'` name is reserved for a future change that will probe the
- *   identity automatically; today, picking `'auto'` is identical to
- *   picking `'static'`. Opt in to HD via `'hd'` or a
+ * - `'auto'` *(default)*: **short-term** — currently identical to
+ *   `'static'`. The `'auto'` name is reserved for a future change that
+ *   will re-enable identity-probing once HD rotation has matured in
+ *   the field. Until then, opt into HD explicitly via `'hd'` or a
  *   {@link DescriptorProvider}.
+ *   *(See `TODO(hd-maturation)` in
+ *   `src/wallet/walletReceiveRotator.ts:resolveDescriptorProvider` for
+ *   the flip-back criteria.)*
  * - `'static'`: never rotate. The wallet uses one receive address derived
  *   from `identity.xOnlyPublicKey()`.
  * - `'hd'`: must rotate, using the built-in HD provider derived from the
