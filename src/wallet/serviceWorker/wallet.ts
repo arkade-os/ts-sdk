@@ -153,6 +153,8 @@ type RequestType = WalletUpdaterRequest["type"];
 
 export type MessageTimeouts = Partial<Record<RequestType, number>>;
 
+export type ServiceWorkerWalletMode = "auto" | "static" | "hd";
+
 export const DEFAULT_MESSAGE_TIMEOUTS: Readonly<Record<RequestType, number>> = {
     // Fast reads — fail quickly
     GET_ADDRESS: 10_000,
@@ -356,6 +358,14 @@ interface ServiceWorkerWalletOptions {
     messageBusTimeoutMs?: number;
     /** Optional settlement configuration forwarded to the worker wallet. */
     settlementConfig?: SettlementConfig | false;
+    /**
+     * Receive-address strategy forwarded to the worker wallet.
+     *
+     * Service workers can only receive serializable configuration, so the
+     * descriptor-provider object form accepted by `Wallet.create()` is not
+     * supported here.
+     */
+    walletMode?: ServiceWorkerWalletMode;
     /** Optional contract watcher configuration forwarded to the worker wallet. */
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     /**
@@ -400,6 +410,7 @@ type MessageBusInitConfig = {
     esploraUrl?: string;
     timeoutMs?: number;
     settlementConfig?: SettlementConfig | false;
+    walletMode?: ServiceWorkerWalletMode;
     watcherConfig?: Partial<Omit<ContractWatcherConfig, "indexerProvider">>;
     messageTimeouts?: Record<string, number>;
 };
@@ -1428,6 +1439,7 @@ export class ServiceWorkerWallet
             indexerUrl: options.indexerUrl,
             esploraUrl: options.esploraUrl,
             settlementConfig: options.settlementConfig,
+            walletMode: options.walletMode,
             watcherConfig: options.watcherConfig,
             messageTimeouts,
         };

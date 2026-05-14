@@ -414,7 +414,10 @@ describe("Worker buildServices identity hydration", () => {
         warnSpy.mockRestore();
     });
 
-    const startBusAndInit = async (walletConfig: unknown) => {
+    const startBusAndInit = async (
+        walletConfig: unknown,
+        initConfig: Record<string, unknown> = {}
+    ) => {
         const sw = new MessageBus(
             new InMemoryWalletRepository(),
             new InMemoryContractRepository(),
@@ -428,7 +431,7 @@ describe("Worker buildServices identity hydration", () => {
             data: {
                 tag: "INITIALIZE_MESSAGE_BUS",
                 id: "init",
-                config: { wallet: walletConfig, arkServer },
+                config: { wallet: walletConfig, arkServer, ...initConfig },
             },
             source,
         });
@@ -494,6 +497,22 @@ describe("Worker buildServices identity hydration", () => {
             expect((identity as SeedIdentity).descriptor).toBe(
                 reference.descriptor
             );
+        });
+
+        it("forwards walletMode into Wallet.create for signing wallets", async () => {
+            const seed = mnemonicToSeedSync(TEST_MNEMONIC);
+            const reference = SeedIdentity.fromSeed(seed, { isMainnet: true });
+            await startBusAndInit(
+                {
+                    type: "seed",
+                    seed: hex.encode(seed),
+                    descriptor: reference.descriptor,
+                },
+                { walletMode: "hd" }
+            );
+
+            expect(walletCreateSpy).toHaveBeenCalledOnce();
+            expect(walletCreateSpy.mock.calls[0][0].walletMode).toBe("hd");
         });
 
         it("hydrates mnemonic into a MnemonicIdentity with preserved passphrase", async () => {

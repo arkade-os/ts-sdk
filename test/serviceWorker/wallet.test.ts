@@ -1225,6 +1225,25 @@ describe("INITIALIZE_MESSAGE_BUS wire shape emitted by create()", () => {
         );
     });
 
+    it("ServiceWorkerWallet.create forwards walletMode to the worker init config", async () => {
+        const { serviceWorker } = setup();
+        const identity = MnemonicIdentity.fromMnemonic(TEST_MNEMONIC, {
+            isMainnet: true,
+        });
+
+        await ServiceWorkerWallet.create({
+            serviceWorker: serviceWorker as any,
+            arkServerUrl: "https://ark.test",
+            identity,
+            walletMode: "hd",
+            storage: storage(),
+        });
+
+        expect(getInitializeMessage(serviceWorker).config.walletMode).toBe(
+            "hd"
+        );
+    });
+
     it("ServiceWorkerReadonlyWallet.create uses the default Arkade server URL when omitted", async () => {
         const { serviceWorker } = setup();
         const signing = SingleKey.fromHex(TEST_PRIVATE_KEY_HEX);
