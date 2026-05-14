@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { hex, base64 } from "@scure/base";
+import { Transaction } from "@scure/btc-signer";
 import {
     Wallet,
     MnemonicIdentity,
     SingleKey,
     InMemoryWalletRepository,
     InMemoryContractRepository,
+    DefaultVtxo,
+    MissingSigningDescriptorError,
 } from "../src";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { WalletReceiveRotator } from "../src/wallet/walletReceiveRotator";
-import type { ContractEvent } from "../src/contracts/types";
+import type { Contract, ContractEvent, ExtendedVirtualCoin } from "../src";
 
 /**
  * Hand-crafted integration tests for HD receive rotation against the
@@ -943,6 +947,550 @@ describe("Wallet HD rotation", () => {
                     },
                 })
             ).rejects.toThrow(/HSM unavailable/);
+        });
+    });
+
+    /**
+     * Spending paths after a receive rotation. Each test rotates the
+     * wallet to a fresh tagged display contract, builds an
+     * `ExtendedVirtualCoin` whose script matches that rotated contract,
+     * exercises a signing surface, and asserts the resulting PSBT
+     * carries a `tapScriptSig` keyed to the rotated pubkey.
+     *
+     * Regression for the reported errors:
+     *   - `INVALID_PSBT_INPUT (5): missing tapscript spend sig in ark
+     *     tx input 0` (sends)
+     *   - `INVALID_INTENT_PROOF (23): input 0 has no tapscript signatures`
+     *     (auto-renewal)
+     */
+    describe("signing after rotation", () => {
+        // mockArkInfo.signerPubkey is the compressed form (0x02 prefix).
+        // Strip the byte to match how `Wallet.create` materializes
+        // x-only pubkeys for DefaultVtxo.Script construction.
+        const SERVER_PUBKEY = hex.decode(SERVER_PUBKEY_HEX).slice(1);
+
+        // Fire one `vtxo_received` and wait for the rotation to settle.
+        // Returns the rotated default contract record.
+        async function rotateOnce(
+            wallet: Wallet,
+            contractRepo: InMemoryContractRepository
+        ): Promise<Contract> {
+            const scriptBefore = wallet.defaultContractScript;
+            const manager = await wallet.getContractManager();
+            const event: ContractEvent = {
+                type: "vtxo_received",
+                contractScript: scriptBefore,
+                vtxos: [],
+                contract: { script: scriptBefore } as never,
+                timestamp: Date.now(),
+            };
+            for (const cb of (manager as any).eventCallbacks as Set<
+                (e: ContractEvent) => void
+            >) {
+                cb(event);
+            }
+            await (wallet as any)._receiveRotator?.drain();
+
+            const rotatedScript = wallet.defaultContractScript;
+            expect(rotatedScript).not.toBe(scriptBefore);
+
+            const rotated = (await contractRepo.getContracts({})).find(
+                (c) =>
+                    c.script === rotatedScript &&
+                    c.metadata?.source === "wallet-receive"
+            );
+            if (!rotated) {
+                throw new Error("rotated contract not found in repo");
+            }
+            return rotated;
+        }
+
+        function makeVtxoForContract(
+            contract: Contract,
+            txid?: string
+        ): ExtendedVirtualCoin {
+            const params = contract.params;
+            const pubKey = hex.decode(params.pubKey);
+            const serverPubKey = hex.decode(params.serverPubKey);
+            const csvBlocks = BigInt(params.csvTimelock);
+            const tapscript = new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey,
+                csvTimelock: { value: csvBlocks, type: "blocks" },
+            });
+            return {
+                txid: txid ?? "11".repeat(32),
+                vout: 0,
+                value: 50_000,
+                status: { confirmed: true },
+                virtualStatus: { state: "settled" },
+                createdAt: new Date(),
+                isUnrolled: false,
+                isSpent: false,
+                script: hex.encode(tapscript.pkScript),
+                forfeitTapLeafScript: tapscript.forfeit(),
+                intentTapLeafScript: tapscript.forfeit(),
+                tapTree: tapscript.encode(),
+            };
+        }
+
+        // Pull every signing pubkey off a given input's tapScriptSig
+        // entries (PSBT canonical: `[[ {pubKey, leafHash}, signature ], ...]`).
+        function tapscriptSignerPubkeysHex(
+            txOrPsbtBase64: Transaction | string,
+            inputIndex: number
+        ): string[] {
+            const tx =
+                typeof txOrPsbtBase64 === "string"
+                    ? Transaction.fromPSBT(base64.decode(txOrPsbtBase64))
+                    : txOrPsbtBase64;
+            const sigs = tx.getInput(inputIndex).tapScriptSig ?? [];
+            return sigs.map(([data]) => hex.encode(data.pubKey));
+        }
+
+        it("intent proof after rotation: tx-input 0 AND tx-input 1 carry a tapScriptSig keyed to coin[0]'s rotated pubkey", async () => {
+            // Direct regression for `INVALID_INTENT_PROOF (23): input 0
+            // has no tapscript signatures`. `Intent.create` lays out
+            // tx-input 0 as a synthetic toSpend reference whose
+            // witnessUtxo.script is copied from coin[0]'s real
+            // pkScript — both tx-input 0 and tx-input 1 must therefore
+            // carry coin[0]'s pubkey signature.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            const rotated = await rotateOnce(wallet, contractRepo);
+            const rotatedPubKeyHex = rotated.params.pubKey;
+            const baselinePubKeyHex = hex.encode(
+                await wallet.identity.xOnlyPublicKey()
+            );
+            // Sanity: rotation must have produced a non-baseline pubkey,
+            // otherwise the test isn't exercising the descriptor branch.
+            expect(rotatedPubKeyHex).not.toBe(baselinePubKeyHex);
+
+            const coin = makeVtxoForContract(rotated);
+            const intent = await wallet.makeRegisterIntentSignature(
+                [coin],
+                [],
+                [],
+                []
+            );
+            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
+
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
+                rotatedPubKeyHex
+            );
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
+                rotatedPubKeyHex
+            );
+
+            await wallet.dispose();
+        });
+
+        it("delete-intent proof after rotation also signs both inputs with the rotated pubkey", async () => {
+            // `safeRegisterIntent` uses `makeDeleteIntentSignature` to
+            // recover from `duplicated input`. If that path silently
+            // produced an unsigned PSBT, send-after-rotation would
+            // wedge on the retry loop instead of recovering.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            const rotated = await rotateOnce(wallet, contractRepo);
+            const coin = makeVtxoForContract(rotated);
+
+            const intent = await wallet.makeDeleteIntentSignature([coin]);
+            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
+            const rotatedPubKeyHex = rotated.params.pubKey;
+
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
+                rotatedPubKeyHex
+            );
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
+                rotatedPubKeyHex
+            );
+
+            await wallet.dispose();
+        });
+
+        it("get-pending-tx intent proof after rotation signs with the rotated pubkey", async () => {
+            // The auto-renewal recovery path in `finalizePendingTxs`
+            // calls `makeGetPendingTxIntentSignature`. Same shape as
+            // the other two intent helpers; if signInputsByOwner
+            // weren't routed through here, recovery would also
+            // produce unsigned proofs.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            const rotated = await rotateOnce(wallet, contractRepo);
+            const coin = makeVtxoForContract(rotated);
+
+            const intent = await wallet.makeGetPendingTxIntentSignature([coin]);
+            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
+            const rotatedPubKeyHex = rotated.params.pubKey;
+
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
+                rotatedPubKeyHex
+            );
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
+                rotatedPubKeyHex
+            );
+
+            await wallet.dispose();
+        });
+
+        it("mixed baseline + rotated VTXO in one intent: each input is signed by its own pubkey", async () => {
+            // Proves the sequential threading inside `signInputsByOwner`
+            // accumulates signatures across groups: identity-signed
+            // inputs and descriptor-signed inputs end up on the SAME
+            // PSBT, not two clones whose signatures get lost.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            // Build a synthetic baseline contract record exactly as
+            // initializeContractManager does, so signInputsByOwner can
+            // resolve coin1.script → baseline contract → identity sign.
+            const baselineScript = wallet.defaultContractScript;
+            const baseline = (await contractRepo.getContracts({})).find(
+                (c) => c.script === baselineScript
+            )!;
+            expect(baseline.metadata?.source).toBeUndefined();
+
+            const rotated = await rotateOnce(wallet, contractRepo);
+            const baselineCoin = makeVtxoForContract(baseline, "aa".repeat(32));
+            const rotatedCoin = makeVtxoForContract(rotated, "bb".repeat(32));
+            // Order: rotated-coin FIRST so tx-input 0 (synthetic
+            // toSpend) carries the rotated pubkey signature too;
+            // tx-input 1 = rotated coin; tx-input 2 = baseline coin.
+            const intent = await wallet.makeRegisterIntentSignature(
+                [rotatedCoin, baselineCoin],
+                [],
+                [],
+                []
+            );
+            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
+
+            const rotatedPubKeyHex = rotated.params.pubKey;
+            const baselinePubKeyHex = baseline.params.pubKey;
+
+            // Tx-input 0 (toSpend) and tx-input 1 = coin[0] = rotated.
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
+                rotatedPubKeyHex
+            );
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
+                rotatedPubKeyHex
+            );
+            // Tx-input 2 = coin[1] = baseline.
+            expect(tapscriptSignerPubkeysHex(proof, 2)).toContain(
+                baselinePubKeyHex
+            );
+
+            await wallet.dispose();
+        });
+
+        it("hard-error: default contract with non-baseline pubkey AND no signingDescriptor throws MissingSigningDescriptorError", async () => {
+            // Legacy-record path: wallets that rotated under the
+            // pre-fix HD branch carry contracts with `params.pubKey` set
+            // but `metadata.signingDescriptor` absent. Silently falling
+            // back to the identity's index-0 key would reproduce the
+            // original bug; the helper must throw a typed error so
+            // consumers can prompt the user to repair the record.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            // Inject a fake "rotated" contract whose pubkey ≠ baseline
+            // and whose metadata is intentionally missing the
+            // descriptor. Pubkey is a real, on-curve x-only key from
+            // an unrelated test fixture so DefaultVtxo.Script accepts
+            // it without throwing during script construction.
+            const orphanPubKeyHex =
+                "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+            const baseline = (await contractRepo.getContracts({})).find(
+                (c) => c.script === wallet.defaultContractScript
+            )!;
+            const orphanScript = new DefaultVtxo.Script({
+                pubKey: hex.decode(orphanPubKeyHex),
+                serverPubKey: SERVER_PUBKEY,
+                csvTimelock: {
+                    value: BigInt(baseline.params.csvTimelock),
+                    type: "blocks",
+                },
+            });
+            const orphanScriptHex = hex.encode(orphanScript.pkScript);
+            await contractRepo.saveContract({
+                type: "default",
+                params: {
+                    pubKey: orphanPubKeyHex,
+                    serverPubKey: baseline.params.serverPubKey,
+                    csvTimelock: baseline.params.csvTimelock,
+                },
+                script: orphanScriptHex,
+                address: orphanScript.address("tark", SERVER_PUBKEY).encode(),
+                state: "active",
+                createdAt: Date.now(),
+                metadata: { source: "wallet-receive" }, // tag set, descriptor missing
+            });
+
+            const orphanCoin = makeVtxoForContract({
+                ...baseline,
+                params: {
+                    ...baseline.params,
+                    pubKey: orphanPubKeyHex,
+                },
+                script: orphanScriptHex,
+            } as Contract);
+
+            await expect(
+                wallet.makeRegisterIntentSignature([orphanCoin], [], [], [])
+            ).rejects.toBeInstanceOf(MissingSigningDescriptorError);
+
+            // Re-throw to capture the typed instance and assert on its
+            // exposed fields (test the contract on the error, not just
+            // the message).
+            try {
+                await wallet.makeRegisterIntentSignature(
+                    [orphanCoin],
+                    [],
+                    [],
+                    []
+                );
+                throw new Error("expected throw");
+            } catch (err) {
+                expect(err).toBeInstanceOf(MissingSigningDescriptorError);
+                const e = err as MissingSigningDescriptorError;
+                expect(e.contractScript).toBe(orphanScriptHex);
+                expect(e.contractType).toBe("default");
+            }
+
+            await wallet.dispose();
+        });
+
+        it("an input with a script that matches no contract is left untouched (cosigner / connector behaviour)", async () => {
+            // Mirror today's silent-skip for cosigner / connector
+            // inputs: signInputsByOwner must not throw on an input
+            // whose script doesn't resolve to any known contract.
+            // Easiest way to exercise this is via the boarding-script
+            // miss path: inject a coin whose script doesn't match
+            // anything the wallet knows about, then assert the proof
+            // still gets the rotated coin's signatures (and the unknown
+            // coin's input has none).
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+            const rotated = await rotateOnce(wallet, contractRepo);
+
+            const rotatedCoin = makeVtxoForContract(rotated, "cc".repeat(32));
+            // Cosigner-shape coin: a real-looking VTXO whose tapscript
+            // isn't tracked by any contract in the repo (different
+            // pubkey and wallet doesn't own it). Use an unrelated
+            // x-only pubkey so the script is well-formed.
+            const cosignerScript = new DefaultVtxo.Script({
+                pubKey: hex.decode(
+                    "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
+                ),
+                serverPubKey: SERVER_PUBKEY,
+                csvTimelock: {
+                    value: BigInt(rotated.params.csvTimelock),
+                    type: "blocks",
+                },
+            });
+            const cosignerCoin: ExtendedVirtualCoin = {
+                txid: "dd".repeat(32),
+                vout: 0,
+                value: 50_000,
+                status: { confirmed: true },
+                virtualStatus: { state: "settled" },
+                createdAt: new Date(),
+                isUnrolled: false,
+                isSpent: false,
+                script: hex.encode(cosignerScript.pkScript),
+                forfeitTapLeafScript: cosignerScript.forfeit(),
+                intentTapLeafScript: cosignerScript.forfeit(),
+                tapTree: cosignerScript.encode(),
+            };
+
+            const intent = await wallet.makeRegisterIntentSignature(
+                [rotatedCoin, cosignerCoin],
+                [],
+                [],
+                []
+            );
+            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
+
+            // Tx-input 0 / 1 = rotated coin → signed.
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
+                rotated.params.pubKey
+            );
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
+                rotated.params.pubKey
+            );
+            // Tx-input 2 = cosigner-shape coin → no signatures (the
+            // wallet doesn't own it; signInputsByOwner skipped it
+            // exactly the way today's tx.sign would silently skip an
+            // unsignable leaf).
+            expect(tapscriptSignerPubkeysHex(proof, 2)).toEqual([]);
+
+            await wallet.dispose();
+        });
+
+        it("buildAndSubmitOffchainTx after rotation: arkTx submitted to the server carries a tapScriptSig keyed to the rotated pubkey", async () => {
+            // Direct regression for `INVALID_PSBT_INPUT (5): missing
+            // tapscript spend sig in ark tx input 0`. arkTx inputs
+            // spend checkpoint outputs whose `witnessUtxo.script` is
+            // the checkpoint pkScript (server-unroll + collaborative-
+            // closure combo) — *not* the source VTXO's contract
+            // script. Without the per-input source-script override
+            // wired into signInputsByOwner, the arkTx PSBT goes to
+            // the server unsigned.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            const rotated = await rotateOnce(wallet, contractRepo);
+            const coin = makeVtxoForContract(rotated);
+
+            // Capture the PSBT base64 the wallet hands to the server,
+            // and short-circuit the rest of the round-trip so the test
+            // doesn't need a live arkd. Round-trip the supplied
+            // checkpoints back out unchanged so the per-checkpoint
+            // re-sign path inside buildAndSubmitOffchainTx still has
+            // valid PSBTs to rehydrate.
+            let submittedArkTxB64: string | undefined;
+            const submitSpy = vi
+                .spyOn(wallet.arkProvider, "submitTx")
+                .mockImplementation(async (arkTxB64, checkpointsB64) => {
+                    submittedArkTxB64 = arkTxB64;
+                    return {
+                        arkTxid: "ee".repeat(32),
+                        finalArkTx: arkTxB64,
+                        signedCheckpointTxs: checkpointsB64,
+                    };
+                });
+            const finalizeSpy = vi
+                .spyOn(wallet.arkProvider, "finalizeTx")
+                .mockResolvedValue(undefined);
+
+            // Output script: any well-formed pkScript works since
+            // submitTx is mocked. Use the wallet's own arkAddress so
+            // we don't have to invent one.
+            const outputs = [
+                {
+                    amount: BigInt(coin.value - 1000),
+                    script: wallet.arkAddress.pkScript,
+                },
+            ];
+
+            await wallet.buildAndSubmitOffchainTx([coin], outputs);
+
+            expect(submitSpy).toHaveBeenCalledTimes(1);
+            expect(finalizeSpy).toHaveBeenCalledTimes(1);
+            expect(submittedArkTxB64).toBeDefined();
+
+            const arkTx = Transaction.fromPSBT(
+                base64.decode(submittedArkTxB64!)
+            );
+            expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(
+                rotated.params.pubKey
+            );
+
+            submitSpy.mockRestore();
+            finalizeSpy.mockRestore();
+            await wallet.dispose();
+        });
+
+        it("buildAndSubmitOffchainTx baseline send: arkTx is signed by the identity's index-0 pubkey", async () => {
+            // Sanity check that the arkTx-input owner mapping doesn't
+            // regress baseline (non-rotated) sends, which were silently
+            // unsigned by the same code path before the override was
+            // added.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            const baseline = (await contractRepo.getContracts({})).find(
+                (c) => c.script === wallet.defaultContractScript
+            )!;
+            const baselinePubKeyHex = baseline.params.pubKey;
+            const coin = makeVtxoForContract(baseline);
+
+            let submittedArkTxB64: string | undefined;
+            const submitSpy = vi
+                .spyOn(wallet.arkProvider, "submitTx")
+                .mockImplementation(async (arkTxB64, checkpointsB64) => {
+                    submittedArkTxB64 = arkTxB64;
+                    return {
+                        arkTxid: "cc".repeat(32),
+                        finalArkTx: arkTxB64,
+                        signedCheckpointTxs: checkpointsB64,
+                    };
+                });
+            const finalizeSpy = vi
+                .spyOn(wallet.arkProvider, "finalizeTx")
+                .mockResolvedValue(undefined);
+
+            await wallet.buildAndSubmitOffchainTx(
+                [coin],
+                [
+                    {
+                        amount: BigInt(coin.value - 1000),
+                        script: wallet.arkAddress.pkScript,
+                    },
+                ]
+            );
+
+            const arkTx = Transaction.fromPSBT(
+                base64.decode(submittedArkTxB64!)
+            );
+            expect(tapscriptSignerPubkeysHex(arkTx, 0)).toContain(
+                baselinePubKeyHex
+            );
+
+            submitSpy.mockRestore();
+            finalizeSpy.mockRestore();
+            await wallet.dispose();
+        });
+
+        it("descriptor signing is opt-in: provider.signWithDescriptor is NOT called when every input matches the baseline", async () => {
+            // Baseline-only spend (no rotation) must take the identity
+            // arm — the descriptor provider is wired in but stays
+            // untouched, preserving today's behaviour for static / first
+            // boot wallets.
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const wallet = await makeHdWallet(walletRepo, contractRepo);
+
+            const provider = (wallet as any)
+                ._descriptorProvider as HDDescriptorProvider;
+            const signSpy = vi.spyOn(provider, "signWithDescriptor");
+
+            const baselineScript = wallet.defaultContractScript;
+            const baseline = (await contractRepo.getContracts({})).find(
+                (c) => c.script === baselineScript
+            )!;
+            const coin = makeVtxoForContract(baseline);
+
+            const intent = await wallet.makeRegisterIntentSignature(
+                [coin],
+                [],
+                [],
+                []
+            );
+            const proof = Transaction.fromPSBT(base64.decode(intent.proof));
+
+            expect(signSpy).not.toHaveBeenCalled();
+            // Baseline pubkey signs both inputs as expected.
+            expect(tapscriptSignerPubkeysHex(proof, 0)).toContain(
+                baseline.params.pubKey
+            );
+            expect(tapscriptSignerPubkeysHex(proof, 1)).toContain(
+                baseline.params.pubKey
+            );
+
+            signSpy.mockRestore();
+            await wallet.dispose();
         });
     });
 });

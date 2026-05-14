@@ -58,11 +58,16 @@ export interface ReceiveRotatorBoot {
  * Result returned by {@link WalletReceiveRotator.resolveBoot} to the
  * wallet: the rotator plus the offchain tapscript the wallet should
  * actually use (rebuilt to the resolved boot pubkey when it differs
- * from the identity's static pubkey).
+ * from the identity's static pubkey), plus the {@link DescriptorProvider}
+ * the rotator was built around. The wallet retains the provider so
+ * spending paths can route per-input signing through
+ * {@link DescriptorProvider.signWithDescriptor} instead of the
+ * identity's index-0 key.
  */
 export interface ReceiveRotatorBootResult {
     rotator: WalletReceiveRotator;
     offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+    provider: DescriptorProvider;
 }
 
 /**
@@ -328,7 +333,7 @@ export class WalletReceiveRotator {
             ? setup.offchainTapscript
             : rebuildTapscript(setup.offchainTapscript, boot.receivePubkey);
 
-        return { rotator: boot.rotator, offchainTapscript };
+        return { rotator: boot.rotator, offchainTapscript, provider };
     }
 
     /**
@@ -529,7 +534,17 @@ export class WalletReceiveRotator {
             script: newScript,
             address: newAddress,
             state: "active" as const,
-            metadata: { source: WALLET_RECEIVE_SOURCE },
+            // Persist the materialized signing descriptor alongside the
+            // source tag. The wallet's spending paths read this at sign
+            // time to route inputs locked by a rotated pubkey through
+            // `DescriptorProvider.signWithDescriptor` instead of the
+            // identity's index-0 key. Without it, post-rotation sends
+            // produce unsigned PSBTs that the server rejects with
+            // `INVALID_PSBT_INPUT (5): missing tapscript spend sig`.
+            metadata: {
+                source: WALLET_RECEIVE_SOURCE,
+                signingDescriptor: descriptor,
+            },
         };
 
         if (newTapscript instanceof DelegateVtxo.Script) {
