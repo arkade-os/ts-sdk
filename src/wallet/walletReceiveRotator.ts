@@ -34,6 +34,13 @@ export interface ReceiveRotatorBootOpts {
      * accidentally picking up a delegate contract or vice versa.
      */
     expectedContractType?: "default" | "delegate";
+    /**
+     * Logger to receive rotation-failure + backoff diagnostics. Defaults
+     * to `console` when omitted. Any object implementing
+     * {@link Logger.error} works (winston, pino, Sentry breadcrumbs,
+     * the runtime's own logger).
+     */
+    logger?: Logger;
 }
 
 /**
@@ -121,6 +128,39 @@ function hasPeekableDescriptor(
 export const WALLET_RECEIVE_SOURCE = "wallet-receive";
 
 /**
+ * Thrown when a descriptor expected to be rangeable (have a wildcard
+ * leaf) cannot produce a leaf pubkey. Surfaces from the rotator's
+ * `defaultBoot` path so `resolveBoot` can distinguish a legitimate
+ * incompatibility (silent fallback under `walletMode: 'auto'`) from
+ * any other runtime failure.
+ */
+export class NonRangeableDescriptorError extends Error {
+    constructor(message: string, options?: { cause?: unknown }) {
+        super(message, options);
+        this.name = "NonRangeableDescriptorError";
+    }
+}
+
+/**
+ * Minimal logging surface the rotator needs. `console` satisfies it
+ * out of the box; SDK consumers can pass a structured logger
+ * (winston / pino / Sentry adapter) via {@link ReceiveRotatorBootOpts}
+ * to capture rotation failures + backoff diagnostics through their
+ * own pipeline.
+ */
+export interface Logger {
+    error(message: string, ...args: unknown[]): void;
+}
+
+/**
+ * Cap on the exponential backoff applied to repeated rotation
+ * failures. After this delay, every fresh `vtxo_received` event
+ * re-attempts a rotation at this rate until one succeeds (which
+ * resets the counter) or the wallet is disposed.
+ */
+export const ROTATION_MAX_BACKOFF_MS = 60_000;
+
+/**
  * Narrow surface the rotator needs from the wallet at runtime: the
  * mutable display tapscript, the display contract's script hex, the
  * contract manager (for subscribing + registering rotated contracts),
@@ -185,11 +225,30 @@ export class WalletReceiveRotator {
      */
     private currentTaggedScript: string | undefined;
 
+    /**
+     * Consecutive rotation failures since the last successful rotate.
+     * Drives an exponential backoff (capped at
+     * {@link ROTATION_MAX_BACKOFF_MS}) so a broken provider can't make
+     * the rotator hammer `getNextSigningDescriptor` + `createContract`
+     * on every inbound VTXO. Reset to zero on a successful rotate.
+     */
+    private consecutiveFailures = 0;
+    /**
+     * Unix-ms timestamp before which incoming `vtxo_received` events
+     * skip the rotation attempt entirely. Zero means "no backoff
+     * active" — the next event can rotate immediately.
+     */
+    private nextRotationAllowedAt = 0;
+
+    private readonly logger: Logger;
+
     private constructor(
         private readonly provider: DescriptorProvider,
-        priorTaggedScript: string | undefined
+        priorTaggedScript: string | undefined,
+        logger?: Logger
     ) {
         this.currentTaggedScript = priorTaggedScript;
+        this.logger = logger ?? console;
     }
 
     /**
@@ -244,12 +303,13 @@ export class WalletReceiveRotator {
                 ? await provider.createReceiveRotator(factoryOpts)
                 : await WalletReceiveRotator.defaultBoot(provider, factoryOpts);
         } catch (e) {
-            // Only swallow errors from non-rangeable descriptor compatibility issues
-            const isCompatibilityError = (err: unknown): boolean => {
-                if (!(err instanceof Error)) return false;
-                return err.message.includes("wildcard descriptor");
-            };
-            if (allowSilentFallback && isCompatibilityError(e)) {
+            // Only swallow non-rangeable-descriptor errors, and only
+            // under `walletMode: 'auto'`. Explicit HD/`DescriptorProvider`
+            // callers always see the failure.
+            if (
+                allowSilentFallback &&
+                e instanceof NonRangeableDescriptorError
+            ) {
                 return undefined;
             }
             throw e;
@@ -297,7 +357,11 @@ export class WalletReceiveRotator {
         );
         if (existing) {
             return {
-                rotator: new WalletReceiveRotator(provider, existing.script),
+                rotator: new WalletReceiveRotator(
+                    provider,
+                    existing.script,
+                    opts.logger
+                ),
                 receivePubkey: existing.pubKey,
             };
         }
@@ -315,7 +379,7 @@ export class WalletReceiveRotator {
         descriptor ??= await provider.getNextSigningDescriptor();
 
         return {
-            rotator: new WalletReceiveRotator(provider, undefined),
+            rotator: new WalletReceiveRotator(provider, undefined, opts.logger),
             receivePubkey: deriveLeafPubkey(descriptor),
         };
     }
@@ -332,19 +396,63 @@ export class WalletReceiveRotator {
         this.unsubscribe = manager.onContractEvent((event) => {
             if (event.type !== "vtxo_received") return;
             if (event.contractScript !== wallet.defaultContractScript) return;
-            // Serialise rotations: two rapid `vtxo_received` events on the
-            // same contract must not interleave the rotate → rebuild →
-            // createContract sequence. We swallow the rejection on the
-            // CHAIN reference (so the next rotation can still run) but
-            // surface it via `console.error` so operators see failures
-            // instead of a silently-dropped error.
+            // Serialise rotations: two rapid `vtxo_received` events on
+            // the same contract must not interleave the rotate →
+            // rebuild → createContract sequence. `runRotateWithBackoff`
+            // owns the failure handling — it logs, increments the
+            // consecutive-failure counter, and gates future attempts
+            // behind exponential backoff so a broken provider can't
+            // make the rotator hammer `createContract` on every event.
             this.chain = this.chain
                 .catch(() => undefined)
-                .then(() => this.rotate(wallet))
-                .catch((err) => {
-                    console.error("WalletReceiveRotator: rotation failed", err);
-                });
+                .then(() => this.runRotateWithBackoff(wallet));
         });
+    }
+
+    /**
+     * Run a single rotation attempt, applying exponential backoff on
+     * failure. Public-shaped behavior:
+     * - During a backoff window: log + skip (no `rotate()` call).
+     * - On success: reset failure count and backoff.
+     * - On failure: increment counter, schedule next attempt at
+     *   `min(2^consecutiveFailures * 1s, ROTATION_MAX_BACKOFF_MS)`.
+     *
+     * Errors are deliberately swallowed (logged, not rethrown) so the
+     * surrounding `chain` Promise never settles to rejected — the next
+     * `vtxo_received` event must still get a chance to run.
+     */
+    private async runRotateWithBackoff(wallet: RotatableWallet): Promise<void> {
+        const now = Date.now();
+        if (now < this.nextRotationAllowedAt) {
+            this.logger.error(
+                "WalletReceiveRotator: skipping rotation (in backoff)",
+                {
+                    consecutiveFailures: this.consecutiveFailures,
+                    retryInMs: this.nextRotationAllowedAt - now,
+                }
+            );
+            return;
+        }
+        try {
+            await this.rotate(wallet);
+            this.consecutiveFailures = 0;
+            this.nextRotationAllowedAt = 0;
+        } catch (err) {
+            this.consecutiveFailures += 1;
+            // 2^1=2s, 2^2=4s, … capped at ROTATION_MAX_BACKOFF_MS (60s).
+            // `Math.min` on the exponent prevents `2 ** 1024` overflow
+            // for pathologically long failure streaks.
+            const exponent = Math.min(this.consecutiveFailures, 16);
+            const backoffMs = Math.min(
+                2 ** exponent * 1_000,
+                ROTATION_MAX_BACKOFF_MS
+            );
+            this.nextRotationAllowedAt = Date.now() + backoffMs;
+            this.logger.error("WalletReceiveRotator: rotation failed", err, {
+                consecutiveFailures: this.consecutiveFailures,
+                nextAttemptInMs: backoffMs,
+            });
+        }
     }
 
     /**
@@ -482,14 +590,27 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
     const network = isMainnetDescriptor(descriptor)
         ? networks.bitcoin
         : networks.testnet;
-    const expansion = expand({ descriptor, network });
+    // `expand` raises when the descriptor still carries a wildcard or
+    // is otherwise non-rangeable. Wrap so callers (most importantly
+    // `resolveBoot`'s silent-fallback path) can branch on a typed
+    // error class instead of grepping `err.message`.
+    let expansion;
+    try {
+        expansion = expand({ descriptor, network });
+    } catch (e) {
+        throw new NonRangeableDescriptorError(
+            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
+                `ensure the descriptor is materialized (no wildcard) and parsable.`,
+            { cause: e }
+        );
+    }
     const key = expansion.expansionMap?.["@0"];
     if (!key?.pubkey) {
         // Avoid interpolating the descriptor itself: it normally
         // contains an xpub, but a misconfigured caller could pass an
         // xprv, and error messages surface in logs / crash reporters /
         // Sentry. The length is enough context for debugging.
-        throw new Error(
+        throw new NonRangeableDescriptorError(
             `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
                 `ensure the descriptor is materialized (no wildcard) and parsable.`
         );

@@ -336,6 +336,47 @@ describe("Wallet HD rotation", () => {
             createSpy.mockRestore();
             await wallet.dispose();
         });
+
+        it("skips subsequent events within the backoff window after a rotation failure", async () => {
+            // PR #489 review #6: a broken provider used to make every
+            // incoming `vtxo_received` re-attempt `getNextSigningDescriptor`
+            // + `createContract` immediately. With exponential backoff
+            // in place, a second event arriving within the backoff
+            // window must skip the rotation entirely.
+            const wallet = await makeHdWallet();
+            const scriptBefore = wallet.defaultContractScript;
+
+            const manager = await wallet.getContractManager();
+            const createSpy = vi
+                .spyOn(manager, "createContract")
+                .mockRejectedValue(new Error("simulated repo failure"));
+
+            const event: ContractEvent = {
+                type: "vtxo_received",
+                contractScript: scriptBefore,
+                vtxos: [],
+                contract: { script: scriptBefore } as never,
+                timestamp: Date.now(),
+            };
+            // Fire the same event twice. The first triggers a rotate
+            // that fails (counter = 1, backoff window opens). The
+            // second arrives inside that window and must short-circuit
+            // — no second `createContract` call.
+            for (const cb of (manager as any).eventCallbacks as Set<
+                (e: ContractEvent) => void
+            >) {
+                cb(event);
+                cb(event);
+            }
+            await (wallet as any)._receiveRotator?.drain();
+
+            expect(createSpy).toHaveBeenCalledTimes(1);
+            // Displayed tapscript still pinned to pre-rotation script.
+            expect(wallet.defaultContractScript).toBe(scriptBefore);
+
+            createSpy.mockRestore();
+            await wallet.dispose();
+        });
     });
 
     describe("persistence", () => {
