@@ -7,6 +7,7 @@ import {
     InMemoryContractRepository,
 } from "../src";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
+import { WalletReceiveRotator } from "../src/wallet/walletReceiveRotator";
 import type { ContractEvent } from "../src/contracts/types";
 
 /**
@@ -163,6 +164,45 @@ describe("Wallet HD rotation", () => {
             });
             const state = await repo.getWalletState();
             expect(state?.settings?.hd).toBeUndefined();
+            await wallet.dispose();
+        });
+
+        it("a failing install leaves no cached manager and retries on next call", async () => {
+            // PR #489 review #2: `getVtxoManager` used to assign
+            // `_vtxoManager` + flip `_receiveRotatorInstalled` BEFORE
+            // awaiting `install()`. A transient install failure would
+            // then cache the half-initialised state and silently disable
+            // rotation for the wallet's lifetime. Post-fix: both
+            // assignments happen only AFTER install resolves; a retry
+            // on the same instance succeeds when the cause clears.
+            //
+            // `Wallet.create` calls `getVtxoManager` eagerly, so we
+            // build a happy wallet first and then reset its rotator
+            // bookkeeping to simulate "fresh, install not yet run".
+            const wallet = await makeHdWallet();
+            (wallet as any)._vtxoManager = undefined;
+            (wallet as any)._vtxoManagerInitializing = undefined;
+            (wallet as any)._receiveRotatorInstalled = false;
+
+            const installSpy = vi
+                .spyOn(WalletReceiveRotator.prototype, "install")
+                .mockRejectedValueOnce(new Error("simulated install failure"))
+                .mockResolvedValueOnce(undefined);
+
+            await expect(wallet.getVtxoManager()).rejects.toThrow(
+                /simulated install failure/
+            );
+            // Neither side of the cache was set.
+            expect((wallet as any)._vtxoManager).toBeUndefined();
+            expect((wallet as any)._receiveRotatorInstalled).toBe(false);
+
+            // Second call: install succeeds, cache populates.
+            const manager = await wallet.getVtxoManager();
+            expect(manager).toBeDefined();
+            expect((wallet as any)._receiveRotatorInstalled).toBe(true);
+            expect(installSpy).toHaveBeenCalledTimes(2);
+
+            installSpy.mockRestore();
             await wallet.dispose();
         });
     });
@@ -689,6 +729,36 @@ describe("Wallet HD rotation", () => {
     });
 
     describe("dispose", () => {
+        it("rethrows a rotator-disposal error while still disposing the manager", async () => {
+            // PR #489 review #3: `await this._receiveRotator?.dispose()`
+            // used to short-circuit teardown — a rejection there would
+            // leak the VtxoManager + its watcher. Now the rotator
+            // error is captured, manager + super disposal still run,
+            // and the captured error is rethrown at the end so callers
+            // still see the failure.
+            const wallet = await makeHdWallet();
+            const manager = await wallet.getVtxoManager();
+
+            const rotator = (wallet as any)
+                ._receiveRotator as WalletReceiveRotator;
+            const rotatorDisposeSpy = vi
+                .spyOn(rotator, "dispose")
+                .mockRejectedValueOnce(
+                    new Error("simulated rotator disposal failure")
+                );
+            const managerDisposeSpy = vi.spyOn(manager, "dispose");
+
+            await expect(wallet.dispose()).rejects.toThrow(
+                /simulated rotator disposal failure/
+            );
+
+            // The manager was disposed despite the rotator failure.
+            expect(managerDisposeSpy).toHaveBeenCalledTimes(1);
+
+            rotatorDisposeSpy.mockRestore();
+            managerDisposeSpy.mockRestore();
+        });
+
         it("unsubscribes the rotation handler", async () => {
             const rotateSpy = vi.spyOn(
                 HDDescriptorProvider.prototype,
