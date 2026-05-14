@@ -442,41 +442,49 @@ describe("ContractManager", () => {
                     reconnectDelayMs: 500,
                 },
             });
-            await mgr.createContract({
-                type: "default",
-                params: createDefaultContractParams(),
-                script: TEST_DEFAULT_SCRIPT,
-                address: "address",
-            });
-            await contractRepo.saveContract({
-                type: "default",
-                params: createDefaultContractParams(),
-                script: inactiveScript,
-                address: "stale-address",
-                state: "inactive",
-                createdAt: Date.now(),
-            });
-            await walletRepo.saveWalletState({
-                lastSyncTime: SEEDED_CURSOR,
-                settings: { vtxoCursorMigrated: true },
-            });
+            // Dispose the per-test watcher in `finally` so a background
+            // `getVtxos` loop can't bleed into a later test sharing the
+            // same `mockIndexer` (fake-timer suite).
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address",
+                });
+                await contractRepo.saveContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: inactiveScript,
+                    address: "stale-address",
+                    state: "inactive",
+                    createdAt: Date.now(),
+                });
+                await walletRepo.saveWalletState({
+                    lastSyncTime: SEEDED_CURSOR,
+                    settings: { vtxoCursorMigrated: true },
+                });
 
-            (mockIndexer.getVtxos as any).mockClear();
-            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
 
-            await mgr.refreshVtxos({ includeInactive: true });
+                await mgr.refreshVtxos({ includeInactive: true });
 
-            // Sanity: the inactive contract was actually queried (this
-            // is what makes the path a superset, not a subset).
-            const requested = collectRequestedScripts(mockIndexer);
-            expect(requested.has(inactiveScript)).toBe(true);
+                // Sanity: the inactive contract was actually queried
+                // (this is what makes the path a superset, not a subset).
+                const requested = collectRequestedScripts(mockIndexer);
+                expect(requested.has(inactiveScript)).toBe(true);
 
-            // Cursor moved strictly forward — `>=` would pass even on
-            // the no-op case (cursor unchanged), defeating the test.
-            const stateAfter = await walletRepo.getWalletState();
-            expect(stateAfter?.lastSyncTime ?? 0).toBeGreaterThan(
-                SEEDED_CURSOR
-            );
+                // Cursor moved strictly forward — `>=` would pass even
+                // on the no-op case (cursor unchanged), defeating the
+                // test.
+                const stateAfter = await walletRepo.getWalletState();
+                expect(stateAfter?.lastSyncTime ?? 0).toBeGreaterThan(
+                    SEEDED_CURSOR
+                );
+            } finally {
+                await mgr.dispose();
+            }
         });
 
         it("does NOT advance the cursor on a windowed includeInactive sweep", async () => {
@@ -495,27 +503,31 @@ describe("ContractManager", () => {
                     reconnectDelayMs: 500,
                 },
             });
-            await mgr.createContract({
-                type: "default",
-                params: createDefaultContractParams(),
-                script: TEST_DEFAULT_SCRIPT,
-                address: "address",
-            });
-            await walletRepo.saveWalletState({
-                lastSyncTime: SEEDED_CURSOR,
-                settings: { vtxoCursorMigrated: true },
-            });
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address",
+                });
+                await walletRepo.saveWalletState({
+                    lastSyncTime: SEEDED_CURSOR,
+                    settings: { vtxoCursorMigrated: true },
+                });
 
-            (mockIndexer.getVtxos as any).mockClear();
-            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
 
-            await mgr.refreshVtxos({
-                includeInactive: true,
-                after: 1_000_000,
-            });
+                await mgr.refreshVtxos({
+                    includeInactive: true,
+                    after: 1_000_000,
+                });
 
-            const stateAfter = await walletRepo.getWalletState();
-            expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
+                const stateAfter = await walletRepo.getWalletState();
+                expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
+            } finally {
+                await mgr.dispose();
+            }
         });
     });
 

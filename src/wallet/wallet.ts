@@ -207,7 +207,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
          * Mutable so {@link Wallet} can swap the active receive tapscript
          * after an HD rotation. External consumers should treat it as
          * read-only — writes happen exclusively in
-         * {@link Wallet.rebuildOffchainTapscript} and the boot path.
+         * {@link WalletReceiveRotator.rotate} and the boot path.
          */
         public offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
@@ -1216,21 +1216,22 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         try {
             const manager = await this._vtxoManagerInitializing;
-            this._vtxoManager = manager;
             // First-time hookup of the HD rotator: subscribe to
             // `vtxo_received` AFTER the contract manager (which is
             // initialised inside the VtxoManager construction path) has
             // registered the wallet's baseline contracts. The flag
             // makes this idempotent across repeated `getVtxoManager`
             // calls — install runs at most once per wallet instance.
+            // Cache the manager and flip the install flag only after
+            // `install()` resolves; otherwise a failing install would
+            // leave the manager cached and silently disable HD
+            // rotation for the lifetime of this wallet.
             if (this._receiveRotator && !this._receiveRotatorInstalled) {
-                this._receiveRotatorInstalled = true;
                 await this._receiveRotator.install(this);
+                this._receiveRotatorInstalled = true;
             }
+            this._vtxoManager = manager;
             return manager;
-        } catch (error) {
-            this._vtxoManagerInitializing = undefined;
-            throw error;
         } finally {
             this._vtxoManagerInitializing = undefined;
         }
@@ -1241,7 +1242,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         // first so no late `vtxo_received` event can queue work on a
         // disposing wallet, and so any in-flight `createContract` call
         // finishes before we dispose the contract manager underneath it.
-        await this._receiveRotator?.dispose();
+        // A rotator-disposal failure must not abort the rest of
+        // teardown — the contract manager / super still need to run on
+        // best-effort, so we capture and rethrow at the end.
+        let rotatorError: unknown;
+        try {
+            await this._receiveRotator?.dispose();
+        } catch (error) {
+            rotatorError = error;
+        }
 
         const manager =
             this._vtxoManager ??
@@ -1258,6 +1267,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this._vtxoManager = undefined;
             this._vtxoManagerInitializing = undefined;
             await super.dispose();
+        }
+
+        if (rotatorError) {
+            throw rotatorError;
         }
     }
 
@@ -1397,6 +1410,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
 
         if (params.selectedVtxos && params.selectedVtxos.length > 0) {
             return this._withTxLock(async () => {
+                // Snapshot the active receive tapscript synchronously
+                // before any `await` so the change output's pkScript and
+                // the change-VTXO metadata written later by
+                // `updateDbAfterOffchainTx` are bound to the same
+                // tapscript even if `WalletReceiveRotator.rotate` fires
+                // during the offchain round-trip.
+                const offchainTapscript = this.offchainTapscript;
+                const arkAddress = offchainTapscript.address(
+                    this.network.hrp,
+                    this.arkServerPublicKey
+                );
+
                 const selectedVtxoSum = params
                     .selectedVtxos!.map((v) => v.value)
                     .reduce((a, b) => a + b, 0);
@@ -1429,8 +1454,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 if (selected.changeAmount > 0n) {
                     const changeOutputScript =
                         selected.changeAmount < this.dustAmount
-                            ? this.arkAddress.subdustPkScript
-                            : this.arkAddress.pkScript;
+                            ? arkAddress.subdustPkScript
+                            : arkAddress.pkScript;
 
                     outputs.push({
                         script: changeOutputScript,
@@ -1452,7 +1477,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                         signedCheckpointTxs,
                         params.amount,
                         selected.changeAmount,
-                        selected.changeAmount > 0n ? outputs.length - 1 : 0
+                        selected.changeAmount > 0n ? outputs.length - 1 : 0,
+                        offchainTapscript
                     );
 
                     return arkTxid;
@@ -2314,11 +2340,23 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             throw new Error("At least one receiver is required");
         }
 
+        // Snapshot the active receive tapscript synchronously before any
+        // `await`. `WalletReceiveRotator.rotate` mutates
+        // `this.offchainTapscript` without acquiring `_txLock`, so any
+        // yield between here and `updateDbAfterOffchainTx` opens a window
+        // where the change-output pkScript (built from `outputAddress`
+        // below) and the change-VTXO metadata (built from the snapshot
+        // inside `updateDbAfterOffchainTx`) could come from different
+        // tapscripts. Threading the snapshot pins both reads.
+        const offchainTapscript = this.offchainTapscript;
+        const outputAddress = offchainTapscript.address(
+            this.network.hrp,
+            this.arkServerPublicKey
+        );
+        const address = outputAddress.encode();
+
         // validate recipients and populate undefined amount with dust amount
         const recipients = validateRecipients(args, Number(this.dustAmount));
-
-        const address = await this.getAddress();
-        const outputAddress = ArkAddress.decode(address);
 
         const virtualCoins = await this.getVtxos({
             withRecoverable: false,
@@ -2537,6 +2575,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 sentAmount,
                 BigInt(changeAmount),
                 changeReceiver ? changeIndex : 0,
+                offchainTapscript,
                 changeReceiver?.assets
             );
 
@@ -2630,7 +2669,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         return { arkTxid, signedCheckpointTxs };
     }
 
-    // mark virtual outputs as spent, save change outputs if any
+    // mark virtual outputs as spent, save change outputs if any.
+    // `offchainTapscript` is the snapshot the caller captured under
+    // `_txLock` before any `await`; deriving both the change-VTXO
+    // metadata and `primaryAddress` from it here guarantees the local
+    // record matches the pkScript the server saw on the inbound
+    // transaction, even if `WalletReceiveRotator.rotate` swaps
+    // `this.offchainTapscript` mid-flight.
     private async updateDbAfterOffchainTx(
         inputs: VirtualCoin[],
         arkTxid: string,
@@ -2638,20 +2683,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         sentAmount: number,
         changeAmount: bigint,
         changeVout: number,
+        offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         changeAssets?: Asset[]
     ): Promise<void> {
-        // Snapshot the current offchain tapscript + display address at
-        // function entry, synchronously, before any `await`.
-        // `WalletReceiveRotator.rotate` mutates `this.offchainTapscript`
-        // without acquiring `_txLock`, so a concurrent `vtxo_received`
-        // could swap it between the `forfeit()` read for the change
-        // VTXO and the `pkScript` read below — stamping the change with
-        // mixed scripts and binding it to the wrong contract. The two
-        // snapshot reads happen on the same synchronous tick so they
-        // are guaranteed consistent with each other, even if rotation
-        // fires the moment the next `await` yields.
-        const offchainTapscript = this.offchainTapscript;
-        const primaryAddress = this.arkAddress.encode();
+        const primaryAddress = offchainTapscript
+            .address(this.network.hrp, this.arkServerPublicKey)
+            .encode();
 
         try {
             const spentVtxos: ExtendedVirtualCoin[] = [];
@@ -2715,7 +2752,6 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             }
 
             const createdAt = Date.now();
-            const primaryAddr = primaryAddress;
 
             // Only save a change virtual output for preconfirmed coins (those with a batchExpiry).
             // Inputs without a batchExpiry are already settled/unrolled and don't need tracking.
@@ -2791,12 +2827,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             if (changeVtxo) {
                 await saveVtxosForContract(
                     this.walletRepository,
-                    { script: changeVtxo.script!, address: primaryAddr },
+                    { script: changeVtxo.script!, address: primaryAddress },
                     [changeVtxo]
                 );
             }
 
-            await this.walletRepository.saveTransactions(primaryAddr, [
+            await this.walletRepository.saveTransactions(primaryAddress, [
                 {
                     key: {
                         boardingTxid: "",

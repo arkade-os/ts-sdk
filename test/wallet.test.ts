@@ -1923,19 +1923,21 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             annotateVtxos: overrides.annotateVtxos,
             getContracts,
         });
+        const arkAddress = { encode: () => PRIMARY_ADDR };
         const offchainTapscript: any = {
             pkScript: primaryPkScript,
             forfeit: () => [new Uint8Array(32), new Uint8Array(33)],
             encode: () => new Uint8Array(64),
+            address: () => arkAddress,
         };
-        const arkAddress = { encode: () => PRIMARY_ADDR };
         return {
             thisArg: {
-                arkAddress,
-                offchainTapscript,
+                network: { hrp: "ark" },
+                arkServerPublicKey: new Uint8Array(32),
                 walletRepository: { saveVtxos, saveTransactions },
                 getContractManager,
             } as any,
+            offchainTapscript,
             saveVtxos,
             saveTransactions,
             getContracts,
@@ -1964,10 +1966,11 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
     it("saves single-contract spend rows and the change row under the primary bucket", async () => {
         const input = makeSpentInput(PRIMARY_SCRIPT, "1");
         const annotateVtxos = vi.fn().mockResolvedValue([annotated(input)]);
-        const { thisArg, saveVtxos, saveTransactions } = makeThisArg({
-            annotateVtxos,
-            contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
-        });
+        const { thisArg, offchainTapscript, saveVtxos, saveTransactions } =
+            makeThisArg({
+                annotateVtxos,
+                contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
+            });
 
         await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
             thisArg,
@@ -1976,7 +1979,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             [], // empty checkpoints → loop takes the no-PSBT branch
             1_000, // sentAmount
             4_000n, // changeAmount
-            1 // changeVout
+            1, // changeVout
+            offchainTapscript
         );
 
         // Per-script saves: one for the spent row, one for the change row.
@@ -2015,7 +2019,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                 annotated(primaryInput),
                 annotated(delegateInput),
             ]);
-        const { thisArg, saveVtxos } = makeThisArg({
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [
                 { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
@@ -2030,7 +2034,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             [],
             1_000,
             0n, // no change → only spent rows
-            0
+            0,
+            offchainTapscript
         );
 
         expect(saveVtxos).toHaveBeenCalledTimes(2);
@@ -2052,7 +2057,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                 annotated(primaryInput),
                 annotated(delegateInput),
             ]);
-        const { thisArg, saveVtxos } = makeThisArg({
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [
                 { script: PRIMARY_SCRIPT, address: PRIMARY_ADDR },
@@ -2067,7 +2072,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             [],
             1_000,
             4_000n,
-            1
+            1,
+            offchainTapscript
         );
 
         // Per-script saves: primary spent, delegate spent, change (primary script).
@@ -2091,7 +2097,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         const annotateVtxos = vi
             .fn()
             .mockResolvedValue([{ ...annotated(input), script: undefined }]);
-        const { thisArg, saveVtxos } = makeThisArg({
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
         });
@@ -2104,7 +2110,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                 [],
                 1_000,
                 0n,
-                0
+                0,
+                offchainTapscript
             )
         ).rejects.toThrow(/has no script/);
 
@@ -2118,7 +2125,7 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
             script: "ee".repeat(34),
         };
         const annotateVtxos = vi.fn().mockResolvedValue([orphan]);
-        const { thisArg, saveVtxos } = makeThisArg({
+        const { thisArg, offchainTapscript, saveVtxos } = makeThisArg({
             annotateVtxos,
             contracts: [{ script: PRIMARY_SCRIPT, address: PRIMARY_ADDR }],
         });
@@ -2131,7 +2138,8 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
                 [],
                 1_000,
                 0n,
-                0
+                0,
+                offchainTapscript
             )
         ).rejects.toThrow(/no contract owns script/);
 
