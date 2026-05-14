@@ -80,6 +80,7 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    MissingSigningDescriptorError,
 } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
@@ -401,6 +402,7 @@ export {
     // Errors
     ArkError,
     maybeArkError,
+    MissingSigningDescriptorError,
 
     // Batch session
     Batch,

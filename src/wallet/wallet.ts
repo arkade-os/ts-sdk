@@ -28,7 +28,7 @@ import {
     validateVtxoTxGraph,
 } from "../tree/validation";
 import { validateBatchRecipients } from "./validation";
-import { Identity, isBatchSignable, ReadonlyIdentity } from "../identity";
+import { Identity, ReadonlyIdentity } from "../identity";
 import {
     ArkTransaction,
     Asset,
@@ -63,7 +63,6 @@ import { VtxoScript } from "../script/base";
 import { CSVMultisigTapscript, RelativeTimelock } from "../script/tapscript";
 import {
     buildOffchainTx,
-    combineTapscriptSigs,
     hasBoardingTxExpired,
     isValidArkAddress,
 } from "../utils/arkTransaction";
@@ -98,6 +97,7 @@ import {
     IndexedDBWalletRepository,
 } from "../repositories";
 import { ContractManager } from "../contracts/contractManager";
+import { Contract } from "../contracts/types";
 import { contractHandlers } from "../contracts/handlers";
 import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
@@ -106,6 +106,7 @@ import {
     saveVtxosForContract,
 } from "../contracts/vtxoOwnership";
 import { WalletReceiveRotator } from "./walletReceiveRotator";
+import { DescriptorProvider } from "../identity/descriptorProvider";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -177,6 +178,38 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
         "toReadonly" in identity &&
         typeof (identity as any).toReadonly === "function"
     );
+}
+
+/**
+ * Thrown when {@link Wallet.signInputsByOwner} encounters a default or
+ * delegate contract whose owning pubkey differs from the identity's
+ * baseline (so it must be signed via {@link DescriptorProvider}) but
+ * the contract record has no `metadata.signingDescriptor`. This happens
+ * on wallets that rotated under the original HD branch (which only
+ * persisted `params.pubKey`) — the fix-forward is to manually write a
+ * `signingDescriptor` onto each affected contract record, or to restore
+ * from a pre-rotation snapshot.
+ *
+ * Surfacing this loudly is intentional: silently falling back to the
+ * identity's index-0 key would reproduce the original "missing tapscript
+ * spend sig" server error — a confusingly-late failure with no obvious
+ * root cause.
+ */
+export class MissingSigningDescriptorError extends Error {
+    readonly name = "MissingSigningDescriptorError";
+
+    constructor(
+        readonly contractScript: string,
+        readonly contractType: "default" | "delegate"
+    ) {
+        super(
+            `Cannot sign input for ${contractType} contract ${contractScript}: ` +
+                `metadata.signingDescriptor is missing. This wallet was rotated ` +
+                `on an earlier build that did not persist signing descriptors. ` +
+                `Manually set metadata.signingDescriptor on the contract record, ` +
+                `or restore from a pre-rotation snapshot.`
+        );
+    }
 }
 
 export class ReadonlyWallet implements IReadonlyWallet {
@@ -1093,6 +1126,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private _receiveRotatorInstalled = false;
 
     /**
+     * Descriptor-aware signer used by {@link signInputsByOwner} to sign
+     * inputs locked by rotated pubkeys. Same instance the rotator owns;
+     * stashed here so the spending paths don't have to reach inside the
+     * rotator. Undefined for static / non-HD-capable wallets — those
+     * paths only ever take the identity-sign branch.
+     */
+    private readonly _descriptorProvider?: DescriptorProvider;
+
+    /**
      * @internal Sole write path for `offchainTapscript` after construction.
      * Called by {@link WalletReceiveRotator.rotate} once the rotated
      * display contract has been persisted. External code must treat
@@ -1172,7 +1214,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         watcherConfig?: WalletConfig["watcherConfig"],
         settlementConfig?: WalletConfig["settlementConfig"],
         walletContractTimelocks?: RelativeTimelock[],
-        receiveRotator?: WalletReceiveRotator
+        receiveRotator?: WalletReceiveRotator,
+        descriptorProvider?: DescriptorProvider
     ) {
         super(
             identity,
@@ -1218,6 +1261,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             ? new DelegatorManagerImpl(delegatorProvider, arkProvider, identity)
             : undefined;
         this._receiveRotator = receiveRotator;
+        this._descriptorProvider = descriptorProvider;
     }
 
     override get assetManager(): IAssetManager {
@@ -1370,7 +1414,8 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             config.watcherConfig,
             config.settlementConfig,
             setup.walletContractTimelocks,
-            boot?.rotator
+            boot?.rotator,
+            boot?.provider
         );
 
         await wallet.getVtxoManager();
@@ -1875,9 +1920,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     settlementPsbt.updateInput(i, {
                         tapLeafScript: [input.forfeitTapLeafScript],
                     });
-                    settlementPsbt = await this.identity.sign(settlementPsbt, [
-                        i,
-                    ]);
+                    settlementPsbt = await this.signInputsByOwner(
+                        settlementPsbt,
+                        [i]
+                    );
                     hasBoardingUtxos = true;
                     break;
                 }
@@ -1939,7 +1985,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             );
 
             // do not sign the connector input
-            forfeitTx = await this.identity.sign(forfeitTx, [0]);
+            forfeitTx = await this.signInputsByOwner(forfeitTx, [0]);
 
             signedForfeits.push(base64.encode(forfeitTx.toPSBT()));
         }
@@ -2119,6 +2165,191 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         };
     }
 
+    /**
+     * Sign each (signable) input of `tx` with the key that actually owns
+     * it. Replaces the legacy `identity.sign(tx, …)` call sites — which
+     * always reach for the identity's index-0 private key, and therefore
+     * silently fail to sign inputs locked by rotated HD pubkeys.
+     *
+     * Resolution per input:
+     *   1. Read `witnessUtxo.script`.
+     *   2. Look up `script → Contract` via the contract repository.
+     *   3. If no contract is found AND the script equals
+     *      `boardingTapscript.pkScript`, treat as a boarding input
+     *      (signed by the identity).
+     *   4. If still no contract, leave the input alone — covers connector
+     *      / cosigner inputs already handled by other paths.
+     *   5. For non-`default` / non-`delegate` contracts (e.g. VHTLC),
+     *      preserve today's behaviour and route through the identity.
+     *   6. For `default` / `delegate` contracts: if the contract's
+     *      `pubKey` matches the identity's baseline x-only pubkey, route
+     *      through the identity. Otherwise read
+     *      `metadata.signingDescriptor` and route through
+     *      `_descriptorProvider.signWithDescriptor`. Missing descriptor
+     *      throws {@link MissingSigningDescriptorError} — silently
+     *      falling back would reproduce the original bug.
+     *
+     * Inputs are then grouped (one identity group, one descriptor group
+     * per descriptor string) and signed sequentially. `signWithDescriptor`
+     * returns a freshly-cloned tx per request, so signatures only
+     * accumulate by threading the output of each call as the input to
+     * the next. See PR_489_send.agents.md §3 / §4.
+     *
+     * @param tx - Transaction to sign in place (returns a fresh
+     *   instance; the input is not mutated).
+     * @param inputIndexes - Optional subset of input indexes to sign.
+     *   When omitted, every signable input is considered.
+     * @param lookupScriptOverrides - Optional per-input override for the
+     *   script used to look up the owning contract. Required for the
+     *   offchain `arkTx`, whose `witnessUtxo.script` is the *checkpoint*
+     *   pkScript (server-unroll + collaborative-closure combo) and not
+     *   the source VTXO's contract script — without an override the
+     *   helper would silently skip every arkTx input. Callers that sign
+     *   transactions whose inputs do match a contract directly (intent
+     *   proofs, checkpoints, forfeits, settlement boarding) can omit
+     *   this and the helper falls back to `witnessUtxo.script`.
+     */
+    private async signInputsByOwner(
+        tx: Transaction,
+        inputIndexes?: number[],
+        lookupScriptOverrides?: Map<number, string>
+    ): Promise<Transaction> {
+        const candidateIndexes =
+            inputIndexes ??
+            Array.from({ length: tx.inputsLength }, (_, i) => i);
+        if (candidateIndexes.length === 0) return tx;
+
+        // Collect script hex for each candidate input. The override map
+        // wins when present: arkTx inputs spend checkpoint outputs whose
+        // own pkScript is unrelated to the source VTXO's contract, so
+        // resolution must use the original VTXO's script. When no
+        // override is supplied for an index we fall back to
+        // `witnessUtxo.script` (intent proofs, checkpoints, forfeits,
+        // settlement boarding all sign their own real prevouts and need
+        // no override). Missing both is "we can't tell what owns this
+        // input" — leave it alone.
+        const inputScriptHex = new Map<number, string>();
+        for (const idx of candidateIndexes) {
+            const override = lookupScriptOverrides?.get(idx);
+            if (override !== undefined) {
+                inputScriptHex.set(idx, override);
+                continue;
+            }
+            const input = tx.getInput(idx);
+            const script = input.witnessUtxo?.script;
+            if (!script) continue;
+            inputScriptHex.set(idx, hex.encode(script));
+        }
+
+        // One repo round-trip for every distinct script in scope. Cheap
+        // for the common case (one or two scripts per tx) and keeps the
+        // helper O(scripts), not O(inputs).
+        const distinctScripts = Array.from(new Set(inputScriptHex.values()));
+        const scriptToContract = new Map<string, Contract>();
+        if (distinctScripts.length > 0) {
+            const contracts = await this.contractRepository.getContracts({
+                script: distinctScripts,
+            });
+            for (const contract of contracts) {
+                // Repo may yield duplicates if seeded oddly; keep first.
+                if (!scriptToContract.has(contract.script)) {
+                    scriptToContract.set(contract.script, contract);
+                }
+            }
+        }
+
+        const baselinePubKeyHex = hex.encode(
+            await this.identity.xOnlyPublicKey()
+        );
+        const boardingScriptHex = hex.encode(this.boardingTapscript.pkScript);
+
+        // Bucket each candidate input into one of:
+        //   - identity (baseline group OR identity-fallback group)
+        //   - descriptor (keyed by descriptor string)
+        // Inputs the helper can't classify (no witnessUtxo, no matching
+        // contract, no boarding match) are intentionally dropped — that
+        // mirrors today's silent-skip behaviour for cosigner / connector
+        // inputs.
+        const identityIndexes: number[] = [];
+        const descriptorGroups = new Map<string, number[]>();
+        for (const idx of candidateIndexes) {
+            const scriptHex = inputScriptHex.get(idx);
+            if (!scriptHex) continue;
+            const contract = scriptToContract.get(scriptHex);
+
+            if (!contract) {
+                if (scriptHex === boardingScriptHex) {
+                    // Baseline boarding input.
+                    identityIndexes.push(idx);
+                }
+                // Otherwise: cosigner / connector / unknown — leave alone.
+                continue;
+            }
+
+            if (contract.type !== "default" && contract.type !== "delegate") {
+                // VHTLC and friends keep today's identity-sign behaviour;
+                // descriptor signing is opt-in for the wallet's own
+                // receive contracts only.
+                identityIndexes.push(idx);
+                continue;
+            }
+
+            const ownerPubKeyHex = contract.params.pubKey;
+            if (
+                ownerPubKeyHex &&
+                ownerPubKeyHex.toLowerCase() === baselinePubKeyHex.toLowerCase()
+            ) {
+                identityIndexes.push(idx);
+                continue;
+            }
+
+            const descriptor = contract.metadata?.signingDescriptor;
+            if (typeof descriptor !== "string" || descriptor.length === 0) {
+                throw new MissingSigningDescriptorError(
+                    contract.script,
+                    contract.type as "default" | "delegate"
+                );
+            }
+            const bucket = descriptorGroups.get(descriptor);
+            if (bucket) {
+                bucket.push(idx);
+            } else {
+                descriptorGroups.set(descriptor, [idx]);
+            }
+        }
+
+        // Thread the tx through each group sequentially. Sorting the
+        // descriptor groups by descriptor string keeps the order
+        // deterministic for fixture-based tests.
+        let signed = tx;
+        if (identityIndexes.length > 0) {
+            signed = await this.identity.sign(signed, identityIndexes);
+        }
+        const sortedDescriptors = Array.from(descriptorGroups.keys()).sort();
+        for (const descriptor of sortedDescriptors) {
+            if (!this._descriptorProvider) {
+                // Resolution above only routes to the descriptor branch
+                // when a `signingDescriptor` was found, which can only
+                // exist on a wallet that booted with a provider. Hitting
+                // this branch without a provider means a bug elsewhere
+                // (e.g. contract metadata seeded by a different wallet).
+                throw new Error(
+                    "signInputsByOwner: descriptor signing requested but no DescriptorProvider was wired into this wallet"
+                );
+            }
+            const indexes = descriptorGroups.get(descriptor)!;
+            const [next] = await this._descriptorProvider.signWithDescriptor([
+                {
+                    tx: signed,
+                    descriptor,
+                    inputIndexes: indexes,
+                },
+            ]);
+            signed = next;
+        }
+        return signed;
+    }
+
     async safeRegisterIntent(
         intent: SignedIntent<Intent.RegisterMessage>,
         inputs: ExtendedCoin[]
@@ -2166,7 +2397,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         };
 
         const proof = Intent.create(message, coins, outputs);
-        const signedProof = await this.identity.sign(proof);
+        // `Intent.create` produces a proof whose tx-input 0 is a synthetic
+        // toSpend reference whose witnessUtxo.script is copied from
+        // coin[0]'s real pkScript (see `craftToSignTx`). That means input
+        // 0 and input 1 share a script — and `signInputsByOwner` resolves
+        // both to coin[0]'s contract automatically.
+        const signedProof = await this.signInputsByOwner(proof);
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
@@ -2183,7 +2419,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         };
 
         const proof = Intent.create(message, coins, []);
-        const signedProof = await this.identity.sign(proof);
+        const signedProof = await this.signInputsByOwner(proof);
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
@@ -2200,7 +2436,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         };
 
         const proof = Intent.create(message, coins, []);
-        const signedProof = await this.identity.sign(proof);
+        const signedProof = await this.signInputsByOwner(proof);
 
         return {
             proof: base64.encode(signedProof.toPSBT()),
@@ -2290,7 +2526,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                                     base64.decode(c)
                                 );
                                 const signedCheckpoint =
-                                    await this.identity.sign(tx);
+                                    await this.signInputsByOwner(tx);
                                 return base64.encode(signedCheckpoint.toPSBT());
                             })
                         );
@@ -2634,28 +2870,36 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.serverUnrollScript
         );
 
-        let signedVirtualTx: Transaction;
-        let userSignedCheckpoints: Transaction[] | undefined;
-
-        if (isBatchSignable(this.identity)) {
-            // Batch-sign arkTx + all checkpoints in one wallet popup.
-            // Clone so the provider can't mutate originals before submitTx.
-            const requests = [
-                { tx: offchainTx.arkTx.clone() },
-                ...offchainTx.checkpoints.map((c) => ({ tx: c.clone() })),
-            ];
-            const signed = await this.identity.signMultiple(requests);
-            if (signed.length !== requests.length) {
-                throw new Error(
-                    `signMultiple returned ${signed.length} transactions, expected ${requests.length}`
-                );
-            }
-            const [firstSignedTx, ...signedCheckpoints] = signed;
-            signedVirtualTx = firstSignedTx;
-            userSignedCheckpoints = signedCheckpoints;
-        } else {
-            signedVirtualTx = await this.identity.sign(offchainTx.arkTx);
+        // Per-input routing requires signing each PSBT independently —
+        // the previous `signMultiple` batch optimisation collapsed the
+        // arkTx and every checkpoint into a single wallet popup, which
+        // can't dispatch per-input to different keys. External
+        // batch-signing wallets paired with HD rotation will see N+1
+        // popups (arkTx + N checkpoints). A future
+        // `BatchSignableDescriptorProvider` interface can reclaim the
+        // optimisation; tracked in PR_489_send.agents.md §6.
+        //
+        // arkTx-specific gotcha: each arkTx input spends a checkpoint
+        // output, so its `witnessUtxo.script` is the checkpoint
+        // pkScript, not the source VTXO's contract pkScript. With no
+        // override, the helper would silently skip every arkTx input
+        // and submit an unsigned PSBT — which the server rejects with
+        // `INVALID_PSBT_INPUT (5): missing tapscript spend sig`. The
+        // mapping is positional: arkTx input i corresponds to
+        // `inputs[i]`, so we feed the source VTXO's pkScript at each
+        // index and let the helper resolve owner from there.
+        const arkTxOwnerScripts = new Map<number, string>();
+        for (let i = 0; i < inputs.length; i++) {
+            arkTxOwnerScripts.set(
+                i,
+                hex.encode(VtxoScript.decode(inputs[i].tapTree).pkScript)
+            );
         }
+        const signedVirtualTx = await this.signInputsByOwner(
+            offchainTx.arkTx,
+            undefined,
+            arkTxOwnerScripts
+        );
 
         // Mark pending before submitting — if we crash between submit and
         // finalize, the next init will recover via finalizePendingTxs.
@@ -2667,25 +2911,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 offchainTx.checkpoints.map((c) => base64.encode(c.toPSBT()))
             );
 
-        let finalCheckpoints: string[];
-
-        if (userSignedCheckpoints) {
-            // Merge pre-signed user signatures onto server-signed checkpoints
-            finalCheckpoints = signedCheckpointTxs.map((c, i) => {
-                const serverSigned = Transaction.fromPSBT(base64.decode(c));
-                combineTapscriptSigs(userSignedCheckpoints![i], serverSigned);
-                return base64.encode(serverSigned.toPSBT());
-            });
-        } else {
-            // Legacy: sign each checkpoint individually (N popups)
-            finalCheckpoints = await Promise.all(
-                signedCheckpointTxs.map(async (c) => {
-                    const tx = Transaction.fromPSBT(base64.decode(c));
-                    const signedCheckpoint = await this.identity.sign(tx);
-                    return base64.encode(signedCheckpoint.toPSBT());
-                })
-            );
-        }
+        const finalCheckpoints = await Promise.all(
+            signedCheckpointTxs.map(async (c) => {
+                const tx = Transaction.fromPSBT(base64.decode(c));
+                const signedCheckpoint = await this.signInputsByOwner(tx);
+                return base64.encode(signedCheckpoint.toPSBT());
+            })
+        );
 
         await this.arkProvider.finalizeTx(arkTxid, finalCheckpoints);
 
