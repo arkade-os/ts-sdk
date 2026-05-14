@@ -21,7 +21,13 @@ export interface ReadonlyHDCapableIdentity extends ReadonlyIdentity {
      */
     readonly descriptor: string;
 
-    /** True iff `descriptor` derives from this identity's xpub/seed. */
+    /**
+     * True iff `descriptor` derives from this identity's xpub/seed.
+     *
+     * @deprecated Prefer `DescriptorProvider.isOurs()` via
+     * `HDDescriptorProvider` for rotating HD wallets or
+     * `StaticDescriptorProvider` for legacy single-key wallets.
+     */
     isOurs(descriptor: string): boolean;
 }
 
@@ -40,12 +46,24 @@ export interface ReadonlyHDCapableIdentity extends ReadonlyIdentity {
  *    explicitly-non-rotating use cases.
  */
 export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
-    /** Signs each request with the key derived from its descriptor. */
+    /**
+     * Signs each request with the key derived from its descriptor.
+     *
+     * @deprecated Prefer `DescriptorProvider.signWithDescriptor()` via
+     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
+     * this method only as backing implementation for descriptor providers.
+     */
     signWithDescriptor(
         requests: DescriptorSigningRequest[]
     ): Promise<Transaction[]>;
 
-    /** Signs a message using the key derived from `descriptor`. */
+    /**
+     * Signs a message using the key derived from `descriptor`.
+     *
+     * @deprecated Prefer `DescriptorProvider.signMessageWithDescriptor()` via
+     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
+     * this method only as backing implementation for descriptor providers.
+     */
     signMessageWithDescriptor(
         descriptor: string,
         message: Uint8Array,
