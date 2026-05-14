@@ -197,19 +197,21 @@ export class ReadonlyWallet implements IReadonlyWallet {
         return this._assetManager;
     }
 
+    /**
+     * Backing field for the active receive tapscript. Read via the
+     * public `offchainTapscript` getter; written only by
+     * {@link Wallet.setOffchainTapscriptForRotation}, which
+     * {@link WalletReceiveRotator.rotate} is the sole intended caller of.
+     */
+    protected _offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+
     protected constructor(
         readonly identity: ReadonlyIdentity,
         readonly network: Network,
         readonly onchainProvider: OnchainProvider,
         readonly indexerProvider: IndexerProvider,
         readonly arkServerPublicKey: Bytes,
-        /**
-         * Mutable so {@link Wallet} can swap the active receive tapscript
-         * after an HD rotation. External consumers should treat it as
-         * read-only — writes happen exclusively in
-         * {@link WalletReceiveRotator.rotate} and the boot path.
-         */
-        public offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
+        offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script,
         readonly boardingTapscript: DefaultVtxo.Script,
         readonly dustAmount: bigint,
         public readonly walletRepository: WalletRepository,
@@ -233,6 +235,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
                 );
             }
         }
+        this._offchainTapscript = offchainTapscript;
         this.watcherConfig = watcherConfig;
         this._assetManager = new ReadonlyAssetManager(this.indexerProvider);
         // Defensive for direct-construction callers; setupWalletConfig already
@@ -244,6 +247,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
                       this.offchainTapscript.options.csvTimelock ??
                           DefaultVtxo.Script.DEFAULT_TIMELOCK,
                   ];
+    }
+
+    /**
+     * Currently-active receive tapscript. Read-only from the outside;
+     * mutated only via {@link Wallet.setOffchainTapscriptForRotation}
+     * by {@link WalletReceiveRotator.rotate}.
+     */
+    get offchainTapscript(): DefaultVtxo.Script | DelegateVtxo.Script {
+        return this._offchainTapscript;
     }
 
     /**
@@ -1079,6 +1091,18 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private _receiveRotator?: WalletReceiveRotator;
     private _receiveRotatorInstalled = false;
+
+    /**
+     * @internal Sole write path for `offchainTapscript` after construction.
+     * Called by {@link WalletReceiveRotator.rotate} once the rotated
+     * display contract has been persisted. External code must treat
+     * `offchainTapscript` as read-only.
+     */
+    setOffchainTapscriptForRotation(
+        tapscript: DefaultVtxo.Script | DelegateVtxo.Script
+    ): void {
+        this._offchainTapscript = tapscript;
+    }
 
     /**
      * Async mutex that serializes all operations submitting VTXOs to the Arkade

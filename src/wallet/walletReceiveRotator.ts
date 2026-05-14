@@ -134,7 +134,15 @@ export interface RotatableWallet {
     readonly defaultContractScript: string;
     readonly network: { hrp: string };
     readonly arkServerPublicKey: Uint8Array;
-    offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+    readonly offchainTapscript: DefaultVtxo.Script | DelegateVtxo.Script;
+    /**
+     * @internal Sole sanctioned write path for `offchainTapscript`
+     * after construction. The rotator calls this once per rotation
+     * after persisting the new display contract.
+     */
+    setOffchainTapscriptForRotation(
+        tapscript: DefaultVtxo.Script | DelegateVtxo.Script
+    ): void;
     getContractManager(): Promise<IContractManager>;
     getAddress(): Promise<string>;
 }
@@ -444,8 +452,9 @@ export class WalletReceiveRotator {
         // Persistence succeeded — commit the new tapscript to the
         // wallet's visible state. From this point onward
         // `wallet.defaultContractScript` and `getAddress()` reflect
-        // the rotated identity.
-        wallet.offchainTapscript = newTapscript;
+        // the rotated identity. `setOffchainTapscriptForRotation` is
+        // the only write path; the field is read-only otherwise.
+        wallet.setOffchainTapscriptForRotation(newTapscript);
 
         // Retire the previous tagged contract (if any). The order
         // matters: deactivate FIRST, then update `currentTaggedScript`,
