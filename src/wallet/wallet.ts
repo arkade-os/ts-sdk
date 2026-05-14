@@ -1251,7 +1251,12 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             // leave the manager cached and silently disable HD
             // rotation for the lifetime of this wallet.
             if (this._receiveRotator && !this._receiveRotatorInstalled) {
-                await this._receiveRotator.install(this);
+                try {
+                    await this._receiveRotator.install(this);
+                } catch (installErr) {
+                    await manager.dispose();
+                    throw installErr;
+                }
                 this._receiveRotatorInstalled = true;
             }
             this._vtxoManager = manager;
