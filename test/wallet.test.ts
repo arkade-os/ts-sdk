@@ -7,6 +7,7 @@ import {
     RestArkProvider,
     ReadonlyWallet,
     Batch,
+    DefaultVtxo,
     InMemoryWalletRepository,
     InMemoryContractRepository,
     ArkError,
@@ -15,6 +16,11 @@ import {
     type OnchainProvider,
     type DelegatorProvider,
 } from "../src";
+import {
+    TEST_PUB_KEY,
+    TEST_DELEGATE_PUB_KEY,
+    TEST_SERVER_PUB_KEY,
+} from "./contracts/helpers";
 import { DEFAULT_ARKADE_SERVER_URL } from "../src/wallet";
 import type { ExtendedCoin } from "../src/wallet";
 import { ReadonlySingleKey } from "../src/identity/singleKey";
@@ -2144,6 +2150,140 @@ describe("Wallet.updateDbAfterOffchainTx", () => {
         ).rejects.toThrow(/no contract owns script/);
 
         expect(saveVtxos).not.toHaveBeenCalled();
+    });
+
+    it("binds the change VTXO metadata to the snapshot, not to this.offchainTapscript", async () => {
+        // PR #489 review #1 contract test: the change output's pkScript
+        // is captured under `_txLock` BEFORE the offchain round-trip,
+        // but the change-VTXO metadata (`forfeitTapLeafScript`,
+        // `tapTree`, `script`, `primaryAddress`) is written AFTER the
+        // round-trip — `WalletReceiveRotator.rotate` could swap
+        // `this.offchainTapscript` in between. The fix threads the
+        // pre-round-trip snapshot down as a parameter and derives all
+        // four fields from it. A regression that re-reads
+        // `this.offchainTapscript` inside the function would bind the
+        // change to the post-rotation tapscript while the server's
+        // VTXO is locked to the pre-rotation pkScript — the exact P1
+        // race we're guarding against.
+        //
+        // Two real `DefaultVtxo.Script` instances with distinct
+        // pubkeys: `tapscriptOld` lives on `this.offchainTapscript`
+        // (deliberately the "wrong" one), `tapscriptNew` is the
+        // snapshot threaded through. The change-VTXO fields must
+        // match `tapscriptNew` everywhere.
+        const tapscriptOld = new DefaultVtxo.Script({
+            pubKey: TEST_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+        });
+        const tapscriptNew = new DefaultVtxo.Script({
+            pubKey: TEST_DELEGATE_PUB_KEY,
+            serverPubKey: TEST_SERVER_PUB_KEY,
+        });
+        // Sanity: the two tapscripts produce distinguishable outputs.
+        // Without this, any assertion below would be vacuously true.
+        expect(hex.encode(tapscriptOld.pkScript)).not.toBe(
+            hex.encode(tapscriptNew.pkScript)
+        );
+
+        const SPEND_SCRIPT = hex.encode(tapscriptOld.pkScript);
+        const SPEND_ADDR = tapscriptOld
+            .address("ark", TEST_SERVER_PUB_KEY)
+            .encode();
+        const CHANGE_SCRIPT = hex.encode(tapscriptNew.pkScript);
+        const CHANGE_ADDR = tapscriptNew
+            .address("ark", TEST_SERVER_PUB_KEY)
+            .encode();
+
+        const input: VirtualCoin = {
+            txid: "1".repeat(64),
+            vout: 0,
+            value: 5_000,
+            status: { confirmed: true },
+            virtualStatus: {
+                state: "preconfirmed",
+                batchExpiry: 1_700_000_000,
+            },
+            createdAt: new Date(),
+            isUnrolled: false,
+            isSpent: false,
+            script: SPEND_SCRIPT,
+        };
+        const annotatedInput: any = {
+            ...input,
+            forfeitTapLeafScript: [new Uint8Array(32), new Uint8Array(33)],
+            intentTapLeafScript: [new Uint8Array(32), new Uint8Array(34)],
+            tapTree: new Uint8Array(64),
+        };
+
+        const saveVtxos = vi.fn().mockResolvedValue(undefined);
+        const saveTransactions = vi.fn().mockResolvedValue(undefined);
+        const getContractManager = vi.fn().mockResolvedValue({
+            annotateVtxos: vi.fn().mockResolvedValue([annotatedInput]),
+            getContracts: vi.fn().mockResolvedValue([
+                // Spent input is owned by the OLD script's contract.
+                { script: SPEND_SCRIPT, address: SPEND_ADDR },
+                // Change is owned by the NEW script's contract.
+                { script: CHANGE_SCRIPT, address: CHANGE_ADDR },
+            ]),
+        });
+
+        const thisArg = {
+            network: { hrp: "ark" },
+            arkServerPublicKey: TEST_SERVER_PUB_KEY,
+            // Deliberately the WRONG tapscript on `this`. A regression
+            // that re-reads `this.offchainTapscript` inside the
+            // function would bind the change to this instead of the
+            // snapshot.
+            offchainTapscript: tapscriptOld,
+            arkAddress: tapscriptOld.address("ark", TEST_SERVER_PUB_KEY),
+            walletRepository: { saveVtxos, saveTransactions },
+            getContractManager,
+        } as any;
+
+        await (Wallet.prototype as any).updateDbAfterOffchainTx.call(
+            thisArg,
+            [input],
+            "ark-tx-id",
+            [], // empty checkpoints → no-PSBT branch
+            1_000,
+            4_000n,
+            1,
+            tapscriptNew // the snapshot
+        );
+
+        // Find the change-row save (the one keyed by CHANGE_ADDR).
+        const changeCall = saveVtxos.mock.calls.find(
+            ([addr]: any) => addr === CHANGE_ADDR
+        );
+        expect(changeCall).toBeDefined();
+        const [, changeRows] = changeCall!;
+        expect(changeRows).toHaveLength(1);
+        const changeVtxo = changeRows[0];
+
+        // The four script-shaped fields all derive from `tapscriptNew`.
+        // Asserting each individually so a regression points at the
+        // exact field that broke. `TapLeafScript` is
+        // `[ControlBlockObject, Uint8Array]` — assert by structural
+        // equality on the object and hex equality on the script bytes.
+        expect(changeVtxo.script).toBe(CHANGE_SCRIPT);
+        expect(hex.encode(changeVtxo.tapTree)).toBe(
+            hex.encode(tapscriptNew.encode())
+        );
+        const expectedForfeit = tapscriptNew.forfeit();
+        expect(changeVtxo.forfeitTapLeafScript[0]).toEqual(expectedForfeit[0]);
+        expect(hex.encode(changeVtxo.forfeitTapLeafScript[1])).toBe(
+            hex.encode(expectedForfeit[1])
+        );
+        expect(changeVtxo.intentTapLeafScript[0]).toEqual(expectedForfeit[0]);
+        expect(hex.encode(changeVtxo.intentTapLeafScript[1])).toBe(
+            hex.encode(expectedForfeit[1])
+        );
+
+        // `primaryAddress` (the address `saveTransactions` is keyed by)
+        // also derives from the snapshot, not from `this.arkAddress`.
+        expect(saveTransactions).toHaveBeenCalledTimes(1);
+        expect(saveTransactions.mock.calls[0][0]).toBe(CHANGE_ADDR);
+        expect(saveTransactions.mock.calls[0][0]).not.toBe(SPEND_ADDR);
     });
 });
 
