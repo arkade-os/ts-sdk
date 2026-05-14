@@ -18,9 +18,27 @@ import {
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
+    TEST_DELEGATE_PUB_KEY,
     TEST_PUB_KEY,
     TEST_SERVER_PUB_KEY,
 } from "./helpers";
+
+// Second (script, params) pair distinct from `TEST_DEFAULT_SCRIPT` so a
+// test can register two contracts via `manager.createContract` without
+// the manager rejecting the duplicate script. Built with the delegate
+// fixture pubkey to keep it deterministic.
+const SECOND_DEFAULT_SCRIPT_TAPSCRIPT = new DefaultVtxo.Script({
+    pubKey: TEST_DELEGATE_PUB_KEY,
+    serverPubKey: TEST_SERVER_PUB_KEY,
+});
+const SECOND_DEFAULT_SCRIPT = hex.encode(
+    SECOND_DEFAULT_SCRIPT_TAPSCRIPT.pkScript
+);
+const SECOND_DEFAULT_PARAMS = DefaultContractHandler.serializeParams({
+    pubKey: TEST_DELEGATE_PUB_KEY,
+    serverPubKey: TEST_SERVER_PUB_KEY,
+    csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+});
 
 vi.useFakeTimers();
 
@@ -403,6 +421,35 @@ describe("ContractManager", () => {
             // gives us. `includeInactive` is the explicit override.
             const requested = collectRequestedScripts(mockIndexer);
             expect(requested.has(inactiveScript)).toBe(false);
+        });
+
+        it("default path skips contracts the watcher itself transitioned to inactive", async () => {
+            // The `seedRaw` variants above prove unmanaged repository
+            // rows are ignored. This test exercises the path that
+            // actually happens in production: a contract registered
+            // through `manager.createContract` is later transitioned
+            // to `inactive` via `setContractState`. If the watcher
+            // leaked the now-inactive script back into its watched
+            // set, the default `refreshVtxos()` would still hit the
+            // indexer for it — defeating the privacy/perf rationale.
+            await seedActive();
+            await manager.createContract({
+                type: "default",
+                params: SECOND_DEFAULT_PARAMS,
+                script: SECOND_DEFAULT_SCRIPT,
+                address: "second-address",
+                state: "active",
+            });
+            await manager.setContractState(SECOND_DEFAULT_SCRIPT, "inactive");
+
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+            await manager.refreshVtxos();
+
+            const requested = collectRequestedScripts(mockIndexer);
+            expect(requested.has(TEST_DEFAULT_SCRIPT)).toBe(true);
+            expect(requested.has(SECOND_DEFAULT_SCRIPT)).toBe(false);
         });
 
         it("explicit scripts filter takes precedence over includeInactive", async () => {
