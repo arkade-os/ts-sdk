@@ -41,6 +41,7 @@ import {
     IReadonlyWallet,
     BaseWalletConfig,
     WalletConfig,
+    WalletMode,
     ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
@@ -79,6 +80,8 @@ import {
     ReadonlyWallet,
     waitForIncomingFunds,
     IncomingFunds,
+    DescriptorSigningProviderMissingError,
+    MissingSigningDescriptorError,
 } from "./wallet/wallet";
 import { TxTree, TxTreeNode } from "./tree/txTree";
 import {
@@ -95,7 +98,10 @@ import {
     ServiceWorkerReadonlyWallet,
     DEFAULT_MESSAGE_TIMEOUTS,
 } from "./wallet/serviceWorker/wallet";
-import type { MessageTimeouts } from "./wallet/serviceWorker/wallet";
+import type {
+    MessageTimeouts,
+    ServiceWorkerWalletMode,
+} from "./wallet/serviceWorker/wallet";
 import { OnchainWallet } from "./wallet/onchain";
 import { setupServiceWorker } from "./worker/browser/utils";
 import {
@@ -400,6 +406,8 @@ export {
     // Errors
     ArkError,
     maybeArkError,
+    DescriptorSigningProviderMissingError,
+    MissingSigningDescriptorError,
 
     // Batch session
     Batch,
@@ -436,6 +444,7 @@ export type {
     IReadonlyWallet,
     BaseWalletConfig,
     WalletConfig,
+    WalletMode,
     ReadonlyWalletConfig,
     ProviderClass,
     ArkTransaction,
@@ -573,6 +582,7 @@ export type {
     RequestEnvelope,
     ResponseEnvelope,
     MessageTimeouts,
+    ServiceWorkerWalletMode,
 
     // Delegator types
     IDelegatorManager,

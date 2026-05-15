@@ -18,11 +18,40 @@ import {
     createMockIndexerProvider,
     createMockVtxo,
     TEST_DEFAULT_SCRIPT,
+    TEST_DELEGATE_PUB_KEY,
     TEST_PUB_KEY,
     TEST_SERVER_PUB_KEY,
 } from "./helpers";
 
+// Second (script, params) pair distinct from `TEST_DEFAULT_SCRIPT` so a
+// test can register two contracts via `manager.createContract` without
+// the manager rejecting the duplicate script. Built with the delegate
+// fixture pubkey to keep it deterministic.
+const SECOND_DEFAULT_SCRIPT_TAPSCRIPT = new DefaultVtxo.Script({
+    pubKey: TEST_DELEGATE_PUB_KEY,
+    serverPubKey: TEST_SERVER_PUB_KEY,
+});
+const SECOND_DEFAULT_SCRIPT = hex.encode(
+    SECOND_DEFAULT_SCRIPT_TAPSCRIPT.pkScript
+);
+const SECOND_DEFAULT_PARAMS = DefaultContractHandler.serializeParams({
+    pubKey: TEST_DELEGATE_PUB_KEY,
+    serverPubKey: TEST_SERVER_PUB_KEY,
+    csvTimelock: DefaultVtxo.Script.DEFAULT_TIMELOCK,
+});
+
 vi.useFakeTimers();
+
+function collectRequestedScripts(mockIndexer: IndexerProvider): Set<string> {
+    const calls = (mockIndexer.getVtxos as any).mock.calls;
+    const out = new Set<string>();
+    for (const args of calls) {
+        for (const s of args[0]?.scripts ?? []) {
+            out.add(s);
+        }
+    }
+    return out;
+}
 
 describe("ContractManager", () => {
     let manager: ContractManager;
@@ -318,6 +347,235 @@ describe("ContractManager", () => {
         });
 
         vi.advanceTimersByTime(3000);
+    });
+
+    describe("refreshVtxos includeInactive", () => {
+        // Default `refreshVtxos()` syncs only the watched set
+        // (active contracts + inactives that still have known VTXOs).
+        // `includeInactive: true` widens the query to every contract in
+        // the repository — the audit path for "did anyone send funds
+        // to a stale rotated address?".
+        //
+        // The manager validates that `script` is derived from `params`,
+        // so these tests seed the repository directly with synthetic
+        // scripts to exercise the refresh path independently of script
+        // construction.
+
+        const inactiveScript = "ee".repeat(34);
+        const otherScript = "dd".repeat(34);
+
+        async function seedActive(): Promise<void> {
+            await manager.createContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script: TEST_DEFAULT_SCRIPT,
+                address: "active-address",
+                state: "active",
+            });
+        }
+
+        async function seedRaw(
+            script: string,
+            address: string,
+            state: "active" | "inactive"
+        ): Promise<void> {
+            await repository.saveContract({
+                type: "default",
+                params: createDefaultContractParams(),
+                script,
+                address,
+                state,
+                createdAt: Date.now(),
+            });
+        }
+
+        it("indexer query covers inactive contracts when the flag is set", async () => {
+            await seedActive();
+            await seedRaw(inactiveScript, "stale-address", "inactive");
+
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+            await manager.refreshVtxos({ includeInactive: true });
+
+            // Both scripts appear in the indexer's `scripts` filter —
+            // the active one (which the watched set would already
+            // cover) AND the inactive one (which the default path
+            // would skip).
+            const requested = collectRequestedScripts(mockIndexer);
+            expect(requested.has(TEST_DEFAULT_SCRIPT)).toBe(true);
+            expect(requested.has(inactiveScript)).toBe(true);
+        });
+
+        it("default path (no flag) skips inactive contracts that have no known VTXOs", async () => {
+            await seedActive();
+            await seedRaw(inactiveScript, "stale-address", "inactive");
+
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+            await manager.refreshVtxos();
+
+            // The inactive script must NOT appear in any `scripts`
+            // filter — that's the privacy/perf saving the watcher
+            // gives us. `includeInactive` is the explicit override.
+            const requested = collectRequestedScripts(mockIndexer);
+            expect(requested.has(inactiveScript)).toBe(false);
+        });
+
+        it("default path skips contracts the watcher itself transitioned to inactive", async () => {
+            // The `seedRaw` variants above prove unmanaged repository
+            // rows are ignored. This test exercises the path that
+            // actually happens in production: a contract registered
+            // through `manager.createContract` is later transitioned
+            // to `inactive` via `setContractState`. If the watcher
+            // leaked the now-inactive script back into its watched
+            // set, the default `refreshVtxos()` would still hit the
+            // indexer for it — defeating the privacy/perf rationale.
+            await seedActive();
+            await manager.createContract({
+                type: "default",
+                params: SECOND_DEFAULT_PARAMS,
+                script: SECOND_DEFAULT_SCRIPT,
+                address: "second-address",
+                state: "active",
+            });
+            await manager.setContractState(SECOND_DEFAULT_SCRIPT, "inactive");
+
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+            await manager.refreshVtxos();
+
+            const requested = collectRequestedScripts(mockIndexer);
+            expect(requested.has(TEST_DEFAULT_SCRIPT)).toBe(true);
+            expect(requested.has(SECOND_DEFAULT_SCRIPT)).toBe(false);
+        });
+
+        it("explicit scripts filter takes precedence over includeInactive", async () => {
+            // `includeInactive` is documented as ignored when `scripts`
+            // is set; verify the indexer query only covers the explicit
+            // list, not "all contracts in the repo".
+            await seedActive();
+            await seedRaw(otherScript, "other-address", "inactive");
+
+            (mockIndexer.getVtxos as any).mockClear();
+            (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+            await manager.refreshVtxos({
+                scripts: [TEST_DEFAULT_SCRIPT],
+                includeInactive: true,
+            });
+
+            const requested = collectRequestedScripts(mockIndexer);
+            expect(requested.has(TEST_DEFAULT_SCRIPT)).toBe(true);
+            expect(requested.has(otherScript)).toBe(false);
+        });
+
+        it("advances the cursor on a cursor-derived includeInactive sweep", async () => {
+            // `includeInactive` widens the contract scope to a superset
+            // of the watched set, so the cursor invariant ("we've caught
+            // up on at least the watched set") still holds. The cursor
+            // should advance, unlike a `scripts` subset query.
+            const SEEDED_CURSOR = Date.now() - 60_000;
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const mgr = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: contractRepo,
+                walletRepository: walletRepo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+            // Dispose the per-test watcher in `finally` so a background
+            // `getVtxos` loop can't bleed into a later test sharing the
+            // same `mockIndexer` (fake-timer suite).
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address",
+                });
+                await contractRepo.saveContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: inactiveScript,
+                    address: "stale-address",
+                    state: "inactive",
+                    createdAt: Date.now(),
+                });
+                await walletRepo.saveWalletState({
+                    lastSyncTime: SEEDED_CURSOR,
+                    settings: { vtxoCursorMigrated: true },
+                });
+
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+                await mgr.refreshVtxos({ includeInactive: true });
+
+                // Sanity: the inactive contract was actually queried
+                // (this is what makes the path a superset, not a subset).
+                const requested = collectRequestedScripts(mockIndexer);
+                expect(requested.has(inactiveScript)).toBe(true);
+
+                // Cursor moved strictly forward — `>=` would pass even
+                // on the no-op case (cursor unchanged), defeating the
+                // test.
+                const stateAfter = await walletRepo.getWalletState();
+                expect(stateAfter?.lastSyncTime ?? 0).toBeGreaterThan(
+                    SEEDED_CURSOR
+                );
+            } finally {
+                await mgr.dispose();
+            }
+        });
+
+        it("does NOT advance the cursor on a windowed includeInactive sweep", async () => {
+            // Even though `includeInactive` itself is cursor-safe, an
+            // explicit `after` / `before` makes the query a bounded
+            // subset of time and must not move the global cursor.
+            const SEEDED_CURSOR = Date.now() - 60_000;
+            const walletRepo = new InMemoryWalletRepository();
+            const contractRepo = new InMemoryContractRepository();
+            const mgr = await ContractManager.create({
+                indexerProvider: mockIndexer,
+                contractRepository: contractRepo,
+                walletRepository: walletRepo,
+                watcherConfig: {
+                    failsafePollIntervalMs: 1000,
+                    reconnectDelayMs: 500,
+                },
+            });
+            try {
+                await mgr.createContract({
+                    type: "default",
+                    params: createDefaultContractParams(),
+                    script: TEST_DEFAULT_SCRIPT,
+                    address: "address",
+                });
+                await walletRepo.saveWalletState({
+                    lastSyncTime: SEEDED_CURSOR,
+                    settings: { vtxoCursorMigrated: true },
+                });
+
+                (mockIndexer.getVtxos as any).mockClear();
+                (mockIndexer.getVtxos as any).mockResolvedValue({ vtxos: [] });
+
+                await mgr.refreshVtxos({
+                    includeInactive: true,
+                    after: 1_000_000,
+                });
+
+                const stateAfter = await walletRepo.getWalletState();
+                expect(stateAfter?.lastSyncTime).toBe(SEEDED_CURSOR);
+            } finally {
+                await mgr.dispose();
+            }
+        });
     });
 
     describe("annotateVtxos", () => {

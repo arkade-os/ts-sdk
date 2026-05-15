@@ -21,7 +21,13 @@ export interface ReadonlyHDCapableIdentity extends ReadonlyIdentity {
      */
     readonly descriptor: string;
 
-    /** True iff `descriptor` derives from this identity's xpub/seed. */
+    /**
+     * True iff `descriptor` derives from this identity's xpub/seed.
+     *
+     * @deprecated Prefer `DescriptorProvider.isOurs()` via
+     * `HDDescriptorProvider` for rotating HD wallets or
+     * `StaticDescriptorProvider` for legacy single-key wallets.
+     */
     isOurs(descriptor: string): boolean;
 }
 
@@ -40,15 +46,48 @@ export interface ReadonlyHDCapableIdentity extends ReadonlyIdentity {
  *    explicitly-non-rotating use cases.
  */
 export interface HDCapableIdentity extends ReadonlyHDCapableIdentity, Identity {
-    /** Signs each request with the key derived from its descriptor. */
+    /**
+     * Signs each request with the key derived from its descriptor.
+     *
+     * @deprecated Prefer `DescriptorProvider.signWithDescriptor()` via
+     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
+     * this method only as backing implementation for descriptor providers.
+     */
     signWithDescriptor(
         requests: DescriptorSigningRequest[]
     ): Promise<Transaction[]>;
 
-    /** Signs a message using the key derived from `descriptor`. */
+    /**
+     * Signs a message using the key derived from `descriptor`.
+     *
+     * @deprecated Prefer `DescriptorProvider.signMessageWithDescriptor()` via
+     * `HDDescriptorProvider` or `StaticDescriptorProvider`. Identities keep
+     * this method only as backing implementation for descriptor providers.
+     */
     signMessageWithDescriptor(
         descriptor: string,
         message: Uint8Array,
         signatureType?: "schnorr" | "ecdsa"
     ): Promise<Uint8Array>;
+}
+
+/**
+ * Structural type guard for {@link HDCapableIdentity}. Returns `true`
+ * when the value exposes the four members the HD wallet flow relies on:
+ * `descriptor`, `isOurs`, `signWithDescriptor`, and
+ * `signMessageWithDescriptor`. Used by callers that need to opt into
+ * the HD path (e.g. installing an `HDDescriptorProvider`) without
+ * coupling to a concrete identity class.
+ */
+export function isHDCapableIdentity(
+    value: unknown
+): value is HDCapableIdentity {
+    if (typeof value !== "object" || value === null) return false;
+    const v = value as Record<string, unknown>;
+    return (
+        typeof v.descriptor === "string" &&
+        typeof v.isOurs === "function" &&
+        typeof v.signWithDescriptor === "function" &&
+        typeof v.signMessageWithDescriptor === "function"
+    );
 }
