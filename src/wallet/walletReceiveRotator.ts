@@ -401,13 +401,18 @@ export class WalletReceiveRotator {
         this.unsubscribe = manager.onContractEvent((event) => {
             if (event.type !== "vtxo_received") return;
             if (event.contractScript !== wallet.defaultContractScript) return;
-            // Serialise rotations: two rapid `vtxo_received` events on
-            // the same contract must not interleave the rotate →
-            // rebuild → createContract sequence. `runRotateWithBackoff`
-            // owns the failure handling — it logs, increments the
-            // consecutive-failure counter, and gates future attempts
-            // behind exponential backoff so a broken provider can't
-            // make the rotator hammer `createContract` on every event.
+            // Serialise rotations: each `vtxo_received` event is its
+            // own rotation trigger (BIP-44-style: one receive ⇒ one
+            // fresh address), so two rapid events on the same script
+            // are *expected* to burn two consecutive HD indices. The
+            // chain here only prevents the rotate → rebuild →
+            // createContract sequences from interleaving; it does not
+            // — and intentionally does not — dedupe events on the same
+            // script. `runRotateWithBackoff` owns the failure handling
+            // — it logs, increments the consecutive-failure counter,
+            // and gates future attempts behind exponential backoff so
+            // a broken provider can't make the rotator hammer
+            // `createContract` on every event.
             this.chain = this.chain
                 .catch(() => undefined)
                 .then(() => this.runRotateWithBackoff(wallet));
@@ -627,7 +632,9 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
         // Sentry. The length is enough context for debugging.
         throw new NonRangeableDescriptorError(
             `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
-                `ensure the descriptor is materialized (no wildcard) and parsable.`
+                `descriptor parsed but no '@0' pubkey was found in the expansion map. ` +
+                `The rotator expects a materialized tr(xpub/.../*) shape; ensure the ` +
+                `descriptor has no wildcard and that its key resolves into the '@0' slot.`
         );
     }
     return key.pubkey;
@@ -758,7 +765,8 @@ async function resolveDescriptorProvider(
     } catch (e) {
         throw new Error(
             "walletMode 'hd' failed to initialize: " +
-                (e instanceof Error ? e.message : String(e))
+                (e instanceof Error ? e.message : String(e)),
+            { cause: e }
         );
     }
 }

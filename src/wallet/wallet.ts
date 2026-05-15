@@ -107,7 +107,10 @@ import {
 import { WalletReceiveRotator } from "./walletReceiveRotator";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
-import { MissingSigningDescriptorError } from "./signingErrors";
+import {
+    DescriptorSigningProviderMissingError,
+    MissingSigningDescriptorError,
+} from "./signingErrors";
 
 export const getArkadeServerUrl = ({
     arkServerUrl,
@@ -123,14 +126,11 @@ function intentProofJobs(
     coins: ReadonlyArray<{ tapTree: Bytes }>
 ): InputSigningJob[] {
     if (coins.length === 0) return [];
-    const firstScript = VtxoScript.decode(coins[0].tapTree).pkScript;
-    return [
-        { index: 0, lookupScript: firstScript },
-        ...coins.map((coin, i) => ({
-            index: i + 1,
-            lookupScript: VtxoScript.decode(coin.tapTree).pkScript,
-        })),
-    ];
+    const coinJobs = coins.map((coin, i) => ({
+        index: i + 1,
+        lookupScript: VtxoScript.decode(coin.tapTree).pkScript,
+    }));
+    return [{ index: 0, lookupScript: coinJobs[0].lookupScript }, ...coinJobs];
 }
 
 // Built-in ArkProvider implementations (Rest/Expo) expose `serverUrl`,
@@ -199,7 +199,7 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
     );
 }
 
-export { MissingSigningDescriptorError };
+export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
