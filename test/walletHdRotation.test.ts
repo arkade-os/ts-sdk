@@ -1116,9 +1116,9 @@ describe("Wallet HD rotation", () => {
         it("get-pending-tx intent proof after rotation signs with the rotated pubkey", async () => {
             // The auto-renewal recovery path in `finalizePendingTxs`
             // calls `makeGetPendingTxIntentSignature`. Same shape as
-            // the other two intent helpers; if signInputsByOwner
-            // weren't routed through here, recovery would also
-            // produce unsigned proofs.
+            // the other two intent helpers; if owner-routed signing
+            // weren't wired in, recovery would also produce unsigned
+            // proofs.
             const walletRepo = new InMemoryWalletRepository();
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);
@@ -1141,7 +1141,7 @@ describe("Wallet HD rotation", () => {
         });
 
         it("mixed baseline + rotated VTXO in one intent: each input is signed by its own pubkey", async () => {
-            // Proves the sequential threading inside `signInputsByOwner`
+            // Proves the sequential threading inside `InputSignerRouter`
             // accumulates signatures across groups: identity-signed
             // inputs and descriptor-signed inputs end up on the SAME
             // PSBT, not two clones whose signatures get lost.
@@ -1150,7 +1150,7 @@ describe("Wallet HD rotation", () => {
             const wallet = await makeHdWallet(walletRepo, contractRepo);
 
             // Build a synthetic baseline contract record exactly as
-            // initializeContractManager does, so signInputsByOwner can
+            // initializeContractManager does, so the router can
             // resolve coin1.script → baseline contract → identity sign.
             const baselineScript = wallet.defaultContractScript;
             const baseline = (await contractRepo.getContracts({})).find(
@@ -1270,8 +1270,8 @@ describe("Wallet HD rotation", () => {
 
         it("an input with a script that matches no contract is left untouched (cosigner / connector behaviour)", async () => {
             // Mirror today's silent-skip for cosigner / connector
-            // inputs: signInputsByOwner must not throw on an input
-            // whose script doesn't resolve to any known contract.
+            // inputs: the router must not throw on an input whose
+            // script doesn't resolve to any known contract.
             // Easiest way to exercise this is via the boarding-script
             // miss path: inject a coin whose script doesn't match
             // anything the wallet knows about, then assert the proof
@@ -1328,9 +1328,9 @@ describe("Wallet HD rotation", () => {
                 rotated.params.pubKey
             );
             // Tx-input 2 = cosigner-shape coin → no signatures (the
-            // wallet doesn't own it; signInputsByOwner skipped it
-            // exactly the way today's tx.sign would silently skip an
-            // unsignable leaf).
+            // wallet doesn't own it; the router skipped it exactly the
+            // way today's tx.sign would silently skip an unsignable
+            // leaf).
             expect(tapscriptSignerPubkeysHex(proof, 2)).toEqual([]);
 
             await wallet.dispose();
@@ -1342,9 +1342,9 @@ describe("Wallet HD rotation", () => {
             // spend checkpoint outputs whose `witnessUtxo.script` is
             // the checkpoint pkScript (server-unroll + collaborative-
             // closure combo) — *not* the source VTXO's contract
-            // script. Without the per-input source-script override
-            // wired into signInputsByOwner, the arkTx PSBT goes to
-            // the server unsigned.
+            // script. Without the per-input source-script jobs fed
+            // into the router, the arkTx PSBT goes to the server
+            // unsigned.
             const walletRepo = new InMemoryWalletRepository();
             const contractRepo = new InMemoryContractRepository();
             const wallet = await makeHdWallet(walletRepo, contractRepo);
