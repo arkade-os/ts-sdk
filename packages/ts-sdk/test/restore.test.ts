@@ -75,6 +75,7 @@ describe("HDDescriptorProvider scan support", () => {
 });
 
 import { isDiscoverable } from "../src/contracts/types";
+import { timelockToSequence } from "../src/utils/timelock";
 
 describe("isDiscoverable", () => {
     it("true only when discoverAt is a function", () => {
@@ -87,6 +88,7 @@ describe("isDiscoverable", () => {
 
 import { DefaultContractHandler } from "../src/contracts/handlers/default";
 import { DefaultVtxo } from "../src/script/default";
+import type { RelativeTimelock } from "../src/script/tapscript";
 
 function mockIndexer(usedScripts: Set<string>) {
     return {
@@ -117,21 +119,17 @@ describe("DefaultContractHandler.discoverAt", () => {
     );
 
     it("is Discoverable", () => {
-        expect(isDiscoverable(DefaultContractHandler as any)).toBe(true);
+        expect(isDiscoverable(DefaultContractHandler)).toBe(true);
     });
 
     it("returns nothing when the script has no history", async () => {
-        const out = await (DefaultContractHandler as any).discoverAt(
-            0,
-            descriptor,
-            {
-                indexerProvider: mockIndexer(new Set()),
-                onchainProvider: {} as any,
-                network: { hrp: "ark" },
-                serverPubKey: server,
-                csvTimelocks: [tl],
-            }
-        );
+        const out = await DefaultContractHandler.discoverAt(0, descriptor, {
+            indexerProvider: mockIndexer(new Set()),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            csvTimelocks: [tl],
+        });
         expect(out).toEqual([]);
     });
 
@@ -143,7 +141,7 @@ describe("DefaultContractHandler.discoverAt", () => {
             serverPubKey: server,
             csvTimelocks: [tl],
         };
-        const at0 = await (DefaultContractHandler as any).discoverAt(
+        const at0 = await DefaultContractHandler.discoverAt(
             0,
             descriptor,
             deps
@@ -153,7 +151,7 @@ describe("DefaultContractHandler.discoverAt", () => {
         expect(at0[0].script).toBe(script);
         expect(at0[0].metadata).toBeUndefined();
 
-        const at3 = await (DefaultContractHandler as any).discoverAt(
+        const at3 = await DefaultContractHandler.discoverAt(
             3,
             descriptor,
             deps
@@ -162,5 +160,53 @@ describe("DefaultContractHandler.discoverAt", () => {
             source: "wallet-receive",
             signingDescriptor: descriptor,
         });
+    });
+
+    it("iterates all csvTimelocks and returns one entry per matching timelock", async () => {
+        const tl1: RelativeTimelock = DefaultVtxo.Script.DEFAULT_TIMELOCK; // { value: 144n, type: "blocks" }
+        const tl2: RelativeTimelock = { value: 288n, type: "blocks" };
+
+        const pubKey = hex.decode(pkHex);
+        const script1 = hex.encode(
+            new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey: server,
+                csvTimelock: tl1,
+            }).pkScript
+        );
+        const script2 = hex.encode(
+            new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey: server,
+                csvTimelock: tl2,
+            }).pkScript
+        );
+
+        // Both scripts are distinct
+        expect(script1).not.toBe(script2);
+
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: mockIndexer(new Set([script1, script2])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            csvTimelocks: [tl1, tl2],
+        });
+
+        expect(out).toHaveLength(2);
+
+        const scripts = out.map((e) => e.script);
+        expect(scripts).toContain(script1);
+        expect(scripts).toContain(script2);
+
+        const entry1 = out.find((e) => e.script === script1)!;
+        const entry2 = out.find((e) => e.script === script2)!;
+
+        expect(entry1.params.csvTimelock).toBe(
+            timelockToSequence(tl1).toString()
+        );
+        expect(entry2.params.csvTimelock).toBe(
+            timelockToSequence(tl2).toString()
+        );
     });
 });
