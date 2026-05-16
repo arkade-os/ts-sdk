@@ -1,8 +1,7 @@
-import { expand, networks } from "@bitcoinerlab/descriptors-scure";
 import { equalBytes } from "@scure/btc-signer/utils.js";
 import { hex } from "@scure/base";
 
-import { isMainnetDescriptor } from "../identity/descriptor";
+import { deriveDescriptorLeafPubKey } from "../identity/descriptor";
 import { DescriptorProvider } from "../identity/descriptorProvider";
 import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import { ContractRepository } from "../repositories/contractRepository";
@@ -569,23 +568,14 @@ export class WalletReceiveRotator {
 }
 
 /**
- * Extract the x-only (32-byte) pubkey from a materialized HD descriptor.
- *
- * `expand()` populates `@0.pubkey` for non-ranged descriptors (including
- * HD ones where a concrete child index has been substituted for the
- * wildcard). This sidesteps `extractPubKey`, which intentionally rejects
- * any descriptor carrying a `bip32` key because it was designed for
- * static `tr(pubkey)` inputs.
+ * Wrapper around {@link deriveDescriptorLeafPubKey} that re-throws as a
+ * typed {@link NonRangeableDescriptorError} so callers (most importantly
+ * `resolveBoot`'s silent-fallback path) can branch on the typed error
+ * class instead of grepping `err.message`.
  */
 function deriveLeafPubkey(descriptor: string): Uint8Array {
-    const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
-    // `expand` raises when the descriptor still carries a wildcard or
-    // is otherwise non-rangeable. Wrap so callers (most importantly
-    // `resolveBoot`'s silent-fallback path) can branch on a typed
-    // error class instead of grepping `err.message`.
-    let expansion;
     try {
-        expansion = expand({ descriptor, network });
+        return deriveDescriptorLeafPubKey(descriptor);
     } catch (e) {
         throw new NonRangeableDescriptorError(
             `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
@@ -593,20 +583,6 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
             { cause: e },
         );
     }
-    const key = expansion.expansionMap?.["@0"];
-    if (!key?.pubkey) {
-        // Avoid interpolating the descriptor itself: it normally
-        // contains an xpub, but a misconfigured caller could pass an
-        // xprv, and error messages surface in logs / crash reporters /
-        // Sentry. The length is enough context for debugging.
-        throw new NonRangeableDescriptorError(
-            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
-                `descriptor parsed but no '@0' pubkey was found in the expansion map. ` +
-                `The rotator expects a materialized tr(xpub/.../*) shape; ensure the ` +
-                `descriptor has no wildcard and that its key resolves into the '@0' slot.`,
-        );
-    }
-    return key.pubkey;
 }
 
 /**
