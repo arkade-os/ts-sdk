@@ -87,7 +87,9 @@ describe("isDiscoverable", () => {
 });
 
 import { DefaultContractHandler } from "../src/contracts/handlers/default";
+import { DelegateContractHandler } from "../src/contracts/handlers/delegate";
 import { DefaultVtxo } from "../src/script/default";
+import { DelegateVtxo } from "../src/script/delegate";
 import type { RelativeTimelock } from "../src/script/tapscript";
 
 function mockIndexer(usedScripts: Set<string>) {
@@ -190,6 +192,136 @@ describe("DefaultContractHandler.discoverAt", () => {
             onchainProvider: {} as any,
             network: { hrp: "ark" },
             serverPubKey: server,
+            csvTimelocks: [tl1, tl2],
+        });
+
+        expect(out).toHaveLength(2);
+
+        const scripts = out.map((e) => e.script);
+        expect(scripts).toContain(script1);
+        expect(scripts).toContain(script2);
+
+        const entry1 = out.find((e) => e.script === script1)!;
+        const entry2 = out.find((e) => e.script === script2)!;
+
+        expect(entry1.params.csvTimelock).toBe(
+            timelockToSequence(tl1).toString()
+        );
+        expect(entry2.params.csvTimelock).toBe(
+            timelockToSequence(tl2).toString()
+        );
+    });
+});
+
+describe("DelegateContractHandler.discoverAt", () => {
+    // Valid secp256k1 x-only generator points (same as DefaultContractHandler tests above).
+    const pkHex =
+        "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const serverHex =
+        "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    // A third distinct valid point for the delegate key.
+    const delegateHex =
+        "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+
+    const pubKey = hex.decode(pkHex);
+    const server = hex.decode(serverHex);
+    const del = hex.decode(delegateHex);
+    const descriptor = `tr(${pkHex})`;
+    const tl = DefaultVtxo.Script.DEFAULT_TIMELOCK;
+
+    const delegateScript = hex.encode(
+        new DelegateVtxo.Script({
+            pubKey,
+            serverPubKey: server,
+            delegatePubKey: del,
+            csvTimelock: tl,
+        }).pkScript
+    );
+
+    it("is Discoverable", () => {
+        expect(isDiscoverable(DelegateContractHandler)).toBe(true);
+    });
+
+    it("returns [] when delegatePubKey is absent", async () => {
+        // Even if the script exists in the indexer, no delegatePubKey → []
+        const out = await DelegateContractHandler.discoverAt(1, descriptor, {
+            indexerProvider: mockIndexer(new Set([delegateScript])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            csvTimelocks: [tl],
+            // delegatePubKey intentionally omitted
+        });
+        expect(out).toEqual([]);
+    });
+
+    it("index 0 is untagged; index > 0 is wallet-receive tagged", async () => {
+        const deps = {
+            indexerProvider: mockIndexer(new Set([delegateScript])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            delegatePubKey: del,
+            csvTimelocks: [tl],
+        };
+
+        const at0 = await DelegateContractHandler.discoverAt(
+            0,
+            descriptor,
+            deps
+        );
+        expect(at0).toHaveLength(1);
+        expect(at0[0].type).toBe("delegate");
+        expect(at0[0].script).toBe(delegateScript);
+        expect(at0[0].params.delegatePubKey).toBe(delegateHex);
+        expect(at0[0].params.pubKey).toBe(pkHex);
+        expect(at0[0].params.serverPubKey).toBe(serverHex);
+        expect(at0[0].params.csvTimelock).toBe(
+            timelockToSequence(tl).toString()
+        );
+        expect(at0[0].metadata).toBeUndefined();
+
+        const at3 = await DelegateContractHandler.discoverAt(
+            3,
+            descriptor,
+            deps
+        );
+        expect(at3[0].metadata).toEqual({
+            source: "wallet-receive",
+            signingDescriptor: descriptor,
+        });
+    });
+
+    it("iterates all csvTimelocks and returns one entry per matching timelock", async () => {
+        const tl1: RelativeTimelock = DefaultVtxo.Script.DEFAULT_TIMELOCK; // { value: 144n, type: "blocks" }
+        const tl2: RelativeTimelock = { value: 288n, type: "blocks" };
+
+        const script1 = hex.encode(
+            new DelegateVtxo.Script({
+                pubKey,
+                serverPubKey: server,
+                delegatePubKey: del,
+                csvTimelock: tl1,
+            }).pkScript
+        );
+        const script2 = hex.encode(
+            new DelegateVtxo.Script({
+                pubKey,
+                serverPubKey: server,
+                delegatePubKey: del,
+                csvTimelock: tl2,
+            }).pkScript
+        );
+
+        // Both scripts are distinct
+        expect(script1).not.toBe(script2);
+
+        const out = await DelegateContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: mockIndexer(new Set([script1, script2])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            delegatePubKey: del,
             csvTimelocks: [tl1, tl2],
         });
 
