@@ -73,3 +73,14 @@ describe("HDDescriptorProvider scan support", () => {
         );
     });
 });
+
+import { isDiscoverable } from "../src/contracts/types";
+
+describe("isDiscoverable", () => {
+    it("true only when discoverAt is a function", () => {
+        expect(isDiscoverable({ type: "x" } as any)).toBe(false);
+        expect(
+            isDiscoverable({ type: "x", discoverAt: async () => [] } as any)
+        ).toBe(true);
+    });
+});
