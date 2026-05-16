@@ -248,6 +248,7 @@ import {
     isArkContract,
 } from "./contracts/arkcontract";
 import type { ParsedArkContract } from "./contracts/arkcontract";
+import { isDiscoverable } from "./contracts/types";
 import type {
     Contract,
     ContractVtxo,
@@ -260,7 +261,15 @@ import type {
     PathSelection,
     PathContext,
     ExtendedContractVtxo,
+    Discoverable,
+    DiscoveryDeps,
+    DiscoveredContract,
 } from "./contracts/types";
+import type {
+    ScanResult,
+    ScanContractsOptions,
+    HandlerError,
+} from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {
@@ -427,6 +436,7 @@ export {
     contractFromArkContract,
     contractFromArkContractWithAddress,
     isArkContract,
+    isDiscoverable,
 };
 
 export type {
@@ -571,6 +581,12 @@ export type {
     DefaultContractParams,
     DelegateContractParams,
     VHTLCContractParams,
+    Discoverable,
+    DiscoveryDeps,
+    DiscoveredContract,
+    ScanResult,
+    ScanContractsOptions,
+    HandlerError,
 
     // Service Worker types
     MessageHandler,

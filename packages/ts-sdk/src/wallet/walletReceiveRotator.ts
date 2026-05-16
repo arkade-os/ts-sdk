@@ -128,6 +128,7 @@ export { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
  */
 export function signingDescriptorIndex(descriptor: unknown): number {
     if (typeof descriptor !== "string") return 0;
+    // captures the trailing child index N from "...xpub.../0/N)"
     const m = descriptor.match(/\/(\d+)\)\s*$/);
     if (!m) return 0;
     const n = Number(m[1]);

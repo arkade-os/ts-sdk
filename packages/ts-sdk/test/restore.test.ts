@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { signingDescriptorIndex } from "../src/wallet/walletReceiveRotator";
 import { mnemonicToSeedSync } from "@scure/bip39";
@@ -10,6 +10,21 @@ import {
 import { deriveDescriptorLeafPubKey } from "../src/identity/descriptor";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { makeHdProviderForTest } from "./helpers/hdProvider";
+import { isDiscoverable } from "../src/contracts/types";
+import { timelockToSequence } from "../src/utils/timelock";
+import { DefaultContractHandler } from "../src/contracts/handlers/default";
+import { DelegateContractHandler } from "../src/contracts/handlers/delegate";
+import { DefaultVtxo } from "../src/script/default";
+import { DelegateVtxo } from "../src/script/delegate";
+import type { RelativeTimelock } from "../src/script/tapscript";
+import { contractHandlers } from "../src/contracts/handlers";
+import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
+import {
+    installRestoreHarness,
+    teardownRestoreHarness,
+    makeStaticWalletForTest,
+    makeHdWalletForTest,
+} from "./helpers/restoreWallet";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -56,8 +71,8 @@ describe("deriveDescriptorLeafPubKey", () => {
 describe("HDDescriptorProvider scan support", () => {
     it("materializeDescriptorAt is pure (no watermark mutation)", async () => {
         const p = await makeHdProviderForTest();
-        const d0 = await p.materializeDescriptorAt(0);
-        const d5 = await p.materializeDescriptorAt(5);
+        const d0 = p.materializeDescriptorAt(0);
+        const d5 = p.materializeDescriptorAt(5);
         expect(d0).not.toEqual(d5);
         expect(await p.getCurrentSigningDescriptor()).toBeUndefined();
     });
@@ -66,17 +81,14 @@ describe("HDDescriptorProvider scan support", () => {
         const p = await makeHdProviderForTest();
         await p.advanceLastIndexUsed(10);
         expect(await p.getCurrentSigningDescriptor()).toBe(
-            await p.materializeDescriptorAt(10)
+            p.materializeDescriptorAt(10)
         );
         await p.advanceLastIndexUsed(7);
         expect(await p.getCurrentSigningDescriptor()).toBe(
-            await p.materializeDescriptorAt(10)
+            p.materializeDescriptorAt(10)
         );
     });
 });
-
-import { isDiscoverable } from "../src/contracts/types";
-import { timelockToSequence } from "../src/utils/timelock";
 
 describe("isDiscoverable", () => {
     it("true only when discoverAt is a function", () => {
@@ -86,12 +98,6 @@ describe("isDiscoverable", () => {
         ).toBe(true);
     });
 });
-
-import { DefaultContractHandler } from "../src/contracts/handlers/default";
-import { DelegateContractHandler } from "../src/contracts/handlers/delegate";
-import { DefaultVtxo } from "../src/script/default";
-import { DelegateVtxo } from "../src/script/delegate";
-import type { RelativeTimelock } from "../src/script/tapscript";
 
 function mockIndexer(usedScripts: Set<string>) {
     return {
@@ -344,10 +350,6 @@ describe("DelegateContractHandler.discoverAt", () => {
     });
 });
 
-import { afterEach } from "vitest";
-import { contractHandlers } from "../src/contracts/handlers";
-import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
-
 /**
  * Build a fully-synthetic `Discoverable` contract handler for the
  * `scanContracts` suite. Its `createScript(params)` decodes `params.script`
@@ -589,14 +591,6 @@ describe("signingDescriptorIndex", () => {
         expect(signingDescriptorIndex("tr(deadbeef)")).toBe(0);
     });
 });
-
-import { beforeEach } from "vitest";
-import {
-    installRestoreHarness,
-    teardownRestoreHarness,
-    makeStaticWalletForTest,
-    makeHdWalletForTest,
-} from "./helpers/restoreWallet";
 
 describe("Wallet.restore", () => {
     beforeEach(() => {

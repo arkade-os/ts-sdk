@@ -30,4 +30,7 @@ export type {
     ContractManagerConfig,
     CreateContractParams,
     RefreshVtxosOptions,
+    ScanResult,
+    ScanContractsOptions,
+    HandlerError,
 } from "./contractManager";
