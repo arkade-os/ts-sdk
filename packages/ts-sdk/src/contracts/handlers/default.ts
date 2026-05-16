@@ -16,7 +16,7 @@ import {
     extractPubKey,
     deriveDescriptorLeafPubKey,
 } from "../../identity/descriptor";
-import { WALLET_RECEIVE_SOURCE } from "../../wallet/walletReceiveRotator";
+import { WALLET_RECEIVE_SOURCE } from "../metadata";
 
 /**
  * Typed parameters for DefaultVtxo contracts.

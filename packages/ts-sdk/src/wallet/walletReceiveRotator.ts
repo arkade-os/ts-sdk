@@ -7,6 +7,7 @@ import { isHDCapableIdentity } from "../identity/hdCapableIdentity";
 import { ContractRepository } from "../repositories/contractRepository";
 import { WalletRepository } from "../repositories/walletRepository";
 import { IContractManager } from "../contracts/contractManager";
+import { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 import { DefaultVtxo } from "../script/default";
 import { DelegateVtxo } from "../script/delegate";
 import { timelockToSequence } from "../utils/timelock";
@@ -111,20 +112,12 @@ function hasPeekableDescriptor(
     );
 }
 
-/**
- * Sentinel value stored in `contract.metadata.source` to identify the
- * wallet's current display contract. Borrowed from btcpay-arkade's
- * source-tagging pattern: every contract records "where and why it was
- * generated", and the wallet only cares about the ones it generated for
- * its own receive address.
- *
- * Tagging makes the boot lookup unambiguous — the rotator filters on
- * `metadata.source === WALLET_RECEIVE_SOURCE` rather than on "any active
- * default contract", so a contract repo that also holds default contracts
- * created for other reasons (legacy timelock variants, external
- * integrations) doesn't confuse the wallet's display state.
- */
-export const WALLET_RECEIVE_SOURCE = "wallet-receive";
+// Re-exported from the contracts layer (src/contracts/metadata.ts) for
+// backward compatibility of any existing import paths that reference this
+// module. The source-of-truth declaration now lives in `contracts/metadata`
+// so contract handlers can import it without creating a contracts→wallet
+// dependency cycle.
+export { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 
 /**
  * Thrown when a descriptor expected to be rangeable (have a wildcard
