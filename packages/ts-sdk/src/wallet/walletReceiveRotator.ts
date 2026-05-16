@@ -578,8 +578,7 @@ function deriveLeafPubkey(descriptor: string): Uint8Array {
         return deriveDescriptorLeafPubKey(descriptor);
     } catch (e) {
         throw new NonRangeableDescriptorError(
-            `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
-                `ensure the descriptor is materialized (no wildcard) and parsable.`,
+            "Cannot derive leaf pubkey: descriptor is not a materialized, parsable tr(...) shape.",
             { cause: e },
         );
     }
