@@ -13,6 +13,7 @@ import {
     RestArkProvider,
     WalletRepository,
     ContractRepository,
+    WalletMode,
 } from "../../src";
 import { execSync } from "child_process";
 import { RestDelegatorProvider } from "../../src/providers/delegator";
@@ -152,10 +153,17 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
  * caller supply both the seed and the storage layer, making it possible to
  * construct a second wallet on the same mnemonic with *fresh* (separate)
  * repositories — the pattern needed by restore tests.
+ *
+ * An optional `walletMode` is forwarded verbatim to `Wallet.create`'s
+ * config. Omitting it preserves the previous behaviour (the SDK default,
+ * `'auto'`, which currently behaves like `'static'`). Restore tests pass
+ * `'hd'` so the receive address rotates off the index-0 baseline — the
+ * only scenario where `restore()` is actually load-bearing.
  */
 export async function createTestArkWalletFromMnemonic(
     mnemonic: string,
-    repos?: SharedRepos
+    repos?: SharedRepos,
+    walletMode?: WalletMode
 ): Promise<TestArkWallet> {
     const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
         isMainnet: false,
@@ -164,6 +172,7 @@ export async function createTestArkWalletFromMnemonic(
 
     const wallet = await Wallet.create({
         identity,
+        ...(walletMode !== undefined ? { walletMode } : {}),
         arkServerUrl: "http://localhost:7070",
         onchainProvider: new EsploraProvider("http://localhost:3000", {
             forcePolling: true,
