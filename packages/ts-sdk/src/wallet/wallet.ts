@@ -1109,6 +1109,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      * @param opts.gapLimit - Consecutive-unused-index window. Default
      * 20. A non-positive / non-integer value is a programmer error and
      * throws synchronously (distinct from operational failure).
+     *
+     * @note Concurrent calls coalesce: if a restore is already in flight,
+     * subsequent callers receive the same promise and their `gapLimit` is
+     * ignored — the first caller's value governs the running scan.
      */
     async restore(opts?: { gapLimit?: number }): Promise<void> {
         const gapLimit = opts?.gapLimit ?? 20;
@@ -1132,15 +1136,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             typeof (provider as Partial<HDDescriptorProvider>)
                 .materializeDescriptorAt === "function";
 
-        const staticDescriptor = `tr(${hex.encode(
-            await this.identity.xOnlyPublicKey()
-        )})`;
+        const staticDescriptor = hd
+            ? undefined
+            : `tr(${hex.encode(await this.identity.xOnlyPublicKey())})`;
         const materialize = (index: number): string =>
             hd
                 ? (provider as HDDescriptorProvider).materializeDescriptorAt(
                       index
                   )
-                : staticDescriptor;
+                : staticDescriptor!;
 
         const delegatePubKey =
             this.offchainTapscript instanceof DelegateVtxo.Script
@@ -1318,6 +1322,13 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     }
 
     override async dispose(): Promise<void> {
+        // Drain any in-flight restore before touching the contract/vtxo
+        // managers — _runRestore calls manager.refreshVtxos() and
+        // manager.scanContracts(), both of which would hit a torn-down
+        // manager if we proceeded concurrently. _runRestore never calls
+        // dispose(), so awaiting it here is deadlock-free.
+        await this._restoreInFlight?.catch(() => undefined);
+
         // Tear down the rotation subscription + drain in-flight rotations
         // first so no late `vtxo_received` event can queue work on a
         // disposing wallet, and so any in-flight `createContract` call
