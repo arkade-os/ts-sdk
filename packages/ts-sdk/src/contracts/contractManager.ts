@@ -8,10 +8,12 @@ import {
     ContractState,
     ContractVtxo,
     ContractWithVtxos,
+    DiscoveryDeps,
     GetContractsFilter,
     PathContext,
     PathSelection,
     ExtendedContractVtxo,
+    isDiscoverable,
 } from "./types";
 import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
@@ -55,6 +57,46 @@ export type RefreshVtxosOptions = {
      */
     includeInactive?: boolean;
 };
+
+/**
+ * A single `Discoverable` handler's `discoverAt` rejection, captured during
+ * a {@link IContractManager.scanContracts} run instead of aborting the loop.
+ */
+export interface HandlerError {
+    handler: string;
+    index: number;
+    error: unknown;
+}
+
+/**
+ * Outcome of a {@link IContractManager.scanContracts} run.
+ *
+ * `lastIndexUsed` is the highest HD index at which any handler discovered a
+ * contract (`-1` if nothing was found). `handlerErrors` collects per-handler
+ * `discoverAt` failures — non-empty means the gap window may have closed
+ * early and the caller should surface this (the scan itself still resolved).
+ */
+export interface ScanResult {
+    lastIndexUsed: number;
+    handlerErrors: HandlerError[];
+}
+
+/**
+ * Options for {@link IContractManager.scanContracts}.
+ */
+export interface ScanContractsOptions {
+    /** Default 20. A non-positive / non-integer value throws. */
+    gapLimit?: number;
+    /** HD mode → unbounded gap loop; false → single pass at index 0. */
+    hd: boolean;
+    /**
+     * Materialize the descriptor at an HD index. Pure derivation; a throw
+     * here is structural/fatal and propagates out of `scanContracts`.
+     */
+    materialize: (index: number) => string;
+    /** Read-only context injected into every `discoverAt` call. */
+    deps: DiscoveryDeps;
+}
 
 export interface IContractManager extends Disposable {
     /**
@@ -164,6 +206,30 @@ export interface IContractManager extends Disposable {
      * Outpoints not owned by any tracked contract are silently dropped.
      */
     refreshOutpoints(outpoints: Outpoint[]): Promise<void>;
+
+    /**
+     * Explicit, gap-limit contract discovery used by `wallet.restore()`.
+     *
+     * Walks HD indices from 0, asking every registered `Discoverable`
+     * handler whether it owns a contract anchored at that index, and
+     * registers each find via the idempotent {@link createContract}. A hit
+     * at index `i` (by any handler, including an injected swap handler)
+     * resets the gap counter, so swap discovery keeps the HD window open.
+     *
+     * Error contract (safety-critical — see spec §4):
+     * - A handler's `discoverAt` rejecting is **collected** into
+     *   `handlerErrors` and the loop **continues**; it never aborts the
+     *   scan or throws.
+     * - A fatal operational error — `materialize()` throwing, or
+     *   `createContract` rejecting — **propagates** out of `scanContracts`
+     *   (it invalidates the gap-window signal, so a silent truncation
+     *   would risk hiding user funds).
+     *
+     * @param opts See {@link ScanContractsOptions}.
+     * @returns `{ lastIndexUsed, handlerErrors }` — the caller surfaces
+     *   `handlerErrors` *after* the inline VTXO pull.
+     */
+    scanContracts(opts: ScanContractsOptions): Promise<ScanResult>;
 
     /**
      * Whether the underlying watcher is currently active.
@@ -412,6 +478,65 @@ export class ContractManager implements IContractManager {
         await this.watcher.addContract(contract);
 
         return contract;
+    }
+
+    /**
+     * Explicit, gap-limit contract discovery (see {@link IContractManager.scanContracts}).
+     *
+     * Safety-critical invariants (spec §2.C / §4):
+     * - `opts.materialize(i)` throwing is structural/fatal: it is NOT
+     *   wrapped — it propagates and aborts the scan.
+     * - A `discoverAt` rejection is collected into `handlerErrors` and the
+     *   loop continues (the gap counter still advances for that index if no
+     *   other handler hit it).
+     * - `createContract` rejecting is operational/fatal and propagates
+     *   (only `discoverAt` is guarded).
+     */
+    async scanContracts(opts: ScanContractsOptions): Promise<ScanResult> {
+        const gapLimit = opts.gapLimit ?? 20;
+        if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
+            throw new Error(
+                `scanContracts: gapLimit must be a positive integer (got ${String(opts.gapLimit)})`
+            );
+        }
+        const discoverables = contractHandlers
+            .getRegisteredTypes()
+            .map((t) => contractHandlers.get(t))
+            .filter(isDiscoverable);
+
+        const maxIdx = opts.hd ? Number.POSITIVE_INFINITY : 0;
+        const handlerErrors: HandlerError[] = [];
+        let lastUsedIdx = -1;
+        let unused = 0;
+        let i = 0;
+
+        while (i <= maxIdx && unused < gapLimit) {
+            // Materialization failure is fatal/structural — let it propagate.
+            const descriptor = opts.materialize(i);
+            let hitAtThisIndex = false;
+            for (const h of discoverables) {
+                let found;
+                try {
+                    found = await h.discoverAt(i, descriptor, opts.deps);
+                } catch (error) {
+                    handlerErrors.push({ handler: h.type, index: i, error });
+                    continue;
+                }
+                for (const c of found) {
+                    await this.createContract(c); // idempotent (script-keyed)
+                    hitAtThisIndex = true;
+                }
+            }
+            if (hitAtThisIndex) {
+                lastUsedIdx = i;
+                unused = 0;
+            } else {
+                unused += 1;
+            }
+            i += 1;
+        }
+
+        return { lastIndexUsed: lastUsedIdx, handlerErrors };
     }
 
     /**

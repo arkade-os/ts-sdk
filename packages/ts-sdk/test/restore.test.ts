@@ -342,3 +342,238 @@ describe("DelegateContractHandler.discoverAt", () => {
         );
     });
 });
+
+import { afterEach } from "vitest";
+import { ContractManager } from "../src/contracts/contractManager";
+import { contractHandlers } from "../src/contracts/handlers";
+import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
+
+/**
+ * Build a fully-synthetic `Discoverable` contract handler for the
+ * `scanContracts` suite. Its `createScript(params)` decodes `params.script`
+ * straight back to bytes so `hex.encode(createScript(params).pkScript)`
+ * round-trips to exactly the `script` the discovered contract declares —
+ * this makes `ContractManager.createContract`'s script-derivation check pass
+ * deterministically without coupling the test to real crypto / timelocks.
+ */
+function makeFakeHandler(
+    type: string,
+    discoverAt: (index: number) => any[] | Promise<any[]>
+) {
+    const calls: number[] = [];
+    const handler = {
+        type,
+        createScript: (params: Record<string, string>) =>
+            ({ pkScript: hex.decode(params.script) }) as any,
+        serializeParams: (p: any) => p,
+        deserializeParams: (p: any) => p,
+        selectPath: () => null,
+        getAllSpendingPaths: () => [],
+        getSpendablePaths: () => [],
+        async discoverAt(index: number) {
+            calls.push(index);
+            return discoverAt(index);
+        },
+    };
+    return { handler, calls };
+}
+
+describe("ContractManager.scanContracts", () => {
+    // A valid static tr(<x-only pubkey>) descriptor. The scanner asks EVERY
+    // registered Discoverable handler — including the real default/delegate
+    // ones — so `materialize` must return a descriptor they can parse.
+    // makeDeps() supplies empty csvTimelocks, so the built-ins parse this,
+    // iterate zero timelocks, and contribute nothing; the fake handlers
+    // (which key off the index, not the descriptor) drive the assertions.
+    const VALID_DESCRIPTOR =
+        "tr(79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)";
+    const materialize = () => VALID_DESCRIPTOR;
+
+    const registered: string[] = [];
+
+    afterEach(() => {
+        // Never let a fake handler leak into other suites.
+        for (const t of registered.splice(0)) {
+            contractHandlers.unregister(t);
+        }
+    });
+
+    function register(type: string, handler: any) {
+        contractHandlers.register(handler);
+        registered.push(type);
+    }
+
+    it("rejects a non-positive / non-integer gapLimit", async () => {
+        const mgr = await makeManagerForTest();
+        try {
+            for (const bad of [0, -1, 1.5]) {
+                await expect(
+                    mgr.scanContracts({
+                        gapLimit: bad,
+                        hd: true,
+                        materialize,
+                        deps: makeDeps(),
+                    })
+                ).rejects.toThrow(/gapLimit/);
+            }
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("a swap-only hit at index 4 keeps the gap window open and sets lastIndexUsed (core)", async () => {
+        // Core regression (spec §5): the ONLY discoverable that hits is a
+        // swap handler, and it hits ONLY at index 4. No default/delegate
+        // history exists (makeDeps' indexer is empty + csvTimelocks []).
+        //
+        // gapLimit MUST be > 4 for index 4 to be reachable at all: with
+        // gapLimit N the loop stops after N consecutive unused indices, so
+        // the hit's index must be < N for the scan to ever probe it. (The
+        // plan's `gapLimit:3` example is unreachable under the spec §2.C
+        // algorithm — 0,1,2 unused closes the window before index 4 — so
+        // gapLimit 5 is used. The asserted invariant the spec actually
+        // requires is preserved: a swap hit at 4 resets `unused` to 0,
+        // keeps the window open PAST 4, and drives lastIndexUsed to 4.)
+        const { handler } = makeFakeHandler("swapfake", (i) =>
+            i === 4
+                ? [
+                      {
+                          type: "swapfake",
+                          params: { script: "aabb" },
+                          script: "aabb",
+                          address: "ark1qswap",
+                      },
+                  ]
+                : []
+        );
+        register("swapfake", handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 5,
+                hd: true,
+                materialize,
+                deps: makeDeps(),
+            });
+            // The swap hit at 4 reset `unused` (was 4 after 0..3 unused),
+            // so the loop kept probing 5..9 instead of stopping at 4, and
+            // lastIndexUsed is driven solely by the swap handler.
+            expect(res.lastIndexUsed).toBe(4);
+            expect(res.handlerErrors).toEqual([]);
+            // The contract was actually registered (idempotent createContract).
+            const [c] = await mgr.getContracts({ script: "aabb" });
+            expect(c?.type).toBe("swapfake");
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("collects a per-handler discoverAt error instead of throwing it", async () => {
+        const { handler, calls } = makeFakeHandler("boomfake", () => {
+            throw new Error("handler down");
+        });
+        register("boomfake", handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 2,
+                hd: false, // single pass at i=0
+                materialize,
+                deps: makeDeps(),
+            });
+            // Resolved (did not abort), error collected with full context.
+            expect(res.handlerErrors).toHaveLength(1);
+            expect(res.handlerErrors[0].handler).toBe("boomfake");
+            expect(res.handlerErrors[0].index).toBe(0);
+            expect(res.handlerErrors[0].error).toBeInstanceOf(Error);
+            expect((res.handlerErrors[0].error as Error).message).toBe(
+                "handler down"
+            );
+            expect(res.lastIndexUsed).toBe(-1);
+            // Loop ran exactly the single static pass.
+            expect(calls).toEqual([0]);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("a discoverAt error is collected but the loop completes the gap window", async () => {
+        // Always throws → loop must still terminate via the gap counter
+        // (unused reaches gapLimit) and surface one error per probed index.
+        const { handler } = makeFakeHandler("boomfake", () => {
+            throw new Error("handler down");
+        });
+        register("boomfake", handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 3,
+                hd: true,
+                materialize,
+                deps: makeDeps(),
+            });
+            // 3 unused indices (0,1,2) close the window; one error each.
+            expect(res.lastIndexUsed).toBe(-1);
+            expect(res.handlerErrors).toHaveLength(3);
+            expect(res.handlerErrors.map((e) => e.index)).toEqual([0, 1, 2]);
+            expect(
+                res.handlerErrors.every((e) => e.handler === "boomfake")
+            ).toBe(true);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("a materialize() throw is fatal — it propagates, not collected", async () => {
+        const { handler } = makeFakeHandler("swapfake", () => []);
+        register("swapfake", handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const boom = new Error("boom");
+            await expect(
+                mgr.scanContracts({
+                    gapLimit: 5,
+                    hd: true,
+                    materialize: () => {
+                        throw boom;
+                    },
+                    deps: makeDeps(),
+                })
+            ).rejects.toBe(boom);
+        } finally {
+            mgr.dispose();
+        }
+    });
+
+    it("static mode (hd:false) probes only index 0", async () => {
+        // Would hit at index 3, but static mode must ask ONLY index 0.
+        const { handler, calls } = makeFakeHandler("swapfake", (i) =>
+            i === 3
+                ? [
+                      {
+                          type: "swapfake",
+                          params: { script: "cc" },
+                          script: "cc",
+                          address: "ark1qswap",
+                      },
+                  ]
+                : []
+        );
+        register("swapfake", handler);
+        const mgr = await makeManagerForTest();
+        try {
+            const res = await mgr.scanContracts({
+                gapLimit: 20,
+                hd: false,
+                materialize,
+                deps: makeDeps(),
+            });
+            // Single pass at i=0 only; never reached the index-3 hit.
+            expect(calls).toEqual([0]);
+            expect(res.lastIndexUsed).toBe(-1);
+            expect(res.handlerErrors).toEqual([]);
+        } finally {
+            mgr.dispose();
+        }
+    });
+});
