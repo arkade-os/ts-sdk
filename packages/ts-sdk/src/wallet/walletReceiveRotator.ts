@@ -120,6 +120,21 @@ function hasPeekableDescriptor(
 export { WALLET_RECEIVE_SOURCE } from "../contracts/metadata";
 
 /**
+ * Parse the trailing HD child index from a materialized signing
+ * descriptor (`tr(...xpub.../0/<index>)`). Returns 0 when the
+ * descriptor is absent or carries no parseable child index — restore
+ * registers the index-0 baseline untagged, so a missing descriptor
+ * legitimately maps to 0.
+ */
+export function signingDescriptorIndex(descriptor: unknown): number {
+    if (typeof descriptor !== "string") return 0;
+    const m = descriptor.match(/\/(\d+)\)\s*$/);
+    if (!m) return 0;
+    const n = Number(m[1]);
+    return Number.isInteger(n) && n >= 0 ? n : 0;
+}
+
+/**
  * Thrown when a descriptor expected to be rangeable (have a wildcard
  * leaf) cannot produce a leaf pubkey. Surfaces from the rotator's
  * `defaultBoot` path so `resolveBoot` can distinguish a legitimate
@@ -634,7 +649,13 @@ async function pickActiveReceive(
                 c.params.serverPubKey === serverPubKeyHex &&
                 c.metadata?.source === WALLET_RECEIVE_SOURCE,
         )
-        .sort((a, b) => b.createdAt - a.createdAt);
+        .sort((a, b) => {
+            if (b.createdAt !== a.createdAt) return b.createdAt - a.createdAt;
+            return (
+                signingDescriptorIndex(b.metadata?.signingDescriptor) -
+                signingDescriptorIndex(a.metadata?.signingDescriptor)
+            );
+        });
     const newest = matching[0];
     if (!newest?.params.pubKey) return undefined;
     try {

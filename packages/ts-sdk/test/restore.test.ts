@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { hex } from "@scure/base";
+import { signingDescriptorIndex } from "../src/wallet/walletReceiveRotator";
 import { mnemonicToSeedSync } from "@scure/bip39";
 import {
     HDKey,
@@ -574,5 +575,17 @@ describe("ContractManager.scanContracts", () => {
         } finally {
             mgr.dispose();
         }
+    });
+});
+
+describe("signingDescriptorIndex", () => {
+    it("parses the trailing child index", () => {
+        expect(signingDescriptorIndex("tr([aa/86'/0'/0']xpub6.../0/7)")).toBe(
+            7
+        );
+    });
+    it("returns 0 when absent/unparseable", () => {
+        expect(signingDescriptorIndex(undefined)).toBe(0);
+        expect(signingDescriptorIndex("tr(deadbeef)")).toBe(0);
     });
 });
