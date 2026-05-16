@@ -145,6 +145,43 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
     };
 }
 
+/**
+ * Build a Wallet from a given mnemonic and optional repositories.
+ *
+ * This is the counterpart to `createTestArkWalletWithMnemonic` that lets the
+ * caller supply both the seed and the storage layer, making it possible to
+ * construct a second wallet on the same mnemonic with *fresh* (separate)
+ * repositories — the pattern needed by restore tests.
+ */
+export async function createTestArkWalletFromMnemonic(
+    mnemonic: string,
+    repos?: SharedRepos
+): Promise<TestArkWallet> {
+    const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
+        isMainnet: false,
+    });
+    const storage = repos ?? createSharedRepos();
+
+    const wallet = await Wallet.create({
+        identity,
+        arkServerUrl: "http://localhost:7070",
+        onchainProvider: new EsploraProvider("http://localhost:3000", {
+            forcePolling: true,
+            pollingInterval: 2000,
+        }),
+        storage: {
+            walletRepository: storage.walletRepository,
+            contractRepository: storage.contractRepository,
+        },
+        settlementConfig: false,
+    });
+
+    return {
+        wallet,
+        identity,
+    };
+}
+
 export function faucetOffchain(address: string, amount: number): void {
     execCommand(`${arkdExec} ark send --to ${address} --amount ${amount} --password secret`);
 }
