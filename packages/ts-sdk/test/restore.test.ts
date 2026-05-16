@@ -7,6 +7,8 @@ import {
     scriptExpressions,
 } from "@bitcoinerlab/descriptors-scure";
 import { deriveDescriptorLeafPubKey } from "../src/identity/descriptor";
+import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
+import { makeHdProviderForTest } from "./helpers/hdProvider";
 
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
@@ -47,5 +49,27 @@ describe("deriveDescriptorLeafPubKey", () => {
         const pubkey1 = deriveDescriptorLeafPubKey(makeHDDescriptor(1));
         const pubkey2 = deriveDescriptorLeafPubKey(makeHDDescriptor(2));
         expect(hex.encode(pubkey1)).not.toBe(hex.encode(pubkey2));
+    });
+});
+
+describe("HDDescriptorProvider scan support", () => {
+    it("materializeDescriptorAt is pure (no watermark mutation)", async () => {
+        const p = await makeHdProviderForTest();
+        const d0 = await p.materializeDescriptorAt(0);
+        const d5 = await p.materializeDescriptorAt(5);
+        expect(d0).not.toEqual(d5);
+        expect(await p.getCurrentSigningDescriptor()).toBeUndefined();
+    });
+
+    it("advanceLastIndexUsed is monotonic (never rewinds)", async () => {
+        const p = await makeHdProviderForTest();
+        await p.advanceLastIndexUsed(10);
+        expect(await p.getCurrentSigningDescriptor()).toBe(
+            await p.materializeDescriptorAt(10)
+        );
+        await p.advanceLastIndexUsed(7);
+        expect(await p.getCurrentSigningDescriptor()).toBe(
+            await p.materializeDescriptorAt(10)
+        );
     });
 });

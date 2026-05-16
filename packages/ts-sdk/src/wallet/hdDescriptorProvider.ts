@@ -92,7 +92,7 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
         return this.mutate((settings) => {
             const next = settings.lastIndexUsed === undefined ? 0 : settings.lastIndexUsed + 1;
             settings.lastIndexUsed = next;
-            return this.materializeAt(next);
+            return this.materializeDescriptorAt(next);
         });
     }
 
@@ -112,7 +112,23 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
         const state = await this.walletRepository.getWalletState();
         const settings = this.parseSettings(state ?? ({} as WalletState));
         if (settings.lastIndexUsed === undefined) return undefined;
-        return this.materializeAt(settings.lastIndexUsed);
+        return this.materializeDescriptorAt(settings.lastIndexUsed);
+    }
+
+    /**
+     * Monotonically advance the allocation watermark so the next
+     * `getNextSigningDescriptor()` skips indices discovered by a restore
+     * scan. Never rewinds: a lower or equal `index` is a no-op.
+     */
+    async advanceLastIndexUsed(index: number): Promise<void> {
+        await this.mutate((settings) => {
+            if (
+                settings.lastIndexUsed === undefined ||
+                index > settings.lastIndexUsed
+            ) {
+                settings.lastIndexUsed = index;
+            }
+        });
     }
 
     /**
@@ -162,8 +178,12 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
      * rather than ad-hoc string substitution. The parser's `expand({ index })`
      * call validates that the input is a ranged template AND produces a
      * canonical materialized key expression at the given index.
+     *
+     * This is a pure read: it does NOT advance the allocation watermark.
+     * Used by restore's gap-scan to peek descriptors at arbitrary indices
+     * without side-effects.
      */
-    private materializeAt(index: number): string {
+    materializeDescriptorAt(index: number): string {
         const descriptor = this.identity.descriptor;
         const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
         const expansion = expand({ descriptor, network, index });
