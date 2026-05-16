@@ -8,6 +8,7 @@ import {
     ContractState,
     ContractVtxo,
     ContractWithVtxos,
+    DiscoveredContract,
     DiscoveryDeps,
     GetContractsFilter,
     PathContext,
@@ -87,7 +88,7 @@ export interface ScanResult {
 export interface ScanContractsOptions {
     /** Default 20. A non-positive / non-integer value throws. */
     gapLimit?: number;
-    /** HD mode → unbounded gap loop; false → single pass at index 0. */
+    /** HD mode → unbounded gap loop guided by the gap counter; false → probe only index 0 (single static pass). */
     hd: boolean;
     /**
      * Materialize the descriptor at an HD index. Pure derivation; a throw
@@ -506,7 +507,7 @@ export class ContractManager implements IContractManager {
 
         const maxIdx = opts.hd ? Number.POSITIVE_INFINITY : 0;
         const handlerErrors: HandlerError[] = [];
-        let lastUsedIdx = -1;
+        let lastIndexUsed = -1;
         let unused = 0;
         let i = 0;
 
@@ -515,7 +516,7 @@ export class ContractManager implements IContractManager {
             const descriptor = opts.materialize(i);
             let hitAtThisIndex = false;
             for (const h of discoverables) {
-                let found;
+                let found: DiscoveredContract[];
                 try {
                     found = await h.discoverAt(i, descriptor, opts.deps);
                 } catch (error) {
@@ -528,7 +529,7 @@ export class ContractManager implements IContractManager {
                 }
             }
             if (hitAtThisIndex) {
-                lastUsedIdx = i;
+                lastIndexUsed = i;
                 unused = 0;
             } else {
                 unused += 1;
@@ -536,7 +537,7 @@ export class ContractManager implements IContractManager {
             i += 1;
         }
 
-        return { lastIndexUsed: lastUsedIdx, handlerErrors };
+        return { lastIndexUsed, handlerErrors };
     }
 
     /**

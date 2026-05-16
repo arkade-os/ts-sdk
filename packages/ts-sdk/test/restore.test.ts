@@ -344,7 +344,6 @@ describe("DelegateContractHandler.discoverAt", () => {
 });
 
 import { afterEach } from "vitest";
-import { ContractManager } from "../src/contracts/contractManager";
 import { contractHandlers } from "../src/contracts/handlers";
 import { makeManagerForTest, makeDeps } from "./helpers/scanManager";
 
