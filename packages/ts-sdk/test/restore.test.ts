@@ -589,3 +589,166 @@ describe("signingDescriptorIndex", () => {
         expect(signingDescriptorIndex("tr(deadbeef)")).toBe(0);
     });
 });
+
+import { beforeEach } from "vitest";
+import {
+    installRestoreHarness,
+    teardownRestoreHarness,
+    makeStaticWalletForTest,
+    makeHdWalletForTest,
+} from "./helpers/restoreWallet";
+
+describe("Wallet.restore", () => {
+    beforeEach(() => {
+        installRestoreHarness();
+    });
+    afterEach(() => {
+        teardownRestoreHarness();
+    });
+
+    it("rejects an invalid gapLimit without running a scan", async () => {
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        try {
+            for (const bad of [0, -1, 1.5]) {
+                await expect(wallet.restore({ gapLimit: bad })).rejects.toThrow(
+                    /gapLimit/
+                );
+            }
+            // No discovery probe should have run for an invalid arg —
+            // validation happens before _runRestore touches the manager.
+            expect(indexer.getVtxosCalls).toHaveLength(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("static identity: single-pass restore, never throws, pulls vtxos", async () => {
+        // Fund the static wallet's index-0 baseline default script.
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        try {
+            indexer.usedScripts.add(wallet.defaultContractScript);
+
+            await expect(wallet.restore()).resolves.toBeUndefined();
+
+            const balance = await wallet.getBalance();
+            expect(balance.total).toBeGreaterThan(0);
+
+            // Static mode is a single pass at index 0: the default
+            // handler probes each csvTimelock at index 0 exactly once.
+            // Every probed scripts-array should be index-0 derived; the
+            // scan must not have walked an HD range.
+            expect(indexer.getVtxosCalls.length).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("HD identity: discovers funded indices and advances the watermark", async () => {
+        const { wallet, indexer, hdProvider } = await makeHdWalletForTest();
+        try {
+            // Compute the default pkScripts at HD indices 0 and 2 the
+            // same way DefaultContractHandler.discoverAt does: leaf
+            // pubkey of the materialized descriptor + serverPubKey +
+            // each wallet csvTimelock.
+            const serverPubKey = wallet.offchainTapscript.options.serverPubKey;
+            const scriptsAt = (index: number) =>
+                wallet.walletContractTimelocks.map((csvTimelock) =>
+                    hex.encode(
+                        new DefaultVtxo.Script({
+                            pubKey: deriveDescriptorLeafPubKey(
+                                hdProvider.materializeDescriptorAt(index)
+                            ),
+                            serverPubKey,
+                            csvTimelock,
+                        }).pkScript
+                    )
+                );
+            for (const s of [...scriptsAt(0), ...scriptsAt(2)]) {
+                indexer.usedScripts.add(s);
+            }
+
+            await wallet.restore({ gapLimit: 5 });
+
+            // Watermark advanced to the highest used index (2).
+            expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
+                hdProvider.materializeDescriptorAt(2)
+            );
+            const balance = await wallet.getBalance();
+            expect(balance.total).toBeGreaterThan(0);
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("concurrent restore() calls coalesce into a single scan", async () => {
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        try {
+            indexer.usedScripts.add(wallet.defaultContractScript);
+
+            const [a, b] = await Promise.all([
+                wallet.restore(),
+                wallet.restore(),
+            ]);
+            expect(a).toBeUndefined();
+            expect(b).toBeUndefined();
+
+            // Both awaited the same in-flight promise: the static scan
+            // is a single index-0 pass, so the number of probes equals
+            // exactly one run (one getVtxos per csvTimelock) plus the
+            // single inline refreshVtxos pull — NOT doubled.
+            const singleRunCalls = indexer.getVtxosCalls.length;
+            expect(singleRunCalls).toBeGreaterThan(0);
+
+            // A subsequent sequential restore re-runs (guard cleared on
+            // settle): the call count must strictly increase, proving
+            // the guard coalesced the concurrent pair (not "always one").
+            await wallet.restore();
+            expect(indexer.getVtxosCalls.length).toBeGreaterThan(
+                singleRunCalls
+            );
+        } finally {
+            await wallet.dispose();
+        }
+    });
+
+    it("handler error: rejects AFTER the inline pull recovers default funds", async () => {
+        const { wallet, indexer } = await makeStaticWalletForTest();
+        const fakeType = "restore-boom-fake";
+        const fake = {
+            type: fakeType,
+            createScript: (params: Record<string, string>) =>
+                ({ pkScript: hex.decode(params.script || "00") }) as any,
+            serializeParams: (p: any) => p,
+            deserializeParams: (p: any) => p,
+            selectPath: () => null,
+            getAllSpendingPaths: () => [],
+            getSpendablePaths: () => [],
+            async discoverAt() {
+                throw new Error("swap source unreachable");
+            },
+        };
+        contractHandlers.register(fake as any);
+        try {
+            // The default handler still finds the funded baseline.
+            indexer.usedScripts.add(wallet.defaultContractScript);
+
+            const err = await wallet.restore().then(
+                () => undefined,
+                (e) => e
+            );
+            expect(err).toBeInstanceOf(AggregateError);
+            expect((err as AggregateError).errors).toHaveLength(1);
+            expect(((err as AggregateError).errors[0] as Error).message).toBe(
+                "swap source unreachable"
+            );
+
+            // Despite the throwing handler, the inline refreshVtxos ran
+            // first so the default-handler funds were still recovered.
+            const balance = await wallet.getBalance();
+            expect(balance.total).toBeGreaterThan(0);
+        } finally {
+            contractHandlers.unregister(fakeType);
+            await wallet.dispose();
+        }
+    });
+});

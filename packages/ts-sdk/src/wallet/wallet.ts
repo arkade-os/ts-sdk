@@ -80,7 +80,9 @@ import { timelockToSequence } from "../utils/timelock";
 import { clearSyncCursor, updateWalletState } from "../utils/syncCursors";
 import { validateVtxosForScript, saveVtxosForContract } from "../contracts/vtxoOwnership";
 import { WalletReceiveRotator } from "./walletReceiveRotator";
+import { HDDescriptorProvider } from "./hdDescriptorProvider";
 import { DescriptorProvider } from "../identity/descriptorProvider";
+import { DiscoveryDeps } from "../contracts/types";
 import { InputSignerRouter, InputSigningJob } from "./inputSignerRouter";
 import {
     DescriptorSigningProviderMissingError,
@@ -1051,6 +1053,14 @@ export class Wallet extends ReadonlyWallet implements IWallet {
      */
     private _txLock: Promise<void> = Promise.resolve();
 
+    /**
+     * In-flight guard for {@link restore}. A second `restore()` while one
+     * is running returns the same promise so concurrent callers coalesce
+     * into a single scan (spec §3.E). Cleared on settle so a later
+     * explicit `restore()` re-runs.
+     */
+    private _restoreInFlight?: Promise<void>;
+
     private _addPendingSpends(inputs: readonly ExtendedCoin[]): void {
         for (const input of inputs) {
             if ("virtualStatus" in input) {
@@ -1079,6 +1089,101 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 release();
             }
         });
+    }
+
+    /**
+     * Explicitly recover this wallet's contracts and balance on a fresh
+     * repo. HD wallets run a gap-limit scan across the index range;
+     * static / non-HD wallets restore based on the single default
+     * pubkey. Never throws because of identity/mode (a static identity
+     * is a valid, narrower restore); throws on operational failure (so a
+     * truncated restore is loud, not silent — the gap window may have
+     * closed early). Idempotent and safe to call concurrently (calls
+     * coalesce into one scan).
+     *
+     * Ordering is deliberate (spec §3.B / §4): scan → advance the HD
+     * watermark → inline VTXO pull → only THEN surface aggregated
+     * handler errors, so safely-discovered funds are always recovered
+     * even when one discovery handler failed.
+     *
+     * @param opts.gapLimit - Consecutive-unused-index window. Default
+     * 20. A non-positive / non-integer value is a programmer error and
+     * throws synchronously (distinct from operational failure).
+     */
+    async restore(opts?: { gapLimit?: number }): Promise<void> {
+        const gapLimit = opts?.gapLimit ?? 20;
+        if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
+            throw new Error(
+                `restore: gapLimit must be a positive integer (got ${String(opts?.gapLimit)})`
+            );
+        }
+        if (this._restoreInFlight) return this._restoreInFlight;
+        this._restoreInFlight = this._runRestore(gapLimit).finally(() => {
+            this._restoreInFlight = undefined;
+        });
+        return this._restoreInFlight;
+    }
+
+    private async _runRestore(gapLimit: number): Promise<void> {
+        const manager = await this.getContractManager();
+        const provider = this._descriptorProvider;
+        const hd =
+            !!provider &&
+            typeof (provider as Partial<HDDescriptorProvider>)
+                .materializeDescriptorAt === "function";
+
+        const staticDescriptor = `tr(${hex.encode(
+            await this.identity.xOnlyPublicKey()
+        )})`;
+        const materialize = (index: number): string =>
+            hd
+                ? (provider as HDDescriptorProvider).materializeDescriptorAt(
+                      index
+                  )
+                : staticDescriptor;
+
+        const delegatePubKey =
+            this.offchainTapscript instanceof DelegateVtxo.Script
+                ? this.offchainTapscript.options.delegatePubKey
+                : undefined;
+
+        const deps: DiscoveryDeps = {
+            indexerProvider: this.indexerProvider,
+            onchainProvider: this.onchainProvider,
+            network: { hrp: this.network.hrp },
+            serverPubKey: this.offchainTapscript.options.serverPubKey,
+            csvTimelocks: this.walletContractTimelocks,
+            delegatePubKey,
+        };
+
+        const result = await manager.scanContracts({
+            gapLimit,
+            hd,
+            materialize,
+            deps,
+        });
+
+        if (hd && result.lastIndexUsed >= 0) {
+            await (provider as HDDescriptorProvider).advanceLastIndexUsed(
+                result.lastIndexUsed
+            );
+        }
+
+        // Inline pull BEFORE surfacing any handler errors so safely
+        // discovered funds are always recovered (spec §3.B / §4).
+        await manager.refreshVtxos({ includeInactive: true });
+
+        if (result.handlerErrors.length > 0) {
+            throw new AggregateError(
+                result.handlerErrors.map((e) =>
+                    e.error instanceof Error
+                        ? e.error
+                        : new Error(String(e.error))
+                ),
+                `restore: ${result.handlerErrors.length} discovery handler(s) failed; ` +
+                    `the gap window may have closed early — retry is safe (idempotent).`
+            );
+        }
     }
 
     /** @deprecated Use settlementConfig instead */
