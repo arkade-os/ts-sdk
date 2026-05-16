@@ -1,10 +1,22 @@
 import { hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
-import { Contract, ContractHandler, PathContext, PathSelection } from "../types";
+import {
+    Contract,
+    ContractHandler,
+    Discoverable,
+    PathContext,
+    PathSelection,
+} from "../types";
+import type { DiscoveredContract, DiscoveryDeps } from "../types";
 import { isCsvSpendable } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
-import { normalizeToDescriptor, extractPubKey } from "../../identity/descriptor";
+import {
+    normalizeToDescriptor,
+    extractPubKey,
+    deriveDescriptorLeafPubKey,
+} from "../../identity/descriptor";
+import { WALLET_RECEIVE_SOURCE } from "../../wallet/walletReceiveRotator";
 
 /**
  * Typed parameters for DefaultVtxo contracts.
@@ -29,7 +41,11 @@ function extractPubKeyBytes(value: string): Uint8Array {
  * - forfeit: (Alice + Server) multisig for collaborative spending
  * - exit: (Alice) + CSV timelock for unilateral exit
  */
-export const DefaultContractHandler: ContractHandler<DefaultContractParams, DefaultVtxo.Script> = {
+export const DefaultContractHandler: ContractHandler<
+    DefaultContractParams,
+    DefaultVtxo.Script
+> &
+    Discoverable = {
     type: "default",
 
     createScript(params: Record<string, string>): DefaultVtxo.Script {
@@ -125,5 +141,47 @@ export const DefaultContractHandler: ContractHandler<DefaultContractParams, Defa
         }
 
         return paths;
+    },
+
+    async discoverAt(
+        index: number,
+        descriptor: string,
+        deps: DiscoveryDeps
+    ): Promise<DiscoveredContract[]> {
+        const pubKey = deriveDescriptorLeafPubKey(descriptor);
+        const out: DiscoveredContract[] = [];
+        for (const csvTimelock of deps.csvTimelocks) {
+            const script = new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey: deps.serverPubKey,
+                csvTimelock,
+            });
+            const scriptHex = hex.encode(script.pkScript);
+            const { vtxos } = await deps.indexerProvider.getVtxos({
+                scripts: [scriptHex],
+            });
+            if (vtxos.length === 0) continue;
+            out.push({
+                type: "default",
+                params: {
+                    pubKey: hex.encode(pubKey),
+                    serverPubKey: hex.encode(deps.serverPubKey),
+                    csvTimelock: timelockToSequence(csvTimelock).toString(),
+                },
+                script: scriptHex,
+                address: script
+                    .address(deps.network.hrp, deps.serverPubKey)
+                    .encode(),
+                ...(index > 0
+                    ? {
+                          metadata: {
+                              source: WALLET_RECEIVE_SOURCE,
+                              signingDescriptor: descriptor,
+                          },
+                      }
+                    : {}),
+            });
+        }
+        return out;
     },
 };

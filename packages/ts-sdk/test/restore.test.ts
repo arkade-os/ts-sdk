@@ -84,3 +84,83 @@ describe("isDiscoverable", () => {
         ).toBe(true);
     });
 });
+
+import { DefaultContractHandler } from "../src/contracts/handlers/default";
+import { DefaultVtxo } from "../src/script/default";
+
+function mockIndexer(usedScripts: Set<string>) {
+    return {
+        async getVtxos(opts: any) {
+            const hit = (opts.scripts ?? []).some((s: string) =>
+                usedScripts.has(s)
+            );
+            return { vtxos: hit ? [{ value: 1 } as any] : [] };
+        },
+    } as any;
+}
+
+describe("DefaultContractHandler.discoverAt", () => {
+    // Must use valid secp256k1 x-only pubkeys; fill(3)/fill(7) are not valid points.
+    const pkHex =
+        "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const serverHex =
+        "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const server = hex.decode(serverHex);
+    const descriptor = `tr(${pkHex})`;
+    const tl = DefaultVtxo.Script.DEFAULT_TIMELOCK;
+    const script = hex.encode(
+        new DefaultVtxo.Script({
+            pubKey: hex.decode(pkHex),
+            serverPubKey: server,
+            csvTimelock: tl,
+        }).pkScript
+    );
+
+    it("is Discoverable", () => {
+        expect(isDiscoverable(DefaultContractHandler as any)).toBe(true);
+    });
+
+    it("returns nothing when the script has no history", async () => {
+        const out = await (DefaultContractHandler as any).discoverAt(
+            0,
+            descriptor,
+            {
+                indexerProvider: mockIndexer(new Set()),
+                onchainProvider: {} as any,
+                network: { hrp: "ark" },
+                serverPubKey: server,
+                csvTimelocks: [tl],
+            }
+        );
+        expect(out).toEqual([]);
+    });
+
+    it("index 0 is untagged; index > 0 is wallet-receive tagged", async () => {
+        const deps = {
+            indexerProvider: mockIndexer(new Set([script])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            csvTimelocks: [tl],
+        };
+        const at0 = await (DefaultContractHandler as any).discoverAt(
+            0,
+            descriptor,
+            deps
+        );
+        expect(at0).toHaveLength(1);
+        expect(at0[0].type).toBe("default");
+        expect(at0[0].script).toBe(script);
+        expect(at0[0].metadata).toBeUndefined();
+
+        const at3 = await (DefaultContractHandler as any).discoverAt(
+            3,
+            descriptor,
+            deps
+        );
+        expect(at3[0].metadata).toEqual({
+            source: "wallet-receive",
+            signingDescriptor: descriptor,
+        });
+    });
+});
