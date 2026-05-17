@@ -119,13 +119,16 @@ export class HDDescriptorProvider implements DescriptorProvider, ReceiveRotatorF
      * Monotonically advance the allocation watermark so the next
      * `getNextSigningDescriptor()` skips indices discovered by a restore
      * scan. Never rewinds: a lower or equal `index` is a no-op.
+     *
+     * An invalid `index` (non-integer / negative) is ignored (no-op):
+     * persisting it would corrupt `lastIndexUsed` and make the next
+     * `parseSettings()` throw, mirroring the validation parseSettings
+     * already enforces.
      */
     async advanceLastIndexUsed(index: number): Promise<void> {
+        if (!Number.isInteger(index) || index < 0) return;
         await this.mutate((settings) => {
-            if (
-                settings.lastIndexUsed === undefined ||
-                index > settings.lastIndexUsed
-            ) {
+            if (settings.lastIndexUsed === undefined || index > settings.lastIndexUsed) {
                 settings.lastIndexUsed = index;
             }
         });

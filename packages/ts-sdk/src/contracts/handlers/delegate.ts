@@ -2,13 +2,7 @@ import { hex } from "@scure/base";
 import { DelegateVtxo } from "../../script/delegate";
 import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
-import {
-    Contract,
-    ContractHandler,
-    Discoverable,
-    PathContext,
-    PathSelection,
-} from "../types";
+import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
 import { isCsvSpendable } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
@@ -33,10 +27,7 @@ export interface DelegateContractParams {
  * - exit: (Alice) + CSV timelock for unilateral exit
  * - delegate: (Alice + Delegate + Server) multisig for delegated renewal
  */
-export const DelegateContractHandler: ContractHandler<
-    DelegateContractParams,
-    DelegateVtxo.Script
-> &
+export const DelegateContractHandler: ContractHandler<DelegateContractParams, DelegateVtxo.Script> &
     Discoverable = {
     type: "delegate",
 
@@ -167,9 +158,7 @@ export const DelegateContractHandler: ContractHandler<
                     csvTimelock: timelockToSequence(csvTimelock).toString(),
                 },
                 script: scriptHex,
-                address: script
-                    .address(deps.network.hrp, deps.serverPubKey)
-                    .encode(),
+                address: script.address(deps.network.hrp, deps.serverPubKey).encode(),
                 ...(index > 0
                     ? {
                           metadata: {

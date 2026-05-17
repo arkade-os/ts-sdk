@@ -1118,7 +1118,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         const gapLimit = opts?.gapLimit ?? 20;
         if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
             throw new Error(
-                `restore: gapLimit must be a positive integer (got ${String(opts?.gapLimit)})`
+                `restore: gapLimit must be a positive integer (got ${String(opts?.gapLimit)})`,
             );
         }
         if (this._restoreInFlight) return this._restoreInFlight;
@@ -1131,19 +1131,24 @@ export class Wallet extends ReadonlyWallet implements IWallet {
     private async _runRestore(gapLimit: number): Promise<void> {
         const manager = await this.getContractManager();
         const provider = this._descriptorProvider;
+        // The HD path calls BOTH materializeDescriptorAt (gap scan) and
+        // advanceLastIndexUsed (watermark advance). A custom
+        // DescriptorProvider implementing only one of them must NOT take
+        // the HD path — it would TypeError on the missing method. Require
+        // both; otherwise fall back to the static path (which calls
+        // neither).
+        const partial = provider as Partial<HDDescriptorProvider>;
         const hd =
             !!provider &&
-            typeof (provider as Partial<HDDescriptorProvider>)
-                .materializeDescriptorAt === "function";
+            typeof partial.materializeDescriptorAt === "function" &&
+            typeof partial.advanceLastIndexUsed === "function";
 
         const staticDescriptor = hd
             ? undefined
             : `tr(${hex.encode(await this.identity.xOnlyPublicKey())})`;
         const materialize = (index: number): string =>
             hd
-                ? (provider as HDDescriptorProvider).materializeDescriptorAt(
-                      index
-                  )
+                ? (provider as HDDescriptorProvider).materializeDescriptorAt(index)
                 : staticDescriptor!;
 
         const delegatePubKey =
@@ -1168,9 +1173,7 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         });
 
         if (hd && result.lastIndexUsed >= 0) {
-            await (provider as HDDescriptorProvider).advanceLastIndexUsed(
-                result.lastIndexUsed
-            );
+            await (provider as HDDescriptorProvider).advanceLastIndexUsed(result.lastIndexUsed);
         }
 
         // Inline pull BEFORE surfacing any handler errors so safely
@@ -1180,12 +1183,10 @@ export class Wallet extends ReadonlyWallet implements IWallet {
         if (result.handlerErrors.length > 0) {
             throw new AggregateError(
                 result.handlerErrors.map((e) =>
-                    e.error instanceof Error
-                        ? e.error
-                        : new Error(String(e.error))
+                    e.error instanceof Error ? e.error : new Error(String(e.error)),
                 ),
                 `restore: ${result.handlerErrors.length} discovery handler(s) failed; ` +
-                    `the gap window may have closed early — retry is safe (idempotent).`
+                    `the gap window may have closed early — retry is safe (idempotent).`,
             );
         }
     }

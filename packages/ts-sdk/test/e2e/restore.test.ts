@@ -44,89 +44,89 @@ describe("Wallet.restore()", () => {
             const mnemonic = generateMnemonic(wordlist);
 
             // ── Wallet A: HD mode, original instance ──────────────────────
-            const a = await createTestArkWalletFromMnemonic(
-                mnemonic,
-                undefined,
-                "hd"
-            );
+            const a = await createTestArkWalletFromMnemonic(mnemonic, undefined, "hd");
 
-            // A's first receive address is the index-0 baseline (==
-            // identity.xOnlyPublicKey()). Funding it triggers a
-            // `vtxo_received`, which rotates the display to index-1.
-            const baselineAddress = await a.wallet.getAddress();
-            expect(baselineAddress).toBeDefined();
+            // Wrap A in try/finally so a failed assertion can't leak A's
+            // watcher/state into later e2e files.
+            try {
+                // A's first receive address is the index-0 baseline (==
+                // identity.xOnlyPublicKey()). Funding it triggers a
+                // `vtxo_received`, which rotates the display to index-1.
+                const baselineAddress = await a.wallet.getAddress();
+                expect(baselineAddress).toBeDefined();
 
-            faucetOffchain(baselineAddress!, 100_000);
+                faucetOffchain(baselineAddress!, 100_000);
 
-            // Wait for A to see the index-0 VTXO.
-            await waitFor(async () => (await a.wallet.getVtxos()).length > 0, {
-                timeout: 60_000,
-                interval: 1_000,
-            });
+                // Wait for A to see the index-0 VTXO.
+                await waitFor(async () => (await a.wallet.getVtxos()).length > 0, {
+                    timeout: 60_000,
+                    interval: 1_000,
+                });
 
-            // Wait for the receive rotation to advance the displayed
-            // address off the index-0 baseline. After this, getAddress()
-            // returns the index-1 (HD-derived, non-baseline) address.
-            let rotatedAddress = baselineAddress!;
-            await waitFor(
-                async () => {
-                    rotatedAddress = await a.wallet.getAddress();
-                    return rotatedAddress !== baselineAddress;
-                },
-                { timeout: 60_000, interval: 1_000 }
-            );
-            expect(rotatedAddress).not.toBe(baselineAddress);
+                // Wait for the receive rotation to advance the displayed
+                // address off the index-0 baseline. After this, getAddress()
+                // returns the index-1 (HD-derived, non-baseline) address.
+                let rotatedAddress = baselineAddress!;
+                await waitFor(
+                    async () => {
+                        rotatedAddress = await a.wallet.getAddress();
+                        return rotatedAddress !== baselineAddress;
+                    },
+                    { timeout: 60_000, interval: 1_000 },
+                );
+                expect(rotatedAddress).not.toBe(baselineAddress);
 
-            // Fund the ROTATED (index-1) address. These funds live at a
-            // script the index-0 baseline auto-registration does NOT
-            // cover.
-            faucetOffchain(rotatedAddress, 100_000);
+                // Fund the ROTATED (index-1) address. These funds live at a
+                // script the index-0 baseline auto-registration does NOT
+                // cover.
+                faucetOffchain(rotatedAddress, 100_000);
 
-            // Wait until A sees both VTXOs (index-0 + index-1).
-            await waitFor(async () => (await a.wallet.getVtxos()).length >= 2, {
-                timeout: 60_000,
-                interval: 1_000,
-            });
+                // Wait until A sees both VTXOs (index-0 + index-1).
+                await waitFor(async () => (await a.wallet.getVtxos()).length >= 2, {
+                    timeout: 60_000,
+                    interval: 1_000,
+                });
 
-            const totalA = (await a.wallet.getBalance()).total;
-            // Sanity: A received two 100_000 faucets offchain (no fee on
-            // an arkd `ark send`), so it holds the full sum.
-            expect(totalA).toBe(200_000);
+                const totalA = (await a.wallet.getBalance()).total;
+                // Sanity: A received two 100_000 faucets offchain (no fee on
+                // an arkd `ark send`), so it holds the full sum.
+                expect(totalA).toBe(200_000);
 
-            await a.wallet.dispose();
+                // ── Wallet B: same seed, HD mode, FRESH separate repos ────────
+                const freshRepos = createSharedRepos();
+                const b = await createTestArkWalletFromMnemonic(mnemonic, freshRepos, "hd");
 
-            // ── Wallet B: same seed, HD mode, FRESH separate repos ────────
-            const freshRepos = createSharedRepos();
-            const b = await createTestArkWalletFromMnemonic(
-                mnemonic,
-                freshRepos,
-                "hd"
-            );
+                // Wrap B in try/finally too — guarantee b.dispose() runs even
+                // if a B-side assertion throws.
+                try {
+                    // B's baseline auto-registration covers ONLY the index-0
+                    // script. It will (after its watcher syncs) credit the
+                    // index-0 funds but can never see the index-1 funds — so
+                    // `before` is strictly LESS than the full A total. This is
+                    // the robust replacement for the old, false `=== 0`
+                    // assertion.
+                    const before = (await b.wallet.getBalance()).total;
+                    expect(before).toBeLessThan(totalA);
 
-            // B's baseline auto-registration covers ONLY the index-0
-            // script. It will (after its watcher syncs) credit the
-            // index-0 funds but can never see the index-1 funds — so
-            // `before` is strictly LESS than the full A total. This is
-            // the robust replacement for the old, false `=== 0`
-            // assertion.
-            const before = (await b.wallet.getBalance()).total;
-            expect(before).toBeLessThan(totalA);
+                    // ── restore() must scan the HD index range and register the
+                    //    index-1 contract the baseline missed ──────────────────────
+                    await b.wallet.restore();
 
-            // ── restore() must scan the HD index range and register the
-            //    index-1 contract the baseline missed ──────────────────────
-            await b.wallet.restore();
+                    const after = (await b.wallet.getBalance()).total;
+                    // restore() is load-bearing: it raised B's balance by
+                    // discovering the rotated (index-1) contract. Offchain
+                    // receive loses no value, so B recovers the full A total.
+                    expect(after).toBeGreaterThan(before);
+                    expect(after).toBeGreaterThanOrEqual(totalA);
 
-            const after = (await b.wallet.getBalance()).total;
-            // restore() is load-bearing: it raised B's balance by
-            // discovering the rotated (index-1) contract. Offchain
-            // receive loses no value, so B recovers the full A total.
-            expect(after).toBeGreaterThan(before);
-            expect(after).toBeGreaterThanOrEqual(totalA);
-
-            const vtxosAfter = await b.wallet.getVtxos();
-            expect(vtxosAfter.length).toBeGreaterThan(0);
-
-            await b.wallet.dispose();
-        }
+                    const vtxosAfter = await b.wallet.getVtxos();
+                    expect(vtxosAfter.length).toBeGreaterThan(0);
+                } finally {
+                    await b.wallet.dispose();
+                }
+            } finally {
+                await a.wallet.dispose();
+            }
+        },
     );
 });

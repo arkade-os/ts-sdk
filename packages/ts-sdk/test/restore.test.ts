@@ -2,11 +2,7 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { hex } from "@scure/base";
 import { signingDescriptorIndex } from "../src/wallet/walletReceiveRotator";
 import { mnemonicToSeedSync } from "@scure/bip39";
-import {
-    HDKey,
-    networks,
-    scriptExpressions,
-} from "@bitcoinerlab/descriptors-scure";
+import { HDKey, networks, scriptExpressions } from "@bitcoinerlab/descriptors-scure";
 import { deriveDescriptorLeafPubKey } from "../src/identity/descriptor";
 import { HDDescriptorProvider } from "../src/wallet/hdDescriptorProvider";
 import { makeHdProviderForTest } from "./helpers/hdProvider";
@@ -80,42 +76,39 @@ describe("HDDescriptorProvider scan support", () => {
     it("advanceLastIndexUsed is monotonic (never rewinds)", async () => {
         const p = await makeHdProviderForTest();
         await p.advanceLastIndexUsed(10);
-        expect(await p.getCurrentSigningDescriptor()).toBe(
-            p.materializeDescriptorAt(10)
-        );
+        expect(await p.getCurrentSigningDescriptor()).toBe(p.materializeDescriptorAt(10));
         await p.advanceLastIndexUsed(7);
-        expect(await p.getCurrentSigningDescriptor()).toBe(
-            p.materializeDescriptorAt(10)
-        );
+        expect(await p.getCurrentSigningDescriptor()).toBe(p.materializeDescriptorAt(10));
     });
 });
 
 describe("isDiscoverable", () => {
     it("true only when discoverAt is a function", () => {
         expect(isDiscoverable({ type: "x" } as any)).toBe(false);
-        expect(
-            isDiscoverable({ type: "x", discoverAt: async () => [] } as any)
-        ).toBe(true);
+        expect(isDiscoverable({ type: "x", discoverAt: async () => [] } as any)).toBe(true);
     });
 });
 
 function mockIndexer(usedScripts: Set<string>) {
     return {
         async getVtxos(opts: any) {
-            const hit = (opts.scripts ?? []).some((s: string) =>
-                usedScripts.has(s)
-            );
-            return { vtxos: hit ? [{ value: 1 } as any] : [] };
+            // Per-script: return one synthetic vtxo for EACH queried
+            // script that is actually in usedScripts (empty if none).
+            // A naive "any match → hit for all" mock would mask
+            // partial-hit bugs where a handler treats one matching
+            // script as evidence for every candidate it built.
+            const vtxos = ((opts.scripts ?? []) as string[])
+                .filter((s) => usedScripts.has(s))
+                .map((s) => ({ value: 1, script: s }) as any);
+            return { vtxos };
         },
     } as any;
 }
 
 describe("DefaultContractHandler.discoverAt", () => {
     // Must use valid secp256k1 x-only pubkeys; fill(3)/fill(7) are not valid points.
-    const pkHex =
-        "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    const serverHex =
-        "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const pkHex = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const serverHex = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
     const server = hex.decode(serverHex);
     const descriptor = `tr(${pkHex})`;
     const tl = DefaultVtxo.Script.DEFAULT_TIMELOCK;
@@ -124,7 +117,7 @@ describe("DefaultContractHandler.discoverAt", () => {
             pubKey: hex.decode(pkHex),
             serverPubKey: server,
             csvTimelock: tl,
-        }).pkScript
+        }).pkScript,
     );
 
     it("is Discoverable", () => {
@@ -150,21 +143,13 @@ describe("DefaultContractHandler.discoverAt", () => {
             serverPubKey: server,
             csvTimelocks: [tl],
         };
-        const at0 = await DefaultContractHandler.discoverAt(
-            0,
-            descriptor,
-            deps
-        );
+        const at0 = await DefaultContractHandler.discoverAt(0, descriptor, deps);
         expect(at0).toHaveLength(1);
         expect(at0[0].type).toBe("default");
         expect(at0[0].script).toBe(script);
         expect(at0[0].metadata).toBeUndefined();
 
-        const at3 = await DefaultContractHandler.discoverAt(
-            3,
-            descriptor,
-            deps
-        );
+        const at3 = await DefaultContractHandler.discoverAt(3, descriptor, deps);
         expect(at3[0].metadata).toEqual({
             source: "wallet-receive",
             signingDescriptor: descriptor,
@@ -181,14 +166,14 @@ describe("DefaultContractHandler.discoverAt", () => {
                 pubKey,
                 serverPubKey: server,
                 csvTimelock: tl1,
-            }).pkScript
+            }).pkScript,
         );
         const script2 = hex.encode(
             new DefaultVtxo.Script({
                 pubKey,
                 serverPubKey: server,
                 csvTimelock: tl2,
-            }).pkScript
+            }).pkScript,
         );
 
         // Both scripts are distinct
@@ -211,24 +196,58 @@ describe("DefaultContractHandler.discoverAt", () => {
         const entry1 = out.find((e) => e.script === script1)!;
         const entry2 = out.find((e) => e.script === script2)!;
 
-        expect(entry1.params.csvTimelock).toBe(
-            timelockToSequence(tl1).toString()
+        expect(entry1.params.csvTimelock).toBe(timelockToSequence(tl1).toString());
+        expect(entry2.params.csvTimelock).toBe(timelockToSequence(tl2).toString());
+    });
+
+    it("partial timelock hit returns ONLY the matching timelock (no over-discovery)", async () => {
+        // Two candidate timelock scripts are built, but only ONE has
+        // on-chain history. A per-script indexer must yield exactly one
+        // DiscoveredContract — proving the handler does not treat a
+        // single hit as evidence for every candidate it probed. (This
+        // assertion is only meaningful with the per-script mockIndexer;
+        // the old "any match → hit for all" mock would mask it.)
+        const tl1: RelativeTimelock = DefaultVtxo.Script.DEFAULT_TIMELOCK;
+        const tl2: RelativeTimelock = { value: 288n, type: "blocks" };
+
+        const pubKey = hex.decode(pkHex);
+        const script1 = hex.encode(
+            new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey: server,
+                csvTimelock: tl1,
+            }).pkScript,
         );
-        expect(entry2.params.csvTimelock).toBe(
-            timelockToSequence(tl2).toString()
+        const script2 = hex.encode(
+            new DefaultVtxo.Script({
+                pubKey,
+                serverPubKey: server,
+                csvTimelock: tl2,
+            }).pkScript,
         );
+        expect(script1).not.toBe(script2);
+
+        // Only script1 is funded.
+        const out = await DefaultContractHandler.discoverAt(2, descriptor, {
+            indexerProvider: mockIndexer(new Set([script1])),
+            onchainProvider: {} as any,
+            network: { hrp: "ark" },
+            serverPubKey: server,
+            csvTimelocks: [tl1, tl2],
+        });
+
+        expect(out).toHaveLength(1);
+        expect(out[0].script).toBe(script1);
+        expect(out[0].params.csvTimelock).toBe(timelockToSequence(tl1).toString());
     });
 });
 
 describe("DelegateContractHandler.discoverAt", () => {
     // Valid secp256k1 x-only generator points (same as DefaultContractHandler tests above).
-    const pkHex =
-        "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    const serverHex =
-        "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const pkHex = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    const serverHex = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
     // A third distinct valid point for the delegate key.
-    const delegateHex =
-        "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
+    const delegateHex = "f9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9";
 
     const pubKey = hex.decode(pkHex);
     const server = hex.decode(serverHex);
@@ -242,7 +261,7 @@ describe("DelegateContractHandler.discoverAt", () => {
             serverPubKey: server,
             delegatePubKey: del,
             csvTimelock: tl,
-        }).pkScript
+        }).pkScript,
     );
 
     it("is Discoverable", () => {
@@ -272,27 +291,17 @@ describe("DelegateContractHandler.discoverAt", () => {
             csvTimelocks: [tl],
         };
 
-        const at0 = await DelegateContractHandler.discoverAt(
-            0,
-            descriptor,
-            deps
-        );
+        const at0 = await DelegateContractHandler.discoverAt(0, descriptor, deps);
         expect(at0).toHaveLength(1);
         expect(at0[0].type).toBe("delegate");
         expect(at0[0].script).toBe(delegateScript);
         expect(at0[0].params.delegatePubKey).toBe(delegateHex);
         expect(at0[0].params.pubKey).toBe(pkHex);
         expect(at0[0].params.serverPubKey).toBe(serverHex);
-        expect(at0[0].params.csvTimelock).toBe(
-            timelockToSequence(tl).toString()
-        );
+        expect(at0[0].params.csvTimelock).toBe(timelockToSequence(tl).toString());
         expect(at0[0].metadata).toBeUndefined();
 
-        const at3 = await DelegateContractHandler.discoverAt(
-            3,
-            descriptor,
-            deps
-        );
+        const at3 = await DelegateContractHandler.discoverAt(3, descriptor, deps);
         expect(at3[0].metadata).toEqual({
             source: "wallet-receive",
             signingDescriptor: descriptor,
@@ -309,7 +318,7 @@ describe("DelegateContractHandler.discoverAt", () => {
                 serverPubKey: server,
                 delegatePubKey: del,
                 csvTimelock: tl1,
-            }).pkScript
+            }).pkScript,
         );
         const script2 = hex.encode(
             new DelegateVtxo.Script({
@@ -317,7 +326,7 @@ describe("DelegateContractHandler.discoverAt", () => {
                 serverPubKey: server,
                 delegatePubKey: del,
                 csvTimelock: tl2,
-            }).pkScript
+            }).pkScript,
         );
 
         // Both scripts are distinct
@@ -341,12 +350,8 @@ describe("DelegateContractHandler.discoverAt", () => {
         const entry1 = out.find((e) => e.script === script1)!;
         const entry2 = out.find((e) => e.script === script2)!;
 
-        expect(entry1.params.csvTimelock).toBe(
-            timelockToSequence(tl1).toString()
-        );
-        expect(entry2.params.csvTimelock).toBe(
-            timelockToSequence(tl2).toString()
-        );
+        expect(entry1.params.csvTimelock).toBe(timelockToSequence(tl1).toString());
+        expect(entry2.params.csvTimelock).toBe(timelockToSequence(tl2).toString());
     });
 });
 
@@ -358,10 +363,7 @@ describe("DelegateContractHandler.discoverAt", () => {
  * this makes `ContractManager.createContract`'s script-derivation check pass
  * deterministically without coupling the test to real crypto / timelocks.
  */
-function makeFakeHandler(
-    type: string,
-    discoverAt: (index: number) => any[] | Promise<any[]>
-) {
+function makeFakeHandler(type: string, discoverAt: (index: number) => any[] | Promise<any[]>) {
     const calls: number[] = [];
     const handler = {
         type,
@@ -387,8 +389,7 @@ describe("ContractManager.scanContracts", () => {
     // makeDeps() supplies empty csvTimelocks, so the built-ins parse this,
     // iterate zero timelocks, and contribute nothing; the fake handlers
     // (which key off the index, not the descriptor) drive the assertions.
-    const VALID_DESCRIPTOR =
-        "tr(79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)";
+    const VALID_DESCRIPTOR = "tr(79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)";
     const materialize = () => VALID_DESCRIPTOR;
 
     const registered: string[] = [];
@@ -415,7 +416,7 @@ describe("ContractManager.scanContracts", () => {
                         hd: true,
                         materialize,
                         deps: makeDeps(),
-                    })
+                    }),
                 ).rejects.toThrow(/gapLimit/);
             }
         } finally {
@@ -436,7 +437,7 @@ describe("ContractManager.scanContracts", () => {
         // gapLimit 5 is used. The asserted invariant the spec actually
         // requires is preserved: a swap hit at 4 resets `unused` to 0,
         // keeps the window open PAST 4, and drives lastIndexUsed to 4.)
-        const { handler } = makeFakeHandler("swapfake", (i) =>
+        const { handler, calls } = makeFakeHandler("swapfake", (i) =>
             i === 4
                 ? [
                       {
@@ -446,7 +447,7 @@ describe("ContractManager.scanContracts", () => {
                           address: "ark1qswap",
                       },
                   ]
-                : []
+                : [],
         );
         register("swapfake", handler);
         const mgr = await makeManagerForTest();
@@ -462,6 +463,14 @@ describe("ContractManager.scanContracts", () => {
             // lastIndexUsed is driven solely by the swap handler.
             expect(res.lastIndexUsed).toBe(4);
             expect(res.handlerErrors).toEqual([]);
+            // Strong regression: a buggy loop that STOPS after the first
+            // hit would still satisfy lastIndexUsed===4. The handler MUST
+            // be probed across the full post-hit window. Per scanContracts
+            // (gapLimit 5): 0..3 are misses (unused→4), 4 hits (unused
+            // resets to 0), then 5,6,7,8,9 are 5 consecutive misses —
+            // unused reaches 5 (== gapLimit) only AFTER probing 9, so the
+            // exact probe sequence is 0..9 inclusive.
+            expect(calls).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
             // The contract was actually registered (idempotent createContract).
             const [c] = await mgr.getContracts({ script: "aabb" });
             expect(c?.type).toBe("swapfake");
@@ -488,9 +497,7 @@ describe("ContractManager.scanContracts", () => {
             expect(res.handlerErrors[0].handler).toBe("boomfake");
             expect(res.handlerErrors[0].index).toBe(0);
             expect(res.handlerErrors[0].error).toBeInstanceOf(Error);
-            expect((res.handlerErrors[0].error as Error).message).toBe(
-                "handler down"
-            );
+            expect((res.handlerErrors[0].error as Error).message).toBe("handler down");
             expect(res.lastIndexUsed).toBe(-1);
             // Loop ran exactly the single static pass.
             expect(calls).toEqual([0]);
@@ -518,9 +525,7 @@ describe("ContractManager.scanContracts", () => {
             expect(res.lastIndexUsed).toBe(-1);
             expect(res.handlerErrors).toHaveLength(3);
             expect(res.handlerErrors.map((e) => e.index)).toEqual([0, 1, 2]);
-            expect(
-                res.handlerErrors.every((e) => e.handler === "boomfake")
-            ).toBe(true);
+            expect(res.handlerErrors.every((e) => e.handler === "boomfake")).toBe(true);
         } finally {
             mgr.dispose();
         }
@@ -540,7 +545,7 @@ describe("ContractManager.scanContracts", () => {
                         throw boom;
                     },
                     deps: makeDeps(),
-                })
+                }),
             ).rejects.toBe(boom);
         } finally {
             mgr.dispose();
@@ -559,7 +564,7 @@ describe("ContractManager.scanContracts", () => {
                           address: "ark1qswap",
                       },
                   ]
-                : []
+                : [],
         );
         register("swapfake", handler);
         const mgr = await makeManagerForTest();
@@ -582,9 +587,7 @@ describe("ContractManager.scanContracts", () => {
 
 describe("signingDescriptorIndex", () => {
     it("parses the trailing child index", () => {
-        expect(signingDescriptorIndex("tr([aa/86'/0'/0']xpub6.../0/7)")).toBe(
-            7
-        );
+        expect(signingDescriptorIndex("tr([aa/86'/0'/0']xpub6.../0/7)")).toBe(7);
     });
     it("returns 0 when absent/unparseable", () => {
         expect(signingDescriptorIndex(undefined)).toBe(0);
@@ -604,9 +607,7 @@ describe("Wallet.restore", () => {
         const { wallet, indexer } = await makeStaticWalletForTest();
         try {
             for (const bad of [0, -1, 1.5]) {
-                await expect(wallet.restore({ gapLimit: bad })).rejects.toThrow(
-                    /gapLimit/
-                );
+                await expect(wallet.restore({ gapLimit: bad })).rejects.toThrow(/gapLimit/);
             }
             // No discovery probe should have run for an invalid arg —
             // validation happens before _runRestore touches the manager.
@@ -650,12 +651,12 @@ describe("Wallet.restore", () => {
                     hex.encode(
                         new DefaultVtxo.Script({
                             pubKey: deriveDescriptorLeafPubKey(
-                                hdProvider.materializeDescriptorAt(index)
+                                hdProvider.materializeDescriptorAt(index),
                             ),
                             serverPubKey,
                             csvTimelock,
-                        }).pkScript
-                    )
+                        }).pkScript,
+                    ),
                 );
             for (const s of [...scriptsAt(0), ...scriptsAt(2)]) {
                 indexer.usedScripts.add(s);
@@ -665,7 +666,7 @@ describe("Wallet.restore", () => {
 
             // Watermark advanced to the highest used index (2).
             expect(await hdProvider.getCurrentSigningDescriptor()).toBe(
-                hdProvider.materializeDescriptorAt(2)
+                hdProvider.materializeDescriptorAt(2),
             );
             const balance = await wallet.getBalance();
             expect(balance.total).toBeGreaterThan(0);
@@ -679,10 +680,7 @@ describe("Wallet.restore", () => {
         try {
             indexer.usedScripts.add(wallet.defaultContractScript);
 
-            const [a, b] = await Promise.all([
-                wallet.restore(),
-                wallet.restore(),
-            ]);
+            const [a, b] = await Promise.all([wallet.restore(), wallet.restore()]);
             expect(a).toBeUndefined();
             expect(b).toBeUndefined();
 
@@ -697,9 +695,7 @@ describe("Wallet.restore", () => {
             // settle): the call count must strictly increase, proving
             // the guard coalesced the concurrent pair (not "always one").
             await wallet.restore();
-            expect(indexer.getVtxosCalls.length).toBeGreaterThan(
-                singleRunCalls
-            );
+            expect(indexer.getVtxosCalls.length).toBeGreaterThan(singleRunCalls);
         } finally {
             await wallet.dispose();
         }
@@ -728,12 +724,12 @@ describe("Wallet.restore", () => {
 
             const err = await wallet.restore().then(
                 () => undefined,
-                (e) => e
+                (e) => e,
             );
             expect(err).toBeInstanceOf(AggregateError);
             expect((err as AggregateError).errors).toHaveLength(1);
             expect(((err as AggregateError).errors[0] as Error).message).toBe(
-                "swap source unreachable"
+                "swap source unreachable",
             );
 
             // Despite the throwing handler, the inline refreshVtxos ran
@@ -771,9 +767,6 @@ describe("Wallet.restore", () => {
         // but it must not be a rejected promise that references disposed internals.
         // We assert it settled (fulfilled or rejected) — the allSettled wrapper
         // guarantees this never throws, which is the no-crash invariant.
-        expect(
-            results[0].status === "fulfilled" ||
-                results[0].status === "rejected"
-        ).toBe(true);
+        expect(results[0].status === "fulfilled" || results[0].status === "rejected").toBe(true);
     });
 });

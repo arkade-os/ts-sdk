@@ -1222,8 +1222,8 @@ export class ServiceWorkerReadonlyWallet implements IReadonlyWallet {
                         "scanContracts is not available on the service-worker " +
                             "contract-manager proxy: its materialize() callback " +
                             "cannot be sent across the worker message boundary. " +
-                            "Use the wallet's restore entrypoint instead."
-                    )
+                            "Use the wallet's restore entrypoint instead.",
+                    ),
                 );
             },
 

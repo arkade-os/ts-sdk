@@ -163,7 +163,7 @@ export async function createTestArkWalletWithMnemonic(): Promise<TestArkWallet> 
 export async function createTestArkWalletFromMnemonic(
     mnemonic: string,
     repos?: SharedRepos,
-    walletMode?: WalletMode
+    walletMode?: WalletMode,
 ): Promise<TestArkWallet> {
     const identity = MnemonicIdentity.fromMnemonic(mnemonic, {
         isMainnet: false,

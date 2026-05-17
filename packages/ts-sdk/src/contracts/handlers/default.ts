@@ -1,13 +1,7 @@
 import { hex } from "@scure/base";
 import { DefaultVtxo } from "../../script/default";
 import { RelativeTimelock } from "../../script/tapscript";
-import {
-    Contract,
-    ContractHandler,
-    Discoverable,
-    PathContext,
-    PathSelection,
-} from "../types";
+import { Contract, ContractHandler, Discoverable, PathContext, PathSelection } from "../types";
 import type { DiscoveredContract, DiscoveryDeps } from "../types";
 import { isCsvSpendable } from "./helpers";
 import { sequenceToTimelock, timelockToSequence } from "../../utils/timelock";
@@ -41,10 +35,7 @@ function extractPubKeyBytes(value: string): Uint8Array {
  * - forfeit: (Alice + Server) multisig for collaborative spending
  * - exit: (Alice) + CSV timelock for unilateral exit
  */
-export const DefaultContractHandler: ContractHandler<
-    DefaultContractParams,
-    DefaultVtxo.Script
-> &
+export const DefaultContractHandler: ContractHandler<DefaultContractParams, DefaultVtxo.Script> &
     Discoverable = {
     type: "default",
 
@@ -146,7 +137,7 @@ export const DefaultContractHandler: ContractHandler<
     async discoverAt(
         index: number,
         descriptor: string,
-        deps: DiscoveryDeps
+        deps: DiscoveryDeps,
     ): Promise<DiscoveredContract[]> {
         const pubKey = deriveDescriptorLeafPubKey(descriptor);
         const out: DiscoveredContract[] = [];
@@ -169,9 +160,7 @@ export const DefaultContractHandler: ContractHandler<
                     csvTimelock: timelockToSequence(csvTimelock).toString(),
                 },
                 script: scriptHex,
-                address: script
-                    .address(deps.network.hrp, deps.serverPubKey)
-                    .encode(),
+                address: script.address(deps.network.hrp, deps.serverPubKey).encode(),
                 ...(index > 0
                     ? {
                           metadata: {

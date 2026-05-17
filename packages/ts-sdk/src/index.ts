@@ -265,11 +265,7 @@ import type {
     DiscoveryDeps,
     DiscoveredContract,
 } from "./contracts/types";
-import type {
-    ScanResult,
-    ScanContractsOptions,
-    HandlerError,
-} from "./contracts/contractManager";
+import type { ScanResult, ScanContractsOptions, HandlerError } from "./contracts/contractManager";
 import { timelockToSequence, sequenceToTimelock } from "./utils/timelock";
 import { closeDatabase, openDatabase } from "./repositories/indexedDB/manager";
 import {

@@ -497,7 +497,7 @@ export class ContractManager implements IContractManager {
         const gapLimit = opts.gapLimit ?? 20;
         if (!Number.isInteger(gapLimit) || gapLimit <= 0) {
             throw new Error(
-                `scanContracts: gapLimit must be a positive integer (got ${String(opts.gapLimit)})`
+                `scanContracts: gapLimit must be a positive integer (got ${String(opts.gapLimit)})`,
             );
         }
         const discoverables = contractHandlers

@@ -277,18 +277,15 @@ export interface Discoverable {
     discoverAt(
         index: number,
         descriptor: string,
-        deps: DiscoveryDeps
+        deps: DiscoveryDeps,
     ): Promise<DiscoveredContract[]>;
 }
 
 /** Duck-typed guard (mirrors `hasReceiveRotatorFactory`). */
 export function isDiscoverable(
-    handler: ContractHandler<unknown> | undefined
+    handler: ContractHandler<unknown> | undefined,
 ): handler is ContractHandler<unknown> & Discoverable {
-    return (
-        !!handler &&
-        typeof (handler as Partial<Discoverable>).discoverAt === "function"
-    );
+    return !!handler && typeof (handler as Partial<Discoverable>).discoverAt === "function";
 }
 
 /**

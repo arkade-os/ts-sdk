@@ -1,8 +1,4 @@
-import {
-    ContractManager,
-    InMemoryContractRepository,
-    InMemoryWalletRepository,
-} from "../../src";
+import { ContractManager, InMemoryContractRepository, InMemoryWalletRepository } from "../../src";
 import type { DiscoveryDeps } from "../../src/contracts/types";
 
 /**

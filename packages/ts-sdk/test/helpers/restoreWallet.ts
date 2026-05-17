@@ -25,11 +25,9 @@ import { HDDescriptorProvider } from "../../src/wallet/hdDescriptorProvider";
 const TEST_MNEMONIC =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
-const SINGLEKEY_HEX =
-    "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
+const SINGLEKEY_HEX = "ce66c68f8875c0c98a502c666303dc183a21600130013c06f9d1edf60207abf2";
 
-const SERVER_PUBKEY_HEX =
-    "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+const SERVER_PUBKEY_HEX = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
 const mockArkInfo = {
     signerPubkey: SERVER_PUBKEY_HEX,
@@ -80,10 +78,39 @@ export function teardownRestoreHarness(): void {
     vi.unstubAllGlobals();
 }
 
+/**
+ * Monotonic counter so every {@link makeVtxo} call yields a distinct
+ * outpoint even for the same `script` — a constant txid/vout would make
+ * multiple mocked VTXOs collide/dedupe and silently understate balances.
+ */
+let vtxoCounter = 0;
+
+/**
+ * Derive a deterministic, unique 64-hex txid from `script` + an
+ * incrementing counter. FNV-1a over the seed string, then expand the
+ * 32-bit digest into 32 bytes so the result is always a valid
+ * lowercase-hex txid string.
+ */
+function uniqueTxid(script: string): string {
+    const seed = `${script}:${vtxoCounter++}`;
+    let h = 0x811c9dc5;
+    for (let i = 0; i < seed.length; i++) {
+        h ^= seed.charCodeAt(i);
+        h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    let txid = "";
+    for (let b = 0; b < 32; b++) {
+        h ^= b;
+        h = Math.imul(h, 0x01000193) >>> 0;
+        txid += (h & 0xff).toString(16).padStart(2, "0");
+    }
+    return txid;
+}
+
 /** A settled, unspent, confirmed VTXO of `value` sats locked by `script`. */
 function makeVtxo(script: string, value: number): VirtualCoin {
     return {
-        txid: "11".repeat(32),
+        txid: uniqueTxid(script),
         vout: 0,
         value,
         status: { confirmed: true },
@@ -122,9 +149,7 @@ function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
             const scripts = opts?.scripts;
             if (!scripts) return { vtxos: [] };
             getVtxosCalls.push({ scripts });
-            const vtxos = scripts
-                .filter((s) => usedScripts.has(s))
-                .map((s) => makeVtxo(s, 50_000));
+            const vtxos = scripts.filter((s) => usedScripts.has(s)).map((s) => makeVtxo(s, 50_000));
             return { vtxos };
         },
         async getAssetDetails() {
@@ -140,10 +165,7 @@ function makeMockIndexer(usedScripts: Set<string>): MockIndexer {
         // Mirrors the MockEventSource (never fires onmessage) used by
         // test/walletHdRotation.test.ts so the watcher stays quiet and
         // the restore path drives discovery via getVtxos alone.
-        async *getSubscription(
-            _subscriptionId: string,
-            abortSignal: AbortSignal
-        ) {
+        async *getSubscription(_subscriptionId: string, abortSignal: AbortSignal) {
             await new Promise<void>((resolve) => {
                 if (abortSignal.aborted) return resolve();
                 abortSignal.addEventListener("abort", () => resolve(), {
@@ -213,7 +235,7 @@ export interface RestoreWalletHandle {
  * `defaultContractScript` after construction to model a funded baseline.
  */
 export async function makeStaticWalletForTest(
-    usedScripts: Set<string> = new Set()
+    usedScripts: Set<string> = new Set(),
 ): Promise<RestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
@@ -241,7 +263,7 @@ export interface HdRestoreWalletHandle extends RestoreWalletHandle {
  * index maps to and assert the post-restore watermark.
  */
 export async function makeHdWalletForTest(
-    usedScripts: Set<string> = new Set()
+    usedScripts: Set<string> = new Set(),
 ): Promise<HdRestoreWalletHandle> {
     const indexer = makeMockIndexer(usedScripts);
     const walletRepository = new InMemoryWalletRepository();
@@ -256,9 +278,19 @@ export async function makeHdWalletForTest(
         onchainProvider: makeMockOnchain(),
         storage: { walletRepository, contractRepository },
     });
-    const hdProvider = (
-        wallet as unknown as { _descriptorProvider: HDDescriptorProvider }
-    )._descriptorProvider;
+    const resolved = (wallet as unknown as { _descriptorProvider?: unknown })._descriptorProvider;
+    if (
+        !resolved ||
+        typeof (resolved as Partial<HDDescriptorProvider>).materializeDescriptorAt !== "function" ||
+        typeof (resolved as Partial<HDDescriptorProvider>).advanceLastIndexUsed !== "function"
+    ) {
+        throw new Error(
+            "makeHdWalletForTest: expected wallet._descriptorProvider to be an " +
+                "HDDescriptorProvider exposing materializeDescriptorAt/" +
+                "advanceLastIndexUsed — wallet internals may have changed.",
+        );
+    }
+    const hdProvider = resolved as HDDescriptorProvider;
     return {
         wallet,
         indexer,

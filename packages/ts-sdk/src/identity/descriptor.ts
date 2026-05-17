@@ -141,9 +141,7 @@ export function extractPubKey(descriptor: string): string {
  * callers that need a typed error wrap this.
  */
 export function deriveDescriptorLeafPubKey(descriptor: string): Uint8Array {
-    const network = isMainnetDescriptor(descriptor)
-        ? networks.bitcoin
-        : networks.testnet;
+    const network = isMainnetDescriptor(descriptor) ? networks.bitcoin : networks.testnet;
     let expansion;
     try {
         expansion = expand({ descriptor, network });
@@ -151,14 +149,14 @@ export function deriveDescriptorLeafPubKey(descriptor: string): Uint8Array {
         throw new Error(
             `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
                 `ensure it is materialized (no wildcard) and parsable.`,
-            { cause: e }
+            { cause: e },
         );
     }
     const key = expansion.expansionMap?.["@0"];
     if (!key?.pubkey) {
         throw new Error(
             `Cannot derive leaf pubkey from descriptor (length=${descriptor.length}): ` +
-                `parsed but no '@0' pubkey in the expansion map.`
+                `parsed but no '@0' pubkey in the expansion map.`,
         );
     }
     return key.pubkey;
