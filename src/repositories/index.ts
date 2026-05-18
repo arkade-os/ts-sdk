@@ -1,5 +1,7 @@
 export * from "./walletRepository";
 export * from "./contractRepository";
+export * from "./intentRepository";
+export * from "./virtualTxRepository";
 export * from "./inMemory/walletRepository";
 export * from "./inMemory/contractRepository";
 export * from "./indexedDB/contractRepository";
