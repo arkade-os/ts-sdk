@@ -13,6 +13,7 @@ import {
     WalletRepository,
     IntentRepository,
     VirtualTxRepository,
+    VirtualTxMode,
 } from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
@@ -236,6 +237,14 @@ export type StorageConfig = {
      * VTXO sync path populates raw txs + branch. Absent ⇒ no-op.
      */
     virtualTxRepository?: VirtualTxRepository;
+    /**
+     * How much virtual-tx data to store during sync. `"lite"` (default):
+     * txids + branch structure only; tx hex is materialized on demand at
+     * unilateral-exit time and cached. `"full"`: tx hex stored eagerly on
+     * sync (ready for instant exit, heavier sync). Mirrors NArk
+     * `VirtualTxMode` (whose enum default is also Lite).
+     */
+    virtualTxMode?: VirtualTxMode;
 };
 
 /**

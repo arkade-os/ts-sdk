@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { IndexerProvider } from "../providers/indexer";
+import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -17,7 +17,15 @@ import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import { extendVirtualCoinForContract } from "../wallet/utils";
-import { ContractFilter, ContractRepository } from "../repositories";
+import {
+    ContractFilter,
+    ContractRepository,
+    VtxoBranch,
+    VirtualTx,
+    VirtualTxRepository,
+    VirtualTxMode,
+    ChainedTxType,
+} from "../repositories";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -32,6 +40,61 @@ import {
 } from "./vtxoOwnership";
 
 const DEFAULT_PAGE_SIZE = 500;
+
+/** Map the indexer's chained-tx type onto the persisted numeric enum. */
+export function chainTxTypeToChained(t: ChainTxType): ChainedTxType {
+    switch (t) {
+        case ChainTxType.COMMITMENT:
+            return ChainedTxType.Commitment;
+        case ChainTxType.ARK:
+            return ChainedTxType.Ark;
+        case ChainTxType.TREE:
+            return ChainedTxType.Tree;
+        case ChainTxType.CHECKPOINT:
+            return ChainedTxType.Checkpoint;
+        default:
+            return ChainedTxType.Unspecified;
+    }
+}
+
+/** Parse an indexer `expiresAt` (unix-seconds string or ISO) to ms epoch. */
+function parseExpiry(raw: string | null | undefined): number | null {
+    if (!raw) return null;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) {
+        // Heuristic shared with the rest of the codebase: a value too small
+        // to be ms-epoch is unix seconds.
+        return n < 1e12 ? n * 1000 : n;
+    }
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Normalise an indexer VTXO chain into the persisted branch + virtual-tx
+ * shapes. `position` 0 is the commitment/root end (spec convention); the
+ * indexer returns the chain leaf-first, so positions are reversed.
+ * `hexByTxid` supplies raw tx bodies in Full mode; omitted ⇒ Lite (hex null).
+ */
+export function chainToBranchAndTxs(
+    vtxo: Outpoint,
+    chain: ChainTx[],
+    hexByTxid?: Map<string, string>
+): { branch: VtxoBranch[]; txs: VirtualTx[] } {
+    const branch: VtxoBranch[] = chain.map((c, i) => ({
+        vtxoTxid: vtxo.txid,
+        vtxoVout: vtxo.vout,
+        virtualTxid: c.txid,
+        position: chain.length - 1 - i,
+    }));
+    const txs: VirtualTx[] = chain.map((c) => ({
+        txid: c.txid,
+        hex: hexByTxid?.get(c.txid) ?? null,
+        expiresAt: parseExpiry(c.expiresAt),
+        type: chainTxTypeToChained(c.type),
+    }));
+    return { branch, txs };
+}
 
 export type RefreshVtxosOptions = {
     scripts?: string[];
@@ -220,6 +283,12 @@ export interface ContractManagerConfig {
 
     /** The wallet repository for virtual output storage (single source of truth) */
     walletRepository: WalletRepository;
+
+    /** Optional virtual-tx / exit-branch repository (opt-in; no-op when absent). */
+    virtualTxRepository?: VirtualTxRepository;
+
+    /** How much virtual-tx data to persist during sync. Default: `"lite"`. */
+    virtualTxMode?: VirtualTxMode;
 
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
