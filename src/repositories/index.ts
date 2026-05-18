@@ -4,6 +4,7 @@ export * from "./intentRepository";
 export * from "./virtualTxRepository";
 export * from "./inMemory/intentRepository";
 export * from "./inMemory/virtualTxRepository";
+export * from "./sqlite/virtualTxRepository";
 export * from "./inMemory/walletRepository";
 export * from "./inMemory/contractRepository";
 export * from "./indexedDB/contractRepository";
