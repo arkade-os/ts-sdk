@@ -13,16 +13,22 @@ describe("shouldPruneSpentVtxo", () => {
         expect(shouldPruneSpentVtxo(vtxo({ isSpent: true }))).toBe(true);
     });
 
-    it("never prunes an unrolled output (unilateral exit may need its chain)", () => {
+    it("prunes an onchain-settled (settledBy) non-unrolled output", () => {
+        expect(shouldPruneSpentVtxo(vtxo({ settledBy: "ctx" }))).toBe(true);
+    });
+
+    it("never prunes an unrolled output, even if spent or settled", () => {
         expect(
             shouldPruneSpentVtxo(vtxo({ isSpent: true, isUnrolled: true }))
         ).toBe(false);
+        expect(
+            shouldPruneSpentVtxo(vtxo({ settledBy: "ctx", isUnrolled: true }))
+        ).toBe(false);
     });
 
-    it("does not prune unspent / swept-without-isSpent / settled-without-isSpent", () => {
+    it("does not prune unspent / swept-without-isSpent-or-settledBy", () => {
         expect(shouldPruneSpentVtxo(vtxo({ isSpent: false }))).toBe(false);
         expect(shouldPruneSpentVtxo(vtxo({}))).toBe(false);
-        expect(shouldPruneSpentVtxo(vtxo({ settledBy: "ctx" }))).toBe(false);
     });
 });
 
@@ -38,13 +44,18 @@ describe("ContractManager.pruneSpentVirtualTxs (automated GC glue)", () => {
         const pruneForSpentVtxo = vi.fn().mockResolvedValue(undefined);
         await call({ virtualTxRepository: { pruneForSpentVtxo } }, [
             vtxo({ txid: "spent", vout: 1, isSpent: true }),
+            vtxo({ txid: "settled", vout: 2, settledBy: "ctx" }),
             vtxo({ txid: "live", vout: 0, isSpent: false }),
             vtxo({ txid: "exiting", vout: 0, isSpent: true, isUnrolled: true }),
         ]);
-        expect(pruneForSpentVtxo).toHaveBeenCalledTimes(1);
+        expect(pruneForSpentVtxo).toHaveBeenCalledTimes(2);
         expect(pruneForSpentVtxo).toHaveBeenCalledWith({
             txid: "spent",
             vout: 1,
+        });
+        expect(pruneForSpentVtxo).toHaveBeenCalledWith({
+            txid: "settled",
+            vout: 2,
         });
     });
 

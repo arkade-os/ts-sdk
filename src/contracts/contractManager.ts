@@ -106,20 +106,24 @@ export function chainToBranchAndTxs(
  * exit is mid-flight that re-fetch may not be serviceable, so the default is
  * deliberately conservative:
  *
- *   - prune only when `isSpent === true` — per the domain model that flag is
- *     set ONLY for an *offchain collaborative* spend (a forfeit/settlement),
- *     never for an unrolled or swept output. Such a VTXO is permanently
- *     consumed and will never be unilaterally exited, so its branch is dead
+ *   - prune when `isSpent === true` (set ONLY for an *offchain
+ *     collaborative* spend — a forfeit, never for an unrolled/swept output)
+ *     OR when `settledBy` is set (the output was settled onchain by a
+ *     commitment tx). Both are permanently-consumed terminal states the
+ *     wallet will never unilaterally exit, so the stored branch is dead
  *     weight.
  *   - never prune an `isUnrolled` output (belt-and-suspenders: a unilateral
  *     exit may be in progress and still needs the chain).
  *
- * NOT pruned by the default (kept until clearly safe): `swept`/`settled`
- * outputs without `isSpent`, and anything `isUnrolled`. Tightening or
- * loosening this is a protocol-judgement call — adjust here.
+ * NOT pruned (kept until clearly safe): `swept` outputs and anything
+ * `isUnrolled`. Tightening/loosening this is a protocol-judgement call —
+ * adjust here.
  */
 export function shouldPruneSpentVtxo(vtxo: VirtualCoin): boolean {
-    return vtxo.isSpent === true && !vtxo.isUnrolled;
+    return (
+        (vtxo.isSpent === true || vtxo.settledBy !== undefined) &&
+        !vtxo.isUnrolled
+    );
 }
 
 export type RefreshVtxosOptions = {
@@ -833,6 +837,10 @@ export class ContractManager implements IContractManager {
                 );
             }
         }
+        // Surgical poll-and-upsert path (e.g. VTXO_ALREADY_SPENT recovery):
+        // these records were reconciled without a `vtxo_spent` event and
+        // bypass the delta-sync funnel, so prune here too.
+        await this.pruneSpentVirtualTxs(annotated);
     }
 
     /**
