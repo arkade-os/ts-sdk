@@ -8,6 +8,7 @@ export * from "./sqlite/virtualTxRepository";
 export * from "./sqlite/intentRepository";
 export * from "./indexedDB/virtualTxRepository";
 export * from "./indexedDB/intentRepository";
+export * from "./realm/virtualTxRepository";
 export * from "./inMemory/walletRepository";
 export * from "./inMemory/contractRepository";
 export * from "./indexedDB/contractRepository";
