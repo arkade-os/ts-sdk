@@ -6,6 +6,9 @@ export const STORE_UTXOS = "utxos";
 export const STORE_TRANSACTIONS = "transactions";
 export const STORE_WALLET_STATE = "walletState";
 export const STORE_CONTRACTS = "contracts";
+export const STORE_INTENTS = "intents";
+export const STORE_VIRTUAL_TXS = "virtualTxs";
+export const STORE_VTXO_BRANCHES = "vtxoBranches";
 
 // @deprecated use only for migrations, this is created in V1
 export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
@@ -17,7 +20,9 @@ export const LEGACY_STORE_CONTRACT_COLLECTIONS = "contractsCollections";
 //        `vtxo.script` from `vtxo.address` so the field is always present
 //        at read time. Matches the `script` indexing already in place for
 //        Realm (`realm/schemas.ts`) and SQLite (`sqlite/walletRepository.ts`).
-export const DB_VERSION = 3;
+//   v4 — add intent + virtualtx persistence: `intents`, `virtualTxs`,
+//        `vtxoBranches` object stores (new, empty — no backfill).
+export const DB_VERSION = 4;
 
 export function initDatabase(
     db: IDBDatabase,
@@ -175,6 +180,31 @@ export function initDatabase(
                 unique: false,
             });
         }
+    }
+
+    // v4: intent + virtualtx persistence. New, empty stores — the
+    // `contains()` guards are idempotent and there is no legacy data to
+    // migrate, so no oldVersion gate is needed.
+    if (!db.objectStoreNames.contains(STORE_INTENTS)) {
+        const s = db.createObjectStore(STORE_INTENTS, {
+            keyPath: "intentTxId",
+        });
+        s.createIndex("intentId", "intentId", { unique: false });
+        s.createIndex("state", "state", { unique: false });
+        s.createIndex("intentVtxoKeys", "intentVtxoKeys", {
+            unique: false,
+            multiEntry: true,
+        });
+    }
+    if (!db.objectStoreNames.contains(STORE_VIRTUAL_TXS)) {
+        db.createObjectStore(STORE_VIRTUAL_TXS, { keyPath: "txid" });
+    }
+    if (!db.objectStoreNames.contains(STORE_VTXO_BRANCHES)) {
+        const s = db.createObjectStore(STORE_VTXO_BRANCHES, {
+            keyPath: ["vtxoTxid", "vtxoVout", "position"],
+        });
+        s.createIndex("vtxo", ["vtxoTxid", "vtxoVout"], { unique: false });
+        s.createIndex("virtualTxid", "virtualTxid", { unique: false });
     }
 
     if (!db.objectStoreNames.contains(LEGACY_STORE_CONTRACT_COLLECTIONS)) {

@@ -78,6 +78,13 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
+import type {
+    IntentRepository,
+    ArkIntent,
+    ArkIntentState,
+} from "../repositories/intentRepository";
+import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
+import { applySettlementEventToIntent } from "./intentStateReducer";
 import { extendCoin, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
@@ -201,10 +208,35 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
+/**
+ * Drop VTXOs whose outpoint is locked by a non-terminal intent. Returns the
+ * input array unchanged when nothing is locked (cheap no-op for the common
+ * case where no `intentRepository` is configured).
+ */
+export function excludeLockedOutpoints<
+    T extends { txid: string; vout: number },
+>(vtxos: T[], locked: { txid: string; vout: number }[]): T[] {
+    if (locked.length === 0) return vtxos;
+    const lockedKeys = new Set(locked.map((o) => `${o.txid}:${o.vout}`));
+    return vtxos.filter((v) => !lockedKeys.has(`${v.txid}:${v.vout}`));
+}
+
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+
+    /**
+     * Opt-in intent-lifecycle repository. Assigned by the `create()`
+     * factories from `config.storage.intentRepository`; `undefined` ⇒ all
+     * intent-persistence code paths are no-ops (default behaviour unchanged).
+     */
+    public intentRepository?: IntentRepository;
+    /**
+     * Opt-in virtual-tx / exit-branch repository. Assigned by `create()`
+     * from `config.storage.virtualTxRepository`; `undefined` ⇒ no-op.
+     */
+    public virtualTxRepository?: VirtualTxRepository;
     private readonly _assetManager: IReadonlyAssetManager;
     private _syncVtxosInflight?: Promise<void>;
     readonly walletContractTimelocks: RelativeTimelock[];
@@ -458,7 +490,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        return new ReadonlyWallet(
+        const wallet = new ReadonlyWallet(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -473,6 +505,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks
         );
+        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        return wallet;
     }
 
     get arkAddress(): ArkAddress {
@@ -509,6 +544,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getVtxos(),
         ]);
 
+        // Exclude VTXOs locked by non-terminal intents from spendable
+        // balance. No-op (same array) when no intentRepository is configured.
+        const spendableVtxos = this.intentRepository
+            ? excludeLockedOutpoints(
+                  vtxos,
+                  await this.intentRepository.getLockedVtxoOutpoints()
+              )
+            : vtxos;
+
         // boarding
         let confirmed = 0;
         let unconfirmed = 0;
@@ -524,13 +568,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
-        settled = vtxos
+        settled = spendableVtxos
             .filter((coin) => coin.virtualStatus.state === "settled")
             .reduce((sum, coin) => sum + coin.value, 0);
-        preconfirmed = vtxos
+        preconfirmed = spendableVtxos
             .filter((coin) => coin.virtualStatus.state === "preconfirmed")
             .reduce((sum, coin) => sum + coin.value, 0);
-        recoverable = vtxos
+        recoverable = spendableVtxos
             .filter(
                 (coin) =>
                     isSpendable(coin) && coin.virtualStatus.state === "swept"
@@ -542,7 +586,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
-        for (const vtxo of vtxos) {
+        for (const vtxo of spendableVtxos) {
             if (!isSpendable(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
@@ -965,6 +1009,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
+            virtualTxRepository: this.virtualTxRepository,
             watcherConfig: this.watcherConfig,
         });
 
@@ -1415,6 +1460,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.provider
         );
 
+        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+
         await wallet.getVtxoManager();
         return wallet;
     }
@@ -1791,6 +1839,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
+        // Client-side intent key: the intent proof's txid (NArk parity).
+        // Falls back to a deterministic outpoint digest if the special
+        // intent PSBT can't be decoded — keeps persistence resilient.
+        let intentTxId: string;
+        try {
+            intentTxId = Transaction.fromPSBT(base64.decode(intent.proof)).id;
+        } catch {
+            intentTxId = params.inputs
+                .map((i) => `${i.txid}:${i.vout}`)
+                .sort()
+                .join("|");
+        }
+        await this.persistIntentSnapshot(
+            intentTxId,
+            "waiting_to_submit",
+            intent,
+            deleteIntent,
+            params.inputs
+        );
+
         const topics = [
             ...signingPublicKeys,
             ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
@@ -1829,6 +1897,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 params.inputs
             );
 
+            await this.persistIntentSnapshot(
+                intentTxId,
+                "waiting_for_batch",
+                intent,
+                deleteIntent,
+                params.inputs,
+                { intentId }
+            );
+
             const handler = this.createBatchHandler(
                 intentId,
                 params.inputs,
@@ -1836,12 +1913,43 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 session
             );
 
+            // Compose the caller's event callback with event-sourced intent
+            // state. Active whenever an intentRepository is configured, even
+            // if the caller passed no eventCallback. Reducer/persist failures
+            // are swallowed — they must not break the settlement stream.
+            const intentRepo = this.intentRepository;
+            const composedEventCallback =
+                eventCallback || intentRepo
+                    ? async (event: SettlementEvent) => {
+                          if (eventCallback) {
+                              await Promise.resolve(eventCallback(event));
+                          }
+                          if (!intentRepo) return;
+                          try {
+                              const cur = (
+                                  await intentRepo.getIntents({
+                                      intentTxIds: [intentTxId],
+                                  })
+                              )[0];
+                              if (!cur) return;
+                              const next = applySettlementEventToIntent(
+                                  cur,
+                                  event
+                              );
+                              if (next) await intentRepo.saveIntent(next);
+                          } catch (e) {
+                              console.error(
+                                  "Failed to apply settlement event to intent",
+                                  e
+                              );
+                          }
+                      }
+                    : undefined;
+
             const commitmentTxid = await Batch.join(primedStream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
-                eventCallback: eventCallback
-                    ? (event) => Promise.resolve(eventCallback(event))
-                    : undefined,
+                eventCallback: composedEventCallback,
             });
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
@@ -1861,6 +1969,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     e
                 );
             });
+            await this.persistIntentSnapshot(
+                intentTxId,
+                "cancelled",
+                intent,
+                deleteIntent,
+                params.inputs,
+                {
+                    cancellationReason:
+                        error instanceof Error ? error.message : String(error),
+                }
+            );
             throw error;
         } finally {
             // Clear state first so a synchronous handler firing from abort()
@@ -2192,6 +2311,52 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             if (script) jobs.push({ index, lookupScript: script });
         }
         return jobs;
+    }
+
+    /**
+     * Best-effort upsert of the current settlement intent into the optional
+     * {@link intentRepository}. Never throws into the settle path — intent
+     * persistence is observational and must not break money flow. Preserves
+     * fields already written by the event reducer (state-event ordering).
+     */
+    private async persistIntentSnapshot(
+        intentTxId: string,
+        state: ArkIntentState,
+        intent: SignedIntent<Intent.RegisterMessage>,
+        deleteIntent: SignedIntent<Intent.DeleteMessage>,
+        inputs: ExtendedCoin[],
+        patch?: Partial<ArkIntent>
+    ): Promise<void> {
+        const repo = this.intentRepository;
+        if (!repo) return;
+        try {
+            const now = Date.now();
+            const existing = (
+                await repo.getIntents({ intentTxIds: [intentTxId] })
+            )[0];
+            await repo.saveIntent({
+                ...(existing ?? {}),
+                intentTxId,
+                registerProof: intent.proof,
+                registerProofMessage: Intent.encodeMessage(intent.message),
+                deleteProof: deleteIntent.proof,
+                deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
+                intentVtxos: inputs.map((i) => ({
+                    txid: i.txid,
+                    vout: i.vout,
+                })),
+                partialForfeits: existing?.partialForfeits ?? [],
+                createdAt: existing?.createdAt ?? now,
+                updatedAt: now,
+                state,
+                ...patch,
+            });
+        } catch (e) {
+            console.error(
+                `Failed to persist intent ${intentTxId} (state=${state})`,
+                e
+            );
+        }
     }
 
     async safeRegisterIntent(

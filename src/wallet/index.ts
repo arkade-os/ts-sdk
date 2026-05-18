@@ -8,7 +8,13 @@ import { RenewalConfig, SettlementConfig } from "./vtxo-manager";
 import { IndexerProvider } from "../providers/indexer";
 import { OnchainProvider } from "../providers/onchain";
 import { ContractWatcherConfig } from "../contracts/contractWatcher";
-import { ContractRepository, WalletRepository } from "../repositories";
+import {
+    ContractRepository,
+    WalletRepository,
+    IntentRepository,
+    VirtualTxRepository,
+    VirtualTxMode,
+} from "../repositories";
 import { IContractManager } from "../contracts/contractManager";
 import { IDelegatorManager } from "./delegator";
 import { DelegatorProvider } from "../providers/delegator";
@@ -220,6 +226,25 @@ export type StorageConfig = {
     walletRepository: WalletRepository;
     /** Contract-state repository implementation. */
     contractRepository: ContractRepository;
+    /**
+     * Optional intent-lifecycle repository. Opt-in: when present, the wallet
+     * persists settlement intents and excludes intent-locked VTXOs from
+     * spendable balance. Absent ⇒ those code paths are no-ops.
+     */
+    intentRepository?: IntentRepository;
+    /**
+     * Optional virtual-tx / exit-branch repository. Opt-in: when present, the
+     * VTXO sync path populates raw txs + branch. Absent ⇒ no-op.
+     */
+    virtualTxRepository?: VirtualTxRepository;
+    /**
+     * How much virtual-tx data to store during sync. `"lite"` (default):
+     * txids + branch structure only; tx hex is materialized on demand at
+     * unilateral-exit time and cached. `"full"`: tx hex stored eagerly on
+     * sync (ready for instant exit, heavier sync). Mirrors NArk
+     * `VirtualTxMode` (whose enum default is also Lite).
+     */
+    virtualTxMode?: VirtualTxMode;
 };
 
 /**

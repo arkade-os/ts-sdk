@@ -105,6 +105,54 @@ export const ArkContractSchema = {
     },
 } as const;
 
+export const ArkIntentSchema = {
+    name: "ArkIntent",
+    primaryKey: "intentTxId",
+    properties: {
+        intentTxId: "string",
+        intentId: "string?",
+        state: { type: "string", indexed: true },
+        validFrom: "int?",
+        validUntil: "int?",
+        createdAt: "int",
+        updatedAt: "int",
+        registerProof: "string",
+        registerProofMessage: "string",
+        deleteProof: "string",
+        deleteProofMessage: "string",
+        batchId: "string?",
+        commitmentTransactionId: "string?",
+        cancellationReason: "string?",
+        partialForfeitsJson: "string",
+        signerDescriptor: "string?",
+        intentVtxosJson: "string",
+    },
+} as const;
+
+export const ArkVirtualTxSchema = {
+    name: "ArkVirtualTx",
+    primaryKey: "txid",
+    properties: {
+        txid: "string",
+        hex: "string?",
+        expiresAt: "int?",
+        type: "int",
+    },
+} as const;
+
+export const ArkVtxoBranchSchema = {
+    name: "ArkVtxoBranch",
+    primaryKey: "pk",
+    properties: {
+        pk: "string", // `${vtxoTxid}:${vtxoVout}:${position}`
+        vtxoKey: { type: "string", indexed: true }, // `${vtxoTxid}:${vtxoVout}`
+        vtxoTxid: "string",
+        vtxoVout: "int",
+        virtualTxid: { type: "string", indexed: true },
+        position: "int",
+    },
+} as const;
+
 /**
  * All Realm schemas needed by the Arkade wallet repositories.
  * Pass this array to your Realm configuration's `schema` property.
@@ -115,6 +163,9 @@ export const ArkRealmSchemas = [
     ArkTransactionSchema,
     ArkWalletStateSchema,
     ArkContractSchema,
+    ArkIntentSchema,
+    ArkVirtualTxSchema,
+    ArkVtxoBranchSchema,
 ];
 
 /**
@@ -138,8 +189,10 @@ export const ArkRealmSchemas = [
  *   - v1: initial ArkVtxo/ArkUtxo/... schemas, `script` nullable.
  *   - v2: ArkVtxo.script becomes required; NULL values are backfilled from
  *     the owning Ark address during migration.
+ *   - v3: add ArkIntent / ArkVirtualTx / ArkVtxoBranch schemas (new; no
+ *     backfill — runArkRealmMigrations is unchanged).
  */
-export const ARK_REALM_SCHEMA_VERSION = 2;
+export const ARK_REALM_SCHEMA_VERSION = 3;
 
 /**
  * Run every Arkade schema migration applicable to the open Realm.

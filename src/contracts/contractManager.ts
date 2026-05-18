@@ -1,5 +1,5 @@
 import { hex } from "@scure/base";
-import { IndexerProvider } from "../providers/indexer";
+import { ChainTx, ChainTxType, IndexerProvider } from "../providers/indexer";
 import { WalletRepository } from "../repositories/walletRepository";
 import {
     Contract,
@@ -17,7 +17,15 @@ import { ContractWatcher, ContractWatcherConfig } from "./contractWatcher";
 import { contractHandlers } from "./handlers";
 import { ExtendedVirtualCoin, Outpoint, VirtualCoin } from "../wallet";
 import { extendVirtualCoinForContract } from "../wallet/utils";
-import { ContractFilter, ContractRepository } from "../repositories";
+import {
+    ContractFilter,
+    ContractRepository,
+    VtxoBranch,
+    VirtualTx,
+    VirtualTxRepository,
+    VirtualTxMode,
+    ChainedTxType,
+} from "../repositories";
 import {
     advanceSyncCursor,
     computeSyncWindow,
@@ -32,6 +40,91 @@ import {
 } from "./vtxoOwnership";
 
 const DEFAULT_PAGE_SIZE = 500;
+
+/** Map the indexer's chained-tx type onto the persisted numeric enum. */
+export function chainTxTypeToChained(t: ChainTxType): ChainedTxType {
+    switch (t) {
+        case ChainTxType.COMMITMENT:
+            return ChainedTxType.Commitment;
+        case ChainTxType.ARK:
+            return ChainedTxType.Ark;
+        case ChainTxType.TREE:
+            return ChainedTxType.Tree;
+        case ChainTxType.CHECKPOINT:
+            return ChainedTxType.Checkpoint;
+        default:
+            return ChainedTxType.Unspecified;
+    }
+}
+
+/** Parse an indexer `expiresAt` (unix-seconds string or ISO) to ms epoch. */
+function parseExpiry(raw: string | null | undefined): number | null {
+    if (!raw) return null;
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) {
+        // Heuristic shared with the rest of the codebase: a value too small
+        // to be ms-epoch is unix seconds.
+        return n < 1e12 ? n * 1000 : n;
+    }
+    const parsed = Date.parse(raw);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * Normalise an indexer VTXO chain into the persisted branch + virtual-tx
+ * shapes. `position` 0 is the commitment/root end (spec convention); the
+ * indexer returns the chain leaf-first, so positions are reversed.
+ * `hexByTxid` supplies raw tx bodies in Full mode; omitted ⇒ Lite (hex null).
+ */
+export function chainToBranchAndTxs(
+    vtxo: Outpoint,
+    chain: ChainTx[],
+    hexByTxid?: Map<string, string>
+): { branch: VtxoBranch[]; txs: VirtualTx[] } {
+    const branch: VtxoBranch[] = chain.map((c, i) => ({
+        vtxoTxid: vtxo.txid,
+        vtxoVout: vtxo.vout,
+        virtualTxid: c.txid,
+        position: chain.length - 1 - i,
+    }));
+    const txs: VirtualTx[] = chain.map((c) => ({
+        txid: c.txid,
+        hex: hexByTxid?.get(c.txid) ?? null,
+        expiresAt: parseExpiry(c.expiresAt),
+        type: chainTxTypeToChained(c.type),
+    }));
+    return { branch, txs };
+}
+
+/**
+ * Policy: is this spent virtual output safe to prune from the
+ * {@link VirtualTxRepository}?
+ *
+ * Fund-safety crux — a VTXO's stored exit branch is exactly the data a
+ * unilateral exit needs. Pruning the wrong one only forces a re-fetch from
+ * the indexer (the exit path falls back), but for a VTXO whose unilateral
+ * exit is mid-flight that re-fetch may not be serviceable, so the default is
+ * deliberately conservative:
+ *
+ *   - prune when `isSpent === true` (set ONLY for an *offchain
+ *     collaborative* spend — a forfeit, never for an unrolled/swept output)
+ *     OR when `settledBy` is set (the output was settled onchain by a
+ *     commitment tx). Both are permanently-consumed terminal states the
+ *     wallet will never unilaterally exit, so the stored branch is dead
+ *     weight.
+ *   - never prune an `isUnrolled` output (belt-and-suspenders: a unilateral
+ *     exit may be in progress and still needs the chain).
+ *
+ * NOT pruned (kept until clearly safe): `swept` outputs and anything
+ * `isUnrolled`. Tightening/loosening this is a protocol-judgement call —
+ * adjust here.
+ */
+export function shouldPruneSpentVtxo(vtxo: VirtualCoin): boolean {
+    return (
+        (vtxo.isSpent === true || vtxo.settledBy !== undefined) &&
+        !vtxo.isUnrolled
+    );
+}
 
 export type RefreshVtxosOptions = {
     scripts?: string[];
@@ -220,6 +313,12 @@ export interface ContractManagerConfig {
 
     /** The wallet repository for virtual output storage (single source of truth) */
     walletRepository: WalletRepository;
+
+    /** Optional virtual-tx / exit-branch repository (opt-in; no-op when absent). */
+    virtualTxRepository?: VirtualTxRepository;
+
+    /** How much virtual-tx data to persist during sync. Default: `"lite"`. */
+    virtualTxMode?: VirtualTxMode;
 
     /** Watcher configuration */
     watcherConfig?: Partial<ContractWatcherConfig>;
@@ -738,6 +837,10 @@ export class ContractManager implements IContractManager {
                 );
             }
         }
+        // Surgical poll-and-upsert path (e.g. VTXO_ALREADY_SPENT recovery):
+        // these records were reconciled without a `vtxo_spent` event and
+        // bypass the delta-sync funnel, so prune here too.
+        await this.pruneSpentVirtualTxs(annotated);
     }
 
     /**
@@ -943,9 +1046,42 @@ export class ContractManager implements IContractManager {
                     contract,
                     filtered as ExtendedVirtualCoin[]
                 );
+                await this.pruneSpentVirtualTxs(
+                    filtered as ExtendedVirtualCoin[]
+                );
             }
         }
         return result;
+    }
+
+    /**
+     * Automated repository GC: for every just-synced VTXO that
+     * {@link shouldPruneSpentVtxo} deems safely spent, drop its persisted
+     * exit branch and any now-orphaned virtual txs. Runs on every delta sync
+     * (and therefore on the `vtxo_spent` event path, which funnels through
+     * here), keeping `VirtualTxRepository` bounded.
+     *
+     * Best-effort by design: pruning is a size optimisation, not a
+     * correctness invariant, so a failure is logged and the sync continues.
+     * No-op when no `virtualTxRepository` is configured.
+     */
+    private async pruneSpentVirtualTxs(vtxos: VirtualCoin[]): Promise<void> {
+        const repo = this.config.virtualTxRepository;
+        if (!repo) return;
+        for (const vtxo of vtxos) {
+            if (!shouldPruneSpentVtxo(vtxo)) continue;
+            try {
+                await repo.pruneForSpentVtxo({
+                    txid: vtxo.txid,
+                    vout: vtxo.vout,
+                });
+            } catch (e) {
+                console.error(
+                    `pruneForSpentVtxo failed for ${vtxo.txid}:${vtxo.vout}`,
+                    e
+                );
+            }
+        }
     }
 
     private async fetchContractVtxosBulk(

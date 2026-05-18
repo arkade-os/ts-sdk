@@ -1803,6 +1803,7 @@ describe("Wallet._settleImpl", () => {
             safeRegisterIntent,
             createBatchHandler,
             updateDbAfterSettle,
+            persistIntentSnapshot: vi.fn(),
         };
 
         const result = await (Wallet.prototype as any)._settleImpl.call(
@@ -1885,6 +1886,7 @@ describe("Wallet._settleImpl", () => {
             }),
             createBatchHandler: vi.fn(),
             updateDbAfterSettle: vi.fn(),
+            persistIntentSnapshot: vi.fn(),
         };
 
         await expect(
