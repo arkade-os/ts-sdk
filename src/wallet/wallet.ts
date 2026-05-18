@@ -78,6 +78,9 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
+import type { IntentRepository } from "../repositories/intentRepository";
+import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
+import { applySettlementEventToIntent } from "./intentStateReducer";
 import { extendCoin, validateRecipients } from "./utils";
 import { ArkError } from "../providers/errors";
 import { Batch } from "./batch";
@@ -201,10 +204,35 @@ function hasToReadonly(identity: unknown): identity is HasToReadonly {
 
 export { DescriptorSigningProviderMissingError, MissingSigningDescriptorError };
 
+/**
+ * Drop VTXOs whose outpoint is locked by a non-terminal intent. Returns the
+ * input array unchanged when nothing is locked (cheap no-op for the common
+ * case where no `intentRepository` is configured).
+ */
+export function excludeLockedOutpoints<
+    T extends { txid: string; vout: number },
+>(vtxos: T[], locked: { txid: string; vout: number }[]): T[] {
+    if (locked.length === 0) return vtxos;
+    const lockedKeys = new Set(locked.map((o) => `${o.txid}:${o.vout}`));
+    return vtxos.filter((v) => !lockedKeys.has(`${v.txid}:${v.vout}`));
+}
+
 export class ReadonlyWallet implements IReadonlyWallet {
     private _contractManager?: ContractManager;
     private _contractManagerInitializing?: Promise<ContractManager>;
     protected readonly watcherConfig?: ReadonlyWalletConfig["watcherConfig"];
+
+    /**
+     * Opt-in intent-lifecycle repository. Assigned by the `create()`
+     * factories from `config.storage.intentRepository`; `undefined` ⇒ all
+     * intent-persistence code paths are no-ops (default behaviour unchanged).
+     */
+    public intentRepository?: IntentRepository;
+    /**
+     * Opt-in virtual-tx / exit-branch repository. Assigned by `create()`
+     * from `config.storage.virtualTxRepository`; `undefined` ⇒ no-op.
+     */
+    public virtualTxRepository?: VirtualTxRepository;
     private readonly _assetManager: IReadonlyAssetManager;
     private _syncVtxosInflight?: Promise<void>;
     readonly walletContractTimelocks: RelativeTimelock[];
@@ -458,7 +486,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         const setup = await ReadonlyWallet.setupWalletConfig(config, pubkey);
 
-        return new ReadonlyWallet(
+        const wallet = new ReadonlyWallet(
             config.identity,
             setup.network,
             setup.onchainProvider,
@@ -473,6 +501,9 @@ export class ReadonlyWallet implements IReadonlyWallet {
             config.watcherConfig,
             setup.walletContractTimelocks
         );
+        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.virtualTxRepository = config.storage?.virtualTxRepository;
+        return wallet;
     }
 
     get arkAddress(): ArkAddress {
@@ -509,6 +540,15 @@ export class ReadonlyWallet implements IReadonlyWallet {
             this.getVtxos(),
         ]);
 
+        // Exclude VTXOs locked by non-terminal intents from spendable
+        // balance. No-op (same array) when no intentRepository is configured.
+        const spendableVtxos = this.intentRepository
+            ? excludeLockedOutpoints(
+                  vtxos,
+                  await this.intentRepository.getLockedVtxoOutpoints()
+              )
+            : vtxos;
+
         // boarding
         let confirmed = 0;
         let unconfirmed = 0;
@@ -524,13 +564,13 @@ export class ReadonlyWallet implements IReadonlyWallet {
         let settled = 0;
         let preconfirmed = 0;
         let recoverable = 0;
-        settled = vtxos
+        settled = spendableVtxos
             .filter((coin) => coin.virtualStatus.state === "settled")
             .reduce((sum, coin) => sum + coin.value, 0);
-        preconfirmed = vtxos
+        preconfirmed = spendableVtxos
             .filter((coin) => coin.virtualStatus.state === "preconfirmed")
             .reduce((sum, coin) => sum + coin.value, 0);
-        recoverable = vtxos
+        recoverable = spendableVtxos
             .filter(
                 (coin) =>
                     isSpendable(coin) && coin.virtualStatus.state === "swept"
@@ -542,7 +582,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
 
         // aggregate asset balances from spendable virtual outputs
         const assetBalances = new Map<string, bigint>();
-        for (const vtxo of vtxos) {
+        for (const vtxo of spendableVtxos) {
             if (!isSpendable(vtxo)) continue;
             if (vtxo.assets) {
                 for (const a of vtxo.assets) {
@@ -1414,6 +1454,9 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             boot?.rotator,
             boot?.provider
         );
+
+        wallet.intentRepository = config.storage?.intentRepository;
+        wallet.virtualTxRepository = config.storage?.virtualTxRepository;
 
         await wallet.getVtxoManager();
         return wallet;
