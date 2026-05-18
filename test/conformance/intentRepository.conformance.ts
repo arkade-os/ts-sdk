@@ -73,12 +73,14 @@ export function intentRepositoryConformance(
                     (i) => i.intentTxId
                 )
             ).toEqual(["a"]);
+            // "null bounds = open": intent "b" has no validity window, so it
+            // is valid at every instant; "a" is bounded [10, 20].
             expect(
                 (await r.getIntents({ validAt: 15 })).map((i) => i.intentTxId)
-            ).toEqual(["a"]);
+            ).toEqual(["a", "b"]);
             expect(
                 (await r.getIntents({ validAt: 25 })).map((i) => i.intentTxId)
-            ).toEqual([]);
+            ).toEqual(["b"]);
         });
 
         it("paginates with skip/take on a stable order", async () => {
