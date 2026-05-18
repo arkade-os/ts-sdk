@@ -96,6 +96,32 @@ export function chainToBranchAndTxs(
     return { branch, txs };
 }
 
+/**
+ * Policy: is this spent virtual output safe to prune from the
+ * {@link VirtualTxRepository}?
+ *
+ * Fund-safety crux — a VTXO's stored exit branch is exactly the data a
+ * unilateral exit needs. Pruning the wrong one only forces a re-fetch from
+ * the indexer (the exit path falls back), but for a VTXO whose unilateral
+ * exit is mid-flight that re-fetch may not be serviceable, so the default is
+ * deliberately conservative:
+ *
+ *   - prune only when `isSpent === true` — per the domain model that flag is
+ *     set ONLY for an *offchain collaborative* spend (a forfeit/settlement),
+ *     never for an unrolled or swept output. Such a VTXO is permanently
+ *     consumed and will never be unilaterally exited, so its branch is dead
+ *     weight.
+ *   - never prune an `isUnrolled` output (belt-and-suspenders: a unilateral
+ *     exit may be in progress and still needs the chain).
+ *
+ * NOT pruned by the default (kept until clearly safe): `swept`/`settled`
+ * outputs without `isSpent`, and anything `isUnrolled`. Tightening or
+ * loosening this is a protocol-judgement call — adjust here.
+ */
+export function shouldPruneSpentVtxo(vtxo: VirtualCoin): boolean {
+    return vtxo.isSpent === true && !vtxo.isUnrolled;
+}
+
 export type RefreshVtxosOptions = {
     scripts?: string[];
     after?: number;
@@ -1012,9 +1038,42 @@ export class ContractManager implements IContractManager {
                     contract,
                     filtered as ExtendedVirtualCoin[]
                 );
+                await this.pruneSpentVirtualTxs(
+                    filtered as ExtendedVirtualCoin[]
+                );
             }
         }
         return result;
+    }
+
+    /**
+     * Automated repository GC: for every just-synced VTXO that
+     * {@link shouldPruneSpentVtxo} deems safely spent, drop its persisted
+     * exit branch and any now-orphaned virtual txs. Runs on every delta sync
+     * (and therefore on the `vtxo_spent` event path, which funnels through
+     * here), keeping `VirtualTxRepository` bounded.
+     *
+     * Best-effort by design: pruning is a size optimisation, not a
+     * correctness invariant, so a failure is logged and the sync continues.
+     * No-op when no `virtualTxRepository` is configured.
+     */
+    private async pruneSpentVirtualTxs(vtxos: VirtualCoin[]): Promise<void> {
+        const repo = this.config.virtualTxRepository;
+        if (!repo) return;
+        for (const vtxo of vtxos) {
+            if (!shouldPruneSpentVtxo(vtxo)) continue;
+            try {
+                await repo.pruneForSpentVtxo({
+                    txid: vtxo.txid,
+                    vout: vtxo.vout,
+                });
+            } catch (e) {
+                console.error(
+                    `pruneForSpentVtxo failed for ${vtxo.txid}:${vtxo.vout}`,
+                    e
+                );
+            }
+        }
     }
 
     private async fetchContractVtxosBulk(

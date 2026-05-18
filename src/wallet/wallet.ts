@@ -1009,6 +1009,7 @@ export class ReadonlyWallet implements IReadonlyWallet {
             indexerProvider: this.indexerProvider,
             contractRepository: this.contractRepository,
             walletRepository: this.walletRepository,
+            virtualTxRepository: this.virtualTxRepository,
             watcherConfig: this.watcherConfig,
         });
 
