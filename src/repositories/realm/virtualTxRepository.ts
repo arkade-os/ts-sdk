@@ -36,9 +36,9 @@ export class RealmVirtualTxRepository implements VirtualTxRepository {
             for (const t of txs) {
                 const prev = [
                     ...this.realm
-                        .objects("ArkVirtualTx")
+                        .objects<VirtualTx>("ArkVirtualTx")
                         .filtered("txid == $0", t.txid),
-                ][0] as VirtualTx | undefined;
+                ].at(0);
                 this.realm.create(
                     "ArkVirtualTx",
                     {
