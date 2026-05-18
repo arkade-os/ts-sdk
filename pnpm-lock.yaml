@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@arkade-os/sdk':
-        specifier: 0.4.26
-        version: 0.4.26(expo-background-task@55.0.17(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo-task-manager@55.0.15(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo@55.0.23)
+        specifier: 0.4.27
+        version: 0.4.27(expo-background-task@55.0.17(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo-task-manager@55.0.15(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo@55.0.23)
       '@noble/curves':
         specifier: ^2.0.1
         version: 2.0.1
@@ -78,8 +78,8 @@ importers:
 
 packages:
 
-  '@arkade-os/sdk@0.4.26':
-    resolution: {integrity: sha512-seyc+BdgWPpsFp/PdgcHAyCmK3FYlNP6+DdG/BMbYmARNxqDHFN/y3/IZcwcXMLJjQkcLVBR/iUL1FKFwBgpdQ==}
+  '@arkade-os/sdk@0.4.27':
+    resolution: {integrity: sha512-LzfvXFAWcl7O6Jl/uljecs8uXovhHVJQKuh9U/DlK657T/sfRcDWlD/Eq1596mm509p3bBNJvIt4uRh133Lq+A==}
     engines: {node: '>=22.12.0 <23', pnpm: '>=10.25.0 <11'}
     peerDependencies:
       '@react-native-async-storage/async-storage': '>=1.0.0'
@@ -3453,7 +3453,7 @@ packages:
 
 snapshots:
 
-  '@arkade-os/sdk@0.4.26(expo-background-task@55.0.17(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo-task-manager@55.0.15(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo@55.0.23)':
+  '@arkade-os/sdk@0.4.27(expo-background-task@55.0.17(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo-task-manager@55.0.15(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo@55.0.23)':
     dependencies:
       '@bitcoinerlab/descriptors-scure': 3.1.7
       '@marcbachmann/cel-js': 7.3.1
@@ -3497,7 +3497,7 @@ snapshots:
       '@babel/types': 7.29.0
       '@jridgewell/remapping': 2.3.5
       convert-source-map: 2.0.0
-      debug: 4.4.1
+      debug: 4.4.3
       gensync: 1.0.0-beta.2
       json5: 2.2.3
       semver: 6.3.1
@@ -3996,7 +3996,7 @@ snapshots:
       '@babel/parser': 7.29.3
       '@babel/template': 7.28.6
       '@babel/types': 7.29.0
-      debug: 4.4.1
+      debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
 
@@ -4189,7 +4189,7 @@ snapshots:
       ci-info: 3.9.0
       compression: 1.8.1
       connect: 3.7.0
-      debug: 4.4.1
+      debug: 4.4.3
       dnssd-advertise: 1.1.4
       expo: 55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6))(react@19.2.6)(typescript@5.9.2)
       expo-server: 55.0.9
@@ -4243,7 +4243,7 @@ snapshots:
       '@expo/plist': 0.5.3
       '@expo/sdk-runtime-versions': 1.0.0
       chalk: 4.1.2
-      debug: 4.4.1
+      debug: 4.4.3
       getenv: 2.0.0
       glob: 13.0.6
       resolve-from: 5.0.0
@@ -4295,7 +4295,7 @@ snapshots:
   '@expo/env@2.1.2':
     dependencies:
       chalk: 4.1.2
-      debug: 4.4.1
+      debug: 4.4.3
       getenv: 2.0.0
     transitivePeerDependencies:
       - supports-color
@@ -4306,7 +4306,7 @@ snapshots:
       '@expo/spawn-async': 1.7.2
       arg: 5.0.2
       chalk: 4.1.2
-      debug: 4.4.1
+      debug: 4.4.3
       getenv: 2.0.0
       glob: 13.0.6
       ignore: 5.3.2
@@ -4363,7 +4363,7 @@ snapshots:
       '@expo/spawn-async': 1.7.2
       browserslist: 4.28.2
       chalk: 4.1.2
-      debug: 4.4.1
+      debug: 4.4.3
       getenv: 2.0.0
       glob: 13.0.6
       hermes-parser: 0.32.1
@@ -4428,7 +4428,7 @@ snapshots:
       '@expo/image-utils': 0.8.14(typescript@5.9.2)
       '@expo/json-file': 10.0.14
       '@react-native/normalize-colors': 0.83.6
-      debug: 4.4.1
+      debug: 4.4.3
       expo: 55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6))(react@19.2.6)(typescript@5.9.2)
       resolve-from: 5.0.0
       semver: 7.7.2
@@ -4449,7 +4449,7 @@ snapshots:
 
   '@expo/router-server@55.0.16(expo-constants@55.0.16(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6)))(expo-font@55.0.7(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6))(react@19.2.6))(expo-server@55.0.9)(expo@55.0.23)(react@19.2.6)':
     dependencies:
-      debug: 4.4.1
+      debug: 4.4.3
       expo: 55.0.23(@babel/core@7.29.0)(@expo/dom-webview@55.0.6)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6))(react@19.2.6)(typescript@5.9.2)
       expo-constants: 55.0.16(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6))
       expo-font: 55.0.7(expo@55.0.23)(react-native@0.85.3(@babel/core@7.29.0)(react@19.2.6))(react@19.2.6)
@@ -4649,7 +4649,7 @@ snapshots:
   '@react-native/community-cli-plugin@0.85.3':
     dependencies:
       '@react-native/dev-middleware': 0.85.3
-      debug: 4.4.1
+      debug: 4.4.3
       invariant: 2.2.4
       metro: 0.84.4
       metro-config: 0.84.4
@@ -4672,7 +4672,7 @@ snapshots:
   '@react-native/debugger-shell@0.85.3':
     dependencies:
       cross-spawn: 7.0.6
-      debug: 4.4.1
+      debug: 4.4.3
       fb-dotslash: 0.5.8
     transitivePeerDependencies:
       - supports-color
@@ -4685,7 +4685,7 @@ snapshots:
       chrome-launcher: 0.15.2
       chromium-edge-launcher: 0.2.0
       connect: 3.7.0
-      debug: 4.4.1
+      debug: 4.4.3
       invariant: 2.2.4
       nullthrows: 1.1.1
       open: 7.4.2
@@ -4704,7 +4704,7 @@ snapshots:
       chrome-launcher: 0.15.2
       chromium-edge-launcher: 0.3.0
       connect: 3.7.0
-      debug: 4.4.1
+      debug: 4.4.3
       invariant: 2.2.4
       nullthrows: 1.1.1
       open: 7.4.2
@@ -5126,7 +5126,7 @@ snapshots:
       babel-plugin-react-native-web: 0.21.2
       babel-plugin-syntax-hermes-parser: 0.32.1
       babel-plugin-transform-flow-enums: 0.0.2(@babel/core@7.29.0)
-      debug: 4.4.1
+      debug: 4.4.3
       react-refresh: 0.14.2
       resolve-from: 5.0.0
     optionalDependencies:
@@ -5815,7 +5815,7 @@ snapshots:
   https-proxy-agent@7.0.6:
     dependencies:
       agent-base: 7.1.4
-      debug: 4.4.1
+      debug: 4.4.3
     transitivePeerDependencies:
       - supports-color
 
@@ -6147,7 +6147,7 @@ snapshots:
 
   metro-file-map@0.83.7:
     dependencies:
-      debug: 4.4.1
+      debug: 4.4.3
       fb-watchman: 2.0.2
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
@@ -6161,7 +6161,7 @@ snapshots:
 
   metro-file-map@0.84.4:
     dependencies:
-      debug: 4.4.1
+      debug: 4.4.3
       fb-watchman: 2.0.2
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
@@ -6325,7 +6325,7 @@ snapshots:
       accepts: 2.0.0
       ci-info: 2.0.0
       connect: 3.7.0
-      debug: 4.4.1
+      debug: 4.4.3
       error-stack-parser: 2.1.4
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
@@ -6371,7 +6371,7 @@ snapshots:
       accepts: 2.0.0
       ci-info: 2.0.0
       connect: 3.7.0
-      debug: 4.4.1
+      debug: 4.4.3
       error-stack-parser: 2.1.4
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
