@@ -13,6 +13,7 @@ import {
     initDatabase,
     STORE_VTXOS,
     backfillVtxoScripts,
+    DB_VERSION,
 } from "../../src/repositories/indexedDB/schema";
 import { IndexedDBWalletRepository } from "../../src/repositories/indexedDB/walletRepository";
 import { SQLiteWalletRepository } from "../../src/repositories/sqlite/walletRepository";
@@ -228,7 +229,10 @@ describe("IndexedDB migration: backfillVtxoScripts", () => {
                 },
             ]);
 
-            const db = await openDatabase(dbName, 3, initDatabase);
+            // Reopen at the current DB_VERSION: the repo above already
+            // created this DB at DB_VERSION, and IndexedDB rejects opening
+            // an existing database at a lower version.
+            const db = await openDatabase(dbName, DB_VERSION, initDatabase);
             await new Promise<void>((resolve, reject) => {
                 const tx = db.transaction([STORE_VTXOS], "readwrite");
                 const store = tx.objectStore(STORE_VTXOS);
