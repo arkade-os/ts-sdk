@@ -78,7 +78,11 @@ import { IndexerProvider, RestIndexerProvider } from "../providers/indexer";
 import { TxTree } from "../tree/txTree";
 import { WalletRepository } from "../repositories/walletRepository";
 import { ContractRepository } from "../repositories/contractRepository";
-import type { IntentRepository } from "../repositories/intentRepository";
+import type {
+    IntentRepository,
+    ArkIntent,
+    ArkIntentState,
+} from "../repositories/intentRepository";
 import type { VirtualTxRepository } from "../repositories/virtualTxRepository";
 import { applySettlementEventToIntent } from "./intentStateReducer";
 import { extendCoin, validateRecipients } from "./utils";
@@ -1834,6 +1838,26 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             this.makeDeleteIntentSignature(params.inputs),
         ]);
 
+        // Client-side intent key: the intent proof's txid (NArk parity).
+        // Falls back to a deterministic outpoint digest if the special
+        // intent PSBT can't be decoded — keeps persistence resilient.
+        let intentTxId: string;
+        try {
+            intentTxId = Transaction.fromPSBT(base64.decode(intent.proof)).id;
+        } catch {
+            intentTxId = params.inputs
+                .map((i) => `${i.txid}:${i.vout}`)
+                .sort()
+                .join("|");
+        }
+        await this.persistIntentSnapshot(
+            intentTxId,
+            "waiting_to_submit",
+            intent,
+            deleteIntent,
+            params.inputs
+        );
+
         const topics = [
             ...signingPublicKeys,
             ...params.inputs.map((input) => `${input.txid}:${input.vout}`),
@@ -1872,6 +1896,15 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 params.inputs
             );
 
+            await this.persistIntentSnapshot(
+                intentTxId,
+                "waiting_for_batch",
+                intent,
+                deleteIntent,
+                params.inputs,
+                { intentId }
+            );
+
             const handler = this.createBatchHandler(
                 intentId,
                 params.inputs,
@@ -1879,12 +1912,43 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                 session
             );
 
+            // Compose the caller's event callback with event-sourced intent
+            // state. Active whenever an intentRepository is configured, even
+            // if the caller passed no eventCallback. Reducer/persist failures
+            // are swallowed — they must not break the settlement stream.
+            const intentRepo = this.intentRepository;
+            const composedEventCallback =
+                eventCallback || intentRepo
+                    ? async (event: SettlementEvent) => {
+                          if (eventCallback) {
+                              await Promise.resolve(eventCallback(event));
+                          }
+                          if (!intentRepo) return;
+                          try {
+                              const cur = (
+                                  await intentRepo.getIntents({
+                                      intentTxIds: [intentTxId],
+                                  })
+                              )[0];
+                              if (!cur) return;
+                              const next = applySettlementEventToIntent(
+                                  cur,
+                                  event
+                              );
+                              if (next) await intentRepo.saveIntent(next);
+                          } catch (e) {
+                              console.error(
+                                  "Failed to apply settlement event to intent",
+                                  e
+                              );
+                          }
+                      }
+                    : undefined;
+
             const commitmentTxid = await Batch.join(primedStream, handler, {
                 abortController,
                 skipVtxoTreeSigning: !hasOffchainOutputs,
-                eventCallback: eventCallback
-                    ? (event) => Promise.resolve(eventCallback(event))
-                    : undefined,
+                eventCallback: composedEventCallback,
             });
 
             await this.updateDbAfterSettle(params.inputs, commitmentTxid);
@@ -1904,6 +1968,17 @@ export class Wallet extends ReadonlyWallet implements IWallet {
                     e
                 );
             });
+            await this.persistIntentSnapshot(
+                intentTxId,
+                "cancelled",
+                intent,
+                deleteIntent,
+                params.inputs,
+                {
+                    cancellationReason:
+                        error instanceof Error ? error.message : String(error),
+                }
+            );
             throw error;
         } finally {
             // Clear state first so a synchronous handler firing from abort()
@@ -2235,6 +2310,52 @@ export class Wallet extends ReadonlyWallet implements IWallet {
             if (script) jobs.push({ index, lookupScript: script });
         }
         return jobs;
+    }
+
+    /**
+     * Best-effort upsert of the current settlement intent into the optional
+     * {@link intentRepository}. Never throws into the settle path — intent
+     * persistence is observational and must not break money flow. Preserves
+     * fields already written by the event reducer (state-event ordering).
+     */
+    private async persistIntentSnapshot(
+        intentTxId: string,
+        state: ArkIntentState,
+        intent: SignedIntent<Intent.RegisterMessage>,
+        deleteIntent: SignedIntent<Intent.DeleteMessage>,
+        inputs: ExtendedCoin[],
+        patch?: Partial<ArkIntent>
+    ): Promise<void> {
+        const repo = this.intentRepository;
+        if (!repo) return;
+        try {
+            const now = Date.now();
+            const existing = (
+                await repo.getIntents({ intentTxIds: [intentTxId] })
+            )[0];
+            await repo.saveIntent({
+                ...(existing ?? {}),
+                intentTxId,
+                registerProof: intent.proof,
+                registerProofMessage: Intent.encodeMessage(intent.message),
+                deleteProof: deleteIntent.proof,
+                deleteProofMessage: Intent.encodeMessage(deleteIntent.message),
+                intentVtxos: inputs.map((i) => ({
+                    txid: i.txid,
+                    vout: i.vout,
+                })),
+                partialForfeits: existing?.partialForfeits ?? [],
+                createdAt: existing?.createdAt ?? now,
+                updatedAt: now,
+                state,
+                ...patch,
+            });
+        } catch (e) {
+            console.error(
+                `Failed to persist intent ${intentTxId} (state=${state})`,
+                e
+            );
+        }
     }
 
     async safeRegisterIntent(
